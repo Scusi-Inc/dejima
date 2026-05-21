@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dejima — the substrate for multi-device agent workflows</title>
+<meta name="description" content="OSS containment layer for AI coding agents. One island per project. Multi-device sessions. Self-hosted on your Mac mini or Linux box.">
+<meta property="og:title" content="Dejima">
+<meta property="og:description" content="The substrate for multi-device agent workflows. Self-hosted, agent-agnostic, isolated by project.">
+<meta property="og:image" content="https://raw.githubusercontent.com/aoos/dejima/master/assets/logo.png">
+<style>
+  :root {
+    --bg: #0f1e35;
+    --fg: #eef3ff;
+    --muted: #94a3b8;
+    --accent: #e8f1ff;
+    --code-bg: #0a172d;
+    --border: #1c3358;
+    --hover: #fff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  main { max-width: 760px; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+  header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2.5rem; }
+  header img { width: 64px; height: 64px; flex-shrink: 0; }
+  header h1 { font-size: 2.4rem; margin: 0; letter-spacing: -0.025em; font-weight: 700; }
+  .tagline { color: var(--muted); margin-top: 0.1rem; font-size: 1.05rem; }
+  section { margin-bottom: 3rem; }
+  h2 { font-size: 0.85rem; margin: 2.8rem 0 1rem; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted); font-weight: 600; }
+  p { margin: 0.7rem 0; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 1rem 1.25rem; overflow-x: auto; font-size: 0.92rem; line-height: 1.5; }
+  code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 0.92em; }
+  :not(pre) > code { background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 3px; padding: 0.1em 0.4em; }
+  ul { padding-left: 1.3rem; margin: 0.8rem 0; }
+  li { margin: 0.35rem 0; }
+  a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px;
+    text-decoration-color: var(--border); }
+  a:hover { color: var(--hover); text-decoration-color: var(--accent); }
+  strong { color: var(--hover); font-weight: 600; }
+  em { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; }
+  th, td { text-align: left; padding: 0.5rem 0.8rem 0.5rem 0; vertical-align: top;
+    border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.78rem;
+    text-transform: uppercase; letter-spacing: 0.06em; }
+  td code { background: transparent; border: 0; padding: 0; color: var(--accent); }
+  .small { color: var(--muted); font-size: 0.88rem; }
+  .pill { display: inline-block; padding: 0.15rem 0.55rem; border: 1px solid var(--border);
+    border-radius: 999px; font-size: 0.75rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <img src="https://raw.githubusercontent.com/aoos/dejima/master/assets/logo.png" alt="Dejima">
+  <div>
+    <h1>Dejima</h1>
+    <div class="tagline">The substrate for multi-device agent workflows. <span class="pill">pre-alpha</span></div>
+  </div>
+</header>
+
+<section>
+  <p><strong>Dejima</strong> is an OSS containment layer for AI coding agents. Each project runs in its own <em>island</em>: an isolated container with the target repo, the agent of your choice, and a brokered API that lets you drive the session from any device on your tailnet.</p>
+  <p>It is the interstitial layer between an agent and your machine. Not an interface. Not a product. Plumbing meant to be consumed by other applications — your CLI, a phone app, a Slack bot, a custom agent harness — all hitting the same API.</p>
+</section>
+
+<h2>Install</h2>
+<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
+<p class="small">Runs on macOS and Linux. Bootstraps Go + Docker as needed, builds the binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers the daemon as a service, runs a health check. Idempotent — re-run to update.</p>
+
+<h2>What you get</h2>
+<ul>
+  <li><strong>Isolation</strong> — agents can't reach your host filesystem, other projects, or unrelated secrets.</li>
+  <li><strong>Multi-project, multi-agent</strong> — N islands on one host, each its own repo and agent. No context bleed.</li>
+  <li><strong>Persistent sessions</strong> — long-running work survives disconnects and host reboots via tmux + named volumes.</li>
+  <li><strong>Multi-device attach</strong> — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.</li>
+  <li><strong>Direct push to GitHub</strong> — host credentials mounted read-only into the island; <code>git push</code> just works.</li>
+  <li><strong>API-first</strong> — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.</li>
+</ul>
+
+<h2>Quickstart</h2>
+<pre><code># 1. Create an island around a real GitHub repo.
+dejima init --repo git@github.com:you/myproject.git
+
+# 2. Connect — drops you into Claude Code, inside the island.
+dejima connect myproject
+
+# 3. Disconnect with Ctrl-b then d (tmux). The session keeps running.
+
+# 4. Pick up from another device on your tailnet:
+DEJIMA_HOST=mac-mini.your-tailnet.ts.net:7273 dejima connect myproject
+
+# 5. When memory pressure bites:
+dejima hibernate myproject &amp;&amp; dejima wake myproject
+
+# 6. Fresh conversation, same code:
+dejima reset myproject
+
+# 7. When you're done:
+dejima purge myproject</code></pre>
+
+<h2>Concepts</h2>
+<table>
+  <tr><th>Term</th><th>Meaning</th></tr>
+  <tr><td><code>Island</code></td><td>The container holding a single project and a single agent.</td></tr>
+  <tr><td><code>Bridge</code></td><td>The brokered I/O channel between host and island.</td></tr>
+  <tr><td><code>Trade</code></td><td>A synced export of changes from island to host.</td></tr>
+  <tr><td><code>Intake</code></td><td>Files passed into the island via <code>dejima import</code>.</td></tr>
+  <tr><td><code>Ledger</code></td><td>(Post-v1) An audit log of every bridge transaction.</td></tr>
+</table>
+
+<h2>CLI</h2>
+<table>
+  <tr><th>Command</th><th>Purpose</th></tr>
+  <tr><td><code>dejima init</code></td><td>Provision a new island.</td></tr>
+  <tr><td><code>dejima connect</code></td><td>Attach to an island's session (multi-attach).</td></tr>
+  <tr><td><code>dejima ls</code></td><td>List all islands.</td></tr>
+  <tr><td><code>dejima status</code></td><td>Detail view of one island, including presence + resource use.</td></tr>
+  <tr><td><code>dejima hibernate</code></td><td>Stop the container, preserve volumes.</td></tr>
+  <tr><td><code>dejima wake</code></td><td>Start a hibernated island.</td></tr>
+  <tr><td><code>dejima reset</code></td><td>Clear agent state. Preserves workspace.</td></tr>
+  <tr><td><code>dejima exec</code></td><td>Run a one-shot command inside an island.</td></tr>
+  <tr><td><code>dejima cp</code></td><td>Copy files in or out of an island.</td></tr>
+  <tr><td><code>dejima logs</code></td><td>Tail an island's container logs (<code>--follow</code>).</td></tr>
+  <tr><td><code>dejima doctor</code></td><td>Health check: daemon, Docker, image, projects, webhooks.</td></tr>
+  <tr><td><code>dejima service</code></td><td>Install / uninstall <code>dejimad</code> as a host service.</td></tr>
+  <tr><td><code>dejima webhook</code></td><td>Subscribe a URL to receive state-change events.</td></tr>
+  <tr><td><code>dejima purge</code></td><td>Destroy island and volumes.</td></tr>
+</table>
+
+<h2>Webhooks</h2>
+<p>Get notified when an agent finishes a task or needs your input:</p>
+<pre><code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code></pre>
+<p class="small">Events include lifecycle (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and — when the Claude Code shim is active — <code>agent.waiting-for-input</code> and <code>agent.task-complete</code>. This is the integration point for Slack / Discord / Telegram bots, mobile push, custom dashboards. Dejima stays agnostic about what's on the other end.</p>
+
+<h2>Status</h2>
+<p>Pre-alpha. v1 milestones M0–M5 implemented; M6 (real-world dogfood) in progress. See the
+<a href="https://github.com/aoos/dejima/blob/master/docs/v1-spec.md">spec</a>,
+<a href="https://github.com/aoos/dejima/blob/master/docs/v1-milestones.md">milestones</a>, and
+<a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md">roadmap</a>.</p>
+
+<h2>Links</h2>
+<ul>
+  <li><a href="https://github.com/aoos/dejima">Source on GitHub</a></li>
+  <li><a href="https://github.com/aoos/dejima/blob/master/README.md">README</a></li>
+  <li><a href="https://github.com/aoos/dejima/blob/master/docs/v1-spec.md">v1 specification</a></li>
+  <li><a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md">Roadmap</a></li>
+  <li><a href="https://github.com/aoos/dejima/blob/master/docs/distribution.md">Distribution / install setup</a></li>
+</ul>
+
+</main>
+</body>
+</html>
