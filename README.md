@@ -50,7 +50,7 @@ curl -fsSL https://aoos.github.io/dejima/install.sh | bash
 
 That bootstraps everything: installs Homebrew prereqs (Go, Docker Desktop if needed), clones the source to `~/.dejima-src`, builds the `dejima` + `dejimad` binaries, installs them to `/usr/local/bin`, builds the island image, registers the daemon as a launchd (macOS) or systemd user (Linux) service, and runs `dejima doctor` to verify. Idempotent — re-run to update.
 
-> The install URL above goes live the moment GitHub Pages is enabled on the repo (Settings → Pages → Branch: `master`, Folder: `/web`). Until then, fall back to the raw URL: `curl -fsSL https://raw.githubusercontent.com/aoos/dejima/master/web/install.sh | bash`. Once you've registered a custom domain (see [`docs/distribution.md`](docs/distribution.md)), `dejima.sh/install.sh` (or whichever TLD) becomes the canonical URL.
+> The install URL above goes live the moment GitHub Pages is enabled on the repo (Settings → Pages → Branch: `master`, Folder: `/(root)`). Until then, fall back to the raw URL: `curl -fsSL https://raw.githubusercontent.com/aoos/dejima/master/install.sh | bash`. Once you've registered a custom domain (see [`docs/distribution.md`](docs/distribution.md)), `dejima.sh/install.sh` (or whichever TLD) becomes the canonical URL.
 
 ### One-liner environment knobs
 

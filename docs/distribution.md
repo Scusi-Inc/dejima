@@ -12,8 +12,10 @@ In the repo settings on GitHub:
 
 - **Settings → Pages**
 - **Source**: Deploy from a branch
-- **Branch**: `master` → folder `/web`
+- **Branch**: `master` → folder `/(root)`
 - Save.
+
+(GitHub Pages only allows `/` or `/docs` as serving folders. The site files live at the repo root: `index.html`, `install.sh`. `.nojekyll` disables Jekyll processing so the other root files like `README.md` aren't rendered.)
 
 That's it. Within a minute, the install URL is live:
 
