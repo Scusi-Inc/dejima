@@ -56,13 +56,32 @@ func (m *launchdManager) Install(binaryPath string) error {
 		return err
 	}
 
-	// `launchctl bootstrap` is the modern verb; falls back to `load` on older macOS.
-	if err := exec.Command("launchctl", "bootstrap", "gui/"+currentUID(), path).Run(); err != nil {
-		if loadErr := exec.Command("launchctl", "load", "-w", path).Run(); loadErr != nil {
-			return fmt.Errorf("launchctl bootstrap/load: %v / %v", err, loadErr)
+	// Idempotent: clear any prior load before re-loading. Both commands are
+	// expected to no-op if nothing's loaded; we ignore their errors.
+	_ = exec.Command("launchctl", "bootout", "gui/"+currentUID()+"/"+launchdLabel).Run()
+	_ = exec.Command("launchctl", "unload", path).Run()
+
+	// Try the modern `bootstrap` first; if that fails (commonly when called
+	// from an SSH session outside the Aqua/GUI session), fall back to the
+	// older `load -w`. Capture stderr on each so we can surface useful errors.
+	if stderr, err := runCaptureStderr("launchctl", "bootstrap", "gui/"+currentUID(), path); err != nil {
+		if stderr2, err2 := runCaptureStderr("launchctl", "load", "-w", path); err2 != nil {
+			return fmt.Errorf("launchctl bootstrap → %v (%s); load -w → %v (%s)",
+				err, strings.TrimSpace(stderr), err2, strings.TrimSpace(stderr2))
 		}
 	}
 	return nil
+}
+
+// runCaptureStderr is a small exec.Command wrapper that returns the command's
+// stderr alongside its error, so the caller can surface launchctl's actual
+// diagnostic instead of just an opaque exit code.
+func runCaptureStderr(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stderr.String(), err
 }
 
 func (m *launchdManager) Uninstall() error {

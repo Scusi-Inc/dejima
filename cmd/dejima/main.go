@@ -318,7 +318,17 @@ func newServiceCmd() *cobra.Command {
 				fmt.Print("URL [skip]: ")
 				var input string
 				_, _ = fmt.Scanln(&input)
-				notifyURL = strings.TrimSpace(input)
+				notifyURL = normalizeWebhookURL(strings.TrimSpace(input))
+
+				if notifyURL != "" && notifySecret == "" {
+					fmt.Println()
+					fmt.Println("HMAC secret (recommended; signs the POST so the receiver can verify it's yours)")
+					fmt.Println("  ntfy.sh ignores headers, but Slack/Discord/your own server will use this.")
+					fmt.Print("Secret [skip]: ")
+					var s string
+					_, _ = fmt.Scanln(&s)
+					notifySecret = strings.TrimSpace(s)
+				}
 			}
 			if err := mgr.Install(bin); err != nil {
 				return err
@@ -546,6 +556,24 @@ func client() (*api.Client, error) {
 
 func serviceMgr() (service.Manager, error) {
 	return service.New()
+}
+
+// normalizeWebhookURL accepts user input that may be a full URL or a bare
+// ntfy.sh topic and returns a canonical URL. Empty input passes through.
+func normalizeWebhookURL(in string) string {
+	if in == "" {
+		return ""
+	}
+	if strings.HasPrefix(in, "http://") || strings.HasPrefix(in, "https://") {
+		return in
+	}
+	// Looks like an ntfy.sh topic shorthand (no scheme, no slashes, plausible chars)?
+	if !strings.Contains(in, "/") && !strings.Contains(in, " ") {
+		fmt.Fprintf(os.Stderr, "  (treating %q as an ntfy.sh topic → https://ntfy.sh/%s)\n", in, in)
+		return "https://ntfy.sh/" + in
+	}
+	fmt.Fprintf(os.Stderr, "  warning: URL %q doesn't start with http:// or https://; using as-is\n", in)
+	return in
 }
 
 // waitForDaemonAndSubscribe polls the daemon socket for up to ~5 seconds, then
