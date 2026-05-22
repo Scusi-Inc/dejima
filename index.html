@@ -86,9 +86,20 @@
 <p>Kick off a 30-minute refactor at your desk, close your laptop, attach from your phone an hour later. Same session, same state, no vendor between you and your code.</p>
 
 <h2>Architecture</h2>
-<pre><code>[ your client ] ⇄ websocket / tailnet ⇄ [ dejimad daemon ] ⇄ host PTY ⇄ [ docker exec ] ⇄ tmux session ⇄ [ agent process ]</code></pre>
-<p><strong>tmux lives inside the container</strong> as the session anchor — agent process attached to a long-lived tmux session, so disconnects don't kill it and N clients can attach simultaneously for shared-screen multi-device work.</p>
-<p><strong>A host-side PTY in the daemon</strong> is the transport — it bridges the websocket to a <code>docker exec</code> against tmux, handling terminal sizing, multi-client multiplexing, and clean detach on disconnect. Together they give you persistent, multi-attach sessions without rebuilding any of tmux's well-debugged internals.</p>
+<pre><code>┌──────────────────────────┐
+│  Your devices            │   laptop · phone · web client
+└────────────┬─────────────┘
+             │  websocket over Tailscale
+             ▼
+┌──────────────────────────┐
+│  Dejima daemon           │   on your Mac mini / VPS
+└────────────┬─────────────┘
+             │  isolation boundary
+             ▼
+┌──────────────────────────┐
+│  Agent in an island      │   one container per project
+└──────────────────────────┘</code></pre>
+<p>Inside each island, the agent process runs under a long-lived <strong>tmux</strong> session — that's what keeps it alive when no client is attached, and how multiple clients can share the same screen. The daemon bridges your websocket to that tmux session via a host-side <strong>PTY</strong>, which handles terminal sizing, multi-client multiplexing, and clean detach on disconnect.</p>
 
 <h2>Install</h2>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
