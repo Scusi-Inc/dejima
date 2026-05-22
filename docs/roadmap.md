@@ -86,6 +86,10 @@ Substantial engineering. Defer until v1 dogfood proves the foundation.
 
 ---
 
+## Open questions to investigate
+
+- [ ] **Compatibility with "OpenClaw"** — name flagged for investigation. Not a project I recognize (as of knowledge cutoff Jan 2026). Once identified: assess whether it's a CLI agent (bundle as image variant), an editor extension (no direct Dejima relationship), a protocol (potential feature), or something else. Goes in v1.x or v2 depending on what it turns out to be.
+
 ## v2+ — tier-2 integrations (separate repos)
 
 These don't live in the core dejima repo. They consume the API.
