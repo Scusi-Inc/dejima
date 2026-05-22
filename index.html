@@ -54,6 +54,9 @@
   .pill { display: inline-block; padding: 0.15rem 0.55rem; border: 1px solid var(--border);
     border-radius: 999px; font-size: 0.75rem; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.05em; }
+  .historical { color: var(--muted); border-left: 2px solid var(--border);
+    padding-left: 1rem; margin: -1rem 0 2.5rem; font-size: 0.95rem; }
+  .historical em { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -66,6 +69,8 @@
     <div class="tagline">The substrate for multi-device agent workflows. <span class="pill">pre-alpha</span></div>
   </div>
 </header>
+
+<p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
 <section>
   <p><strong>Dejima</strong> is an OSS containment layer for AI coding agents. Each project runs in its own <em>island</em>: an isolated container with the target repo, the agent of your choice, and a brokered API that lets you drive the session from any device on your tailnet.</p>
@@ -84,6 +89,41 @@
   <li><strong>Multi-device attach</strong> — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.</li>
   <li><strong>Direct push to GitHub</strong> — host credentials mounted read-only into the island; <code>git push</code> just works.</li>
   <li><strong>API-first</strong> — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.</li>
+</ul>
+
+<h2>Why Dejima?</h2>
+
+<p><strong>Who it's for.</strong> Solo developers and small teams running AI coding agents on their own infrastructure — Mac mini, home server, VPS — who want project isolation and the ability to drive sessions from more than one device.</p>
+
+<p><strong>When to reach for it.</strong> When you're running agents on multiple repos in parallel, want to switch devices mid-task, or don't want unconstrained agent access to your laptop. Also: as a self-hosted alternative to vendor cloud agents.</p>
+
+<p><strong>The problem.</strong> Today's coding agents run on your laptop with full filesystem access, tied to one device and one project at a time. Vendor "remote control" features (Anthropic's, Replit's, etc.) lock you to a single agent on a single cloud. Per-project isolation is on you.</p>
+
+<h2>Why not just …?</h2>
+<table>
+  <tr><th>Alternative</th><th>What's missing</th></tr>
+  <tr>
+    <td><strong>Claude Code raw on your laptop</strong></td>
+    <td>Full filesystem access, no project isolation, tied to one device. Anthropic's remote-control feature is monitor-only and Claude-specific.</td>
+  </tr>
+  <tr>
+    <td><strong>tmux + SSH</strong></td>
+    <td>Persistent sessions, yes — but no isolation, no per-project env, no API for other apps, no lifecycle verbs (<code>hibernate</code> / <code>reset</code>), no notifications. Dejima uses tmux inside each island; it doesn't replace tmux, it builds on it.</td>
+  </tr>
+  <tr>
+    <td><strong>Vendor cloud (Devin, Replit Agent, etc.)</strong></td>
+    <td>Your data on someone else's hardware, vendor lock-in, one-agent-only, monthly bill.</td>
+  </tr>
+</table>
+
+<h2>Build on top</h2>
+<p>Most of the visible value should land <em>on top of</em> Dejima, not inside it. The Dejima API + webhook surface is meant to be the substrate for:</p>
+<ul>
+  <li>A mobile / PWA agent driver that works for any agent — better than vendor remote-control because cross-agent and self-hosted.</li>
+  <li>Chat-service integrations (<code>dejima-slack</code>, <code>dejima-telegram</code>) that drive sessions from a channel.</li>
+  <li>An agent manager that orchestrates many Dejima hosts (your Mac mini + a cloud VM + a friend's homelab) into one view.</li>
+  <li>Audit / compliance dashboards that consume the event stream.</li>
+  <li>Whatever else fits — Dejima is boring infrastructure on purpose so the interesting UX can live elsewhere.</li>
 </ul>
 
 <h2>Quickstart</h2>
