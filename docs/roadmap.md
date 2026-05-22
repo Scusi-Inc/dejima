@@ -55,10 +55,18 @@ Targeted fixes and quality-of-life additions surfaced during planning. Sized in 
 
 ---
 
+## v1.x — open design questions
+
+Questions worth answering before committing to an implementation.
+
+- [ ] **Shared workspace volume across islands** — `dejima init --workspace shared:foo` joins an existing workspace volume instead of creating a fresh one. Enables "multiple role-based agents on the same code, each in its own island" without forcing git-roundtrips between them. Open: how to handle merge conflicts when N agents write to the same files; whether agent state stays per-island (yes) or shared (probably no). (open design, 1-2 days when settled)
+- [ ] **Multi-island sibling view in TUI / `dejima ls`** — group islands that share a repo (or a workspace volume) visually so multi-agent setups read as one project with N agents. UI-only change. (hours)
+
 ## v2 — heavier features
 
 Substantial engineering. Defer until v1 dogfood proves the foundation.
 
+- [ ] **Per-agent / per-island ACLs within a shared project** — when multiple islands share a workspace, define which agent can read/write which paths. Useful for delegated work streams ("frontend can write under /web, backend under /api, both read /shared"). Wrapper-product territory mostly; primitives may belong here. (open design, week+)
 - [ ] **Trust-on-first-use for new clients** — unfamiliar attaches blocked until user approves via push notification on an already-trusted device. The 2FA-shaped feature. (week)
 - [ ] **Audit ledger** — append-only `~/.dejima/ledger.jsonl` of every API request + lifecycle event; optional HMAC-signed entries; `dejima audit` query verb. (week)
 - [ ] **Backup / restore** — `dejima backup <name>` and `dejima restore` with a configurable destination (local path, S3, Backblaze, rsync target). User-configurable. (week)
@@ -86,6 +94,7 @@ These don't live in the core dejima repo. They consume the API.
 
 Things worth saying "no" to clearly so they don't keep coming up:
 
+- **Inter-island communication channels** (a "trade" primitive, a message bus, RPC between islands). The whole point of islands is containment; any sanctioned cross-island channel is a context-bleed vector. Multi-agent orchestration belongs in wrapper apps that drive multiple islands via the public API — not inside Dejima.
 - **Hosted/SaaS variant.** Dejima is OSS, self-hosted. No managed offering planned.
 - **Windows host support.** Linux + macOS only.
 - **Enterprise compliance certifications.** SOC 2 etc. are post-team-product, not v1/v2.
