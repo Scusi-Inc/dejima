@@ -47,6 +47,11 @@ Targeted fixes and quality-of-life additions surfaced during planning. Sized in 
 - [ ] **`dejima refresh-creds <name>`** — re-mount host credentials without touching workspace (for when GitHub / Claude tokens rotate). (day)
 - [ ] **Secrets at rest via Keychain / Secret Service** — webhook HMAC secrets and any future dejima-held tokens out of plaintext config. (day)
 - [ ] **Idle auto-hibernate** — opt-in threshold (e.g., "hibernate after N hours with no client + no agent process"). (day)
+- [ ] **Interactive TUI (`dejima` with no args)** — bubbletea-based dashboard for browse/manage/dive: live state, presence, keyboard nav, single-key actions (connect / hibernate / wake / reset). One-shot CLI verbs still work for scripts. (1 day)
+- [ ] **Default-on attach notifications at install** — `dejima service install --notify <url>` becomes the recommended path; first install prompts for a webhook URL. Awareness without surveillance. (hour)
+- [ ] **Opt-in audit log (`Ledger`)** — append-only `~/.dejima/ledger.jsonl` of operational events. **Off by default**, never silently enabled, easy to disable. For compliance contexts only. (week)
+- [ ] **Opt-in trust-on-first-use** for new clients — paranoid mode for users who want stronger-than-tailnet auth. Off by default. (week)
+- [ ] **Opt-in egress allow-list per island** — `network.allow = ["api.anthropic.com", ...]` in project config. Default: open. (day)
 
 ---
 
