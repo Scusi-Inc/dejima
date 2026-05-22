@@ -45,8 +45,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
 # via a custom image — see docs/custom-agents.md.
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
-# Non-root user.
-RUN useradd -m -s /bin/bash -u 1000 dejima \
+# Non-root user. Ubuntu 24.04 ships with a default `ubuntu` user at UID 1000;
+# delete it so we can keep the canonical UID for our `dejima` user.
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && useradd -m -s /bin/bash -u 1000 dejima \
     && usermod -aG sudo dejima \
     && echo 'dejima ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers.d/dejima
 
