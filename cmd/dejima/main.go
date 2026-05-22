@@ -49,6 +49,10 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Version:       version.Version,
+		// No-args → interactive TUI dashboard. Verbs continue to work for scripting.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTUI(cmd.Context())
+		},
 	}
 	cmd.AddCommand(
 		newInitCmd(),
@@ -68,6 +72,7 @@ func newRootCmd() *cobra.Command {
 		newClientsCmd(),
 		newOverviewCmd(),
 		newDoctorCmd(),
+		newTUICmd(),
 	)
 	return cmd
 }

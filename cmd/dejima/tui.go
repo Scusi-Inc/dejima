@@ -1,0 +1,611 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"sort"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/spf13/cobra"
+
+	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/events"
+)
+
+// newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
+// One-shot CLI verbs (`dejima ls`, etc.) continue to work for scripting.
+func newTUICmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "tui",
+		Short:  "Launch the interactive dashboard (default when run with no args).",
+		Hidden: true, // not surfaced in `dejima --help`; users get it via bare `dejima`.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTUI(cmd.Context())
+		},
+	}
+}
+
+// runTUI starts the bubbletea program; on Enter, it exits with a saved
+// connect-to-this-island intent which the caller acts on after the TUI loop.
+func runTUI(ctx context.Context) error {
+	c, err := client()
+	if err != nil {
+		return err
+	}
+	m := initialTUIModel(c)
+	finalRaw, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+	if err != nil {
+		return err
+	}
+	final := finalRaw.(tuiModel)
+	if final.connectTo != "" {
+		return runConnectFromTUI(ctx, c, final.connectTo)
+	}
+	return nil
+}
+
+func runConnectFromTUI(ctx context.Context, c *api.Client, name string) error {
+	info, err := c.GetIsland(ctx, name)
+	if err != nil {
+		return err
+	}
+	if info.Container != "running" {
+		return fmt.Errorf("island %q is %s; `dejima wake %s` first", name, info.Container, name)
+	}
+	return runSession(ctx, c, name, defaultLabel())
+}
+
+// ---------------------------------------------------------------------------
+// Model
+// ---------------------------------------------------------------------------
+
+type tuiModel struct {
+	client *api.Client
+
+	islands  []api.IslandInfo
+	overview *api.OverviewResponse
+	detail   *api.IslandInfo
+	events_  []events.Event
+
+	selected  int
+	width     int
+	height    int
+	lastError string
+	connectTo string  // set on quit-to-connect; main() acts on this
+	confirm   *confirmPrompt
+	dirtyOps  map[string]string // name → "hibernating" etc. (transient hint)
+}
+
+type confirmPrompt struct {
+	verb   string // "purge", "reset"
+	island string
+	answer string
+}
+
+func initialTUIModel(c *api.Client) tuiModel {
+	return tuiModel{
+		client:   c,
+		dirtyOps: map[string]string{},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+type tickMsg time.Time
+type listMsg []api.IslandInfo
+type overviewMsg *api.OverviewResponse
+type detailMsg struct {
+	info   *api.IslandInfo
+	events []events.Event
+}
+type errMsg struct{ err error }
+type opCompleteMsg struct {
+	name string
+	verb string
+	err  error
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func (m tuiModel) fetchListCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		list, err := m.client.ListIslands(ctx)
+		if err != nil {
+			return errMsg{err}
+		}
+		return listMsg(list)
+	}
+}
+
+func (m tuiModel) fetchOverviewCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		o, err := m.client.Overview(ctx)
+		if err != nil {
+			return errMsg{err}
+		}
+		return overviewMsg(o)
+	}
+}
+
+func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		info, err := m.client.GetIsland(ctx, name)
+		if err != nil {
+			return errMsg{err}
+		}
+		evs, _ := m.client.IslandEvents(ctx, name)
+		return detailMsg{info: info, events: evs}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
+
+func (m tuiModel) Init() tea.Cmd {
+	return tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), tickCmd())
+}
+
+func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+
+	case tickMsg:
+		cmds := []tea.Cmd{tickCmd(), m.fetchListCmd(), m.fetchOverviewCmd()}
+		if name := m.selectedName(); name != "" {
+			cmds = append(cmds, m.fetchDetailCmd(name))
+		}
+		return m, tea.Batch(cmds...)
+
+	case listMsg:
+		m.islands = sortIslands(msg)
+		m.lastError = ""
+		if m.selected >= len(m.islands) {
+			m.selected = len(m.islands) - 1
+		}
+		if m.selected < 0 {
+			m.selected = 0
+		}
+		if name := m.selectedName(); name != "" && (m.detail == nil || m.detail.Name != name) {
+			return m, m.fetchDetailCmd(name)
+		}
+		return m, nil
+
+	case overviewMsg:
+		m.overview = msg
+		return m, nil
+
+	case detailMsg:
+		if name := m.selectedName(); msg.info != nil && msg.info.Name == name {
+			m.detail = msg.info
+			m.events_ = msg.events
+		}
+		return m, nil
+
+	case errMsg:
+		if msg.err != nil {
+			m.lastError = msg.err.Error()
+		}
+		return m, nil
+
+	case opCompleteMsg:
+		delete(m.dirtyOps, msg.name)
+		if msg.err != nil {
+			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
+		}
+		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+	}
+	return m, nil
+}
+
+func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Confirmation modal owns keys when active.
+	if m.confirm != nil {
+		switch msg.String() {
+		case "esc", "ctrl+c":
+			m.confirm = nil
+			return m, nil
+		case "enter":
+			c := *m.confirm
+			m.confirm = nil
+			return m.runConfirmed(c)
+		case "backspace":
+			if len(m.confirm.answer) > 0 {
+				m.confirm.answer = m.confirm.answer[:len(m.confirm.answer)-1]
+			}
+			return m, nil
+		default:
+			if len(msg.String()) == 1 {
+				m.confirm.answer += msg.String()
+			}
+			return m, nil
+		}
+	}
+
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		if m.selected < len(m.islands)-1 {
+			m.selected++
+			return m, m.fetchDetailCmd(m.selectedName())
+		}
+	case "k", "up":
+		if m.selected > 0 {
+			m.selected--
+			return m, m.fetchDetailCmd(m.selectedName())
+		}
+	case "g", "home":
+		m.selected = 0
+		return m, m.fetchDetailCmd(m.selectedName())
+	case "G", "end":
+		m.selected = len(m.islands) - 1
+		return m, m.fetchDetailCmd(m.selectedName())
+	case "enter":
+		if name := m.selectedName(); name != "" && m.detail != nil && m.detail.Container == "running" {
+			m.connectTo = name
+			return m, tea.Quit
+		}
+	case "h":
+		if name := m.selectedName(); name != "" {
+			m.dirtyOps[name] = "hibernating"
+			return m, m.opCmd(name, "hibernate")
+		}
+	case "w":
+		if name := m.selectedName(); name != "" {
+			m.dirtyOps[name] = "waking"
+			return m, m.opCmd(name, "wake")
+		}
+	case "r":
+		if name := m.selectedName(); name != "" {
+			m.confirm = &confirmPrompt{verb: "reset", island: name}
+		}
+	case "d":
+		if name := m.selectedName(); name != "" {
+			m.confirm = &confirmPrompt{verb: "purge", island: name}
+		}
+	case "R":
+		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+	}
+	return m, nil
+}
+
+func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
+	switch c.verb {
+	case "reset":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			m.dirtyOps[c.island] = "resetting"
+			return m, m.opCmd(c.island, "reset")
+		}
+	case "purge":
+		if strings.TrimSpace(c.answer) == c.island {
+			m.dirtyOps[c.island] = "purging"
+			return m, m.opCmd(c.island, "purge")
+		}
+	}
+	return m, nil
+}
+
+func (m tuiModel) opCmd(name, verb string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		var err error
+		switch verb {
+		case "hibernate":
+			_, err = m.client.HibernateIsland(ctx, name)
+		case "wake":
+			_, err = m.client.WakeIsland(ctx, name)
+		case "reset":
+			_, err = m.client.ResetIsland(ctx, name)
+		case "purge":
+			err = m.client.DeleteIsland(ctx, name)
+		}
+		return opCompleteMsg{name: name, verb: verb, err: err}
+	}
+}
+
+func (m tuiModel) selectedName() string {
+	if m.selected < 0 || m.selected >= len(m.islands) {
+		return ""
+	}
+	return m.islands[m.selected].Name
+}
+
+func sortIslands(in []api.IslandInfo) []api.IslandInfo {
+	out := append([]api.IslandInfo(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		// Running first, then alphabetic.
+		ri := out[i].Container == "running"
+		rj := out[j].Container == "running"
+		if ri != rj {
+			return ri
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// View
+// ---------------------------------------------------------------------------
+
+var (
+	stylePane      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#1c3358")).Padding(0, 1)
+	styleHeader    = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8")).Bold(true)
+	styleTitle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#eef3ff")).Bold(true)
+	styleMuted     = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
+	styleAccent    = lipgloss.NewStyle().Foreground(lipgloss.Color("#e8f1ff"))
+	styleSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#1c3358"))
+	styleRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("#34d399"))
+	styleHibernate = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
+	styleErrored   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
+	styleWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
+	styleFooter    = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
+)
+
+func (m tuiModel) View() string {
+	if m.width == 0 {
+		return "loading…"
+	}
+
+	header := m.renderHeader()
+	footer := m.renderFooter()
+	body := m.renderBody()
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+func (m tuiModel) renderHeader() string {
+	host := os.Getenv("DEJIMA_HOST")
+	if host == "" {
+		host = "local"
+	}
+	title := styleTitle.Render("Dejima")
+	right := styleMuted.Render(host)
+	pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
+	if pad < 1 {
+		pad = 1
+	}
+	return " " + title + strings.Repeat(" ", pad) + right
+}
+
+func (m tuiModel) renderBody() string {
+	leftW := m.width / 2
+	if leftW < 30 {
+		leftW = 30
+	}
+	rightW := m.width - leftW - 4
+	if rightW < 20 {
+		rightW = 20
+	}
+	bodyHeight := m.height - 4
+	if bodyHeight < 5 {
+		bodyHeight = 5
+	}
+
+	left := stylePane.Width(leftW).Height(bodyHeight).Render(m.renderList(leftW - 4))
+	right := stylePane.Width(rightW).Height(bodyHeight).Render(m.renderDetail(rightW - 4))
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+
+	if m.confirm != nil {
+		return body + "\n" + m.renderConfirm()
+	}
+	return body
+}
+
+func (m tuiModel) renderList(_ int) string {
+	if len(m.islands) == 0 {
+		if m.lastError != "" {
+			return styleErrored.Render("error: " + m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)")
+		}
+		return styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`")
+	}
+
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Islands"))
+	b.WriteString("\n\n")
+	for i, isl := range m.islands {
+		glyph := glyphFor(isl)
+		row := fmt.Sprintf("%s  %-16s  %s", glyph, truncate(isl.Name, 16), shortStatus(isl, m.dirtyOps[isl.Name]))
+		if i == m.selected {
+			row = styleSelected.Render("▶ " + row)
+		} else {
+			row = "  " + row
+		}
+		b.WriteString(row)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func (m tuiModel) renderDetail(_ int) string {
+	if m.detail == nil {
+		if name := m.selectedName(); name != "" {
+			return styleMuted.Render("loading " + name + "…")
+		}
+		return styleMuted.Render("select an island")
+	}
+	d := m.detail
+	var b strings.Builder
+	b.WriteString(styleTitle.Render(d.Name))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("repo:      %s\n", styleAccent.Render(truncate(d.Repo, 60))))
+	b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(d.Agent)))
+	b.WriteString(fmt.Sprintf("state:     %s\n", coloredStateText(d)))
+	if d.Stats != nil {
+		b.WriteString(fmt.Sprintf("memory:    %s / %s\n",
+			humanBytes(d.Stats.MemoryUsageBytes), humanBytes(d.Stats.MemoryLimitBytes)))
+		b.WriteString(fmt.Sprintf("cpu:       %.1f%%\n", d.Stats.CPUPercent))
+	}
+	if d.AgentState != nil {
+		b.WriteString(fmt.Sprintf("agent:     %s (%s ago)\n",
+			d.AgentState.Latest, time.Since(d.AgentState.UpdatedAt).Round(time.Second)))
+	}
+	if d.Git != nil {
+		clean := "dirty"
+		if d.Git.Clean {
+			clean = "clean"
+		}
+		s := fmt.Sprintf("git:       %s · %s", d.Git.Branch, clean)
+		if !d.Git.Clean {
+			s += fmt.Sprintf(" (%d files)", d.Git.DirtyFiles)
+		}
+		if d.Git.Ahead > 0 {
+			s += fmt.Sprintf(" · %d ahead", d.Git.Ahead)
+		}
+		if d.Git.Behind > 0 {
+			s += fmt.Sprintf(" · %d behind", d.Git.Behind)
+		}
+		b.WriteString(s + "\n")
+	}
+	if len(d.Attached) > 0 {
+		labels := make([]string, 0, len(d.Attached))
+		for _, a := range d.Attached {
+			labels = append(labels, a.Label)
+		}
+		b.WriteString("attached:  " + strings.Join(labels, ", ") + "\n")
+	}
+
+	if len(m.events_) > 0 {
+		b.WriteString("\n")
+		b.WriteString(styleHeader.Render("Recent"))
+		b.WriteString("\n")
+		max := 6
+		if len(m.events_) < max {
+			max = len(m.events_)
+		}
+		for _, e := range m.events_[:max] {
+			b.WriteString(fmt.Sprintf("  %s  %s\n",
+				styleMuted.Render(timeAgo(e.Timestamp)), string(e.Type)))
+		}
+	}
+	return b.String()
+}
+
+func (m tuiModel) renderFooter() string {
+	keys := "[↑/↓] nav   [⏎] connect   [h] hibernate   [w] wake   [r] reset   [d] purge   [R] refresh   [q] quit"
+	o := m.overview
+	left := ""
+	if o != nil {
+		left = fmt.Sprintf("%d islands · %d running · %d hibernated", o.TotalIslands, o.Running, o.Hibernated)
+		if o.MemoryUsageBytes > 0 {
+			left += fmt.Sprintf(" · %s", humanBytes(o.MemoryUsageBytes))
+		}
+	}
+	if m.lastError != "" {
+		left = styleErrored.Render("⚠ " + truncate(m.lastError, 60))
+	}
+	pad := m.width - lipgloss.Width(left) - lipgloss.Width(keys) - 2
+	if pad < 1 {
+		pad = 1
+	}
+	return " " + styleMuted.Render(left) + strings.Repeat(" ", pad) + styleFooter.Render(keys)
+}
+
+func (m tuiModel) renderConfirm() string {
+	c := m.confirm
+	var prompt string
+	switch c.verb {
+	case "reset":
+		prompt = fmt.Sprintf("Clear agent state for %q (workspace preserved)? Type 'y' and press Enter: %s",
+			c.island, c.answer)
+	case "purge":
+		prompt = fmt.Sprintf("DESTROY %q (including all volumes). Type the island name to confirm: %s",
+			c.island, c.answer)
+	}
+	return styleErrored.Render("┌── ") + prompt + styleErrored.Render(" ──┐")
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func glyphFor(isl api.IslandInfo) string {
+	if isl.AgentState != nil && isl.AgentState.Latest == "waiting-for-input" {
+		return styleWaiting.Render("!")
+	}
+	switch isl.Container {
+	case "running":
+		return styleRunning.Render("●")
+	case "exited", "stopped", "paused", "created":
+		return styleHibernate.Render("⏸")
+	case "missing":
+		return styleErrored.Render("◌")
+	default:
+		return styleErrored.Render("✱")
+	}
+}
+
+func shortStatus(isl api.IslandInfo, transient string) string {
+	if transient != "" {
+		return styleAccent.Render(transient + "…")
+	}
+	parts := []string{isl.Container}
+	if isl.Stats != nil && isl.Container == "running" {
+		parts = append(parts, fmt.Sprintf("%s · %.0f%%", humanBytes(isl.Stats.MemoryUsageBytes), isl.Stats.CPUPercent))
+	}
+	parts = append(parts, isl.Agent)
+	return strings.Join(parts, " · ")
+}
+
+func coloredStateText(isl *api.IslandInfo) string {
+	switch isl.Container {
+	case "running":
+		return styleRunning.Render("running")
+	case "exited", "stopped":
+		return styleHibernate.Render("hibernated")
+	case "missing":
+		return styleErrored.Render("missing")
+	default:
+		return isl.Container
+	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n < 4 {
+		return s[:n]
+	}
+	return s[:n-1] + "…"
+}
+
+func timeAgo(t time.Time) string {
+	d := time.Since(t).Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// _ = exec to avoid an unused-import error if we change the connect path later.
+var _ = exec.Command
