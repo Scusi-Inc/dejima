@@ -581,8 +581,13 @@ func runSession(ctx context.Context, c *api.Client, name, label string) error {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	// Enter raw mode on stdin so keystrokes pass through to the agent unfiltered.
+	// Surface the detach hint before raw mode swallows newlines.
 	stdinFd := int(os.Stdin.Fd())
+	if term.IsTerminal(stdinFd) {
+		fmt.Fprintln(os.Stderr, "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. Session keeps running either way.")
+	}
+
+	// Enter raw mode on stdin so keystrokes pass through to the agent unfiltered.
 	var oldState *term.State
 	if term.IsTerminal(stdinFd) {
 		oldState, err = term.MakeRaw(stdinFd)

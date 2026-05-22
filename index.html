@@ -73,9 +73,22 @@
 <p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
 <section>
-  <p><strong>Dejima</strong> is an OSS containment layer for AI coding agents. Each project runs in its own <em>island</em>: an isolated container with the target repo, the agent of your choice, and a brokered API that lets you drive the session from any device on your tailnet.</p>
-  <p>It is the interstitial layer between an agent and your machine. Not an interface. Not a product. Plumbing meant to be consumed by other applications — your CLI, a phone app, a Slack bot, a custom agent harness — all hitting the same API.</p>
+  <p><strong>Dejima</strong> is a self-hosted execution platform for AI coding agents. Each project runs in its own <em>island</em>: an isolated container with the target repo, the agent of your choice, and a brokered API that lets you drive the session from any device on your tailnet.</p>
 </section>
+
+<h2>The pitch</h2>
+<p>Running AI coding agents today is a choice between two tradeoffs:</p>
+<ol>
+  <li><strong>Local.</strong> Run a CLI agent on your laptop. Easy to start; agents get full filesystem access; close the lid and your long-running session dies.</li>
+  <li><strong>Hosted cloud.</strong> Pay a vendor to run a single agent on their hardware, behind a web UI, with your code on their disk.</li>
+</ol>
+<p><strong>Dejima is the third option.</strong> It turns hardware you already own — a Mac mini, a home server, a VPS — into your own agent execution platform. Each project runs in an isolated container. Sessions persist across disconnects. You drive them from any device on your tailnet.</p>
+<p>Kick off a 30-minute refactor at your desk, close your laptop, attach from your phone an hour later. Same session, same state, no vendor between you and your code.</p>
+
+<h2>Architecture</h2>
+<pre><code>[ your client ] ⇄ websocket / tailnet ⇄ [ dejimad daemon ] ⇄ host PTY ⇄ [ docker exec ] ⇄ tmux session ⇄ [ agent process ]</code></pre>
+<p><strong>tmux lives inside the container</strong> as the session anchor — agent process attached to a long-lived tmux session, so disconnects don't kill it and N clients can attach simultaneously for shared-screen multi-device work.</p>
+<p><strong>A host-side PTY in the daemon</strong> is the transport — it bridges the websocket to a <code>docker exec</code> against tmux, handling terminal sizing, multi-client multiplexing, and clean detach on disconnect. Together they give you persistent, multi-attach sessions without rebuilding any of tmux's well-debugged internals.</p>
 
 <h2>Install</h2>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
@@ -83,38 +96,30 @@
 
 <h2>What you get</h2>
 <ul>
-  <li><strong>Isolation</strong> — agents can't reach your host filesystem, other projects, or unrelated secrets.</li>
-  <li><strong>Multi-project, multi-agent</strong> — N islands on one host, each its own repo and agent. No context bleed.</li>
-  <li><strong>Persistent sessions</strong> — long-running work survives disconnects and host reboots via tmux + named volumes.</li>
+  <li><strong>Container isolation per project</strong> — agents can't reach your host filesystem, other projects, or unrelated secrets.</li>
+  <li><strong>Persistent sessions</strong> — long-running work survives client disconnects, daemon restarts, and host reboots.</li>
   <li><strong>Multi-device attach</strong> — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.</li>
-  <li><strong>Direct push to GitHub</strong> — host credentials mounted read-only into the island; <code>git push</code> just works.</li>
+  <li><strong>Direct GitHub push</strong> — host credentials mounted read-only; <code>git push</code> from inside the island just works.</li>
+  <li><strong>Agent-agnostic</strong> — Claude Code today, Codex CLI next, anything that runs in a Linux shell.</li>
   <li><strong>API-first</strong> — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.</li>
 </ul>
 
-<h2>Why Dejima?</h2>
-
-<p><strong>Who it's for.</strong> Solo developers and small teams running AI coding agents on their own infrastructure — Mac mini, home server, VPS — who want project isolation and the ability to drive sessions from more than one device.</p>
-
-<p><strong>When to reach for it.</strong> When you're running agents on multiple repos in parallel, want to switch devices mid-task, or don't want unconstrained agent access to your laptop. Also: as a self-hosted alternative to vendor cloud agents.</p>
-
-<p><strong>The problem.</strong> Today's coding agents run on your laptop with full filesystem access, tied to one device and one project at a time. Vendor "remote control" features (Anthropic's, Replit's, etc.) lock you to a single agent on a single cloud. Per-project isolation is on you.</p>
-
-<h2>Why not just …?</h2>
+<h2>How it compares</h2>
 <table>
-  <tr><th>Alternative</th><th>What's missing</th></tr>
-  <tr>
-    <td><strong>Claude Code raw on your laptop</strong></td>
-    <td>Full filesystem access, no project isolation, tied to one device. Anthropic's remote-control feature is monitor-only and Claude-specific.</td>
-  </tr>
-  <tr>
-    <td><strong>tmux + SSH</strong></td>
-    <td>Persistent sessions, yes — but no isolation, no per-project env, no API for other apps, no lifecycle verbs (<code>hibernate</code> / <code>reset</code>), no notifications. Dejima uses tmux inside each island; it doesn't replace tmux, it builds on it.</td>
-  </tr>
-  <tr>
-    <td><strong>Vendor cloud (Devin, Replit Agent, etc.)</strong></td>
-    <td>Your data on someone else's hardware, vendor lock-in, one-agent-only, monthly bill.</td>
-  </tr>
+  <tr><th>Feature</th><th>Raw local CLI</th><th>tmux + SSH</th><th>Vendor cloud</th><th>Dejima</th></tr>
+  <tr><td>Persistent execution across disconnects</td><td>✗</td><td>✓</td><td>✓</td><td><strong>✓</strong></td></tr>
+  <tr><td>Container isolation per project</td><td>✗</td><td>✗</td><td>✓</td><td><strong>✓</strong></td></tr>
+  <tr><td>Multi-device shared session</td><td>✗</td><td>manual</td><td>web only</td><td><strong>✓</strong></td></tr>
+  <tr><td>Self-hosted, your hardware</td><td>✓</td><td>✓</td><td>✗</td><td><strong>✓</strong></td></tr>
+  <tr><td>Agent-agnostic (Claude / Codex / custom)</td><td>✓</td><td>✓</td><td>✗</td><td><strong>✓</strong></td></tr>
+  <tr><td>API for third-party integrations</td><td>✗</td><td>✗</td><td>vendor-only</td><td><strong>✓</strong></td></tr>
 </table>
+<p class="small">Dejima isn't a replacement for tmux — it uses tmux inside each island. It's the layer above that adds isolation, lifecycle verbs (<code>hibernate</code> / <code>reset</code>), webhook events, and the cross-device API.</p>
+
+<h2>Why Dejima?</h2>
+<p><strong>Who it's for.</strong> Solo developers and small teams running AI coding agents on their own infrastructure — Mac mini, home server, VPS — who want project isolation and the ability to drive sessions from more than one device.</p>
+<p><strong>When to reach for it.</strong> When you're running agents on multiple repos in parallel, want to switch devices mid-task, or don't want unconstrained agent access to your laptop. Also: as a self-hosted alternative to vendor cloud agents.</p>
+<p><strong>The problem.</strong> Today's coding agents run on your laptop with full filesystem access, tied to one device and one project at a time. Vendor "remote control" features lock you to a single agent on a single cloud. Per-project isolation is on you.</p>
 
 <h2>Build on top</h2>
 <p>Most of the visible value should land <em>on top of</em> Dejima, not inside it. The Dejima API + webhook surface is meant to be the substrate for:</p>
