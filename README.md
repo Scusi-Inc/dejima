@@ -42,7 +42,30 @@ A first-time setup runs through these in order:
 4. `dejima init --repo …` on the host (or any client with `DEJIMA_HOST` set) to create an island.
 5. `dejima connect <name>` from any tailnet device to attach.
 
-## Install (host)
+## Install
+
+The shortest path: **get the `dejima` CLI on the machine you'll drive from, run it, follow the wizard.**
+
+```bash
+# 1. Get the CLI (Go 1.22+ required; one-shot binary releases are roadmap)
+go install github.com/aoos/dejima/cmd/dejima@latest
+
+# 2. Run it. First invocation triggers the setup wizard.
+dejima
+```
+
+The first-run wizard detects your environment (OS, Docker, Tailscale, dejimad presence), asks what you're trying to do, and prints a tailored set of next steps:
+
+- *Set up the server here* → recommends `make setup` (or runs it for you)
+- *Connect to an existing host* → asks for the host, prints `DEJIMA_HOST=…` + how to persist it
+- *Both* → server install with a note that the local CLI uses the Unix socket
+- *Just exploring* → overview + links
+
+`dejima onboard` re-engages the wizard any time. Say "never" at the first-run prompt to opt out; the wizard stays available via `dejima onboard`.
+
+### Set up the server (alternative: one-liner installer)
+
+If you already know you want the full server stack on this machine, the curl installer skips the wizard and gets you all the way there:
 
 ```bash
 curl -fsSL https://aoos.github.io/dejima/install.sh | bash
@@ -84,13 +107,21 @@ See [`docs/distribution.md`](docs/distribution.md) for how to create the `aoos/h
 
 ## Install (client only)
 
-To drive a remote Dejima host from your laptop, you only need the CLI — no daemon, no Docker. If you have Go installed:
+To drive a remote Dejima daemon from your laptop, you only need the CLI — no daemon, no Docker.
 
 ```bash
 go install github.com/aoos/dejima/cmd/dejima@latest
+dejima                # first-run wizard handles DEJIMA_HOST configuration
 ```
 
-Otherwise the host installer above works for clients too (it'll build everything, but you can `make build && make install` directly to skip the Docker bits).
+If you already know the host and want to skip the wizard:
+
+```bash
+export DEJIMA_HOST=mac-mini.your-tailnet.ts.net:7273
+dejima ls
+```
+
+Adding `DEJIMA_HOST` to `~/.zshenv` (or `~/.bash_profile`) makes it persistent; the wizard offers to do that automatically.
 
 ## Updating
 

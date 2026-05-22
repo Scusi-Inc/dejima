@@ -144,6 +144,11 @@
 <p>Inside each island, the agent process runs under a long-lived <strong>tmux</strong> session — that's what keeps it alive when no client is attached, and how multiple clients can share the same screen. The daemon bridges your websocket to that tmux session via a host-side <strong>PTY</strong>, which handles terminal sizing, multi-client multiplexing, and clean detach on disconnect.</p>
 
 <h2>Install</h2>
+<p>Shortest path — get the CLI, run it, follow the wizard:</p>
+<pre><code>go install github.com/aoos/dejima/cmd/dejima@latest
+dejima                # first run opens the setup wizard</code></pre>
+<p class="small">The wizard detects your environment (Docker / Tailscale / OS / daemon) and prints the exact commands for your scenario — server install here, client connecting to an existing host, or both. Re-engage anytime with <code>dejima onboard</code>.</p>
+<p>Or, if you already know you want the full server stack on this machine:</p>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
 <p class="small">Runs on macOS and Linux. Bootstraps Go + Docker as needed, builds the binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers the daemon as a service, runs a health check. Idempotent — re-run to update.</p>
 
