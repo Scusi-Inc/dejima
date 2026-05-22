@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dejima API reference</title>
+<meta name="description" content="HTTP + websocket API for the Dejima daemon. Target this surface to build mobile apps, chat integrations, multi-agent dashboards, or any other product on top of Dejima.">
+<link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+<style>
+  :root {
+    --bg: #0f1e35;
+    --fg: #eef3ff;
+    --muted: #94a3b8;
+    --accent: #e8f1ff;
+    --code-bg: #0a172d;
+    --border: #1c3358;
+    --hover: #fff;
+    --method-get: #34d399;
+    --method-post: #fbbf24;
+    --method-delete: #f87171;
+    --method-put: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  main { max-width: 880px; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+  header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2rem; }
+  header img { width: 56px; height: 56px; flex-shrink: 0; }
+  header h1 { font-size: 2rem; margin: 0; letter-spacing: -0.02em; font-weight: 700; }
+  .tagline { color: var(--muted); margin-top: 0.1rem; font-size: 1.0rem; }
+  h2 { font-size: 0.85rem; margin: 3rem 0 1rem; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted); font-weight: 600; scroll-margin-top: 1.5rem; }
+  h3 { font-size: 1.05rem; margin: 1.8rem 0 0.5rem; font-weight: 600;
+    scroll-margin-top: 1.5rem; }
+  p { margin: 0.65rem 0; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.9rem 1.1rem; overflow-x: auto; font-size: 0.88rem; line-height: 1.5; }
+  code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 0.92em; }
+  :not(pre) > code { background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 3px; padding: 0.08em 0.4em; }
+  ul { padding-left: 1.3rem; margin: 0.6rem 0; }
+  li { margin: 0.3rem 0; }
+  a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px;
+    text-decoration-color: var(--border); }
+  a:hover { color: var(--hover); text-decoration-color: var(--accent); }
+  strong { color: var(--hover); font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 0.6rem 0; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 0.5rem 0.7rem 0.5rem 0; vertical-align: top;
+    border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 0.78rem;
+    text-transform: uppercase; letter-spacing: 0.06em; }
+  td code { background: transparent; border: 0; padding: 0; color: var(--accent); }
+  .small { color: var(--muted); font-size: 0.88rem; }
+  .pill { display: inline-block; padding: 0.15rem 0.55rem; border: 1px solid var(--border);
+    border-radius: 999px; font-size: 0.75rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* HTTP method badges */
+  .endpoint { display: flex; align-items: baseline; gap: 0.75rem; margin: 0.4rem 0;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; font-size: 0.92rem; }
+  .method { display: inline-block; min-width: 4.5rem; text-align: center;
+    padding: 0.1rem 0.45rem; border-radius: 3px; font-weight: 700; font-size: 0.78rem;
+    letter-spacing: 0.04em; }
+  .m-get    { color: var(--method-get);    border: 1px solid var(--method-get); }
+  .m-post   { color: var(--method-post);   border: 1px solid var(--method-post); }
+  .m-delete { color: var(--method-delete); border: 1px solid var(--method-delete); }
+  .m-put    { color: var(--method-put);    border: 1px solid var(--method-put); }
+  .endpoint .path { color: var(--accent); }
+  .endpoint .desc { color: var(--muted); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin-left: auto; font-size: 0.9rem; }
+
+  .toc { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 1rem 1.25rem; margin: 1rem 0 2rem; }
+  .toc ul { columns: 2; column-gap: 2rem; margin: 0; padding-left: 1.1rem; }
+  .toc li { break-inside: avoid; }
+
+  @media (max-width: 720px) {
+    main { padding: 3rem 1.25rem 5rem; }
+    header h1 { font-size: 1.7rem; }
+    .toc ul { columns: 1; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <img src="assets/logo-transparent.png" alt="Dejima">
+  <div>
+    <h1>API reference</h1>
+    <div class="tagline">HTTP + websocket surface for the Dejima daemon. <span class="pill">v1 · pre-alpha</span></div>
+  </div>
+</header>
+
+<p>This is the contract products like <em>Dispatch</em>, mobile/PWA clients, chat-service bridges, and any other Dejima consumer target. The CLI is one client of this same API; nothing the CLI does is unavailable to third-party apps.</p>
+
+<p><a href="index.html">← Back to landing</a></p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ul>
+    <li><a href="#connecting">Connecting</a></li>
+    <li><a href="#auth">Authentication</a></li>
+    <li><a href="#errors">Errors</a></li>
+    <li><a href="#islands">Island endpoints</a></li>
+    <li><a href="#lifecycle">Lifecycle endpoints</a></li>
+    <li><a href="#sessions">Sessions (websocket)</a></li>
+    <li><a href="#access">Lightweight access (exec / cp / logs)</a></li>
+    <li><a href="#events">Events &amp; webhooks</a></li>
+    <li><a href="#overview">Server overview</a></li>
+    <li><a href="#agent-events">Agent-event endpoint (shim-only)</a></li>
+    <li><a href="#types">Data types</a></li>
+    <li><a href="#event-types">Event types</a></li>
+    <li><a href="#example">End-to-end example</a></li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="connecting">Connecting</h2>
+
+<p>The Dejima daemon (<code>dejimad</code>) speaks JSON over HTTP/1.1 and websockets. Three reachable surfaces, all serving the same API:</p>
+
+<table>
+  <tr><th>Scenario</th><th>Endpoint</th><th>Notes</th></tr>
+  <tr>
+    <td>Same machine as the daemon</td>
+    <td><code>~/.dejima/dejimad.sock</code> (Unix socket)</td>
+    <td>Always on. Auth = filesystem permissions (<code>0600</code>, only the user can connect). Pass to <code>curl</code> with <code>--unix-socket</code>.</td>
+  </tr>
+  <tr>
+    <td>Remote machine on the same tailnet</td>
+    <td><code>http://&lt;host&gt;:7273</code></td>
+    <td>Daemon must be started with <code>--tcp :7273</code> (or via <code>dejima service install</code>). Only accepts connections from Tailscale-assigned IPs. Off-tailnet connections are refused at the listener.</td>
+  </tr>
+  <tr>
+    <td>Remote without Tailscale</td>
+    <td>SSH-tunnel the socket</td>
+    <td><code>ssh -L /tmp/dejimad.sock:/home/you/.dejima/dejimad.sock host</code>, then point your client at the local tunnel. Token-auth mode is roadmap.</td>
+  </tr>
+</table>
+
+<p>The CLI uses <code>DEJIMA_HOST</code>: unset → Unix socket; set to <code>host:port</code> → remote TCP. Apps follow the same convention or pick their own.</p>
+
+<h3>curl examples</h3>
+<pre><code># Local
+curl --unix-socket ~/.dejima/dejimad.sock http://dejimad/v1/healthz
+
+# Remote (on tailnet)
+curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="auth">Authentication</h2>
+<p>Today: <strong>Tailscale identity</strong> (remote) or <strong>filesystem permissions</strong> (local). No per-client tokens. No per-client ACLs. Documented honestly:</p>
+<ul>
+  <li>Any process on the host running as your user can connect to the local socket.</li>
+  <li>Any tailnet device can connect to the TCP listener.</li>
+  <li>There is currently no way to scope an API client to a subset of islands.</li>
+</ul>
+<p>Trust-on-first-use device allowlisting and optional API-token auth are on the roadmap; until they ship, treat the API as fully trusted within the tailnet.</p>
+
+<!-- ============================================================ -->
+<h2 id="errors">Errors</h2>
+<p>Non-2xx responses carry a JSON body:</p>
+<pre><code>{ "error": "island \"foo\" not found" }</code></pre>
+<p>HTTP status conventions:</p>
+<ul>
+  <li><code>400</code> — bad request (missing/invalid params, malformed JSON)</li>
+  <li><code>404</code> — island not found</li>
+  <li><code>409</code> — state conflict (e.g. attaching to a hibernated island)</li>
+  <li><code>500</code> — internal error (Docker unreachable, etc.)</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="islands">Island endpoints</h2>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands</span><span class="desc">List all islands</span></div>
+<p>Returns <code>[]IslandInfo</code>. Lightweight — no git status; use the per-island detail endpoint for that.</p>
+<pre><code>curl http://host:7273/v1/islands
+[
+  {
+    "name": "foo",
+    "repo": "git@github.com:you/foo.git",
+    "agent": "claude-code",
+    "image": "dejima/island:latest",
+    "state": "running",
+    "container": "running",
+    "created_at": "2026-05-21T15:04:05Z",
+    "last_used_at": "2026-05-22T10:30:00Z",
+    "stats": { "memory_usage_bytes": 245890000, "memory_limit_bytes": 4294967296, "cpu_percent": 12.5 },
+    "agent_state": { "latest": "task-complete", "updated_at": "2026-05-22T10:29:32Z" },
+    "attached": [ { "label": "laptop", "joined_at": "2026-05-22T10:28:00Z" } ]
+  }
+]</code></pre>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands</span><span class="desc">Create a new island</span></div>
+<pre><code>POST /v1/islands
+{
+  "name": "foo",                       // optional; derived from repo if empty
+  "repo": "git@github.com:you/foo.git", // required
+  "agent": "claude-code",              // optional; default "claude-code"
+  "image": "dejima/island:latest",     // optional; default
+  "resources": {
+    "memory": "4G",                    // optional; --memory passthrough
+    "cpus": "2.0",                     // optional; --cpus passthrough
+    "disk": "20G"                      // optional; --storage-opt size=
+  }
+}
+
+→ 201 Created, body is IslandInfo for the new island
+→ 409 Conflict if name already exists</code></pre>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}</span><span class="desc">Detail view of one island</span></div>
+<p>Like the list response but populated with <code>git</code> status (branch, clean, ahead/behind) computed via container exec. Slower than the list — only call when you need the detail.</p>
+
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/islands/{name}</span><span class="desc">Purge — destroy container + volumes</span></div>
+<p>Irreversible. Container is stopped + removed, both volumes (workspace + agent state) deleted, per-island network removed, project config dir wiped. Returns <code>204 No Content</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="lifecycle">Lifecycle endpoints</h2>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/hibernate</span><span class="desc">Stop container, preserve volumes</span></div>
+<p>Sets <code>desired_state = hibernated</code> and stops the container. Workspace and agent on-disk state survive. Returns updated <code>IslandInfo</code>.</p>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/wake</span><span class="desc">Start a hibernated container</span></div>
+<p>Restarts the container against existing volumes. Sets <code>desired_state = running</code>. If the container was removed (e.g. via <code>docker rm</code> directly), it's recreated against the same volumes. Returns updated <code>IslandInfo</code>.</p>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/reset</span><span class="desc">Clear agent state, preserve workspace</span></div>
+<p>Stops container, removes the agent-state volume only, recreates it empty, restarts the container. Workspace and git history are untouched. Use for "fresh conversation, same code."</p>
+
+<!-- ============================================================ -->
+<h2 id="sessions">Sessions (websocket)</h2>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/session?label=&lt;client&gt;</span><span class="desc">Multi-attach PTY stream</span></div>
+
+<p>Upgrades to websocket. Multiple clients can hold this stream concurrently; tmux's native multi-attach gives them all the same screen. The <code>label</code> query param identifies the client in presence; defaults to <code>anonymous</code>.</p>
+
+<p>Wire protocol is JSON frames over the websocket. Server sends:</p>
+<pre><code>{"type":"hello",    "attached":[{"label":"laptop","joined_at":"…"}]}    // on connect
+{"type":"data",     "b64":"&lt;base64-encoded PTY bytes&gt;"}                // server → client
+{"type":"error",    "b64":"&lt;error message&gt;"}                            // recoverable problems</code></pre>
+<p>Client sends:</p>
+<pre><code>{"type":"data",   "b64":"&lt;base64 stdin bytes&gt;"}     // keystrokes → PTY
+{"type":"resize", "rows":24,"cols":80}              // terminal resize</code></pre>
+
+<p>Bytes are base64 because tmux output is raw binary (escape sequences, control bytes) and JSON-over-websocket is the simplest cross-language transport for it.</p>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/sessions/revoke</span><span class="desc">Drop all active client websockets</span></div>
+<p>Force-disconnects every attached client across every island. Containers and agent processes keep running. Used by <code>dejima logout-all</code>. Returns <code>{ "revoked": N }</code>.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/clients</span><span class="desc">Recent attach/detach history</span></div>
+<p>In-memory ring buffer, newest first, bounded at ~200 entries. Lost on daemon restart — by design, this is awareness without surveillance, not a persistent audit log.</p>
+<pre><code>[
+  { "label": "phone-pwa", "island": "foo", "attached_at": "2026-05-22T10:28:00Z" },
+  { "label": "laptop",    "island": "foo", "attached_at": "2026-05-22T10:00:00Z", "detached_at": "2026-05-22T10:27:30Z" }
+]</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="access">Lightweight access</h2>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/exec</span><span class="desc">One-shot command in the island</span></div>
+<pre><code>POST { "cmd": ["ls", "-la", "/workspace"] }
+→ { "stdout": "...", "stderr": "...", "exit_code": 0 }</code></pre>
+<p>Runs the command, returns its output. No PTY, no streaming — use the session websocket for interactive work.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/files/{path...}</span><span class="desc">Read a file out of the island</span></div>
+<p>Body is the raw file bytes (octet-stream). Used by <code>dejima cp foo:/workspace/path ./</code>.</p>
+
+<div class="endpoint"><span class="method m-put">PUT</span><span class="path">/v1/islands/{name}/files/{path...}</span><span class="desc">Write a file into the island</span></div>
+<p>Body is the raw file bytes. Parent directories are created if missing. Returns <code>204 No Content</code>.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/logs?follow=true</span><span class="desc">Stream container logs</span></div>
+<p>Returns a chunked text stream of container stdout + stderr. With <code>?follow=true</code>, the stream stays open until the client disconnects.</p>
+
+<!-- ============================================================ -->
+<h2 id="events">Events &amp; webhooks</h2>
+
+<p>Dejima emits typed events on lifecycle changes, client attach/detach, and (when an agent shim is installed) agent activity. Two ways to consume them:</p>
+<ul>
+  <li><strong>Webhooks</strong> — register a URL; daemon POSTs the event payload to it.</li>
+  <li><strong>Per-island event log</strong> — bounded in-memory ring, queryable on demand.</li>
+</ul>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/events/subscriptions</span><span class="desc">List webhook subscriptions</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/events/subscribe</span><span class="desc">Subscribe a webhook URL</span></div>
+<pre><code>POST { "url": "https://your-app.example.com/dejima",
+       "secret": "optional-hmac-key",
+       "events": ["island.hibernated", "agent.waiting-for-input"]   // optional filter
+     }
+→ 201 Created, body is { "id": "...", "url": "...", "created_at": "..." }</code></pre>
+
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/events/subscriptions/{id}</span><span class="desc">Remove a webhook</span></div>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/events</span><span class="desc">Recent events for one island</span></div>
+<p>Newest first, bounded at ~50 events. In-memory, lost on daemon restart.</p>
+
+<h3>Webhook delivery format</h3>
+<p>Daemon POSTs JSON to each subscribed URL on every matching event:</p>
+<pre><code>POST &lt;your-url&gt;
+Content-Type: application/json
+X-Dejima-Event: island.hibernated
+X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a secret)
+
+{
+  "type": "island.hibernated",
+  "island": "foo",
+  "timestamp": "2026-05-22T10:30:00Z",
+  "payload": { ... event-specific fields ... }
+}</code></pre>
+<p>Delivery is best-effort, fire-and-forget; the daemon doesn't retry. Non-2xx responses are logged but don't block. If you need durability, queue from your own HTTP handler.</p>
+
+<!-- ============================================================ -->
+<h2 id="overview">Server overview</h2>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/overview</span><span class="desc">Server-wide totals</span></div>
+<pre><code>{
+  "total_islands": 4,
+  "running": 3,
+  "hibernated": 1,
+  "errored": 0,
+  "attached_clients": 1,
+  "memory_usage_bytes": 1234567890,
+  "memory_limit_bytes": 8589934592,
+  "cpu_percent": 14.2,
+  "daemon_started_at": "2026-05-22T08:00:00Z",
+  "webhook_count": 1
+}</code></pre>
+<p>Used by the TUI's footer and <code>dejima overview</code>. Cheap to call; good for dashboards.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/healthz</span><span class="desc">Liveness</span></div>
+<p><code>{ "status": "ok" }</code> when the daemon is reachable. Use to check whether <code>dejimad</code> is up before issuing real calls.</p>
+
+<!-- ============================================================ -->
+<h2 id="agent-events">Agent-event endpoint (shim-only)</h2>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/internal/agent-event</span><span class="desc">Used by per-agent shims inside islands</span></div>
+<p>Per-agent shim scripts (currently Claude Code's hook integration) POST agent-specific events here to surface them through the rest of the system. <strong>Not meant for external clients</strong> — it has no auth beyond access to the daemon socket, and is reachable from inside islands via the bind-mounted socket at <code>/run/dejima/dejimad.sock</code>.</p>
+<pre><code>POST { "island": "foo",
+       "type": "agent.waiting-for-input",
+       "payload": { "tool": "..." }    // optional, free-form
+     }
+→ 202 Accepted</code></pre>
+<p>The event propagates to webhook subscribers and to the per-island recent-events feed exactly like any other event.</p>
+
+<!-- ============================================================ -->
+<h2 id="types">Data types</h2>
+
+<h3>IslandInfo</h3>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+  <tr><td><code>name</code></td><td>string</td><td>Unique handle. <code>^[a-z0-9][a-z0-9._-]{0,62}$</code></td></tr>
+  <tr><td><code>repo</code></td><td>string</td><td>Git URL or local path used at init</td></tr>
+  <tr><td><code>agent</code></td><td>string</td><td><code>claude-code</code> | <code>codex</code> | custom</td></tr>
+  <tr><td><code>image</code></td><td>string</td><td>Docker image, e.g. <code>dejima/island:latest</code></td></tr>
+  <tr><td><code>state</code></td><td>string</td><td>Desired state from config: <code>running</code> or <code>hibernated</code></td></tr>
+  <tr><td><code>container</code></td><td>string</td><td>Observed state: <code>running</code>, <code>exited</code>, <code>missing</code>, <code>errored</code></td></tr>
+  <tr><td><code>created_at</code></td><td>RFC3339</td><td></td></tr>
+  <tr><td><code>last_used_at</code></td><td>RFC3339</td><td></td></tr>
+  <tr><td><code>attached</code></td><td>[]PresenceEntry</td><td>Live client list; empty if no one is connected</td></tr>
+  <tr><td><code>stats</code></td><td>IslandStats?</td><td>Memory + CPU; nil if not running</td></tr>
+  <tr><td><code>agent_state</code></td><td>AgentStateInfo?</td><td>Latest agent-emitted event</td></tr>
+  <tr><td><code>git</code></td><td>GitInfo?</td><td>Detail endpoint only (slow path)</td></tr>
+</table>
+
+<h3>IslandStats</h3>
+<table>
+  <tr><th>Field</th><th>Type</th></tr>
+  <tr><td><code>memory_usage_bytes</code></td><td>uint64</td></tr>
+  <tr><td><code>memory_limit_bytes</code></td><td>uint64 (0 = unlimited)</td></tr>
+  <tr><td><code>cpu_percent</code></td><td>float64</td></tr>
+</table>
+
+<h3>AgentStateInfo</h3>
+<table>
+  <tr><th>Field</th><th>Type</th></tr>
+  <tr><td><code>latest</code></td><td>string — <code>waiting-for-input</code>, <code>task-complete</code>, <code>error</code></td></tr>
+  <tr><td><code>updated_at</code></td><td>RFC3339</td></tr>
+</table>
+
+<h3>GitInfo</h3>
+<table>
+  <tr><th>Field</th><th>Type</th></tr>
+  <tr><td><code>branch</code></td><td>string</td></tr>
+  <tr><td><code>clean</code></td><td>bool</td></tr>
+  <tr><td><code>ahead</code></td><td>int</td></tr>
+  <tr><td><code>behind</code></td><td>int</td></tr>
+  <tr><td><code>dirty_files</code></td><td>int</td></tr>
+</table>
+
+<h3>PresenceEntry</h3>
+<table>
+  <tr><th>Field</th><th>Type</th></tr>
+  <tr><td><code>label</code></td><td>string — e.g. <code>laptop</code>, <code>phone-pwa</code></td></tr>
+  <tr><td><code>joined_at</code></td><td>RFC3339</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="event-types">Event types</h2>
+
+<h3>Daemon-observable (always emitted)</h3>
+<table>
+  <tr><th>Type</th><th>Fires when…</th></tr>
+  <tr><td><code>island.created</code></td><td>A new island has been provisioned</td></tr>
+  <tr><td><code>island.running</code></td><td>The container has transitioned to running</td></tr>
+  <tr><td><code>island.hibernated</code></td><td>Container stopped, volumes preserved</td></tr>
+  <tr><td><code>island.woken</code></td><td>Container restarted from hibernation</td></tr>
+  <tr><td><code>island.reset</code></td><td>Agent state cleared, workspace preserved</td></tr>
+  <tr><td><code>island.purged</code></td><td>Container + volumes destroyed</td></tr>
+  <tr><td><code>container.crashed</code></td><td>Container exited unexpectedly (roadmap — once the watchdog ships)</td></tr>
+  <tr><td><code>client.attached</code></td><td>A websocket client has joined a session — <em>this is your "someone connected" signal</em></td></tr>
+  <tr><td><code>client.detached</code></td><td>A websocket client has left</td></tr>
+  <tr><td><code>last-client.detached</code></td><td>All clients have left an island; nobody is watching anymore</td></tr>
+</table>
+
+<h3>Agent-emitted (opt-in via per-agent shim)</h3>
+<p>These fire only for agents whose shim is wired up (Claude Code today; Codex shim does not yet emit these but is roadmap'd).</p>
+<table>
+  <tr><th>Type</th><th>Fires when…</th></tr>
+  <tr><td><code>agent.waiting-for-input</code></td><td>The agent is paused awaiting human input</td></tr>
+  <tr><td><code>agent.task-complete</code></td><td>The agent finished a unit of work</td></tr>
+  <tr><td><code>agent.error</code></td><td>The agent hit an error or refused to continue</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="example">End-to-end example</h2>
+
+<p>Suppose you're building a Slack bot that drives Dejima. The shape:</p>
+
+<h3>1. Subscribe to events</h3>
+<pre><code>curl http://mac-mini:7273/v1/events/subscribe \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://your-bot.example.com/dejima","secret":"hush"}'</code></pre>
+
+<h3>2. Receive an event in your bot</h3>
+<pre><code>POST https://your-bot.example.com/dejima
+X-Dejima-Event: agent.waiting-for-input
+X-Dejima-Signature: sha256=&lt;hmac&gt;
+
+{ "type": "agent.waiting-for-input", "island": "foo", "timestamp": "…" }</code></pre>
+<p>Your bot posts a Slack message: <em>"foo is waiting for your input"</em>.</p>
+
+<h3>3. User replies in Slack</h3>
+<p>Your bot opens the session websocket and sends the user's text:</p>
+<pre><code>// Pseudocode
+ws = connect("ws://mac-mini:7273/v1/islands/foo/session?label=slack-bot")
+ws.send({ type: "data", b64: base64("Yes, proceed with the refactor.\n") })</code></pre>
+<p>The agent receives the input through tmux, the websocket streams the agent's reply back, your bot posts it as Slack messages, and the cycle continues.</p>
+
+<h3>4. User wants to see the screen</h3>
+<p>Your bot can attach as a passive observer (same endpoint, different label):</p>
+<pre><code>ws2 = connect("ws://mac-mini:7273/v1/islands/foo/session?label=slack-readonly")
+// Don't send any data frames — just decode the b64 stream into a rendered terminal screenshot.</code></pre>
+
+<!-- ============================================================ -->
+<h2>Stability</h2>
+<p>The API is <code>v1/</code>-prefixed and intended to be stable, but Dejima itself is pre-alpha — breaking changes may happen if real-world dogfood surfaces issues. We'll version-bump (<code>v2/</code>) rather than break <code>v1/</code> silently. The single source of truth is the source code; this page is hand-maintained and may drift slightly between releases.</p>
+
+<h2>Links</h2>
+<ul>
+  <li><a href="index.html">Dejima landing page</a></li>
+  <li><a href="https://github.com/aoos/dejima">Source on GitHub</a></li>
+  <li><a href="https://github.com/aoos/dejima/blob/master/docs/v1-spec.md">v1 specification</a></li>
+  <li><a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md">Roadmap</a></li>
+</ul>
+
+</main>
+</body>
+</html>

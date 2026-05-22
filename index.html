@@ -118,6 +118,8 @@
     <p>Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools. You need isolated containers + sessions + lifecycle, without writing them.</p>
     <span class="cta">For builders →</span>
   </a>
+
+  <!-- (API reference linked from "For builders" deep-dive section + the Links section.) -->
   <a class="usecase" href="#self-host">
     <h3>Keep code and agents off vendor servers</h3>
     <p>Compliance, NDA, regulated code, or just distrust of hosted agent products. You want agents — but on your hardware, your network, your rules.</p>
@@ -166,7 +168,7 @@ GET    /v1/islands/:name/session       # websocket PTY stream, multi-attach
 POST   /v1/islands/:name/exec          # one-shot command
 POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 </code></pre>
-<p><strong>Why it's worth it:</strong> the boring substrate work — container lifecycle, host-side PTY, multi-client multiplexing, credential injection, webhook events, service install, Tailscale-pinned remote access — is done and OSS. You build the interesting part. The same API the CLI uses is the one you target; if a feature exists in <code>dejima</code>, it exists for you too.</p>
+<p><strong>Why it's worth it:</strong> the boring substrate work — container lifecycle, host-side PTY, multi-client multiplexing, credential injection, webhook events, service install, Tailscale-pinned remote access — is done and OSS. You build the interesting part. The same API the CLI uses is the one you target; if a feature exists in <code>dejima</code>, it exists for you too. Full surface documented at <a href="api.html">the API reference</a>.</p>
 
 <h2 id="self-host">Use case: Self-hosted privacy / compliance</h2>
 <p><strong>If you can't or won't ship your code to a third-party agent service</strong> — NDA work, regulated industries (medical, financial, defense, legal), client confidentiality, or just principle — Dejima runs entirely on your hardware. The agent's LLM API calls go out (that's how agents work at all), but your repo, your generated files, and your auth never leave your box.</p>
@@ -231,6 +233,7 @@ dejimad --tcp :7273
 
 <h2>Links</h2>
 <ul>
+  <li><a href="api.html">API reference</a> — the contract for building on Dejima</li>
   <li><a href="https://github.com/aoos/dejima">Source on GitHub</a></li>
   <li><a href="https://github.com/aoos/dejima/blob/master/README.md">README</a></li>
   <li><a href="https://github.com/aoos/dejima/blob/master/docs/v1-spec.md">v1 specification</a></li>
