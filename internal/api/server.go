@@ -40,17 +40,33 @@ type Server struct {
 	historyMu   sync.Mutex
 	historyRing []ClientHistoryEntry
 	historyCap  int
+
+	// Per-island latest agent state, derived from agent-event hooks.
+	agentStateMu sync.Mutex
+	agentStates  map[string]AgentStateInfo
+
+	// Per-island bounded event log (for `dejima status` recent-events display
+	// and the GET /v1/islands/:name/events endpoint).
+	eventsMu  sync.Mutex
+	events_   map[string][]events.Event
+	eventsCap int
+
+	startedAt time.Time
 }
 
 // NewServer constructs a server backed by the given runtime.
 func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server {
 	return &Server{
-		rt:         rt,
-		log:        log,
-		locks:      map[string]*sync.Mutex{},
-		presence:   map[string]*presenceTracker{},
-		events:     ev,
-		historyCap: 200,
+		rt:          rt,
+		log:         log,
+		locks:       map[string]*sync.Mutex{},
+		presence:    map[string]*presenceTracker{},
+		events:      ev,
+		historyCap:  200,
+		agentStates: map[string]AgentStateInfo{},
+		events_:     map[string][]events.Event{},
+		eventsCap:   50,
+		startedAt:   time.Now().UTC(),
 	}
 }
 
@@ -91,12 +107,75 @@ func (s *Server) RevokeAllSessions() int {
 	return total
 }
 
-// emit fans an event out to webhook subscribers. Safe to call when events is nil.
+// emit fans an event out to webhook subscribers, records it in the per-island
+// event log, and updates the island's latest agent-state if applicable.
+// Safe to call when events is nil.
 func (s *Server) emit(e events.Event) {
-	if s.events == nil {
+	if e.Timestamp.IsZero() {
+		e.Timestamp = time.Now().UTC()
+	}
+	s.recordEvent(e)
+	s.maybeUpdateAgentState(e)
+	if s.events != nil {
+		s.events.Emit(e)
+	}
+}
+
+// recordEvent appends an event to the per-island bounded ring.
+func (s *Server) recordEvent(e events.Event) {
+	if e.Island == "" {
 		return
 	}
-	s.events.Emit(e)
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+	ring := s.events_[e.Island]
+	ring = append(ring, e)
+	if len(ring) > s.eventsCap {
+		ring = ring[len(ring)-s.eventsCap:]
+	}
+	s.events_[e.Island] = ring
+}
+
+// IslandEvents returns the most recent events for one island (newest first).
+func (s *Server) IslandEvents(island string) []events.Event {
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+	ring := s.events_[island]
+	out := make([]events.Event, len(ring))
+	for i, e := range ring {
+		out[len(ring)-1-i] = e
+	}
+	return out
+}
+
+// maybeUpdateAgentState refreshes the per-island latest agent-state entry
+// when the event is one the agent emitted (via its shim).
+func (s *Server) maybeUpdateAgentState(e events.Event) {
+	if e.Island == "" {
+		return
+	}
+	switch e.Type {
+	case events.TypeAgentWaitingForInput,
+		events.TypeAgentTaskComplete,
+		events.TypeAgentError:
+		// fall through
+	default:
+		return
+	}
+	short := strings.TrimPrefix(string(e.Type), "agent.")
+	s.agentStateMu.Lock()
+	s.agentStates[e.Island] = AgentStateInfo{Latest: short, UpdatedAt: e.Timestamp}
+	s.agentStateMu.Unlock()
+}
+
+// agentStateOf returns the latest agent-state entry for an island, or nil.
+func (s *Server) agentStateOf(island string) *AgentStateInfo {
+	s.agentStateMu.Lock()
+	defer s.agentStateMu.Unlock()
+	if st, ok := s.agentStates[island]; ok {
+		return &st
+	}
+	return nil
 }
 
 // Handler returns an http.Handler suitable for the daemon's listener.
@@ -117,6 +196,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/internal/agent-event", s.handleAgentEvent)
 	mux.HandleFunc("POST /v1/sessions/revoke", s.handleRevokeSessions)
 	mux.HandleFunc("GET /v1/clients", s.handleClientHistory)
+	mux.HandleFunc("GET /v1/overview", s.handleOverview)
+	mux.HandleFunc("GET /v1/islands/{name}/events", s.handleIslandEvents)
 	mux.HandleFunc("POST /v1/islands/{name}/exec", s.handleExec)
 	mux.HandleFunc("GET /v1/islands/{name}/files/{path...}", s.handleReadFile)
 	mux.HandleFunc("PUT /v1/islands/{name}/files/{path...}", s.handleWriteFile)
@@ -192,7 +273,11 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
+	info := s.toInfo(r.Context(), p)
+	// Git status is only computed in the detail view, not the list, because
+	// it requires container exec and is the slowest field to populate.
+	info.Git = s.gitStatusOf(r, p.ContainerName())
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
@@ -526,6 +611,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	if tracker := s.presence[p.Name]; tracker != nil {
 		info.Attached = tracker.Snapshot()
 	}
+	info.AgentState = s.agentStateOf(p.Name)
 	return info
 }
 

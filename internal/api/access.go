@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/aoos/dejima/internal/project"
@@ -152,6 +153,96 @@ func (s *Server) handleRevokeSessions(w http.ResponseWriter, _ *http.Request) {
 // handleClientHistory returns the recent attach/detach events (newest first).
 func (s *Server) handleClientHistory(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.ClientHistory())
+}
+
+// handleOverview returns server-wide aggregates: counts, totals, daemon uptime.
+func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
+	projects, err := project.List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := OverviewResponse{
+		TotalIslands:    len(projects),
+		DaemonStartedAt: s.startedAt,
+	}
+	if s.events != nil {
+		out.WebhookCount = len(s.events.List())
+	}
+	for _, p := range projects {
+		status, _ := s.rt.Status(r.Context(), p.ContainerName())
+		switch status {
+		case runtime.StatusRunning:
+			out.Running++
+			if stats, err := s.rt.Stats(r.Context(), p.ContainerName()); err == nil {
+				out.MemoryUsageBytes += stats.MemoryUsageBytes
+				out.MemoryLimitBytes += stats.MemoryLimitBytes
+				out.CPUPercent += stats.CPUPercent
+			}
+		case runtime.StatusErrored, runtime.StatusMissing:
+			out.Errored++
+		default:
+			if p.DesiredState == project.StateHibernated {
+				out.Hibernated++
+			}
+		}
+		if tracker := s.presence[p.Name]; tracker != nil {
+			out.AttachedClients += len(tracker.Snapshot())
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleIslandEvents returns the per-island recent event log (newest first).
+func (s *Server) handleIslandEvents(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if _, err := project.Load(name); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.IslandEvents(name))
+}
+
+// gitStatusOf inspects the workspace of a running island and returns a
+// GitInfo. Uses container exec; only called by the detail endpoint, not the
+// list. Returns nil on any failure (best-effort).
+func (s *Server) gitStatusOf(r *http.Request, containerName string) *GitInfo {
+	if status, _ := s.rt.Status(r.Context(), containerName); status != runtime.StatusRunning {
+		return nil
+	}
+	// Quick check: is /workspace a git repo at all?
+	if _, _, code, _ := s.rt.Exec(r.Context(), containerName,
+		[]string{"git", "-C", "/workspace", "rev-parse", "--git-dir"}); code != 0 {
+		return nil
+	}
+	info := &GitInfo{}
+
+	if out, _, _, _ := s.rt.Exec(r.Context(), containerName,
+		[]string{"git", "-C", "/workspace", "rev-parse", "--abbrev-ref", "HEAD"}); out != "" {
+		info.Branch = strings.TrimSpace(out)
+	}
+	if out, _, code, _ := s.rt.Exec(r.Context(), containerName,
+		[]string{"git", "-C", "/workspace", "status", "--porcelain"}); code == 0 {
+		out = strings.TrimSpace(out)
+		if out == "" {
+			info.Clean = true
+		} else {
+			info.DirtyFiles = strings.Count(out, "\n") + 1
+		}
+	}
+	if out, _, code, _ := s.rt.Exec(r.Context(), containerName,
+		[]string{"git", "-C", "/workspace", "rev-list", "--count", "@{u}..HEAD"}); code == 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
+			info.Ahead = n
+		}
+	}
+	if out, _, code, _ := s.rt.Exec(r.Context(), containerName,
+		[]string{"git", "-C", "/workspace", "rev-list", "--count", "HEAD..@{u}"}); code == 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
+			info.Behind = n
+		}
+	}
+	return info
 }
 
 var (

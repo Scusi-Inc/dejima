@@ -14,6 +14,8 @@ type IslandInfo struct {
 	LastUsedAt time.Time       `json:"last_used_at"`
 	Attached   []PresenceEntry `json:"attached,omitempty"`
 	Stats      *IslandStats    `json:"stats,omitempty"`
+	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
+	Git        *GitInfo        `json:"git,omitempty"`
 }
 
 // IslandStats is a snapshot of the container's resource usage.
@@ -21,6 +23,39 @@ type IslandStats struct {
 	MemoryUsageBytes uint64  `json:"memory_usage_bytes"`
 	MemoryLimitBytes uint64  `json:"memory_limit_bytes"`
 	CPUPercent       float64 `json:"cpu_percent"`
+}
+
+// AgentStateInfo is the most recent operational signal from the agent itself,
+// derived from agent-event hooks (currently emitted by the Claude Code shim).
+// Latest may be empty if the agent hasn't emitted any events.
+type AgentStateInfo struct {
+	Latest    string    `json:"latest"`     // e.g. "waiting-for-input", "task-complete", "error"
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// GitInfo summarizes the workspace's git state. Only populated on the detail
+// endpoint (GET /v1/islands/:name) and only for running islands. Computed
+// lazily via container exec and cached briefly to avoid spamming the island.
+type GitInfo struct {
+	Branch     string `json:"branch"`
+	Clean      bool   `json:"clean"`
+	Ahead      int    `json:"ahead"`
+	Behind     int    `json:"behind"`
+	DirtyFiles int    `json:"dirty_files"`
+}
+
+// OverviewResponse is the body of GET /v1/overview — server-wide totals.
+type OverviewResponse struct {
+	TotalIslands      int     `json:"total_islands"`
+	Running           int     `json:"running"`
+	Hibernated        int     `json:"hibernated"`
+	Errored           int     `json:"errored"`
+	AttachedClients   int     `json:"attached_clients"`
+	MemoryUsageBytes  uint64  `json:"memory_usage_bytes"`
+	MemoryLimitBytes  uint64  `json:"memory_limit_bytes"`
+	CPUPercent        float64 `json:"cpu_percent"`
+	DaemonStartedAt   time.Time `json:"daemon_started_at"`
+	WebhookCount      int     `json:"webhook_count"`
 }
 
 // CreateIslandRequest is the body of POST /v1/islands.

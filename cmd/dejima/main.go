@@ -66,6 +66,7 @@ func newRootCmd() *cobra.Command {
 		newWebhookCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),
+		newOverviewCmd(),
 		newDoctorCmd(),
 	)
 	return cmd
@@ -856,6 +857,26 @@ func newStatusCmd() *cobra.Command {
 				fmt.Printf("memory:      %s / %s\n", humanBytes(info.Stats.MemoryUsageBytes), humanBytes(info.Stats.MemoryLimitBytes))
 				fmt.Printf("cpu:         %.1f%%\n", info.Stats.CPUPercent)
 			}
+			if info.AgentState != nil {
+				fmt.Printf("agent:       %s (%s ago)\n", info.AgentState.Latest, time.Since(info.AgentState.UpdatedAt).Round(time.Second))
+			}
+			if info.Git != nil {
+				clean := "dirty"
+				if info.Git.Clean {
+					clean = "clean"
+				}
+				fmt.Printf("git:         %s · %s", info.Git.Branch, clean)
+				if !info.Git.Clean {
+					fmt.Printf(" (%d files)", info.Git.DirtyFiles)
+				}
+				if info.Git.Ahead > 0 {
+					fmt.Printf(" · %d ahead", info.Git.Ahead)
+				}
+				if info.Git.Behind > 0 {
+					fmt.Printf(" · %d behind", info.Git.Behind)
+				}
+				fmt.Println()
+			}
 			if len(info.Attached) > 0 {
 				labels := make([]string, 0, len(info.Attached))
 				for _, a := range info.Attached {
@@ -863,6 +884,39 @@ func newStatusCmd() *cobra.Command {
 				}
 				fmt.Printf("attached:    %s\n", strings.Join(labels, ", "))
 			}
+			return nil
+		},
+	}
+}
+
+// --- overview ------------------------------------------------------------
+
+func newOverviewCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "overview",
+		Short: "Server-wide totals: islands, memory, cpu, daemon uptime.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			o, err := c.Overview(cmd.Context())
+			if err != nil {
+				return err
+			}
+			fmt.Printf("islands:     %d (%d running · %d hibernated · %d errored)\n",
+				o.TotalIslands, o.Running, o.Hibernated, o.Errored)
+			fmt.Printf("attached:    %d client(s) across all islands\n", o.AttachedClients)
+			if o.MemoryUsageBytes > 0 {
+				fmt.Printf("memory:      %s used\n", humanBytes(o.MemoryUsageBytes))
+			}
+			if o.CPUPercent > 0 {
+				fmt.Printf("cpu:         %.1f%% (total across running islands)\n", o.CPUPercent)
+			}
+			fmt.Printf("webhooks:    %d subscription(s)\n", o.WebhookCount)
+			fmt.Printf("daemon up:   %s (since %s)\n",
+				time.Since(o.DaemonStartedAt).Round(time.Second),
+				o.DaemonStartedAt.Local().Format(time.RFC3339))
 			return nil
 		},
 	}

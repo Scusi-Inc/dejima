@@ -275,6 +275,24 @@ func (c *Client) ClientHistory(ctx context.Context) ([]ClientHistoryEntry, error
 	return out, nil
 }
 
+// Overview returns server-wide aggregates.
+func (c *Client) Overview(ctx context.Context) (*OverviewResponse, error) {
+	var out OverviewResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/overview", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// IslandEvents returns the recent event log for one island.
+func (c *Client) IslandEvents(ctx context.Context, name string) ([]events.Event, error) {
+	var out []events.Event
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+name+"/events", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DialSession opens a websocket against the daemon's session endpoint and
 // returns the underlying connection.
 func (c *Client) DialSession(ctx context.Context, name, label string) (*websocket.Conn, error) {
