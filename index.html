@@ -107,7 +107,7 @@
 <section class="usecases">
   <a class="usecase" href="#home-server">
     <h3>Run agents on your own server</h3>
-    <p>Managing multiple Claude Code (or other agent) sessions over tmux + ssh is hostile UX. Session names you forget. Context bleed across projects. Lost windows.</p>
+    <p>Managing multiple Claude Code or Codex sessions over tmux + ssh is hostile UX. Session names you forget. Context bleed across projects. Lost windows.</p>
     <span class="cta">Home server →</span>
   </a>
   <a class="usecase" href="#api-builder">
@@ -182,7 +182,7 @@ dejimad --tcp :7273
   <tr><td>Persistent execution across disconnects</td><td>✗</td><td>✓</td><td>✓</td><td><strong>✓</strong></td></tr>
   <tr><td>Multi-device shared session</td><td>✗</td><td>manual</td><td>web only</td><td><strong>✓</strong></td></tr>
   <tr><td>Self-hosted, your hardware</td><td>✓</td><td>✓</td><td>✗</td><td><strong>✓</strong></td></tr>
-  <tr><td>Agent-agnostic (Claude / Codex / custom)</td><td>✓</td><td>✓</td><td>✗</td><td><strong>✓</strong></td></tr>
+  <tr><td>Claude Code + Codex bundled (others via custom image)</td><td>n/a</td><td>n/a</td><td>✗</td><td><strong>✓</strong></td></tr>
   <tr><td>API for third-party integrations</td><td>✗</td><td>✗</td><td>vendor-only</td><td><strong>✓</strong></td></tr>
 </table>
 <p class="small">Dejima isn't a replacement for tmux — it uses tmux inside each island. It's the layer above that adds isolation, lifecycle verbs (<code>hibernate</code> / <code>reset</code>), webhook events, and the cross-device API.</p>

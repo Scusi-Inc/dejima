@@ -82,6 +82,15 @@ func HostClaudeDir() (string, error) {
 	return filepath.Join(home, ".claude"), nil
 }
 
+// HostCodexDir returns the user's ~/.codex dir (may not exist).
+func HostCodexDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codex"), nil
+}
+
 // HostGitConfig returns the user's ~/.gitconfig path (may not exist).
 func HostGitConfig() (string, error) {
 	home, err := os.UserHomeDir()

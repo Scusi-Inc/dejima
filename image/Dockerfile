@@ -40,8 +40,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Claude Code (default agent for v1). Other agents installed by their shims.
-RUN npm install -g @anthropic-ai/claude-code
+# Bundled agents. Both are npm-distributed CLI agents that talk to their
+# respective vendor APIs. Other agents (Aider, Goose, etc.) are supported
+# via a custom image — see docs/custom-agents.md.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 # Non-root user.
 RUN useradd -m -s /bin/bash -u 1000 dejima \

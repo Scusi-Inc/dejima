@@ -297,7 +297,7 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		},
 		Volumes: []runtime.VolumeMount{
 			{Name: p.WorkspaceVolume(), Target: "/workspace"},
-			{Name: p.AgentVolume(), Target: "/home/dejima/.claude"},
+			{Name: p.AgentVolume(), Target: agentStateMountTarget(p.Agent)},
 		},
 		BindMounts:  binds,
 		Memory:      p.Resources.Memory,
@@ -482,6 +482,20 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	return info
 }
 
+// agentStateMountTarget returns the container path where the agent volume should
+// be mounted, based on which agent the project runs. Each agent has its own
+// conventional state dir.
+func agentStateMountTarget(agent string) string {
+	switch agent {
+	case "codex":
+		return "/home/dejima/.codex"
+	case "claude-code", "":
+		return "/home/dejima/.claude"
+	default:
+		return "/home/dejima/.agent-state"
+	}
+}
+
 // credentialBindMounts assembles the host paths to mount read-only into the island.
 // Missing paths are silently skipped so users without `gh` configured can still init.
 func credentialBindMounts() ([]runtime.BindMount, error) {
@@ -501,6 +515,15 @@ func credentialBindMounts() ([]runtime.BindMount, error) {
 		if _, statErr := os.Stat(claudeDir); statErr == nil {
 			binds = append(binds, runtime.BindMount{
 				HostPath: claudeDir, ContainerPath: "/opt/host/claude", ReadOnly: true,
+			})
+		}
+	}
+
+	codexDir, err := paths.HostCodexDir()
+	if err == nil {
+		if _, statErr := os.Stat(codexDir); statErr == nil {
+			binds = append(binds, runtime.BindMount{
+				HostPath: codexDir, ContainerPath: "/opt/host/codex", ReadOnly: true,
 			})
 		}
 	}

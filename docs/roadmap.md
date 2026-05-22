@@ -16,6 +16,7 @@ The v1 vertical slice. Buildable, testable. Real-world dogfood pending.
 - [x] M3 — Multi-attach session via websocket API + presence
 - [x] M4 — Service install (launchd/systemd); Tailscale-pinned TCP listener; webhooks; per-agent shims (Claude Code installed)
 - [x] M5 — Resource caps; `exec` / `cp` / `logs` access verbs; multi-agent disambiguation
+- [x] **Codex CLI as a bundled agent** — second agent shim, per-agent state volume mount, honest "agent-agnostic" claim
 - [~] M6 — Dogfood on Mac mini for one week; document rough edges
 
 ---

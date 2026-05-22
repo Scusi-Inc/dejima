@@ -51,8 +51,12 @@ fi
 cd "$WORKSPACE"
 
 # --- agent command --------------------------------------------------------
+# Each known agent maps to its binary + any flags needed when running inside a
+# container. Codex's own OS-level sandboxing (Seatbelt/Landlock) doesn't apply
+# inside Docker, so we disable it and rely on the container as the sandbox.
 case "$AGENT" in
     claude-code) AGENT_CMD="claude" ;;
+    codex)       AGENT_CMD="codex --sandbox-policy=no-sandbox" ;;
     *)           AGENT_CMD="${AGENT}" ;;
 esac
 
