@@ -33,7 +33,10 @@ prompt_yn() {
     local reply
     read -r -p "$prompt [Y/n] " reply
     reply=${reply:-$default}
-    [[ "${reply,,}" == "y" || "${reply,,}" == "yes" ]]
+    case "$reply" in
+        [Yy]|[Yy][Ee][Ss]) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 OS=$(uname -s)
