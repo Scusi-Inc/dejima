@@ -63,40 +63,82 @@ else
     warn "Docker is not installed"
     if [[ "$OS" == "Darwin" ]]; then
         if command -v brew >/dev/null 2>&1; then
-            info "Docker Desktop is the recommended default: free for personal use and"
-            info "small businesses (<250 employees AND <\$10M revenue), familiar everywhere."
-            info ""
-            info "Alternatives, if you'd rather install one of these yourself first:"
-            info "  • OrbStack  — faster on Apple Silicon, but free tier is personal/non-commercial only"
-            info "                (brew install --cask orbstack)"
-            info "  • colima    — CLI-only, OSS, free for any use"
-            info "                (brew install colima docker  →  colima start)"
-            info ""
-            if prompt_yn "Install Docker Desktop now via Homebrew?" "y"; then
-                info "Running: brew install --cask docker"
-                brew install --cask docker || {
-                    fail "brew install --cask docker failed (Gatekeeper or a previous install may be involved)"
-                    info "If install dropped to /Applications/Docker.app, just open it once to finish setup."
-                    info "Otherwise: download from https://www.docker.com/products/docker-desktop/ and re-run setup."
-                    exit 1
-                }
-                info "Now open /Applications/Docker.app once to grant macOS permissions."
-                info "Setup will wait up to 90s for the Docker daemon to come up."
-                for _ in $(seq 1 90); do
+            # SSH context detection — Docker Desktop and OrbStack both require
+            # a GUI first-launch click. From SSH, the user can't grant that
+            # permission; colima is the only sane default for headless setups.
+            is_ssh=0
+            if [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_TTY:-}" ]]; then
+                is_ssh=1
+            fi
+
+            if [[ "$is_ssh" == "1" ]]; then
+                info "You're connected over SSH — Docker Desktop and OrbStack need a GUI"
+                info "first-launch click that you can't grant remotely. Recommending colima"
+                info "(CLI-only, OSS, no GUI needed)."
+                info ""
+                info "If you'd rather use Docker Desktop, exit and either:"
+                info "  • VNC into this Mac and open /Applications/Docker.app, OR"
+                info "  • Install Docker Desktop physically at the Mac mini's console."
+                info ""
+                if prompt_yn "Install colima + docker CLI now via Homebrew?" "y"; then
+                    info "Running: brew install colima docker"
+                    brew install colima docker || {
+                        fail "brew install colima docker failed"
+                        exit 1
+                    }
+                    info "Starting colima (downloads a small Linux VM the first time; ~1 min)…"
+                    colima start || {
+                        fail "colima start failed"
+                        info "Try `colima delete && colima start` to reset, then re-run scripts/setup.sh."
+                        exit 1
+                    }
                     if docker version >/dev/null 2>&1; then
-                        ok "Docker is now reachable"
-                        break
+                        ok "Docker is now reachable (via colima)"
+                    else
+                        fail "colima started but `docker version` is not reachable"
+                        info "Check `colima status` and re-run scripts/setup.sh."
+                        exit 1
                     fi
-                    sleep 1
-                done
-                if ! docker version >/dev/null 2>&1; then
-                    fail "Docker still not reachable after 90s"
-                    info "Launch Docker Desktop manually, then re-run scripts/setup.sh"
+                else
+                    info "Set up your preferred Docker runtime, then re-run scripts/setup.sh"
                     exit 1
                 fi
             else
-                info "Install your preferred Docker runtime, then re-run scripts/setup.sh"
-                exit 1
+                info "Docker Desktop is the recommended default: free for personal use and"
+                info "small businesses (<250 employees AND <\$10M revenue), familiar everywhere."
+                info ""
+                info "Alternatives, if you'd rather install one of these yourself first:"
+                info "  • OrbStack  — faster on Apple Silicon, but free tier is personal/non-commercial only"
+                info "                (brew install --cask orbstack)"
+                info "  • colima    — CLI-only, OSS, free for any use"
+                info "                (brew install colima docker  →  colima start)"
+                info ""
+                if prompt_yn "Install Docker Desktop now via Homebrew?" "y"; then
+                    info "Running: brew install --cask docker"
+                    brew install --cask docker || {
+                        fail "brew install --cask docker failed (Gatekeeper or a previous install may be involved)"
+                        info "If install dropped to /Applications/Docker.app, just open it once to finish setup."
+                        info "Otherwise: download from https://www.docker.com/products/docker-desktop/ and re-run setup."
+                        exit 1
+                    }
+                    info "Now open /Applications/Docker.app once to grant macOS permissions."
+                    info "Setup will wait up to 90s for the Docker daemon to come up."
+                    for _ in $(seq 1 90); do
+                        if docker version >/dev/null 2>&1; then
+                            ok "Docker is now reachable"
+                            break
+                        fi
+                        sleep 1
+                    done
+                    if ! docker version >/dev/null 2>&1; then
+                        fail "Docker still not reachable after 90s"
+                        info "Launch Docker Desktop manually, then re-run scripts/setup.sh"
+                        exit 1
+                    fi
+                else
+                    info "Install your preferred Docker runtime, then re-run scripts/setup.sh"
+                    exit 1
+                fi
             fi
         else
             fail "Homebrew not found and Docker not installed"
