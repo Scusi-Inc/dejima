@@ -49,8 +49,25 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Version:       version.Version,
-		// No-args → interactive TUI dashboard. Verbs continue to work for scripting.
+		// No-args → first-run wizard (if not dismissed) or interactive TUI.
+		// Verbs continue to work for scripting.
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !onboardingDismissed() {
+				continueToTUI, err := firstRunPrompt(cmd.Context())
+				if err != nil {
+					return err
+				}
+				if !continueToTUI {
+					return nil
+				}
+			}
+			// Refuse to open the TUI when there's no real terminal —
+			// piped stdin / cron / `dejima | head` etc.
+			if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+				fmt.Fprintln(os.Stderr, "dejima (no args) opens the interactive TUI, which needs a real terminal.")
+				fmt.Fprintln(os.Stderr, "Try `dejima ls` for a scriptable view, or `dejima --help` for all verbs.")
+				return nil
+			}
 			return runTUI(cmd.Context())
 		},
 	}
@@ -72,6 +89,7 @@ func newRootCmd() *cobra.Command {
 		newClientsCmd(),
 		newOverviewCmd(),
 		newDoctorCmd(),
+		newOnboardCmd(),
 		newTUICmd(),
 	)
 	return cmd

@@ -4,7 +4,7 @@
 
 <h1 align="center">Dejima</h1>
 
-<p align="center"><em>The substrate for multi-device agent workflows.</em></p>
+<p align="center"><em>The secure substrate for multi-device, multi-agent workflows.</em></p>
 
 ---
 
@@ -149,6 +149,14 @@ dejima doctor
 
 Reports daemon / Docker / image / Tailscale / project / webhook health with actionable fix hints. Exits non-zero on failure so it composes with scripts.
 
+### Re-engage the setup wizard anytime
+
+```bash
+dejima onboard
+```
+
+Detects what's already on the machine, asks what you're trying to do (server install / client-only / both / just exploring), and prints a tailored set of commands. Also fires automatically the first time you run `dejima` with no args — say "never" if you don't want it again, "not now" if you want it to ask later.
+
 ## Quickstart
 
 ```bash
@@ -224,6 +232,7 @@ dejima exec      Run a one-shot command inside an island.
 dejima cp        Copy files in or out of an island.
 dejima logs      Tail an island's container logs (--follow).
 dejima doctor    Health check: daemon, Docker, image, projects, networks, webhooks.
+dejima onboard   Walk through Dejima setup; safe to re-run.
 dejima service   Install / uninstall dejimad as a host service (--notify <url>).
 dejima webhook   Subscribe a URL to receive state-change events.
 ```
