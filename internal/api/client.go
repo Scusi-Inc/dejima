@@ -257,6 +257,24 @@ func (c *Client) UnsubscribeWebhook(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/events/subscriptions/"+id, nil, nil)
 }
 
+// RevokeAllSessions drops every active client websocket. Returns the count.
+func (c *Client) RevokeAllSessions(ctx context.Context) (int, error) {
+	var out struct{ Revoked int `json:"revoked"` }
+	if err := c.do(ctx, http.MethodPost, "/v1/sessions/revoke", nil, &out); err != nil {
+		return 0, err
+	}
+	return out.Revoked, nil
+}
+
+// ClientHistory returns the daemon's in-memory attach/detach history.
+func (c *Client) ClientHistory(ctx context.Context) ([]ClientHistoryEntry, error) {
+	var out []ClientHistoryEntry
+	if err := c.do(ctx, http.MethodGet, "/v1/clients", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DialSession opens a websocket against the daemon's session endpoint and
 // returns the underlying connection.
 func (c *Client) DialSession(ctx context.Context, name, label string) (*websocket.Conn, error) {

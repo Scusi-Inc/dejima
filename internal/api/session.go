@@ -26,27 +26,45 @@ type PresenceEntry struct {
 	JoinedAt time.Time `json:"joined_at"`
 }
 
+// ClientHistoryEntry is one row in the recent-clients ring buffer.
+type ClientHistoryEntry struct {
+	Label      string    `json:"label"`
+	Island     string    `json:"island"`
+	AttachedAt time.Time `json:"attached_at"`
+	DetachedAt time.Time `json:"detached_at,omitempty"`
+}
+
 // presenceTracker is the per-island registry of attached clients.
 type presenceTracker struct {
 	mu      sync.Mutex
-	clients map[*presenceHandle]PresenceEntry
+	clients map[*presenceHandle]presenceRecord
 }
 
 type presenceHandle struct{}
 
-func newPresenceTracker() *presenceTracker {
-	return &presenceTracker{clients: map[*presenceHandle]PresenceEntry{}}
+// presenceRecord pairs a presence entry with a cancel function so `dejima
+// sessions revoke` can forcibly drop the underlying websocket.
+type presenceRecord struct {
+	Entry  PresenceEntry
+	Cancel context.CancelFunc
 }
 
-func (p *presenceTracker) Attach(label string) (*presenceHandle, []PresenceEntry) {
+func newPresenceTracker() *presenceTracker {
+	return &presenceTracker{clients: map[*presenceHandle]presenceRecord{}}
+}
+
+func (p *presenceTracker) Attach(label string, cancel context.CancelFunc) (*presenceHandle, []PresenceEntry) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	others := make([]PresenceEntry, 0, len(p.clients))
-	for _, e := range p.clients {
-		others = append(others, e)
+	for _, r := range p.clients {
+		others = append(others, r.Entry)
 	}
 	h := &presenceHandle{}
-	p.clients[h] = PresenceEntry{Label: label, JoinedAt: time.Now().UTC()}
+	p.clients[h] = presenceRecord{
+		Entry:  PresenceEntry{Label: label, JoinedAt: time.Now().UTC()},
+		Cancel: cancel,
+	}
 	return h, others
 }
 
@@ -60,10 +78,25 @@ func (p *presenceTracker) Snapshot() []PresenceEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	out := make([]PresenceEntry, 0, len(p.clients))
-	for _, e := range p.clients {
-		out = append(out, e)
+	for _, r := range p.clients {
+		out = append(out, r.Entry)
 	}
 	return out
+}
+
+// RevokeAll signals all currently-attached clients to disconnect.
+func (p *presenceTracker) RevokeAll() int {
+	p.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(p.clients))
+	for _, r := range p.clients {
+		cancels = append(cancels, r.Cancel)
+	}
+	count := len(cancels)
+	p.mu.Unlock()
+	for _, c := range cancels {
+		c()
+	}
+	return count
 }
 
 // SessionEnvelope is the JSON framing on the websocket. Three message types:
@@ -126,8 +159,14 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
+	// Per-session cancel so `dejima sessions revoke` can forcibly drop us.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
 	tracker := s.trackerFor(name)
-	handle, others := tracker.Attach(label)
+	handle, others := tracker.Attach(label, cancel)
+	attachedAt := time.Now().UTC()
+	s.recordClientHistory(ClientHistoryEntry{Label: label, Island: name, AttachedAt: attachedAt})
 	s.emit(events.Event{
 		Type:    events.TypeClientAttached,
 		Island:  name,
@@ -135,6 +174,9 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	})
 	defer func() {
 		tracker.Detach(handle)
+		s.recordClientHistory(ClientHistoryEntry{
+			Label: label, Island: name, AttachedAt: attachedAt, DetachedAt: time.Now().UTC(),
+		})
 		s.emit(events.Event{
 			Type:    events.TypeClientDetached,
 			Island:  name,
@@ -145,19 +187,17 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	sess, err := bridge.AttachToTmux(r.Context(), "docker", p.ContainerName(), tmuxSession)
+	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxSession)
 	if err != nil {
-		_ = sendEnvelope(r.Context(), conn, SessionEnvelope{Type: "error", B64: err.Error()})
+		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
 		return
 	}
 	defer sess.Close()
 
 	// Send initial hello with the existing client list.
-	_ = sendEnvelope(r.Context(), conn, SessionEnvelope{Type: "hello", Attached: others})
+	_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "hello", Attached: others})
 
 	// PTY → websocket pump.
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
 	go func() {
 		buf := make([]byte, 4096)
 		for {

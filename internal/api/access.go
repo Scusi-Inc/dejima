@@ -143,6 +143,17 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleRevokeSessions drops every active client websocket.
+func (s *Server) handleRevokeSessions(w http.ResponseWriter, _ *http.Request) {
+	count := s.RevokeAllSessions()
+	writeJSON(w, http.StatusOK, map[string]int{"revoked": count})
+}
+
+// handleClientHistory returns the recent attach/detach events (newest first).
+func (s *Server) handleClientHistory(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.ClientHistory())
+}
+
 var (
 	errCmdEmpty = staticErr("cmd is required and must be non-empty")
 )

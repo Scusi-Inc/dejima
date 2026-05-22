@@ -33,17 +33,62 @@ type Server struct {
 	locks    map[string]*sync.Mutex // per-island
 	presence map[string]*presenceTracker
 	events   *events.Manager
+
+	// In-memory ring buffer of recent attach/detach events. Bounded so the
+	// daemon never accumulates client history indefinitely. Not persisted —
+	// daemon restart loses it. Surveillance-free by design.
+	historyMu   sync.Mutex
+	historyRing []ClientHistoryEntry
+	historyCap  int
 }
 
 // NewServer constructs a server backed by the given runtime.
 func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server {
 	return &Server{
-		rt:       rt,
-		log:      log,
-		locks:    map[string]*sync.Mutex{},
-		presence: map[string]*presenceTracker{},
-		events:   ev,
+		rt:         rt,
+		log:        log,
+		locks:      map[string]*sync.Mutex{},
+		presence:   map[string]*presenceTracker{},
+		events:     ev,
+		historyCap: 200,
 	}
+}
+
+// recordClientHistory appends an attach/detach event to the ring buffer.
+func (s *Server) recordClientHistory(e ClientHistoryEntry) {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+	s.historyRing = append(s.historyRing, e)
+	if len(s.historyRing) > s.historyCap {
+		s.historyRing = s.historyRing[len(s.historyRing)-s.historyCap:]
+	}
+}
+
+// ClientHistory returns the most recent attach/detach events (newest first).
+func (s *Server) ClientHistory() []ClientHistoryEntry {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+	out := make([]ClientHistoryEntry, len(s.historyRing))
+	for i, e := range s.historyRing {
+		out[len(s.historyRing)-1-i] = e
+	}
+	return out
+}
+
+// RevokeAllSessions drops every active websocket client across every island.
+// Returns the count of clients that were signaled.
+func (s *Server) RevokeAllSessions() int {
+	s.mu.Lock()
+	trackers := make([]*presenceTracker, 0, len(s.presence))
+	for _, t := range s.presence {
+		trackers = append(trackers, t)
+	}
+	s.mu.Unlock()
+	total := 0
+	for _, t := range trackers {
+		total += t.RevokeAll()
+	}
+	return total
 }
 
 // emit fans an event out to webhook subscribers. Safe to call when events is nil.
@@ -70,6 +115,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/events/subscribe", s.subscribeWebhook)
 	mux.HandleFunc("DELETE /v1/events/subscriptions/{id}", s.unsubscribeWebhook)
 	mux.HandleFunc("POST /v1/internal/agent-event", s.handleAgentEvent)
+	mux.HandleFunc("POST /v1/sessions/revoke", s.handleRevokeSessions)
+	mux.HandleFunc("GET /v1/clients", s.handleClientHistory)
 	mux.HandleFunc("POST /v1/islands/{name}/exec", s.handleExec)
 	mux.HandleFunc("GET /v1/islands/{name}/files/{path...}", s.handleReadFile)
 	mux.HandleFunc("PUT /v1/islands/{name}/files/{path...}", s.handleWriteFile)

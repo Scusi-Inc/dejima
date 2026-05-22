@@ -64,9 +64,85 @@ func newRootCmd() *cobra.Command {
 		newLogsCmd(),
 		newServiceCmd(),
 		newWebhookCmd(),
+		newLogoutAllCmd(),
+		newClientsCmd(),
 		newDoctorCmd(),
 	)
 	return cmd
+}
+
+// --- logout-all ----------------------------------------------------------
+
+func newLogoutAllCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "logout-all",
+		Short: "Drop every active client session across all islands.",
+		Long: "Forcibly disconnects every websocket attached to any island's session. " +
+			"Useful if you suspect an unfamiliar device is attached, or after losing a device. " +
+			"Containers and agent processes keep running; only the client connections are revoked.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !force {
+				fmt.Print("Drop every active session on this host? [y/N]: ")
+				var confirm string
+				_, _ = fmt.Scanln(&confirm)
+				if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+					return fmt.Errorf("aborted")
+				}
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			count, err := c.RevokeAllSessions(cmd.Context())
+			if err != nil {
+				return err
+			}
+			fmt.Printf("revoked %d session(s)\n", count)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation")
+	return cmd
+}
+
+// --- clients --------------------------------------------------------------
+
+func newClientsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "clients",
+		Short: "Show recent attach/detach history across all islands.",
+		Long: "Surfaces in-memory history of which clients have attached, when, and to which " +
+			"island. History is bounded and lives only in the daemon (lost on restart) — " +
+			"not a persistent audit log.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			entries, err := c.ClientHistory(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if len(entries) == 0 {
+				fmt.Println("no client connections recorded since the daemon started")
+				return nil
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "WHEN\tCLIENT\tISLAND\tACTION")
+			for _, e := range entries {
+				when := e.AttachedAt
+				action := "attached"
+				if !e.DetachedAt.IsZero() {
+					when = e.DetachedAt
+					action = "detached"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+					when.Local().Format("2006-01-02 15:04:05"), e.Label, e.Island, action)
+			}
+			return tw.Flush()
+		},
+	}
 }
 
 // --- exec -----------------------------------------------------------------
@@ -192,11 +268,12 @@ func newServiceCmd() *cobra.Command {
 		Short: "Install or uninstall dejimad as a host service.",
 	}
 	var notifyURL, notifySecret string
+	var skipNotifyPrompt bool
 	installCmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install dejimad as a launchd (macOS) or systemd-user (Linux) service.",
 		Long: "Registers dejimad with the host service manager so it survives reboots. " +
-			"Optionally subscribes a webhook for state-change notifications in the same step.",
+			"Interactively prompts for a notification webhook URL (recommended) if one isn't provided.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr, err := serviceMgr()
 			if err != nil {
@@ -205,6 +282,19 @@ func newServiceCmd() *cobra.Command {
 			bin, err := resolveDaemonBinary()
 			if err != nil {
 				return err
+			}
+			// Interactive notify prompt: only when we have a TTY, no flag, and
+			// the user didn't explicitly opt out.
+			if notifyURL == "" && !skipNotifyPrompt && term.IsTerminal(int(os.Stdin.Fd())) {
+				fmt.Println("Set a notification webhook? (Recommended — get a push whenever any device")
+				fmt.Println("connects to one of your islands. Awareness without surveillance.)")
+				fmt.Println("  Examples:")
+				fmt.Println("    https://ntfy.sh/your-private-topic   (free phone push via ntfy app)")
+				fmt.Println("    https://hooks.slack.com/...          (Slack incoming webhook)")
+				fmt.Print("URL [skip]: ")
+				var input string
+				_, _ = fmt.Scanln(&input)
+				notifyURL = strings.TrimSpace(input)
 			}
 			if err := mgr.Install(bin); err != nil {
 				return err
@@ -217,12 +307,16 @@ func newServiceCmd() *cobra.Command {
 				} else {
 					fmt.Printf("subscribed webhook: %s\n", notifyURL)
 				}
+			} else {
+				fmt.Println("no notification webhook configured.")
+				fmt.Println("  set one later: dejima webhook subscribe --url <url>")
 			}
 			return nil
 		},
 	}
-	installCmd.Flags().StringVar(&notifyURL, "notify", "", "auto-subscribe this webhook URL after install (e.g. https://ntfy.sh/your-topic)")
+	installCmd.Flags().StringVar(&notifyURL, "notify", "", "auto-subscribe this webhook URL after install")
 	installCmd.Flags().StringVar(&notifySecret, "notify-secret", "", "HMAC secret for the auto-subscribed webhook")
+	installCmd.Flags().BoolVar(&skipNotifyPrompt, "no-notify-prompt", false, "skip the interactive notification prompt")
 	cmd.AddCommand(
 		installCmd,
 		&cobra.Command{
