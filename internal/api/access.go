@@ -165,9 +165,15 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	out := OverviewResponse{
 		TotalIslands:    len(projects),
 		DaemonStartedAt: s.startedAt,
+		IslandImage:     DefaultImage,
 	}
 	if s.events != nil {
 		out.WebhookCount = len(s.events.List())
+	}
+	// Single Docker query that probes both reachability and image presence.
+	if exists, err := s.rt.ImageExists(r.Context(), DefaultImage); err == nil {
+		out.DockerReachable = true
+		out.IslandImagePresent = exists
 	}
 	for _, p := range projects {
 		status, _ := s.rt.Status(r.Context(), p.ContainerName())

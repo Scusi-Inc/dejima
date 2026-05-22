@@ -506,22 +506,47 @@ func (m tuiModel) renderDetail(_ int) string {
 
 func (m tuiModel) renderFooter() string {
 	keys := "[↑/↓] nav   [⏎] connect   [h] hibernate   [w] wake   [r] reset   [d] purge   [R] refresh   [q] quit"
-	o := m.overview
-	left := ""
-	if o != nil {
-		left = fmt.Sprintf("%d islands · %d running · %d hibernated", o.TotalIslands, o.Running, o.Hibernated)
-		if o.MemoryUsageBytes > 0 {
-			left += fmt.Sprintf(" · %s", humanBytes(o.MemoryUsageBytes))
-		}
-	}
-	if m.lastError != "" {
-		left = styleErrored.Render("⚠ " + truncate(m.lastError, 60))
-	}
+	left := m.renderFooterLeft()
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(keys) - 2
 	if pad < 1 {
 		pad = 1
 	}
-	return " " + styleMuted.Render(left) + strings.Repeat(" ", pad) + styleFooter.Render(keys)
+	return " " + left + strings.Repeat(" ", pad) + styleFooter.Render(keys)
+}
+
+// renderFooterLeft assembles the substrate-health strip + island totals (or
+// the last error if the daemon has gone unreachable).
+func (m tuiModel) renderFooterLeft() string {
+	if m.lastError != "" {
+		return styleErrored.Render("⚠ " + truncate(m.lastError, 60))
+	}
+	o := m.overview
+	if o == nil {
+		return styleMuted.Render("loading…")
+	}
+	dockerGlyph := healthGlyph(o.DockerReachable)
+	imageGlyph := healthGlyph(o.IslandImagePresent)
+	parts := []string{
+		dockerGlyph + " " + styleMuted.Render("docker"),
+		imageGlyph + " " + styleMuted.Render("image"),
+		styleMuted.Render(fmt.Sprintf("%d islands · %d running · %d hibernated",
+			o.TotalIslands, o.Running, o.Hibernated)),
+	}
+	if o.MemoryUsageBytes > 0 {
+		parts = append(parts, styleMuted.Render(humanBytes(o.MemoryUsageBytes)))
+	}
+	if o.WebhookCount > 0 {
+		parts = append(parts, styleMuted.Render(fmt.Sprintf("%d webhook(s)", o.WebhookCount)))
+	}
+	return strings.Join(parts, styleMuted.Render(" · "))
+}
+
+// healthGlyph picks the right colored bullet for a boolean health signal.
+func healthGlyph(ok bool) string {
+	if ok {
+		return styleRunning.Render("●")
+	}
+	return styleErrored.Render("✗")
 }
 
 func (m tuiModel) renderConfirm() string {

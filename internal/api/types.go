@@ -44,18 +44,22 @@ type GitInfo struct {
 	DirtyFiles int    `json:"dirty_files"`
 }
 
-// OverviewResponse is the body of GET /v1/overview — server-wide totals.
+// OverviewResponse is the body of GET /v1/overview — server-wide totals
+// plus substrate health (Docker reachable, island image present).
 type OverviewResponse struct {
-	TotalIslands      int     `json:"total_islands"`
-	Running           int     `json:"running"`
-	Hibernated        int     `json:"hibernated"`
-	Errored           int     `json:"errored"`
-	AttachedClients   int     `json:"attached_clients"`
-	MemoryUsageBytes  uint64  `json:"memory_usage_bytes"`
-	MemoryLimitBytes  uint64  `json:"memory_limit_bytes"`
-	CPUPercent        float64 `json:"cpu_percent"`
-	DaemonStartedAt   time.Time `json:"daemon_started_at"`
-	WebhookCount      int     `json:"webhook_count"`
+	TotalIslands       int       `json:"total_islands"`
+	Running            int       `json:"running"`
+	Hibernated         int       `json:"hibernated"`
+	Errored            int       `json:"errored"`
+	AttachedClients    int       `json:"attached_clients"`
+	MemoryUsageBytes   uint64    `json:"memory_usage_bytes"`
+	MemoryLimitBytes   uint64    `json:"memory_limit_bytes"`
+	CPUPercent         float64   `json:"cpu_percent"`
+	DaemonStartedAt    time.Time `json:"daemon_started_at"`
+	WebhookCount       int       `json:"webhook_count"`
+	DockerReachable    bool      `json:"docker_reachable"`
+	IslandImagePresent bool      `json:"island_image_present"`
+	IslandImage        string    `json:"island_image,omitempty"`
 }
 
 // CreateIslandRequest is the body of POST /v1/islands.

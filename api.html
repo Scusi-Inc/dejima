@@ -314,7 +314,7 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
 <!-- ============================================================ -->
 <h2 id="overview">Server overview</h2>
 
-<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/overview</span><span class="desc">Server-wide totals</span></div>
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/overview</span><span class="desc">Server-wide totals + substrate health</span></div>
 <pre><code>{
   "total_islands": 4,
   "running": 3,
@@ -325,9 +325,12 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
   "memory_limit_bytes": 8589934592,
   "cpu_percent": 14.2,
   "daemon_started_at": "2026-05-22T08:00:00Z",
-  "webhook_count": 1
+  "webhook_count": 1,
+  "docker_reachable": true,
+  "island_image_present": true,
+  "island_image": "dejima/island:latest"
 }</code></pre>
-<p>Used by the TUI's footer and <code>dejima overview</code>. Cheap to call; good for dashboards.</p>
+<p>Used by the TUI's footer health strip and <code>dejima overview</code>. The two <code>*_reachable</code>/<code>*_present</code> booleans are a cheap "is the substrate healthy?" probe — Dispatch (and other clients) can poll this every few seconds and surface a red badge when either turns false.</p>
 
 <div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/healthz</span><span class="desc">Liveness</span></div>
 <p><code>{ "status": "ok" }</code> when the daemon is reachable. Use to check whether <code>dejimad</code> is up before issuing real calls.</p>
