@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dejima — the substrate for multi-device agent workflows</title>
-<meta name="description" content="OSS containment layer for AI coding agents. One island per project. Multi-device sessions. Self-hosted on your Mac mini or Linux box.">
+<meta name="description" content="Run multiple AI coding agents on your own server in isolated containers. Manage them with a clean CLI, drive them from any device, or build a product on top of the API.">
 <meta property="og:title" content="Dejima">
-<meta property="og:description" content="The substrate for multi-device agent workflows. Self-hosted, agent-agnostic, isolated by project.">
+<meta property="og:description" content="OSS substrate for running AI coding agents on your own infrastructure. Per-project containers, multi-device sessions, brokered API.">
 <meta property="og:image" content="https://raw.githubusercontent.com/aoos/dejima/master/assets/logo.png">
 <style>
   :root {
@@ -17,19 +17,22 @@
     --code-bg: #0a172d;
     --border: #1c3358;
     --hover: #fff;
+    --card-hover-bg: #122443;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
     font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased; }
-  main { max-width: 760px; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
-  header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2.5rem; }
+  main { max-width: 800px; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+  header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2rem; }
   header img { width: 64px; height: 64px; flex-shrink: 0; }
   header h1 { font-size: 2.4rem; margin: 0; letter-spacing: -0.025em; font-weight: 700; }
   .tagline { color: var(--muted); margin-top: 0.1rem; font-size: 1.05rem; }
   section { margin-bottom: 3rem; }
-  h2 { font-size: 0.85rem; margin: 2.8rem 0 1rem; text-transform: uppercase;
-    letter-spacing: 0.1em; color: var(--muted); font-weight: 600; }
+  h2 { font-size: 0.85rem; margin: 3rem 0 1rem; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted); font-weight: 600;
+    scroll-margin-top: 1.5rem; }
+  h3 { font-size: 1.15rem; margin: 1.8rem 0 0.6rem; font-weight: 600; }
   p { margin: 0.7rem 0; }
   pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
     padding: 1rem 1.25rem; overflow-x: auto; font-size: 0.92rem; line-height: 1.5; }
@@ -55,8 +58,29 @@
     border-radius: 999px; font-size: 0.75rem; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.05em; }
   .historical { color: var(--muted); border-left: 2px solid var(--border);
-    padding-left: 1rem; margin: -1rem 0 2.5rem; font-size: 0.95rem; }
+    padding-left: 1rem; margin: -0.5rem 0 2rem; font-size: 0.95rem; }
   .historical em { color: var(--muted); }
+  .plain { color: var(--accent); font-style: italic; }
+  .pain { background: var(--code-bg); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); padding: 1rem 1.25rem; border-radius: 4px;
+    color: var(--fg); font-size: 0.95rem; margin: 1.2rem 0; }
+  .usecases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem;
+    margin: 1.5rem 0 0; }
+  .usecase { display: flex; flex-direction: column; justify-content: space-between;
+    background: transparent; border: 1px solid var(--border); border-radius: 8px;
+    padding: 1.2rem 1.1rem; text-decoration: none; color: var(--fg);
+    transition: background 0.15s, border-color 0.15s, transform 0.15s; }
+  .usecase:hover { background: var(--card-hover-bg); border-color: var(--accent);
+    transform: translateY(-1px); }
+  .usecase h3 { margin: 0 0 0.4rem; font-size: 1.0rem; line-height: 1.35; color: var(--hover); }
+  .usecase p { margin: 0 0 0.8rem; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
+  .usecase .cta { color: var(--accent); font-size: 0.85rem; font-weight: 600;
+    letter-spacing: 0.02em; }
+  @media (max-width: 720px) {
+    .usecases { grid-template-columns: 1fr; }
+    main { padding: 3rem 1.25rem 5rem; }
+    header h1 { font-size: 2rem; }
+  }
 </style>
 </head>
 <body>
@@ -73,17 +97,30 @@
 <p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
 <section>
-  <p><strong>Dejima</strong> is a self-hosted execution platform for AI coding agents. Each project runs in its own <em>island</em>: an isolated container with the target repo, the agent of your choice, and a brokered API that lets you drive the session from any device on your tailnet.</p>
+  <p><strong>Dejima</strong> is the missing layer for running AI coding agents on your own infrastructure. Each project lives in its own <em>island</em> — a contained container with the agent of your choice — drivable from any device on your tailnet via a clean CLI and brokered API.</p>
+  <p class="plain">In other words: it lets you run a bunch of Claude Code sessions on your own Mac mini or server without losing your mind to tmux.</p>
+  <div class="pain">
+    You're SSH'd into your Mac mini. Five Claude Code sessions in tmux. Two are named <code>claude1</code> and <code>claude2</code> because you forgot. SSH drops, you reattach to the wrong window, and one of them just pushed to the wrong repo. There's a better way.
+  </div>
 </section>
 
-<h2>The pitch</h2>
-<p>Running AI coding agents today is a choice between two tradeoffs:</p>
-<ol>
-  <li><strong>Local.</strong> Run a CLI agent on your laptop. Easy to start; agents get full filesystem access; close the lid and your long-running session dies.</li>
-  <li><strong>Hosted cloud.</strong> Pay a vendor to run a single agent on their hardware, behind a web UI, with your code on their disk.</li>
-</ol>
-<p><strong>Dejima is the third option.</strong> It turns hardware you already own — a Mac mini, a home server, a VPS — into your own agent execution platform. Each project runs in an isolated container. Sessions persist across disconnects. You drive them from any device on your tailnet.</p>
-<p>Kick off a 30-minute refactor at your desk, close your laptop, attach from your phone an hour later. Same session, same state, no vendor between you and your code.</p>
+<section class="usecases">
+  <a class="usecase" href="#home-server">
+    <h3>Run agents on your own server</h3>
+    <p>Managing multiple Claude Code (or other agent) sessions over tmux + ssh is hostile UX. Session names you forget. Context bleed across projects. Lost windows.</p>
+    <span class="cta">Home server →</span>
+  </a>
+  <a class="usecase" href="#api-builder">
+    <h3>Build a product on top of agent execution</h3>
+    <p>Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools. You need isolated containers + sessions + lifecycle, without writing them.</p>
+    <span class="cta">For builders →</span>
+  </a>
+  <a class="usecase" href="#self-host">
+    <h3>Keep code and agents off vendor servers</h3>
+    <p>Compliance, NDA, regulated code, or just distrust of hosted agent products. You want agents — but on your hardware, your network, your rules.</p>
+    <span class="cta">Self-host →</span>
+  </a>
+</section>
 
 <h2>Architecture</h2>
 <pre><code>┌──────────────────────────┐
@@ -105,21 +142,44 @@
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
 <p class="small">Runs on macOS and Linux. Bootstraps Go + Docker as needed, builds the binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers the daemon as a service, runs a health check. Idempotent — re-run to update.</p>
 
-<h2>What you get</h2>
-<ul>
-  <li><strong>Container isolation per project</strong> — agents can't reach your host filesystem, other projects, or unrelated secrets.</li>
-  <li><strong>Persistent sessions</strong> — long-running work survives client disconnects, daemon restarts, and host reboots.</li>
-  <li><strong>Multi-device attach</strong> — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.</li>
-  <li><strong>Direct GitHub push</strong> — host credentials mounted read-only; <code>git push</code> from inside the island just works.</li>
-  <li><strong>Agent-agnostic</strong> — Claude Code today, Codex CLI next, anything that runs in a Linux shell.</li>
-  <li><strong>API-first</strong> — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.</li>
-</ul>
+<h2 id="home-server">Use case: Home server</h2>
+<p><strong>If you run AI agents over ssh on a home server</strong> — Mac mini, VPS, an always-on Linux box on your shelf — Dejima is the layer that fixes the parts of that workflow that suck.</p>
+<p>Each project gets a named island. <code>dejima init</code> derives the name from the repo, <code>dejima ls</code> shows everything at a glance, and <code>dejima connect &lt;name&gt;</code> is the same command every time. No tmux mnemonics to memorize. No <code>claude1</code>/<code>claude2</code> ambiguity.</p>
+<pre><code>dejima init --repo git@github.com:you/foo.git
+dejima ls                          # one row per island, last-used first
+dejima connect foo                 # drops into Claude Code, in foo's island
+# Ctrl-b d to detach. Or just close the terminal — session keeps running.
+
+DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # from your laptop
+</code></pre>
+<p><strong>Why it's worth it:</strong> islands are real containers. Each has its own <code>$HOME</code>, its own <code>git</code> config, its own <code>gh</code> credentials, its own working directory. Cross-pollination between projects isn't a discipline thing — the kernel won't let it happen. And because sessions are tmux-backed, your laptop closing or your network blipping doesn't kill anything; you reattach where you left off, from wherever you are.</p>
+
+<h2 id="api-builder">Use case: Product builder</h2>
+<p><strong>If you're building a product on top of agent CLIs</strong> — a multi-agent dashboard, a chat-driven coding bot, a web IDE, a team-internal tool — Dejima is the execution substrate so you don't reinvent container lifecycle, PTY multiplexing, session management, and credential injection for your one product.</p>
+<pre><code># Target the Dejima HTTP API from any language.
+POST   /v1/islands          { "repo": "...", "agent": "claude-code" }
+GET    /v1/islands          # list all islands
+GET    /v1/islands/:name/session       # websocket PTY stream, multi-attach
+POST   /v1/islands/:name/exec          # one-shot command
+POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
+</code></pre>
+<p><strong>Why it's worth it:</strong> the boring substrate work — container lifecycle, host-side PTY, multi-client multiplexing, credential injection, webhook events, service install, Tailscale-pinned remote access — is done and OSS. You build the interesting part. The same API the CLI uses is the one you target; if a feature exists in <code>dejima</code>, it exists for you too.</p>
+
+<h2 id="self-host">Use case: Self-hosted privacy / compliance</h2>
+<p><strong>If you can't or won't ship your code to a third-party agent service</strong> — NDA work, regulated industries (medical, financial, defense, legal), client confidentiality, or just principle — Dejima runs entirely on your hardware. The agent's LLM API calls go out (that's how agents work at all), but your repo, your generated files, and your auth never leave your box.</p>
+<pre><code># Install on a regulated server.
+curl -fsSL https://aoos.github.io/dejima/install.sh | bash
+
+# Tailscale-pin the daemon's remote port. Off-tailnet connections are refused.
+dejimad --tcp :7273
+</code></pre>
+<p><strong>Why it's worth it:</strong> your code, your workspace, your generated artifacts stay on your disk. Network egress is yours to set — block what you want, allow only LLM endpoints if your policy demands it. Auth is via Tailscale identity, not a vendor cloud's account model. When you're done, <code>dejima purge</code> erases the island. No data on someone else's bill.</p>
 
 <h2>How it compares</h2>
 <table>
   <tr><th>Feature</th><th>Raw local CLI</th><th>tmux + SSH</th><th>Vendor cloud</th><th>Dejima</th></tr>
+  <tr><td>Named, isolated workspaces per project</td><td>✗</td><td>✗</td><td>✓</td><td><strong>✓</strong></td></tr>
   <tr><td>Persistent execution across disconnects</td><td>✗</td><td>✓</td><td>✓</td><td><strong>✓</strong></td></tr>
-  <tr><td>Container isolation per project</td><td>✗</td><td>✗</td><td>✓</td><td><strong>✓</strong></td></tr>
   <tr><td>Multi-device shared session</td><td>✗</td><td>manual</td><td>web only</td><td><strong>✓</strong></td></tr>
   <tr><td>Self-hosted, your hardware</td><td>✓</td><td>✓</td><td>✗</td><td><strong>✓</strong></td></tr>
   <tr><td>Agent-agnostic (Claude / Codex / custom)</td><td>✓</td><td>✓</td><td>✗</td><td><strong>✓</strong></td></tr>
@@ -127,41 +187,25 @@
 </table>
 <p class="small">Dejima isn't a replacement for tmux — it uses tmux inside each island. It's the layer above that adds isolation, lifecycle verbs (<code>hibernate</code> / <code>reset</code>), webhook events, and the cross-device API.</p>
 
-<h2>Why Dejima?</h2>
-<p><strong>Who it's for.</strong> Solo developers and small teams running AI coding agents on their own infrastructure — Mac mini, home server, VPS — who want project isolation and the ability to drive sessions from more than one device.</p>
-<p><strong>When to reach for it.</strong> When you're running agents on multiple repos in parallel, want to switch devices mid-task, or don't want unconstrained agent access to your laptop. Also: as a self-hosted alternative to vendor cloud agents.</p>
-<p><strong>The problem.</strong> Today's coding agents run on your laptop with full filesystem access, tied to one device and one project at a time. Vendor "remote control" features lock you to a single agent on a single cloud. Per-project isolation is on you.</p>
+<h2>CLI reference</h2>
+<table>
+  <tr><th>Command</th><th>Purpose</th></tr>
+  <tr><td><code>dejima init</code></td><td>Provision a new island.</td></tr>
+  <tr><td><code>dejima connect</code></td><td>Attach to an island's session (multi-attach).</td></tr>
+  <tr><td><code>dejima ls</code></td><td>List all islands.</td></tr>
+  <tr><td><code>dejima status</code></td><td>One island in detail: presence, memory, CPU.</td></tr>
+  <tr><td><code>dejima hibernate</code> / <code>wake</code></td><td>Stop / restart the container; volumes preserved.</td></tr>
+  <tr><td><code>dejima reset</code></td><td>Clear agent state. Preserves workspace.</td></tr>
+  <tr><td><code>dejima exec</code> / <code>cp</code> / <code>logs</code></td><td>One-shot command, file copy, log tail — no session attach.</td></tr>
+  <tr><td><code>dejima doctor</code></td><td>Health check: daemon, Docker, image, projects, webhooks.</td></tr>
+  <tr><td><code>dejima service</code></td><td>Install / uninstall <code>dejimad</code> as a host service.</td></tr>
+  <tr><td><code>dejima webhook</code></td><td>Subscribe a URL to receive state-change events.</td></tr>
+  <tr><td><code>dejima purge</code></td><td>Destroy island and volumes.</td></tr>
+</table>
 
-<h2>Build on top</h2>
-<p>Most of the visible value should land <em>on top of</em> Dejima, not inside it. The Dejima API + webhook surface is meant to be the substrate for:</p>
-<ul>
-  <li>A mobile / PWA agent driver that works for any agent — better than vendor remote-control because cross-agent and self-hosted.</li>
-  <li>Chat-service integrations (<code>dejima-slack</code>, <code>dejima-telegram</code>) that drive sessions from a channel.</li>
-  <li>An agent manager that orchestrates many Dejima hosts (your Mac mini + a cloud VM + a friend's homelab) into one view.</li>
-  <li>Audit / compliance dashboards that consume the event stream.</li>
-  <li>Whatever else fits — Dejima is boring infrastructure on purpose so the interesting UX can live elsewhere.</li>
-</ul>
-
-<h2>Quickstart</h2>
-<pre><code># 1. Create an island around a real GitHub repo.
-dejima init --repo git@github.com:you/myproject.git
-
-# 2. Connect — drops you into Claude Code, inside the island.
-dejima connect myproject
-
-# 3. Disconnect with Ctrl-b then d (tmux). The session keeps running.
-
-# 4. Pick up from another device on your tailnet:
-DEJIMA_HOST=mac-mini.your-tailnet.ts.net:7273 dejima connect myproject
-
-# 5. When memory pressure bites:
-dejima hibernate myproject &amp;&amp; dejima wake myproject
-
-# 6. Fresh conversation, same code:
-dejima reset myproject
-
-# 7. When you're done:
-dejima purge myproject</code></pre>
+<h2>Webhooks</h2>
+<p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code> via the Claude Code shim). This is how mobile push, Slack notifications, and custom dashboards integrate.</p>
+<pre><code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code></pre>
 
 <h2>Concepts</h2>
 <table>
@@ -173,29 +217,8 @@ dejima purge myproject</code></pre>
   <tr><td><code>Ledger</code></td><td>(Post-v1) An audit log of every bridge transaction.</td></tr>
 </table>
 
-<h2>CLI</h2>
-<table>
-  <tr><th>Command</th><th>Purpose</th></tr>
-  <tr><td><code>dejima init</code></td><td>Provision a new island.</td></tr>
-  <tr><td><code>dejima connect</code></td><td>Attach to an island's session (multi-attach).</td></tr>
-  <tr><td><code>dejima ls</code></td><td>List all islands.</td></tr>
-  <tr><td><code>dejima status</code></td><td>Detail view of one island, including presence + resource use.</td></tr>
-  <tr><td><code>dejima hibernate</code></td><td>Stop the container, preserve volumes.</td></tr>
-  <tr><td><code>dejima wake</code></td><td>Start a hibernated island.</td></tr>
-  <tr><td><code>dejima reset</code></td><td>Clear agent state. Preserves workspace.</td></tr>
-  <tr><td><code>dejima exec</code></td><td>Run a one-shot command inside an island.</td></tr>
-  <tr><td><code>dejima cp</code></td><td>Copy files in or out of an island.</td></tr>
-  <tr><td><code>dejima logs</code></td><td>Tail an island's container logs (<code>--follow</code>).</td></tr>
-  <tr><td><code>dejima doctor</code></td><td>Health check: daemon, Docker, image, projects, webhooks.</td></tr>
-  <tr><td><code>dejima service</code></td><td>Install / uninstall <code>dejimad</code> as a host service.</td></tr>
-  <tr><td><code>dejima webhook</code></td><td>Subscribe a URL to receive state-change events.</td></tr>
-  <tr><td><code>dejima purge</code></td><td>Destroy island and volumes.</td></tr>
-</table>
-
-<h2>Webhooks</h2>
-<p>Get notified when an agent finishes a task or needs your input:</p>
-<pre><code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code></pre>
-<p class="small">Events include lifecycle (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and — when the Claude Code shim is active — <code>agent.waiting-for-input</code> and <code>agent.task-complete</code>. This is the integration point for Slack / Discord / Telegram bots, mobile push, custom dashboards. Dejima stays agnostic about what's on the other end.</p>
+<h2>Built with Dejima</h2>
+<p class="small">Projects building on the Dejima API will be listed here. <em>(None yet — it's pre-alpha.)</em></p>
 
 <h2>Status</h2>
 <p>Pre-alpha. v1 milestones M0–M5 implemented; M6 (real-world dogfood) in progress. See the
