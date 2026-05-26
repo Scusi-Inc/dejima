@@ -207,6 +207,34 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. Ensure dejimad is actually reachable
+# ---------------------------------------------------------------------------
+# On headless macOS (no Aqua/GUI session), launchctl can't load the plist —
+# `dejima service install` writes the plist and warns but exits 0. In that
+# case the daemon isn't running yet. Start it manually as a fallback so the
+# rest of the flow works for this session.
+if ! dejima doctor 2>/dev/null | grep -q "daemon.*OK"; then
+    if pgrep -f "/usr/local/bin/dejimad" >/dev/null 2>&1; then
+        info "dejimad already running (not via launchd; won't persist across reboots)"
+    else
+        warn "daemon not reachable — starting it manually as a fallback"
+        info "  (this session only; see service-install warning above for persistence)"
+        mkdir -p "$HOME/Library/Logs/dejima"
+        nohup /usr/local/bin/dejimad \
+            > "$HOME/Library/Logs/dejima/dejimad.out.log" \
+            2> "$HOME/Library/Logs/dejima/dejimad.err.log" < /dev/null &
+        disown
+        # Give it a moment to come up
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if dejima doctor 2>/dev/null | grep -q "daemon.*OK"; then
+                break
+            fi
+            sleep 1
+        done
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Final check
 # ---------------------------------------------------------------------------
 bold "6. Health check"
