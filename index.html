@@ -147,7 +147,7 @@
 <p>Shortest path — get the CLI, run it, follow the wizard:</p>
 <pre><code>go install github.com/aoos/dejima/cmd/dejima@latest
 dejima                # first run opens the setup wizard</code></pre>
-<p class="small">The wizard detects your environment (Docker / Tailscale / OS / daemon) and prints the exact commands for your scenario — server install here, client connecting to an existing host, or both. Re-engage anytime with <code>dejima onboard</code>.</p>
+<p class="small">The wizard detects your environment (Docker / Tailscale / OS / daemon) and walks your scenario — install the server here, or connect to an existing host. For a client it sets <code>DEJIMA_HOST</code>, persists it to your shell, and verifies the link before handing you the dashboard. Re-engage anytime with <code>dejima onboard</code>.</p>
 <p>Or, if you already know you want the full server stack on this machine:</p>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
 <p class="small">Runs on macOS and Linux. Bootstraps Go + Docker as needed, builds the binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers the daemon as a service, runs a health check. Idempotent — re-run to update.</p>
@@ -180,8 +180,9 @@ POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 <pre><code># Install on a regulated server.
 curl -fsSL https://aoos.github.io/dejima/install.sh | bash
 
-# Tailscale-pin the daemon's remote port. Off-tailnet connections are refused.
-dejimad --tcp :7273
+# Expose the daemon to your tailnet (off-tailnet connections are refused).
+# Bakes --tcp into the service so remote access survives reboots.
+dejima service install --tcp :7273
 </code></pre>
 <p><strong>Why it's worth it:</strong> your code, your workspace, your generated artifacts stay on your disk. Network egress is yours to set — block what you want, allow only LLM endpoints if your policy demands it. Auth is via Tailscale identity, not a vendor cloud's account model. When you're done, <code>dejima purge</code> erases the island. No data on someone else's bill.</p>
 
