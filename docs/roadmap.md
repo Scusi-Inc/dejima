@@ -92,6 +92,7 @@ Substantial engineering. Defer until v1 dogfood proves the foundation.
 ## Open questions to investigate
 
 - [ ] **Compatibility with "OpenClaw"** — name flagged for investigation. Not a project I recognize (as of knowledge cutoff Jan 2026). Once identified: assess whether it's a CLI agent (bundle as image variant), an editor extension (no direct Dejima relationship), a protocol (potential feature), or something else. Goes in v1.x or v2 depending on what it turns out to be.
+- [ ] **Native Windows client** — `go build` for Windows mostly works; the blocker is the PTY-backed `dejima connect` (uses `creack/pty`, Unix-only). Cross-compiled Windows binaries would have working `ls / status / overview / webhook / TUI` and broken `connect`. Practical paths for Windows users today: SSH to a real host, or WSL2 + native install. (open; would need a Windows-friendly PTY abstraction)
 
 ## v2+ — tier-2 integrations (separate repos)
 
