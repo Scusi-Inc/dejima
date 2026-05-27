@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -45,14 +46,18 @@ func newOnboardCmd() *cobra.Command {
 // firstRunPrompt is called by the root `dejima` command (no args) when the
 // dismissal marker is absent. Returns (continueToTUI, err).
 //
-//   - "yes"     → runs the wizard, then returns (false, nil) so the user
-//                 acts on the wizard's output rather than dropping into the
-//                 TUI immediately.
-//   - "not now" → returns (false, nil); marker NOT written, so the prompt
-//                 reappears on the next run.
-//   - "never"   → writes the marker and returns (true, nil); the TUI opens
-//                 normally from here on.
-//   - non-TTY   → treated as "not now" (no prompt fires, no marker written).
+// Every choice ends in the TUI — declining the wizard means "skip setup," not
+// "abandon Dejima." The choices differ only in what happens first and whether
+// we ask again. (If nothing is configured yet, the TUI surfaces a
+// daemon-unreachable state rather than failing.)
+//
+//   - "yes"     → runs the wizard, writes the marker, then opens the TUI. The
+//                 wizard's printed steps are restored on screen when the TUI
+//                 (alt-screen) exits.
+//   - "not now" → opens the TUI; marker NOT written, so the prompt reappears
+//                 on the next run.
+//   - "never"   → writes the marker, then opens the TUI; never prompts again.
+//   - non-TTY   → opens the TUI (which handles the unconfigured state).
 func firstRunPrompt(ctx context.Context) (bool, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return true, nil // can't prompt without a TTY; defer to TUI which handles unconfigured state.
@@ -75,7 +80,7 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		_ = writeDismissalMarker()
-		return false, nil
+		return true, nil
 	case "N", "never":
 		fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
 		if err := writeDismissalMarker(); err != nil {
@@ -83,19 +88,23 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 		}
 		return true, nil
 	case "n", "no", "later", "":
-		fmt.Println("OK. Run `dejima onboard` anytime to walk through setup.")
-		return false, nil
+		fmt.Println("OK — opening the dashboard. Run `dejima onboard` anytime to walk through setup.")
+		return true, nil
 	default:
 		fmt.Println("Didn't catch that — treating as 'not now'.")
-		return false, nil
+		return true, nil
 	}
 }
+
+// stdinReader is a single shared buffered reader over stdin. It must be shared
+// across all prompts: bufio reads ahead, so a fresh reader per call would
+// discard any input already buffered (breaking type-ahead, paste, and pipes).
+var stdinReader = bufio.NewReader(os.Stdin)
 
 // readSingleKey prompts and reads a line of input from stdin.
 func readSingleKey(prompt string) string {
 	fmt.Print(prompt)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
+	line, err := stdinReader.ReadString('\n')
 	if err != nil {
 		return ""
 	}
@@ -155,7 +164,7 @@ func runOnboarding(ctx context.Context) error {
 	case "1":
 		return printServerInstall(env, false)
 	case "2":
-		return printClientInstall(env)
+		return printClientInstall(ctx, env)
 	case "3":
 		return printServerInstall(env, true)
 	case "4":
@@ -321,39 +330,119 @@ func printServerInstall(e *envProbe, alsoClient bool) error {
 	return nil
 }
 
-func printClientInstall(e *envProbe) error {
+func printClientInstall(ctx context.Context, e *envProbe) error {
 	fmt.Println()
-	fmt.Println(bold("Client-only install"))
+	fmt.Println(bold("Connect to a remote Dejima host"))
 	fmt.Println()
-	fmt.Println("This machine will run the `dejima` CLI only — no daemon, no Docker needed.")
-	fmt.Println("The CLI talks to a remote Dejima host over your tailnet.")
+	fmt.Println("This machine runs the `dejima` CLI only — no daemon, no Docker. It talks")
+	fmt.Println("to a Dejima host over your tailnet. You're already running the CLI, so it's")
+	fmt.Println("installed — I'll point it at the host, persist that, and verify the link.")
 	fmt.Println()
+
+	if !e.TailscalePresent {
+		fmt.Println("⚠ Tailscale isn't detected here. The host accepts only tailnet peers, so")
+		fmt.Println("  install it and log into the same account first:")
+		fmt.Println("    macOS: brew install --cask tailscale")
+		fmt.Println("    Linux: https://tailscale.com/download")
+		fmt.Println()
+	}
 
 	host := strings.TrimSpace(readSingleKey("Daemon host (e.g. minion.tail2f808e.ts.net): "))
 	if host == "" {
-		fmt.Println("Skipped (no host provided). You can set it later with `export DEJIMA_HOST=<host>:7273`.")
-	} else if !strings.Contains(host, ":") {
+		fmt.Println("Skipped (no host provided). Set it later: export DEJIMA_HOST=<host>:7273")
+		return nil
+	}
+	if !strings.Contains(host, ":") {
 		host = host + ":7273"
 	}
 
-	steps := []string{
-		"# Install the dejima CLI (requires Go 1.22+):\ngo install github.com/aoos/dejima/cmd/dejima@latest",
-	}
-	if host != "" {
-		steps = append(steps,
-			fmt.Sprintf("# Point at the host. Add to your shell rc so it persists:\nexport DEJIMA_HOST=%s\necho 'export DEJIMA_HOST=%s' >> ~/.zshenv", host, host))
-		steps = append(steps,
-			"# Verify:\ndejima doctor")
+	// Make it live for the rest of this process so the dashboard opened right
+	// after the wizard connects to this host immediately.
+	_ = os.Setenv("DEJIMA_HOST", host)
+
+	// Persist to the shell rc so future shells inherit it.
+	if rc := shellRCPath(); rc != "" {
+		prompt := fmt.Sprintf("Persist `export DEJIMA_HOST=%s` to %s? [Y/n]: ", host, tildeify(rc))
+		if ans := readSingleKey(prompt); ans == "" || strings.EqualFold(ans, "y") {
+			line := fmt.Sprintf("export DEJIMA_HOST=%s", host)
+			if err := appendLineIfAbsent(rc, line); err != nil {
+				fmt.Fprintf(os.Stderr, "  couldn't write %s: %v\n", rc, err)
+				fmt.Printf("  add it yourself: echo '%s' >> %s\n", line, tildeify(rc))
+			} else {
+				fmt.Printf("  wrote to %s (new shells pick it up; this session is already set)\n", tildeify(rc))
+			}
+		}
 	}
 
+	// Verify connectivity now so the user gets immediate feedback.
 	fmt.Println()
-	fmt.Println("Run these in order:")
-	fmt.Println()
-	for _, s := range steps {
-		fmt.Println(indentBlock(s, "  "))
-		fmt.Println()
+	fmt.Printf("Checking %s …\n", host)
+	if err := verifyDejimaHost(ctx); err != nil {
+		fmt.Printf("  ✗ couldn't reach the daemon: %v\n", err)
+		fmt.Println("  Common causes:")
+		fmt.Println("    • The host's daemon isn't exposing TCP — on the host run:")
+		fmt.Println("        dejima service install --tcp :7273")
+		fmt.Println("    • Both machines aren't on the same tailnet — check `tailscale status`")
+	} else {
+		fmt.Println("  ✓ connected. `dejima ls` and the dashboard will use this host.")
 	}
 	return nil
+}
+
+// shellRCPath picks the rc file to persist env exports into, based on $SHELL.
+func shellRCPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	switch {
+	case strings.Contains(os.Getenv("SHELL"), "zsh"):
+		return filepath.Join(home, ".zshenv")
+	case strings.Contains(os.Getenv("SHELL"), "bash"):
+		return filepath.Join(home, ".bash_profile")
+	default:
+		return filepath.Join(home, ".profile")
+	}
+}
+
+// tildeify shortens a path under $HOME to ~/… for friendlier display.
+func tildeify(p string) string {
+	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(p, home) {
+		return "~" + strings.TrimPrefix(p, home)
+	}
+	return p
+}
+
+// appendLineIfAbsent appends line (plus newline) to path, creating it if
+// needed. No-op if an identical line is already present, so re-running the
+// wizard doesn't pile up duplicate exports.
+func appendLineIfAbsent(path, line string) error {
+	if existing, err := os.ReadFile(path); err == nil {
+		for _, l := range strings.Split(string(existing), "\n") {
+			if strings.TrimSpace(l) == line {
+				return nil
+			}
+		}
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(line + "\n")
+	return err
+}
+
+// verifyDejimaHost builds a client from the (just-set) DEJIMA_HOST env and
+// runs a short, bounded health check.
+func verifyDejimaHost(ctx context.Context) error {
+	c, err := api_client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	return c.Health(ctx)
 }
 
 func printOverview() error {

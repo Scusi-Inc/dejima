@@ -23,7 +23,7 @@ func (m *launchdManager) plistPath() (string, error) {
 	return filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist"), nil
 }
 
-func (m *launchdManager) Install(binaryPath string) error {
+func (m *launchdManager) Install(binaryPath string, args []string) error {
 	path, err := m.plistPath()
 	if err != nil {
 		return err
@@ -41,14 +41,17 @@ func (m *launchdManager) Install(binaryPath string) error {
 		return err
 	}
 
+	outLog := filepath.Join(logDir, "dejimad.out.log")
+	errLog := filepath.Join(logDir, "dejimad.err.log")
+
 	tmpl := template.Must(template.New("plist").Parse(launchdTemplate))
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, map[string]string{
-		"Label":       launchdLabel,
-		"Binary":      binaryPath,
-		"WorkingDir":  home,
-		"StdoutPath":  filepath.Join(logDir, "dejimad.out.log"),
-		"StderrPath":  filepath.Join(logDir, "dejimad.err.log"),
+	if err := tmpl.Execute(&buf, map[string]any{
+		"Label":            launchdLabel,
+		"ProgramArguments": append([]string{binaryPath}, args...),
+		"WorkingDir":       home,
+		"StdoutPath":       outLog,
+		"StderrPath":       errLog,
 	}); err != nil {
 		return err
 	}
@@ -79,9 +82,9 @@ func (m *launchdManager) Install(binaryPath string) error {
 			fmt.Fprintln(os.Stderr, "Likely cause: no Aqua/GUI session is active on this Mac (headless setup).")
 			fmt.Fprintln(os.Stderr, "LaunchAgents need a logged-in user session. Two ways forward:")
 			fmt.Fprintln(os.Stderr, "  • Run dejimad manually for now (won't persist across reboots):")
-			fmt.Fprintln(os.Stderr, "      nohup /usr/local/bin/dejimad \\")
-			fmt.Fprintln(os.Stderr, "        > ~/Library/Logs/dejima/dejimad.out.log \\")
-			fmt.Fprintln(os.Stderr, "        2> ~/Library/Logs/dejima/dejimad.err.log < /dev/null &")
+			fmt.Fprintf(os.Stderr, "      nohup %s \\\n", strings.Join(append([]string{binaryPath}, args...), " "))
+			fmt.Fprintf(os.Stderr, "        > %s \\\n", outLog)
+			fmt.Fprintf(os.Stderr, "        2> %s < /dev/null &\n", errLog)
 			fmt.Fprintln(os.Stderr, "      disown")
 			fmt.Fprintln(os.Stderr, "  • Log into the Mac's desktop once (Screen Sharing or physical),")
 			fmt.Fprintln(os.Stderr, "    then `dejima service install` will load the plist correctly.")
@@ -137,7 +140,9 @@ const launchdTemplate = `<?xml version="1.0" encoding="UTF-8"?>
   <string>{{.Label}}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{{.Binary}}</string>
+{{- range .ProgramArguments}}
+    <string>{{.}}</string>
+{{- end}}
   </array>
   <key>WorkingDirectory</key>
   <string>{{.WorkingDir}}</string>

@@ -47,7 +47,7 @@ A first-time setup runs through these in order:
 The shortest path: **get the `dejima` CLI on the machine you'll drive from, run it, follow the wizard.**
 
 ```bash
-# 1. Get the CLI (Go 1.22+ required; one-shot binary releases are roadmap)
+# 1. Get the CLI (Go 1.26+ required; one-shot binary releases are roadmap)
 go install github.com/aoos/dejima/cmd/dejima@latest
 
 # 2. Run it. First invocation triggers the setup wizard.

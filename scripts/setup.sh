@@ -193,17 +193,31 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Remote access: expose the Tailscale-pinned TCP listener so other devices
+# (your laptop, phone) can reach this host with DEJIMA_HOST. Only tailnet peers
+# are accepted. Defaults on when Tailscale is present; override with
+# DEJIMA_TCP="" to keep the daemon local-socket-only, or DEJIMA_TCP=":1234".
+# ---------------------------------------------------------------------------
+DEJIMA_TCP="${DEJIMA_TCP-__unset__}"
+if [[ "$DEJIMA_TCP" == "__unset__" ]]; then
+    if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+        DEJIMA_TCP=":7273"
+    else
+        DEJIMA_TCP=""
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Service install
 # ---------------------------------------------------------------------------
 if [[ "${SKIP_SERVICE:-}" == "1" ]]; then
     bold "5. Service install (skipped via SKIP_SERVICE=1)"
 else
     bold "5. Service install"
-    if [[ -n "${NOTIFY_URL:-}" ]]; then
-        dejima service install --notify "$NOTIFY_URL"
-    else
-        dejima service install
-    fi
+    install_args=()
+    [[ -n "$DEJIMA_TCP" ]] && install_args+=(--tcp "$DEJIMA_TCP")
+    [[ -n "${NOTIFY_URL:-}" ]] && install_args+=(--notify "$NOTIFY_URL")
+    dejima service install ${install_args[@]+"${install_args[@]}"}
 fi
 
 # ---------------------------------------------------------------------------
@@ -220,9 +234,15 @@ if ! dejima doctor 2>/dev/null | grep -q "daemon.*OK"; then
         warn "daemon not reachable — starting it manually as a fallback"
         info "  (this session only; see service-install warning above for persistence)"
         mkdir -p "$HOME/Library/Logs/dejima"
-        nohup /usr/local/bin/dejimad \
-            > "$HOME/Library/Logs/dejima/dejimad.out.log" \
-            2> "$HOME/Library/Logs/dejima/dejimad.err.log" < /dev/null &
+        if [[ -n "$DEJIMA_TCP" ]]; then
+            nohup /usr/local/bin/dejimad --tcp "$DEJIMA_TCP" \
+                > "$HOME/Library/Logs/dejima/dejimad.out.log" \
+                2> "$HOME/Library/Logs/dejima/dejimad.err.log" < /dev/null &
+        else
+            nohup /usr/local/bin/dejimad \
+                > "$HOME/Library/Logs/dejima/dejimad.out.log" \
+                2> "$HOME/Library/Logs/dejima/dejimad.err.log" < /dev/null &
+        fi
         disown
         # Give it a moment to come up
         for _ in 1 2 3 4 5 6 7 8 9 10; do

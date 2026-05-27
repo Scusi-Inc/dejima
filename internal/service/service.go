@@ -19,7 +19,10 @@ const (
 
 // Manager is the OS-specific service manager.
 type Manager interface {
-	Install(binaryPath string) error
+	// Install registers dejimad with the host service manager. args are the
+	// extra command-line arguments baked into the service definition (e.g.
+	// ["--tcp", ":7273"] to expose the Tailscale-pinned TCP listener).
+	Install(binaryPath string, args []string) error
 	Uninstall() error
 	Status() (string, error)
 }

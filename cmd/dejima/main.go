@@ -293,11 +293,15 @@ func newServiceCmd() *cobra.Command {
 	}
 	var notifyURL, notifySecret string
 	var skipNotifyPrompt bool
+	var tcpAddr string
+	var skipTCPPrompt bool
 	installCmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install dejimad as a launchd (macOS) or systemd-user (Linux) service.",
 		Long: "Registers dejimad with the host service manager so it survives reboots. " +
-			"Interactively prompts for a notification webhook URL (recommended) if one isn't provided.",
+			"Interactively offers to expose the Tailscale-pinned TCP listener (so other " +
+			"devices can connect) and to set a notification webhook, unless those are " +
+			"provided as flags.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr, err := serviceMgr()
 			if err != nil {
@@ -306,6 +310,27 @@ func newServiceCmd() *cobra.Command {
 			bin, err := resolveDaemonBinary()
 			if err != nil {
 				return err
+			}
+			// Interactive remote-access prompt: only with a TTY, no --tcp flag,
+			// no explicit opt-out, and Tailscale present (the listener refuses
+			// to start without it). Default on — multi-device access is the
+			// common case, and the listener accepts only tailnet peer IPs.
+			if tcpAddr == "" && !skipTCPPrompt && term.IsTerminal(int(os.Stdin.Fd())) {
+				if _, lookErr := exec.LookPath("tailscale"); lookErr == nil {
+					fmt.Println("Expose the daemon to other devices on your tailnet? (Recommended — lets")
+					fmt.Println("you run `dejima` from your laptop or phone. Only Tailscale peer IPs are")
+					fmt.Println("accepted; off-tailnet connections are refused.)")
+					fmt.Print("Enable remote access on :7273? [Y/n]: ")
+					var input string
+					_, _ = fmt.Scanln(&input)
+					if t := strings.TrimSpace(input); t == "" || strings.EqualFold(t, "y") {
+						tcpAddr = ":7273"
+					}
+				}
+			}
+			var svcArgs []string
+			if tcpAddr != "" {
+				svcArgs = []string{"--tcp", tcpAddr}
 			}
 			// Interactive notify prompt: only when we have a TTY, no flag, and
 			// the user didn't explicitly opt out.
@@ -330,10 +355,19 @@ func newServiceCmd() *cobra.Command {
 					notifySecret = strings.TrimSpace(s)
 				}
 			}
-			if err := mgr.Install(bin); err != nil {
+			if err := mgr.Install(bin, svcArgs); err != nil {
 				return err
 			}
 			fmt.Printf("installed dejimad service (binary: %s)\n", bin)
+			if tcpAddr != "" {
+				fmt.Printf("remote access: listening on %s (tailnet peers only)\n", tcpAddr)
+				if fqdn := tailnetFQDN(); fqdn != "" {
+					fmt.Printf("  other devices: export DEJIMA_HOST=%s%s\n", fqdn, tcpAddr)
+				}
+			} else {
+				fmt.Println("remote access: disabled (local Unix socket only).")
+				fmt.Println("  enable later: dejima service install --tcp :7273")
+			}
 			if notifyURL != "" {
 				if err := waitForDaemonAndSubscribe(cmd.Context(), notifyURL, notifySecret); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: could not auto-subscribe webhook (%v)\n", err)
@@ -348,6 +382,8 @@ func newServiceCmd() *cobra.Command {
 			return nil
 		},
 	}
+	installCmd.Flags().StringVar(&tcpAddr, "tcp", "", "expose the Tailscale-pinned TCP listener at this addr (e.g. :7273); empty = local socket only")
+	installCmd.Flags().BoolVar(&skipTCPPrompt, "no-tcp-prompt", false, "skip the interactive remote-access prompt")
 	installCmd.Flags().StringVar(&notifyURL, "notify", "", "auto-subscribe this webhook URL after install")
 	installCmd.Flags().StringVar(&notifySecret, "notify-secret", "", "HMAC secret for the auto-subscribed webhook")
 	installCmd.Flags().BoolVar(&skipNotifyPrompt, "no-notify-prompt", false, "skip the interactive notification prompt")
@@ -556,6 +592,25 @@ func client() (*api.Client, error) {
 
 func serviceMgr() (service.Manager, error) {
 	return service.New()
+}
+
+// tailnetFQDN returns this host's Tailscale DNS name (without trailing dot),
+// or "" if Tailscale isn't present or reachable. Used to print a ready-to-copy
+// DEJIMA_HOST for other devices after enabling remote access.
+func tailnetFQDN() string {
+	out, err := exec.Command("tailscale", "status", "--json").Output()
+	if err != nil {
+		return ""
+	}
+	var status struct {
+		Self struct {
+			DNSName string `json:"DNSName"`
+		} `json:"Self"`
+	}
+	if json.Unmarshal(out, &status) != nil {
+		return ""
+	}
+	return strings.TrimSuffix(status.Self.DNSName, ".")
 }
 
 // normalizeWebhookURL accepts user input that may be a full URL or a bare

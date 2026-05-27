@@ -22,7 +22,7 @@ func (m *systemdManager) unitPath() (string, error) {
 	return filepath.Join(home, ".config", "systemd", "user", systemdUnitName), nil
 }
 
-func (m *systemdManager) Install(binaryPath string) error {
+func (m *systemdManager) Install(binaryPath string, args []string) error {
 	path, err := m.unitPath()
 	if err != nil {
 		return err
@@ -30,9 +30,13 @@ func (m *systemdManager) Install(binaryPath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	execStart := binaryPath
+	if len(args) > 0 {
+		execStart += " " + strings.Join(args, " ")
+	}
 	tmpl := template.Must(template.New("unit").Parse(systemdTemplate))
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, map[string]string{"Binary": binaryPath}); err != nil {
+	if err := tmpl.Execute(&buf, map[string]string{"ExecStart": execStart}); err != nil {
 		return err
 	}
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
@@ -68,7 +72,7 @@ Description=Dejima host daemon
 After=network.target docker.service
 
 [Service]
-ExecStart={{.Binary}}
+ExecStart={{.ExecStart}}
 Restart=on-failure
 RestartSec=5
 
