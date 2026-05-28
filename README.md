@@ -99,7 +99,7 @@ brew install --HEAD aoos/dejima/dejima
 
 See [`docs/distribution.md`](docs/distribution.md) for how to create the `aoos/homebrew-dejima` tap. The formula in `homebrew/dejima.rb` is ready to drop in.
 
-> v1 targets macOS (Mac mini priority) and Linux. Windows is not supported.
+> v1 targets macOS (Mac mini priority) and Linux as **hosts** (the machines running `dejimad` + Docker). The `dejima` **client** CLI builds and runs on macOS, Linux, and **Windows** — see *Install (client only)* below.
 >
 > **macOS**: the installer will offer to install [Docker Desktop](https://www.docker.com/products/docker-desktop/) via Homebrew if Docker isn't present. Docker Desktop is free for personal use and small businesses (<250 employees AND <$10M revenue). Faster alternatives if you prefer to install one yourself first: [OrbStack](https://orbstack.dev) (personal-license only) or [colima](https://github.com/abiosoft/colima) (CLI-only, OSS).
 >
@@ -107,21 +107,39 @@ See [`docs/distribution.md`](docs/distribution.md) for how to create the `aoos/h
 
 ## Install (client only)
 
-To drive a remote Dejima daemon from your laptop, you only need the CLI — no daemon, no Docker.
+To drive a remote Dejima daemon from your laptop or desktop, you only need the CLI — no daemon, no Docker. The CLI builds and runs on **macOS, Linux, and Windows**.
+
+### macOS / Linux (with Go)
 
 ```bash
 go install github.com/aoos/dejima/cmd/dejima@latest
 dejima                # first-run wizard handles DEJIMA_HOST configuration
 ```
 
-If you already know the host and want to skip the wizard:
+### Windows
+
+There's no Go-free install path yet (GitHub Releases with prebuilt binaries are on the roadmap). Until that ships:
+
+```bash
+# On the host (e.g. minion), cross-compile and copy the .exe over:
+make client-binaries
+scp dist/dejima-windows-amd64.exe austin@your-windows-host:dejima.exe
+
+# Then on Windows (PowerShell or Terminal):
+$env:DEJIMA_HOST = "minion.your-tailnet.ts.net:7273"
+.\dejima.exe
+```
+
+The Windows build has full feature parity with macOS/Linux — TUI, `connect`, all verbs. Terminal-resize is polling-based on Windows (vs. SIGWINCH on Unix) but reflows the same way.
+
+### If you already know the host and want to skip the wizard
 
 ```bash
 export DEJIMA_HOST=mac-mini.your-tailnet.ts.net:7273
 dejima ls
 ```
 
-Adding `DEJIMA_HOST` to `~/.zshenv` (or `~/.bash_profile`) makes it persistent; the wizard offers to do that automatically.
+Adding `DEJIMA_HOST` to `~/.zshenv` (or `~/.bash_profile`, or your Windows environment) makes it persistent; the wizard offers to do that automatically on Unix.
 
 ## Updating
 

@@ -10,11 +10,24 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup test lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries test lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
 	scripts/setup.sh
+
+# Cross-compile the CLI (client) for every supported platform into dist/.
+# The CLI is a pure client — it builds and runs anywhere (Windows / macOS /
+# Linux); only the dejimad daemon needs a Unix host with Docker.
+client-binaries:
+	@mkdir -p dist
+	GOOS=darwin  GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o dist/dejima-darwin-arm64        ./cmd/dejima
+	GOOS=darwin  GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o dist/dejima-darwin-amd64        ./cmd/dejima
+	GOOS=linux   GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o dist/dejima-linux-arm64         ./cmd/dejima
+	GOOS=linux   GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o dist/dejima-linux-amd64         ./cmd/dejima
+	GOOS=windows GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o dist/dejima-windows-amd64.exe   ./cmd/dejima
+	GOOS=windows GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o dist/dejima-windows-arm64.exe   ./cmd/dejima
+	@echo "client binaries in dist/"
 
 all: build
 

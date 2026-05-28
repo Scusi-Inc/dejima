@@ -10,10 +10,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -806,22 +804,11 @@ func runSession(ctx context.Context, c *api.Client, name, label string) error {
 		_ = writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
 	}
 
-	// SIGWINCH handler: forward terminal resizes.
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	defer signal.Stop(winch)
-	go func() {
-		for {
-			select {
-			case <-sessionCtx.Done():
-				return
-			case <-winch:
-				if rows, cols, err := terminalSize(stdinFd); err == nil {
-					_ = writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
-				}
-			}
-		}
-	}()
+	// Forward terminal resizes for the life of the session. The mechanism is
+	// OS-specific (SIGWINCH on Unix, polling on Windows) — see resize_*.go.
+	watchTerminalResize(sessionCtx, stdinFd, func(rows, cols uint16) {
+		_ = writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+	})
 
 	// Server → stdout pump.
 	go func() {

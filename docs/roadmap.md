@@ -92,7 +92,7 @@ Substantial engineering. Defer until v1 dogfood proves the foundation.
 ## Open questions to investigate
 
 - [ ] **Compatibility with "OpenClaw"** — name flagged for investigation. Not a project I recognize (as of knowledge cutoff Jan 2026). Once identified: assess whether it's a CLI agent (bundle as image variant), an editor extension (no direct Dejima relationship), a protocol (potential feature), or something else. Goes in v1.x or v2 depending on what it turns out to be.
-- [ ] **Native Windows client** — `go build` for Windows mostly works; the blocker is the PTY-backed `dejima connect` (uses `creack/pty`, Unix-only). Cross-compiled Windows binaries would have working `ls / status / overview / webhook / TUI` and broken `connect`. Practical paths for Windows users today: SSH to a real host, or WSL2 + native install. (open; would need a Windows-friendly PTY abstraction)
+- [x] **Native Windows client** — done. The CLI cross-compiles cleanly for `windows/amd64` and `windows/arm64`; the `creack/pty` import is daemon-only so it doesn't affect the client. The one Unix-ism (SIGWINCH for terminal resize) is now behind build tags — Unix uses SIGWINCH, Windows polls. `make client-binaries` produces all six client targets under `dist/`. *Remaining*: GitHub Releases workflow so Windows users don't have to cross-compile on a Mac/Linux host. (~2 hours of CI work.)
 
 ## v2+ — tier-2 integrations (separate repos)
 
@@ -111,7 +111,7 @@ Things worth saying "no" to clearly so they don't keep coming up:
 
 - **Inter-island communication channels** (a "trade" primitive, a message bus, RPC between islands). The whole point of islands is containment; any sanctioned cross-island channel is a context-bleed vector. Multi-agent orchestration belongs in wrapper apps that drive multiple islands via the public API — not inside Dejima.
 - **Hosted/SaaS variant.** Dejima is OSS, self-hosted. No managed offering planned.
-- **Windows host support.** Linux + macOS only.
+- **Windows host support** (running `dejimad` + Docker on Windows). The client works on Windows; the host doesn't. Out of scope.
 - **Enterprise compliance certifications.** SOC 2 etc. are post-team-product, not v1/v2.
 - **Built-in cost tracking for LLM API spend.** Out of scope; consume webhook events into your own dashboard.
 - **Real-time collaborative editing inside the workspace.** Sessions are shared-tmux, not shared-Cursor. Different problem.
