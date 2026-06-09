@@ -31,13 +31,11 @@ jobs:
       - name: Build release archives
         run: make release-binaries VERSION=${GITHUB_REF_NAME}
 
-      # TODO(notarization): the darwin binaries are currently UNSIGNED, so
-      # Gatekeeper quarantines them on download (install.sh / brew strip the
-      # attribute). To notarize: build+sign the darwin targets on a `macos-latest`
-      # runner with the Apple Developer ID cert (codesign --options runtime),
-      # `xcrun notarytool submit --wait`, then `xcrun stapler staple`, before
-      # packaging. Holds signing secrets in repo Actions secrets. Tracked in
-      # docs/roadmap.md (Release 0.1.0 gate).
+      # NOTE: darwin binaries are currently UNSIGNED, so Gatekeeper quarantines
+      # them on download (install-client.sh / brew strip the attribute). To
+      # notarize, move the darwin build to a macos-latest job and add the
+      # sign/notarize/staple steps — full runbook + drop-in YAML in
+      # docs/release-notarization.md. Tracked in docs/roadmap.md (0.1.0 gate).
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -48,3 +46,6 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # Tags with a pre-release suffix (e.g. v0.1.0-rc1) publish as a GitHub
+          # prerelease — use one to smoke-test the pipeline before going public.
+          prerelease: ${{ contains(github.ref_name, '-') }}

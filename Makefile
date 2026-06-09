@@ -6,6 +6,11 @@ VERSION       ?= $(shell git describe --tags --dirty --always 2>/dev/null || ech
 LDFLAGS       ?= -s -w -X github.com/aoos/dejima/internal/version.Version=$(VERSION)
 BIN_DIR       ?= bin
 
+# When set (release CI on macOS), release-binaries codesigns the darwin binaries
+# with this Developer ID identity, e.g. "Developer ID Application: Name (TEAMID)".
+# Empty = unsigned. See docs/release-notarization.md.
+CODESIGN_IDENTITY ?=
+
 IMAGE_NAME       ?= dejima/island:latest
 IMAGE_REGISTRY   ?=
 IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
@@ -45,6 +50,10 @@ release-binaries:
 	  echo "  building $$os/$$arch (dejima + dejimad)"; \
 	  GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $$d/dejima  ./cmd/dejima; \
 	  GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $$d/dejimad ./cmd/dejimad; \
+	  if [ "$$os" = darwin ] && [ -n "$(CODESIGN_IDENTITY)" ]; then \
+	    echo "  codesigning darwin/$$arch"; \
+	    codesign --force --options runtime --timestamp --sign "$(CODESIGN_IDENTITY)" $$d/dejima $$d/dejimad; \
+	  fi; \
 	  cp LICENSE README.md $$d/ 2>/dev/null || true; \
 	  tar -czf dist/dejima_$${ver}_$${os}_$${arch}.tar.gz -C $$d . ; \
 	  rm -rf $$d; \
