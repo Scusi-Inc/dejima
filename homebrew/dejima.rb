@@ -1,55 +1,83 @@
-# Dejima Homebrew formula.
+# Dejima Homebrew formula (binary).
 #
-# This file lives in the dejima/ repo as a reference. To make `brew install`
-# work, copy it into a separate tap repository named `homebrew-dejima` under
-# your GitHub account (e.g. github.com/aoos/homebrew-dejima/Formula/dejima.rb).
-# See docs/distribution.md for the bootstrap steps.
+# Copy this into a separate tap repo named `homebrew-dejima` under your account
+# (github.com/aoos/homebrew-dejima/Formula/dejima.rb), then:
+#   brew install aoos/dejima/dejima
+# See docs/distribution.md.
 #
-# Until v0.1.0 is tagged + released, the formula only supports head installs:
+# ── Per-release maintenance ────────────────────────────────────────────────
+# On each release, bump `version` and replace the four REPLACE_* sha256 values
+# with the digests from the release's SHA256SUMS (the release CI can auto-bump
+# this file in the tap). Until v0.1.0 is published the sha256s are placeholders,
+# so only the HEAD install works:
 #   brew install --HEAD aoos/dejima/dejima
 #
-# After a release exists, add `url` and `sha256` lines so users can
-# `brew install aoos/dejima/dejima` against the tagged version.
+# Unix archives carry `dejima` + `dejimad`; the daemon only runs on a Unix host.
 
 class Dejima < Formula
   desc "Substrate for multi-device AI agent workflows"
   homepage "https://dejima.dev"
-  license "Pre-public-release" # update to "Apache-2.0" (or chosen license) before going public
+  version "0.1.0"
+  license "Pre-public-release" # update to the chosen license before going public
+
+  on_macos do
+    on_arm do
+      url "https://github.com/aoos/dejima/releases/download/v#{version}/dejima_v#{version}_darwin_arm64.tar.gz"
+      sha256 "REPLACE_DARWIN_ARM64_SHA256"
+    end
+    on_intel do
+      url "https://github.com/aoos/dejima/releases/download/v#{version}/dejima_v#{version}_darwin_amd64.tar.gz"
+      sha256 "REPLACE_DARWIN_AMD64_SHA256"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/aoos/dejima/releases/download/v#{version}/dejima_v#{version}_linux_arm64.tar.gz"
+      sha256 "REPLACE_LINUX_ARM64_SHA256"
+    end
+    on_intel do
+      url "https://github.com/aoos/dejima/releases/download/v#{version}/dejima_v#{version}_linux_amd64.tar.gz"
+      sha256 "REPLACE_LINUX_AMD64_SHA256"
+    end
+  end
+
   head "https://github.com/aoos/dejima.git", branch: "master"
 
-  depends_on "go" => :build
+  depends_on "go" => :build if build.head?
 
   def install
-    ENV["GOFLAGS"] = "-trimpath"
-    system "make", "build"
-    bin.install "bin/dejima"
-    bin.install "bin/dejimad"
+    if build.head?
+      ENV["GOFLAGS"] = "-trimpath"
+      system "make", "build"
+      bin.install "bin/dejima", "bin/dejimad"
+    else
+      # Released tarball: client always present; daemon only in Unix archives.
+      bin.install "dejima"
+      bin.install "dejimad" if File.exist?("dejimad")
+    end
   end
 
   def caveats
     <<~EOS
-      Dejima requires a Docker runtime. On macOS, Docker Desktop is the
-      recommended default (free for small business use):
+      Dejima needs a Docker runtime to run the daemon + islands. On macOS:
 
-        brew install --cask docker
+        brew install --cask docker        # Docker Desktop (recommended)
+        brew install --cask orbstack      # or OrbStack (personal-use license)
+        brew install colima docker        # or colima (CLI-only, OSS)
 
-      Faster alternatives if you'd rather install one yourself:
-        brew install --cask orbstack    # personal-use license only
-        brew install colima docker      # CLI-only, OSS
+      Then build the island image and register the daemon from a checkout:
 
-      Then build the island image and register the daemon:
+        make image && dejima service install
 
-        cd "#{HOMEBREW_PREFIX}" && \\
-          curl -fsSL https://raw.githubusercontent.com/aoos/dejima/master/scripts/setup.sh \\
-            | SKIP_BUILD=1 bash
+      Client-only (a laptop driving a remote daemon)? Skip Docker and just:
 
-      Or simply: `dejima service install` (after building the island image
-      via `make image` from a checkout).
+        export DEJIMA_HOST=your-host.tailnet:7273
+        dejima connect <island>
     EOS
   end
 
   test do
     assert_match "dejima", shell_output("#{bin}/dejima --version")
-    assert_match(/.+/, shell_output("#{bin}/dejimad --version"))
   end
 end
