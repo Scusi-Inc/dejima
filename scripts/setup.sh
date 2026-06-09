@@ -57,8 +57,45 @@ if docker version >/dev/null 2>&1; then
     ok "Docker is reachable ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'server unknown'))"
 elif command -v docker >/dev/null 2>&1; then
     warn "the 'docker' CLI is on PATH but the daemon isn't reachable"
-    info "Start your runtime (OrbStack / Docker Desktop / colima) and re-run scripts/setup.sh"
-    exit 1
+    # The runtime is installed but stopped — start it for the user instead of
+    # dead-ending. Prefer colima (headless-friendly), then OrbStack, then
+    # Docker Desktop. Mirrors dejimad's own EnsureDaemon so both agree.
+    started=""
+    if command -v colima >/dev/null 2>&1; then
+        info "Starting colima (cold VM boot takes ~1 min)…"
+        colima start && started="colima"
+    elif command -v orb >/dev/null 2>&1; then
+        info "Starting OrbStack…"
+        orb start && started="OrbStack"
+    elif [[ "$OS" == "Darwin" && -d /Applications/OrbStack.app ]]; then
+        info "Launching OrbStack…"
+        open -ga OrbStack && started="OrbStack"
+    elif [[ "$OS" == "Darwin" && -d /Applications/Docker.app ]]; then
+        info "Launching Docker Desktop…"
+        open -ga Docker && started="Docker Desktop"
+    elif [[ "$OS" == "Linux" ]] && command -v systemctl >/dev/null 2>&1; then
+        info "Starting docker via systemd…"
+        sudo systemctl start docker && started="docker (systemd)"
+    fi
+
+    if [[ -z "$started" ]]; then
+        fail "couldn't find a runtime to start (colima / OrbStack / Docker Desktop)"
+        info "Start your Docker runtime manually, then re-run scripts/setup.sh"
+        exit 1
+    fi
+
+    info "Waiting up to 90s for the Docker daemon to come up…"
+    for _ in $(seq 1 90); do
+        if docker version >/dev/null 2>&1; then break; fi
+        sleep 1
+    done
+    if docker version >/dev/null 2>&1; then
+        ok "Docker is now reachable (via $started)"
+    else
+        fail "$started started but \`docker version\` is still not reachable after 90s"
+        info "Check the runtime's status and re-run scripts/setup.sh"
+        exit 1
+    fi
 else
     warn "Docker is not installed"
     if [[ "$OS" == "Darwin" ]]; then

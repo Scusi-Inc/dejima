@@ -97,6 +97,15 @@ func run(log *slog.Logger, tcpAddr string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Bring the container runtime up ourselves so the operator only has to start
+	// dejimad. Best-effort: on failure we log and keep serving (doctor/status
+	// still work) — the runtime can come up later.
+	bootCtx, bootCancel := context.WithTimeout(ctx, 3*time.Minute)
+	if err := rt.EnsureDaemon(bootCtx, log); err != nil {
+		log.Warn("container runtime not ready; island operations will fail until it is", "err", err)
+	}
+	bootCancel()
+
 	adoptCtx, adoptCancel := context.WithTimeout(ctx, 30*time.Second)
 	server.AdoptExisting(adoptCtx)
 	adoptCancel()
