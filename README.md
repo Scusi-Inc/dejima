@@ -109,6 +109,16 @@ See [`docs/distribution.md`](docs/distribution.md) for how to create the `aoos/h
 
 To drive a remote Dejima daemon from your laptop or desktop, you only need the CLI — no daemon, no Docker. The CLI builds and runs on **macOS, Linux, and Windows**.
 
+> **Tailscale is required** for remote access. The daemon refuses connections that don't arrive over a tailnet interface, so both server and client must be on the same tailnet. Install from <https://tailscale.com/download> and `tailscale up` on each device before connecting.
+
+### macOS / Linux (one-liner — prebuilt binary)
+
+```bash
+curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash
+```
+
+Downloads the latest release for your platform, verifies SHA256SUMS, installs to `/usr/local/bin/dejima`. No Go required.
+
 ### macOS / Linux (with Go)
 
 ```bash
@@ -116,18 +126,20 @@ go install github.com/aoos/dejima/cmd/dejima@latest
 dejima                # first-run wizard handles DEJIMA_HOST configuration
 ```
 
-### Windows
+### Windows (PowerShell — prebuilt binary)
 
-There's no Go-free install path yet (GitHub Releases with prebuilt binaries are on the roadmap). Until that ships:
+```powershell
+irm https://aoos.github.io/dejima/install-client.ps1 | iex
+```
 
-```bash
-# On the host (e.g. minion), cross-compile and copy the .exe over:
-make client-binaries
-scp dist/dejima-windows-amd64.exe austin@your-windows-host:dejima.exe
+Downloads `dejima_<ver>_windows_<arch>.zip` from the latest GitHub Release, verifies SHA256SUMS, extracts to `%LOCALAPPDATA%\dejima`, and adds it to your User PATH. Then:
 
-# Then on Windows (PowerShell or Terminal):
-$env:DEJIMA_HOST = "minion.your-tailnet.ts.net:7273"
-.\dejima.exe
+```powershell
+# Find your server's tailnet address on the SERVER (mac mini / linux box):
+#   tailscale ip -4          → e.g. 100.84.12.7
+[Environment]::SetEnvironmentVariable("DEJIMA_HOST", "100.84.12.7:7273", "User")
+# Close + reopen PowerShell, then:
+dejima
 ```
 
 The Windows build has full feature parity with macOS/Linux — TUI, `connect`, all verbs. Terminal-resize is polling-based on Windows (vs. SIGWINCH on Unix) but reflows the same way.
@@ -172,8 +184,8 @@ make setup        # detect Docker → build → install → image → service �
 
 ## Future install paths (roadmap)
 
-- **GitHub Releases** with prebuilt darwin/linux binaries (skip the Go-build step).
-- **Homebrew tap** (`brew install aoos/dejima/dejima`).
+- **Homebrew tap** (`brew install aoos/dejima/dejima`) — formula in `homebrew/dejima.rb` is ready; tap repo is on the to-do list.
+- **Signed + notarized macOS binaries** — see [`docs/release-notarization.md`](docs/release-notarization.md). Until then, the installers strip the quarantine attribute on download.
 
 ### Install the daemon as a service
 

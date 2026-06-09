@@ -79,10 +79,34 @@
   .usecase p { margin: 0 0 0.8rem; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
   .usecase .cta { color: var(--accent); font-size: 0.85rem; font-weight: 600;
     letter-spacing: 0.02em; }
+  /* Install picker --------------------------------------------------- */
+  .picker { margin: 1.2rem 0 1.6rem; display: flex; flex-direction: column; gap: 0.7rem; }
+  .pick-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+  .pick-label { color: var(--muted); font-size: 0.92rem; min-width: 5rem; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px;
+    overflow: hidden; background: var(--code-bg); }
+  .seg-btn { background: transparent; border: 0; border-right: 1px solid var(--border);
+    color: var(--fg); font: inherit; font-size: 0.9rem; padding: 0.45rem 0.9rem;
+    cursor: pointer; transition: background 0.12s, color 0.12s; }
+  .seg-btn:last-child { border-right: 0; }
+  .seg-btn:hover:not([aria-pressed="true"]):not(:disabled) { background: var(--card-hover-bg); }
+  .seg-btn[aria-pressed="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+  .seg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .install-panel { display: none; }
+  .install-panel.show { display: block; }
+  .install-panel ol { padding-left: 1.4rem; margin: 0.8rem 0; }
+  .install-panel ol > li { margin: 0.9rem 0; }
+  .install-panel ol > li > strong:first-child { color: var(--hover); }
+  .platform-note { color: var(--muted); font-size: 0.9rem; margin: 0.8rem 0;
+    padding: 0.65rem 0.95rem; border-left: 3px solid var(--accent);
+    background: var(--code-bg); border-radius: 4px; }
+  .noscript-fallback { color: var(--muted); font-size: 0.92rem;
+    border-left: 3px solid var(--accent); padding: 0.65rem 0.95rem; }
   @media (max-width: 720px) {
     .usecases { grid-template-columns: 1fr; }
     main { padding: 3rem 1.25rem 5rem; }
     header h1 { font-size: 2rem; }
+    .pick-label { min-width: 0; }
   }
 </style>
 </head>
@@ -144,13 +168,205 @@
 <p>Inside each island, the agent process runs under a long-lived <strong>tmux</strong> session — that's what keeps it alive when no client is attached, and how multiple clients can share the same screen. The daemon bridges your websocket to that tmux session via a host-side <strong>PTY</strong>, which handles terminal sizing, multi-client multiplexing, and clean detach on disconnect.</p>
 
 <h2>Install</h2>
-<p>Shortest path — get the CLI, run it, follow the wizard:</p>
-<pre><code>go install github.com/aoos/dejima/cmd/dejima@latest
-dejima                # first run opens the setup wizard</code></pre>
-<p class="small">The wizard detects your environment (Docker / Tailscale / OS / daemon) and walks your scenario — install the server here, or connect to an existing host. For a client it sets <code>DEJIMA_HOST</code>, persists it to your shell, and verifies the link before handing you the dashboard. Re-engage anytime with <code>dejima onboard</code>.</p>
-<p>Or, if you already know you want the full server stack on this machine:</p>
+<p>Pick where you're installing it. The page rewrites itself for your choice.</p>
+
+<div class="picker" role="group" aria-label="Install configuration">
+  <div class="pick-row">
+    <span class="pick-label">I'm setting up a</span>
+    <div class="seg" role="radiogroup" aria-label="Role">
+      <button type="button" data-role="server" class="seg-btn" aria-pressed="true">Server (hosts islands)</button>
+      <button type="button" data-role="client" class="seg-btn" aria-pressed="false">Client (connects to a server)</button>
+    </div>
+  </div>
+  <div class="pick-row">
+    <span class="pick-label">on</span>
+    <div class="seg" role="radiogroup" aria-label="OS">
+      <button type="button" data-os="macos"   class="seg-btn" aria-pressed="true">macOS</button>
+      <button type="button" data-os="linux"   class="seg-btn" aria-pressed="false">Linux</button>
+      <button type="button" data-os="windows" class="seg-btn" aria-pressed="false">Windows</button>
+    </div>
+  </div>
+</div>
+
+<noscript>
+  <p class="noscript-fallback">JavaScript is off — the picker can't run. See the <a href="https://github.com/aoos/dejima#install">README install instructions</a> for all platforms.</p>
+</noscript>
+
+<!-- ============ SERVER · macOS ============ -->
+<div class="install-panel" data-show="server-macos">
+  <p class="small">Mac mini, MacBook, anything running macOS that will run the islands.</p>
+  <ol>
+    <li><strong>Open Terminal.</strong> Cmd-Space → type <em>Terminal</em> → Enter. Any directory is fine — the installer uses <code>~/.dejima-src</code>.</li>
+    <li><strong>Install Tailscale</strong> (required for remote access; skip if installed):
+<pre><code>brew install tailscale
+sudo tailscale up                # opens a browser, sign in to your tailnet</code></pre>
+    </li>
+    <li><strong>Install Dejima:</strong>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
-<p class="small">Runs on macOS and Linux. Bootstraps Go + Docker as needed, builds the binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers the daemon as a service, runs a health check. Idempotent — re-run to update.</p>
+    <p class="small">Bootstraps Go + Docker Desktop if missing, builds the binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers <code>dejimad</code> as a launchd service, runs <code>dejima doctor</code>. Idempotent — re-run to update.</p>
+    </li>
+    <li><strong>(Optional) Phone push notifications:</strong>
+<pre><code>dejima service install --notify https://ntfy.sh/your-private-topic</code></pre>
+    </li>
+    <li><strong>Open the dashboard:</strong>
+<pre><code>dejima                              # interactive TUI</code></pre>
+    </li>
+  </ol>
+</div>
+
+<!-- ============ SERVER · Linux ============ -->
+<div class="install-panel" data-show="server-linux">
+  <p class="small">Linux box (always-on home server, VPS, etc.) that will run the islands.</p>
+  <ol>
+    <li><strong>Open a terminal.</strong> Your usual one. Any directory is fine — the installer uses <code>~/.dejima-src</code>.</li>
+    <li><strong>Install Docker</strong> (required, not bootstrapped by the installer):
+<pre><code>sudo apt install docker.io          # Debian / Ubuntu
+# sudo dnf install docker            # Fedora
+# sudo pacman -S docker              # Arch
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER       # then log out + back in</code></pre>
+    </li>
+    <li><strong>Install Tailscale</strong> (required for remote access from other devices):
+<pre><code>curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up                   # opens a URL, sign in to your tailnet</code></pre>
+    </li>
+    <li><strong>Install Dejima:</strong>
+<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
+    <p class="small">Installs binaries to <code>/usr/local/bin</code>, builds the island image, registers <code>dejimad</code> as a systemd user unit, runs <code>dejima doctor</code>. Idempotent.</p>
+    </li>
+    <li><strong>(Optional) Phone push notifications:</strong>
+<pre><code>dejima service install --notify https://ntfy.sh/your-private-topic</code></pre>
+    </li>
+    <li><strong>Open the dashboard:</strong>
+<pre><code>dejima                              # interactive TUI</code></pre>
+    </li>
+  </ol>
+</div>
+
+<!-- ============ SERVER · Windows (not supported) ============ -->
+<div class="install-panel" data-show="server-windows">
+  <p class="platform-note">
+    <strong>The Dejima server is Unix-only.</strong> The daemon needs Docker + tmux,
+    which means macOS or Linux. Use a Mac mini, an always-on Linux box, or a VPS
+    as your server. Your Windows PC can still be a <em>client</em> — pick
+    <em>Client</em> above.
+  </p>
+</div>
+
+<!-- ============ CLIENT · macOS ============ -->
+<div class="install-panel" data-show="client-macos">
+  <p class="small">Mac laptop / desktop that will connect to a remote Dejima server.</p>
+  <ol>
+    <li><strong>Open Terminal.</strong> Cmd-Space → <em>Terminal</em> → Enter.</li>
+    <li><strong>Install Tailscale, sign in to the same tailnet as the server:</strong>
+<pre><code>brew install tailscale
+sudo tailscale up</code></pre>
+    </li>
+    <li><strong>Install the Dejima client</strong> (just the <code>dejima</code> CLI — no Docker, no daemon):
+<pre><code>curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash</code></pre>
+    </li>
+    <li><strong>Find your server's tailnet address.</strong> On the <em>server</em>, run:
+<pre><code>tailscale ip -4                     # e.g. 100.84.12.7   (foolproof)
+tailscale status --self             # e.g. mac-mini.tailXXXXX.ts.net</code></pre>
+    <p class="small">Either works — the <code>100.x.y.z</code> IP avoids any MagicDNS gotchas.</p>
+    </li>
+    <li><strong>Point the client at the server (persisted):</strong>
+<pre><code>echo 'export DEJIMA_HOST=100.84.12.7:7273' >> ~/.zshenv
+export DEJIMA_HOST=100.84.12.7:7273</code></pre>
+    </li>
+    <li><strong>Open the dashboard:</strong>
+<pre><code>dejima                              # interactive TUI</code></pre>
+    </li>
+  </ol>
+</div>
+
+<!-- ============ CLIENT · Linux ============ -->
+<div class="install-panel" data-show="client-linux">
+  <p class="small">Linux laptop / desktop that will connect to a remote Dejima server.</p>
+  <ol>
+    <li><strong>Open a terminal.</strong> Your usual one.</li>
+    <li><strong>Install Tailscale, sign in to the same tailnet as the server:</strong>
+<pre><code>curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up</code></pre>
+    </li>
+    <li><strong>Install the Dejima client:</strong>
+<pre><code>curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash</code></pre>
+    </li>
+    <li><strong>Find your server's tailnet address.</strong> On the <em>server</em>, run:
+<pre><code>tailscale ip -4                     # e.g. 100.84.12.7</code></pre>
+    </li>
+    <li><strong>Point the client at the server (persisted):</strong>
+<pre><code>echo 'export DEJIMA_HOST=100.84.12.7:7273' >> ~/.bashrc
+export DEJIMA_HOST=100.84.12.7:7273</code></pre>
+    </li>
+    <li><strong>Open the dashboard:</strong>
+<pre><code>dejima                              # interactive TUI</code></pre>
+    </li>
+  </ol>
+</div>
+
+<!-- ============ CLIENT · Windows ============ -->
+<div class="install-panel" data-show="client-windows">
+  <p class="small">Windows PC connecting to a remote Dejima server. The daemon is Unix-only, but the client CLI runs on Windows.</p>
+  <ol>
+    <li><strong>Open PowerShell.</strong> Start menu → type <em>PowerShell</em> → Enter. Any directory is fine.</li>
+    <li><strong>Install Tailscale</strong> from <a href="https://tailscale.com/download/windows">tailscale.com/download/windows</a> (GUI installer) and sign in to the <em>same tailnet</em> as your server.</li>
+    <li><strong>Install the Dejima client</strong> (downloads <code>dejima.exe</code> to <code>%LOCALAPPDATA%\dejima</code>, adds it to your PATH):
+<pre><code>irm https://aoos.github.io/dejima/install-client.ps1 | iex</code></pre>
+    </li>
+    <li><strong>Find your server's tailnet address.</strong> On the <em>server</em> (macOS / Linux), run:
+<pre><code>tailscale ip -4                     # e.g. 100.84.12.7</code></pre>
+    </li>
+    <li><strong>Point the client at the server (persisted):</strong>
+<pre><code>[Environment]::SetEnvironmentVariable("DEJIMA_HOST", "100.84.12.7:7273", "User")</code></pre>
+    </li>
+    <li><strong>Close + reopen PowerShell</strong> so the new PATH and <code>DEJIMA_HOST</code> are picked up.</li>
+    <li><strong>Open the dashboard:</strong>
+<pre><code>dejima                              # interactive TUI</code></pre>
+    </li>
+  </ol>
+</div>
+
+<script>
+(function () {
+  var state = { role: 'server', os: 'macos' };
+
+  function detectOS() {
+    var ua = navigator.userAgent || '';
+    var p  = navigator.platform || '';
+    if (/Win/i.test(p) || /Windows/i.test(ua)) return 'windows';
+    if (/Mac/i.test(p) || /Mac OS X|Macintosh/i.test(ua)) return 'macos';
+    if (/Linux/i.test(p) || /Linux/i.test(ua)) return 'linux';
+    return 'macos';
+  }
+
+  function update() {
+    document.querySelectorAll('[data-role]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.role === state.role ? 'true' : 'false');
+    });
+    // Server + Windows isn't supported — keep the OS button enabled so the user
+    // can see the explanatory panel, just visually mute it.
+    document.querySelectorAll('[data-os]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.os === state.os ? 'true' : 'false');
+    });
+    var key = state.role + '-' + state.os;
+    document.querySelectorAll('.install-panel').forEach(function (p) {
+      p.classList.toggle('show', p.dataset.show === key);
+    });
+  }
+
+  document.querySelectorAll('.seg-btn').forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (b.dataset.role) state.role = b.dataset.role;
+      if (b.dataset.os)   state.os   = b.dataset.os;
+      update();
+    });
+  });
+
+  state.os = detectOS();
+  update();
+})();
+</script>
 
 <h2 id="home-server">Use case: Home server</h2>
 <p><strong>If you run AI agents over ssh on a home server</strong> — Mac mini, VPS, an always-on Linux box on your shelf — Dejima is the layer that fixes the parts of that workflow that suck.</p>
