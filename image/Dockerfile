@@ -52,6 +52,15 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && usermod -aG sudo dejima \
     && echo 'dejima ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers.d/dejima
 
+# Pre-create the per-agent state dirs that get backed by named volumes
+# (~/.claude, ~/.codex, ~/.agent-state). Docker seeds a fresh volume from the
+# image directory it's mounted over, inheriting that directory's ownership — so
+# these must exist and be owned by `dejima`. Otherwise the volume mountpoint
+# defaults to root:root and the agent shim's mkdir fails, crash-looping the
+# container.
+RUN mkdir -p /home/dejima/.claude /home/dejima/.codex /home/dejima/.agent-state /workspace \
+    && chown -R dejima:dejima /home/dejima /workspace
+
 # tmux defaults: mouse support, large scrollback, no prefix conflicts.
 COPY image/tmux.conf /etc/tmux.conf
 

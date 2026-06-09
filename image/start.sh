@@ -13,6 +13,16 @@ AGENT="${DEJIMA_AGENT:-claude-code}"
 WORKSPACE="/workspace"
 SESSION="dejima"
 
+# /workspace and the per-agent state dir (e.g. ~/.claude) are named volumes. A
+# volume mounted over a path the image didn't pre-create lands owned by root,
+# leaving the `dejima` user unable to write into it — the clone or the agent
+# shim's mkdir/cp then fails and the container crash-loops. Reclaim ownership of
+# the mount points (dejima has passwordless sudo) so this self-heals on restart,
+# even for volumes created before the image pre-created these paths. Shallow
+# chown on the mount root is enough to unblock writes; existing nested files
+# (e.g. a checked-out tree) keep their ownership.
+sudo chown dejima:dejima "$WORKSPACE" "$HOME"/.claude "$HOME"/.codex "$HOME"/.agent-state 2>/dev/null || true
+
 mkdir -p "$HOME/.claude" "$HOME/.config"
 
 # --- git identity from host (if mounted) ----------------------------------
