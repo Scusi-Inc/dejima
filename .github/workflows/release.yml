@@ -1,0 +1,50 @@
+name: release
+
+# Tag-driven releases: push a semver tag (e.g. v0.1.0) to build and publish
+# prebuilt archives. The first public release is v0.1.0 — see docs/roadmap.md.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # needed to create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so the version bakes correctly
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Sanity build + tests
+        run: |
+          go build ./...
+          go test ./...
+
+      # Cross-compiles every target (Go needs no Mac to build darwin). Unix
+      # archives carry dejima + dejimad; Windows carries the client only.
+      - name: Build release archives
+        run: make release-binaries VERSION=${GITHUB_REF_NAME}
+
+      # TODO(notarization): the darwin binaries are currently UNSIGNED, so
+      # Gatekeeper quarantines them on download (install.sh / brew strip the
+      # attribute). To notarize: build+sign the darwin targets on a `macos-latest`
+      # runner with the Apple Developer ID cert (codesign --options runtime),
+      # `xcrun notarytool submit --wait`, then `xcrun stapler staple`, before
+      # packaging. Holds signing secrets in repo Actions secrets. Tracked in
+      # docs/roadmap.md (Release 0.1.0 gate).
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/dejima_*.tar.gz
+            dist/dejima_*.zip
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true

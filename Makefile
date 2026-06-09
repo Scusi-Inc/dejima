@@ -1,6 +1,9 @@
 GO            ?= go
 GOFLAGS       ?=
-LDFLAGS       ?= -s -w -X github.com/aoos/dejima/internal/version.Version=$(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
+# VERSION drives the baked-in build version. Defaults to a git-describe string;
+# release CI overrides it with the tag (e.g. VERSION=v0.1.0).
+VERSION       ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
+LDFLAGS       ?= -s -w -X github.com/aoos/dejima/internal/version.Version=$(VERSION)
 BIN_DIR       ?= bin
 
 IMAGE_NAME       ?= dejima/island:latest
@@ -10,7 +13,7 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries test lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
@@ -28,6 +31,35 @@ client-binaries:
 	GOOS=windows GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o dist/dejima-windows-amd64.exe   ./cmd/dejima
 	GOOS=windows GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o dist/dejima-windows-arm64.exe   ./cmd/dejima
 	@echo "client binaries in dist/"
+
+# Build packaged release archives for every target into dist/. Unix archives
+# carry both `dejima` and `dejimad` (the daemon only runs on Unix hosts);
+# Windows archives carry the client only. Consumed by the release CI workflow.
+# Override VERSION in CI: `make release-binaries VERSION=v0.1.0`.
+release-binaries:
+	@mkdir -p dist
+	@rm -f dist/dejima_*.tar.gz dist/dejima_*.zip dist/SHA256SUMS
+	@set -e; ver="$(VERSION)"; \
+	for t in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do \
+	  os=$${t%/*}; arch=$${t#*/}; d=$$(mktemp -d); \
+	  echo "  building $$os/$$arch (dejima + dejimad)"; \
+	  GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $$d/dejima  ./cmd/dejima; \
+	  GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $$d/dejimad ./cmd/dejimad; \
+	  cp LICENSE README.md $$d/ 2>/dev/null || true; \
+	  tar -czf dist/dejima_$${ver}_$${os}_$${arch}.tar.gz -C $$d . ; \
+	  rm -rf $$d; \
+	done; \
+	for arch in amd64 arm64; do \
+	  d=$$(mktemp -d); \
+	  echo "  building windows/$$arch (dejima only)"; \
+	  GOOS=windows GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $$d/dejima.exe ./cmd/dejima; \
+	  cp LICENSE README.md $$d/ 2>/dev/null || true; \
+	  ( cd $$d && zip -q dejima_$${ver}_windows_$${arch}.zip dejima.exe LICENSE README.md ); \
+	  mv $$d/dejima_$${ver}_windows_$${arch}.zip dist/ ; \
+	  rm -rf $$d; \
+	done; \
+	( cd dist && shasum -a 256 dejima_$${ver}_* > SHA256SUMS ) ; \
+	echo "release archives + SHA256SUMS in dist/"
 
 all: build
 
