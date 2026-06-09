@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -433,14 +434,21 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	}
 
 	// Mount the daemon's Unix socket into the container so per-agent shims can
-	// emit events via the internal API endpoint.
-	if socket, err := paths.SocketPath(); err == nil {
-		if _, statErr := os.Stat(socket); statErr == nil {
-			binds = append(binds, runtime.BindMount{
-				HostPath:      socket,
-				ContainerPath: "/run/dejima/dejimad.sock",
-				ReadOnly:      false,
-			})
+	// emit events via the internal API endpoint. Only possible when Docker is
+	// native to the daemon's host: when dejimad runs on macOS the engine lives
+	// in a VM (colima/Docker Desktop) that shares the host fs over virtiofs/sshfs,
+	// and unix sockets can't be bind-mounted through that share — Docker tries to
+	// mkdir the source path and fails with "operation not supported", aborting the
+	// whole run. Skip the mount there; notify.sh already no-ops without the socket.
+	if goruntime.GOOS == "linux" {
+		if socket, err := paths.SocketPath(); err == nil {
+			if _, statErr := os.Stat(socket); statErr == nil {
+				binds = append(binds, runtime.BindMount{
+					HostPath:      socket,
+					ContainerPath: "/run/dejima/dejimad.sock",
+					ReadOnly:      false,
+				})
+			}
 		}
 	}
 
