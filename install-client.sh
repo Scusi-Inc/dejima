@@ -96,12 +96,122 @@ if [[ "$os" == "darwin" ]]; then
 fi
 
 bold "Installed dejima $ver → $BIN_DIR/dejima"
+
+# ---------------------------------------------------------------------------
+# Tailscale: this is the network the client uses to reach the daemon, so we
+# offer to set it up alongside the CLI. Detection and prompts mirror the
+# server flow in scripts/setup.sh.
+# ---------------------------------------------------------------------------
+warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+
+ts_prompt_yn() {
+    if [[ "${AUTO_INSTALL_TS:-}" == "1" || ! -t 0 ]]; then
+        return 0
+    fi
+    local reply
+    read -r -p "$1 [Y/n] " reply </dev/tty 2>/dev/null || return 0
+    reply=${reply:-y}
+    [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
+printf '\n'
+bold "Tailscale"
+if command -v tailscale >/dev/null 2>&1; then
+    ok "tailscale CLI found"
+else
+    warn "Tailscale not installed"
+    info "Tailscale is the network this client uses to reach your Dejima server."
+    if ts_prompt_yn "Install Tailscale now?"; then
+        if [[ "$os" == "darwin" ]]; then
+            if command -v brew >/dev/null 2>&1; then
+                info "Running: brew install tailscale"
+                brew install tailscale && ok "Tailscale installed" || warn "brew install tailscale failed"
+            else
+                warn "Homebrew not found — install from https://brew.sh, then 'brew install tailscale'"
+            fi
+        else
+            info "Running: curl -fsSL https://tailscale.com/install.sh | sh"
+            curl -fsSL https://tailscale.com/install.sh | sh && ok "Tailscale installed" || warn "Tailscale install failed"
+        fi
+    fi
+fi
+
+if command -v tailscale >/dev/null 2>&1; then
+    if ! tailscale status >/dev/null 2>&1; then
+        warn "Tailscale not signed in"
+        if [[ -t 0 || -e /dev/tty ]]; then
+            info "Running 'sudo tailscale up' — a browser tab opens for sign-in."
+            info "(Ctrl-C to skip; sign in later with 'sudo tailscale up'.)"
+            sudo tailscale up </dev/tty 2>/dev/tty || warn "'tailscale up' didn't complete"
+        else
+            info "Non-interactive run — sign in later with: sudo tailscale up"
+        fi
+    else
+        ok "Tailscale is signed in"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# DEJIMA_HOST: prompt for the server's tailnet address, validate via TCP
+# probe, and persist to the shell rc so future shells pick it up.
+# ---------------------------------------------------------------------------
+printf '\n'
+bold "Server address"
+info "On the SERVER (mac mini / linux box), run 'tailscale ip -4' to find its address."
+info "Example: 100.84.12.7"
+
+server_host=""
+if [[ -e /dev/tty && -z "${DEJIMA_HOST_PREFILL:-}" ]]; then
+    # Default port assumed below; user types IP or hostname only.
+    read -r -p "Enter your server's tailnet IP or hostname (blank to skip): " server_host </dev/tty 2>/dev/null || true
+elif [[ -n "${DEJIMA_HOST_PREFILL:-}" ]]; then
+    server_host="$DEJIMA_HOST_PREFILL"
+fi
+
+if [[ -n "$server_host" ]]; then
+    # Strip a user-supplied port, then re-attach the canonical 7273.
+    server_host="${server_host%:*}"
+    candidate_host="${server_host}:7273"
+    info "Probing $candidate_host…"
+    probe_ok=0
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z -w3 "$server_host" 7273 >/dev/null 2>&1; then probe_ok=1; fi
+    else
+        # Fallback: bash's /dev/tcp (works on macOS bash too)
+        if (exec 3<>/dev/tcp/$server_host/7273) 2>/dev/null; then
+            probe_ok=1
+            exec 3<&-
+            exec 3>&-
+        fi
+    fi
+    if [[ "$probe_ok" == "1" ]]; then
+        ok "reached $candidate_host"
+    else
+        warn "couldn't reach $candidate_host — saving anyway"
+        info "  (server may be down, or Tailscale not connected yet)"
+    fi
+
+    # Pick the most appropriate rc file: zsh on macOS, bash on Linux.
+    rc=""
+    case "$os" in
+        darwin) rc="$HOME/.zshenv" ;;
+        linux)  rc="$HOME/.bashrc" ;;
+    esac
+    line="export DEJIMA_HOST=$candidate_host"
+    if [[ -n "$rc" ]] && ! grep -qxF "$line" "$rc" 2>/dev/null; then
+        printf '\n# Added by dejima install-client.sh\n%s\n' "$line" >> "$rc"
+        ok "appended DEJIMA_HOST to $rc"
+    fi
+    info "Set for this shell:  export DEJIMA_HOST=$candidate_host"
+fi
+
 cat <<EOS
 
 Next:
-  export DEJIMA_HOST=your-host.tailnet:7273   # your daemon's address
-  dejima                                       # opens the dashboard
-  dejima connect <island>                      # attach to an agent
+  export DEJIMA_HOST=${candidate_host:-your-host:7273}   # if not already set above
+  dejima                                                  # opens the dashboard
+  dejima connect <island>                                 # attach to an agent
 
 (No daemon installed here — this is the client. Run the full server with
  install.sh on the host.)

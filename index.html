@@ -102,6 +102,13 @@
     background: var(--code-bg); border-radius: 4px; }
   .noscript-fallback { color: var(--muted); font-size: 0.92rem;
     border-left: 3px solid var(--accent); padding: 0.65rem 0.95rem; }
+  .bundled-note { background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0.8rem 1rem; margin: 1.2rem 0;
+    color: var(--fg); }
+  kbd { background: var(--code-bg); border: 1px solid var(--border);
+    border-bottom-width: 2px; border-radius: 4px; padding: 0.05em 0.45em;
+    font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.85em;
+    color: var(--fg); }
   @media (max-width: 720px) {
     .usecases { grid-template-columns: 1fr; }
     main { padding: 3rem 1.25rem 5rem; }
@@ -192,47 +199,63 @@
   <p class="noscript-fallback">JavaScript is off — the picker can't run. See the <a href="https://github.com/aoos/dejima#install">README install instructions</a> for all platforms.</p>
 </noscript>
 
+<p class="small bundled-note">
+  The installers below handle <strong>Tailscale</strong> (offer to install it,
+  walk you through sign-in) and — on the client side — capture the server's
+  address into <code>DEJIMA_HOST</code> for you. No manual steps in between.
+</p>
+
 <!-- ============ SERVER · macOS ============ -->
 <div class="install-panel" data-show="server-macos">
-  <p class="small">Mac mini, MacBook, anything running macOS that will run the islands.</p>
+  <p class="small"><strong>Server on macOS.</strong> Mac mini (typical), or any always-on Mac. The Dejima daemon runs here; other devices connect to it.</p>
   <ol>
-    <li><strong>Open Terminal.</strong> Cmd-Space → type <em>Terminal</em> → Enter. Any directory is fine — the installer uses <code>~/.dejima-src</code>.</li>
-    <li><strong>Install Tailscale</strong> (required for remote access; skip if installed):
-<pre><code>brew install tailscale
-sudo tailscale up                # opens a browser, sign in to your tailnet</code></pre>
-    </li>
-    <li><strong>Install Dejima:</strong>
+    <li><strong>Open Terminal.</strong> Press <kbd>⌘</kbd>-<kbd>Space</kbd>, type <em>Terminal</em>, hit Enter. Any working directory is fine — the installer uses <code>~/.dejima-src</code> regardless.</li>
+    <li><strong>Run the installer:</strong>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
-    <p class="small">Bootstraps Go + Docker Desktop if missing, builds the binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers <code>dejimad</code> as a launchd service, runs <code>dejima doctor</code>. Idempotent — re-run to update.</p>
+      <p class="small">It does all of this in order:</p>
+      <ul>
+        <li>Offers to install <strong>Tailscale</strong> (Homebrew) if missing, then walks you through <code>sudo tailscale up</code> — a browser tab opens to sign in to your tailnet.</li>
+        <li>Offers to install <strong>Docker Desktop</strong> (or detects OrbStack / colima) — needed to run islands.</li>
+        <li>Builds the <code>dejima</code> + <code>dejimad</code> binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers <code>dejimad</code> as a launchd service, runs <code>dejima doctor</code>.</li>
+        <li>Captures the server's tailnet IP into <code>~/.dejima/host.json</code> and prints the <code>DEJIMA_HOST</code> string you'll use on your other devices.</li>
+      </ul>
+      <p class="small">Idempotent — re-run any time to update or finish a partial run.</p>
     </li>
-    <li><strong>(Optional) Phone push notifications:</strong>
+    <li><strong>(Optional) Get push notifications</strong> on your phone when islands change state:
 <pre><code>dejima service install --notify https://ntfy.sh/your-private-topic</code></pre>
     </li>
     <li><strong>Open the dashboard:</strong>
 <pre><code>dejima                              # interactive TUI</code></pre>
     </li>
   </ol>
+  <p class="platform-note">
+    <strong>Note the <code>DEJIMA_HOST</code> the installer prints</strong>
+    (something like <code>100.84.12.7:7273</code>) — you'll plug it into the
+    client setup on your other devices.
+  </p>
 </div>
 
 <!-- ============ SERVER · Linux ============ -->
 <div class="install-panel" data-show="server-linux">
-  <p class="small">Linux box (always-on home server, VPS, etc.) that will run the islands.</p>
+  <p class="small"><strong>Server on Linux.</strong> Always-on home server, VPS, or any Linux box. The Dejima daemon runs here; other devices connect to it.</p>
   <ol>
-    <li><strong>Open a terminal.</strong> Your usual one. Any directory is fine — the installer uses <code>~/.dejima-src</code>.</li>
-    <li><strong>Install Docker</strong> (required, not bootstrapped by the installer):
+    <li><strong>Open a terminal.</strong> Your usual one (GNOME Terminal, Konsole, Alacritty, an SSH session, whatever). Any working directory is fine — the installer uses <code>~/.dejima-src</code>.</li>
+    <li><strong>Install Docker</strong> (the installer doesn't bootstrap Docker on Linux):
 <pre><code>sudo apt install docker.io          # Debian / Ubuntu
 # sudo dnf install docker            # Fedora
 # sudo pacman -S docker              # Arch
 sudo systemctl enable --now docker
-sudo usermod -aG docker $USER       # then log out + back in</code></pre>
+sudo usermod -aG docker $USER       # log out + back in for group to take effect</code></pre>
     </li>
-    <li><strong>Install Tailscale</strong> (required for remote access from other devices):
-<pre><code>curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up                   # opens a URL, sign in to your tailnet</code></pre>
-    </li>
-    <li><strong>Install Dejima:</strong>
+    <li><strong>Run the installer:</strong>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
-    <p class="small">Installs binaries to <code>/usr/local/bin</code>, builds the island image, registers <code>dejimad</code> as a systemd user unit, runs <code>dejima doctor</code>. Idempotent.</p>
+      <p class="small">It does all of this in order:</p>
+      <ul>
+        <li>Offers to install <strong>Tailscale</strong> (official install script) if missing, then walks you through <code>sudo tailscale up</code>.</li>
+        <li>Builds the <code>dejima</code> + <code>dejimad</code> binaries, installs them to <code>/usr/local/bin</code>, builds the island image, registers <code>dejimad</code> as a systemd user unit, runs <code>dejima doctor</code>.</li>
+        <li>Captures the server's tailnet IP into <code>~/.dejima/host.json</code> and prints the <code>DEJIMA_HOST</code> string for your other devices.</li>
+      </ul>
+      <p class="small">Idempotent — re-run any time.</p>
     </li>
     <li><strong>(Optional) Phone push notifications:</strong>
 <pre><code>dejima service install --notify https://ntfy.sh/your-private-topic</code></pre>
@@ -241,38 +264,35 @@ sudo tailscale up                   # opens a URL, sign in to your tailnet</code
 <pre><code>dejima                              # interactive TUI</code></pre>
     </li>
   </ol>
+  <p class="platform-note">
+    <strong>Note the <code>DEJIMA_HOST</code> the installer prints</strong>
+    — you'll plug it into the client setup on your other devices.
+  </p>
 </div>
 
 <!-- ============ SERVER · Windows (not supported) ============ -->
 <div class="install-panel" data-show="server-windows">
   <p class="platform-note">
-    <strong>The Dejima server is Unix-only.</strong> The daemon needs Docker + tmux,
-    which means macOS or Linux. Use a Mac mini, an always-on Linux box, or a VPS
-    as your server. Your Windows PC can still be a <em>client</em> — pick
+    <strong>The Dejima server is Unix-only.</strong> The daemon needs Docker
+    + tmux, which means macOS or Linux. Use a Mac mini, an always-on Linux
+    box, or a VPS. Your Windows PC can still be a <em>client</em> — pick
     <em>Client</em> above.
   </p>
 </div>
 
 <!-- ============ CLIENT · macOS ============ -->
 <div class="install-panel" data-show="client-macos">
-  <p class="small">Mac laptop / desktop that will connect to a remote Dejima server.</p>
+  <p class="small"><strong>Client on macOS.</strong> Mac laptop or desktop that will connect to your remote Dejima server.</p>
   <ol>
-    <li><strong>Open Terminal.</strong> Cmd-Space → <em>Terminal</em> → Enter.</li>
-    <li><strong>Install Tailscale, sign in to the same tailnet as the server:</strong>
-<pre><code>brew install tailscale
-sudo tailscale up</code></pre>
-    </li>
-    <li><strong>Install the Dejima client</strong> (just the <code>dejima</code> CLI — no Docker, no daemon):
+    <li><strong>Open Terminal.</strong> <kbd>⌘</kbd>-<kbd>Space</kbd> → <em>Terminal</em> → Enter.</li>
+    <li><strong>Run the client installer:</strong>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash</code></pre>
-    </li>
-    <li><strong>Find your server's tailnet address.</strong> On the <em>server</em>, run:
-<pre><code>tailscale ip -4                     # e.g. 100.84.12.7   (foolproof)
-tailscale status --self             # e.g. mac-mini.tailXXXXX.ts.net</code></pre>
-    <p class="small">Either works — the <code>100.x.y.z</code> IP avoids any MagicDNS gotchas.</p>
-    </li>
-    <li><strong>Point the client at the server (persisted):</strong>
-<pre><code>echo 'export DEJIMA_HOST=100.84.12.7:7273' >> ~/.zshenv
-export DEJIMA_HOST=100.84.12.7:7273</code></pre>
+      <p class="small">It does all of this in order:</p>
+      <ul>
+        <li>Offers to install <strong>Tailscale</strong> if missing, then walks you through <code>sudo tailscale up</code> — sign in to the <em>same tailnet</em> as your server.</li>
+        <li>Downloads the latest <code>dejima</code> CLI from GitHub Releases, verifies SHA256, installs to <code>/usr/local/bin/dejima</code>.</li>
+        <li>Prompts for your server's tailnet IP (the one the server installer printed — e.g. <code>100.84.12.7</code>), probes it on port <code>7273</code>, and persists <code>DEJIMA_HOST</code> to <code>~/.zshenv</code>.</li>
+      </ul>
     </li>
     <li><strong>Open the dashboard:</strong>
 <pre><code>dejima                              # interactive TUI</code></pre>
@@ -282,22 +302,17 @@ export DEJIMA_HOST=100.84.12.7:7273</code></pre>
 
 <!-- ============ CLIENT · Linux ============ -->
 <div class="install-panel" data-show="client-linux">
-  <p class="small">Linux laptop / desktop that will connect to a remote Dejima server.</p>
+  <p class="small"><strong>Client on Linux.</strong> Linux laptop or desktop that will connect to your remote Dejima server.</p>
   <ol>
     <li><strong>Open a terminal.</strong> Your usual one.</li>
-    <li><strong>Install Tailscale, sign in to the same tailnet as the server:</strong>
-<pre><code>curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up</code></pre>
-    </li>
-    <li><strong>Install the Dejima client:</strong>
+    <li><strong>Run the client installer:</strong>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash</code></pre>
-    </li>
-    <li><strong>Find your server's tailnet address.</strong> On the <em>server</em>, run:
-<pre><code>tailscale ip -4                     # e.g. 100.84.12.7</code></pre>
-    </li>
-    <li><strong>Point the client at the server (persisted):</strong>
-<pre><code>echo 'export DEJIMA_HOST=100.84.12.7:7273' >> ~/.bashrc
-export DEJIMA_HOST=100.84.12.7:7273</code></pre>
+      <p class="small">It does all of this in order:</p>
+      <ul>
+        <li>Offers to install <strong>Tailscale</strong> (official install script) if missing, then walks you through <code>sudo tailscale up</code> — sign in to the <em>same tailnet</em> as your server.</li>
+        <li>Downloads the latest <code>dejima</code> CLI from GitHub Releases, verifies SHA256, installs to <code>/usr/local/bin/dejima</code>.</li>
+        <li>Prompts for your server's tailnet IP, probes it on port <code>7273</code>, and persists <code>DEJIMA_HOST</code> to <code>~/.bashrc</code>.</li>
+      </ul>
     </li>
     <li><strong>Open the dashboard:</strong>
 <pre><code>dejima                              # interactive TUI</code></pre>
@@ -307,20 +322,19 @@ export DEJIMA_HOST=100.84.12.7:7273</code></pre>
 
 <!-- ============ CLIENT · Windows ============ -->
 <div class="install-panel" data-show="client-windows">
-  <p class="small">Windows PC connecting to a remote Dejima server. The daemon is Unix-only, but the client CLI runs on Windows.</p>
+  <p class="small"><strong>Client on Windows.</strong> Windows PC that will connect to your remote Dejima server. The daemon is Unix-only, but the client CLI runs on Windows.</p>
   <ol>
-    <li><strong>Open PowerShell.</strong> Start menu → type <em>PowerShell</em> → Enter. Any directory is fine.</li>
-    <li><strong>Install Tailscale</strong> from <a href="https://tailscale.com/download/windows">tailscale.com/download/windows</a> (GUI installer) and sign in to the <em>same tailnet</em> as your server.</li>
-    <li><strong>Install the Dejima client</strong> (downloads <code>dejima.exe</code> to <code>%LOCALAPPDATA%\dejima</code>, adds it to your PATH):
+    <li><strong>Open PowerShell.</strong> Press the Windows key, type <em>PowerShell</em>, press Enter. Any working directory is fine.</li>
+    <li><strong>Run the client installer:</strong>
 <pre><code>irm https://aoos.github.io/dejima/install-client.ps1 | iex</code></pre>
+      <p class="small">It does all of this in order:</p>
+      <ul>
+        <li>Offers to install <strong>Tailscale</strong> via <code>winget</code> if missing. Then points you at the system-tray icon: right-click → <em>Log in</em>, sign in to the <em>same tailnet</em> as your server. (Tailscale sign-in is GUI-driven on Windows, so the installer can't fully automate it.)</li>
+        <li>Downloads <code>dejima.exe</code> from the latest GitHub Release, verifies SHA256, extracts to <code>%LOCALAPPDATA%\dejima</code>, and adds it to your User PATH.</li>
+        <li>Prompts for your server's tailnet IP, probes it on port <code>7273</code> via <code>Test-NetConnection</code>, and persists <code>DEJIMA_HOST</code> to your User environment.</li>
+      </ul>
     </li>
-    <li><strong>Find your server's tailnet address.</strong> On the <em>server</em> (macOS / Linux), run:
-<pre><code>tailscale ip -4                     # e.g. 100.84.12.7</code></pre>
-    </li>
-    <li><strong>Point the client at the server (persisted):</strong>
-<pre><code>[Environment]::SetEnvironmentVariable("DEJIMA_HOST", "100.84.12.7:7273", "User")</code></pre>
-    </li>
-    <li><strong>Close + reopen PowerShell</strong> so the new PATH and <code>DEJIMA_HOST</code> are picked up.</li>
+    <li><strong>Close + reopen PowerShell</strong> so the new <code>PATH</code> and <code>DEJIMA_HOST</code> take effect.</li>
     <li><strong>Open the dashboard:</strong>
 <pre><code>dejima                              # interactive TUI</code></pre>
     </li>

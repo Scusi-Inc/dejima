@@ -109,7 +109,7 @@ See [`docs/distribution.md`](docs/distribution.md) for how to create the `aoos/h
 
 To drive a remote Dejima daemon from your laptop or desktop, you only need the CLI — no daemon, no Docker. The CLI builds and runs on **macOS, Linux, and Windows**.
 
-> **Tailscale is required** for remote access. The daemon refuses connections that don't arrive over a tailnet interface, so both server and client must be on the same tailnet. Install from <https://tailscale.com/download> and `tailscale up` on each device before connecting.
+> **Tailscale is the network layer** — the daemon only accepts connections that arrive over a tailnet interface. The installers below detect Tailscale and offer to install + sign you in if it's missing. Both server and client must be on the same tailnet.
 
 ### macOS / Linux (one-liner — prebuilt binary)
 
@@ -117,7 +117,12 @@ To drive a remote Dejima daemon from your laptop or desktop, you only need the C
 curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash
 ```
 
-Downloads the latest release for your platform, verifies SHA256SUMS, installs to `/usr/local/bin/dejima`. No Go required.
+The script:
+1. Detects + offers to install Tailscale (Homebrew on macOS, official script on Linux), then walks you through `sudo tailscale up`.
+2. Downloads the latest CLI release, verifies SHA256, installs to `/usr/local/bin/dejima`.
+3. Prompts for your server's tailnet IP (the one `install.sh` printed on the server), probes it on port 7273, and persists `DEJIMA_HOST` to `~/.zshenv` (macOS) or `~/.bashrc` (Linux).
+
+Skip the prompts with `AUTO_INSTALL_TS=1` and `DEJIMA_HOST_PREFILL=100.x.y.z` env vars.
 
 ### macOS / Linux (with Go)
 
@@ -126,21 +131,20 @@ go install github.com/aoos/dejima/cmd/dejima@latest
 dejima                # first-run wizard handles DEJIMA_HOST configuration
 ```
 
+(Doesn't bundle Tailscale install — you set that up separately.)
+
 ### Windows (PowerShell — prebuilt binary)
 
 ```powershell
 irm https://aoos.github.io/dejima/install-client.ps1 | iex
 ```
 
-Downloads `dejima_<ver>_windows_<arch>.zip` from the latest GitHub Release, verifies SHA256SUMS, extracts to `%LOCALAPPDATA%\dejima`, and adds it to your User PATH. Then:
+The script:
+1. Detects + offers to install Tailscale via `winget`. Points you at the system-tray icon for sign-in (GUI-only on Windows).
+2. Downloads `dejima_<ver>_windows_<arch>.zip` from the latest Release, verifies SHA256, extracts to `%LOCALAPPDATA%\dejima`, adds it to your User PATH.
+3. Prompts for the server's tailnet IP, probes :7273 via `Test-NetConnection`, persists `DEJIMA_HOST` to the User environment.
 
-```powershell
-# Find your server's tailnet address on the SERVER (mac mini / linux box):
-#   tailscale ip -4          → e.g. 100.84.12.7
-[Environment]::SetEnvironmentVariable("DEJIMA_HOST", "100.84.12.7:7273", "User")
-# Close + reopen PowerShell, then:
-dejima
-```
+Close + reopen PowerShell to pick up the new PATH and env var, then run `dejima`.
 
 The Windows build has full feature parity with macOS/Linux — TUI, `connect`, all verbs. Terminal-resize is polling-based on Windows (vs. SIGWINCH on Unix) but reflows the same way.
 
@@ -151,7 +155,7 @@ export DEJIMA_HOST=mac-mini.your-tailnet.ts.net:7273
 dejima ls
 ```
 
-Adding `DEJIMA_HOST` to `~/.zshenv` (or `~/.bash_profile`, or your Windows environment) makes it persistent; the wizard offers to do that automatically on Unix.
+Adding `DEJIMA_HOST` to `~/.zshenv` (or `~/.bash_profile`, or your Windows environment) makes it persistent; the installer above does this for you.
 
 ## Updating
 

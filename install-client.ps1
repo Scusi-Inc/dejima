@@ -95,22 +95,102 @@ try {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 
+# --- Tailscale ------------------------------------------------------------
+# The network the client uses to reach the daemon. Sign-in is GUI-driven on
+# Windows, so we install the package and point the user at the tray icon.
+Write-Host ""
+Write-Bold "Tailscale"
+$haveTS = $false
+if (Get-Command tailscale -ErrorAction SilentlyContinue) {
+  Write-Info "tailscale CLI found"
+  $haveTS = $true
+} else {
+  Write-Info "Tailscale not found"
+  Write-Info "Tailscale is how this client reaches your Dejima server."
+  $install = $true
+  if ($env:AUTO_INSTALL_TS -ne '1' -and [Environment]::UserInteractive) {
+    $reply = Read-Host "Install Tailscale now via winget? [Y/n]"
+    if ($reply -and ($reply -notmatch '^[Yy]')) { $install = $false }
+  }
+  if ($install) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      Write-Info "Running: winget install Tailscale.Tailscale"
+      try {
+        winget install --id Tailscale.Tailscale --accept-source-agreements --accept-package-agreements -e
+        $haveTS = $true
+      } catch {
+        Write-Info "winget install failed: $_"
+        Write-Info "Install manually from https://tailscale.com/download/windows"
+      }
+    } else {
+      Write-Info "winget not available — install manually from https://tailscale.com/download/windows"
+    }
+  }
+}
+
+if ($haveTS) {
+  Write-Info "Sign in to Tailscale via the system-tray icon (right-click -> Log in)."
+  Write-Info "Use the SAME tailnet as your Dejima server."
+}
+
+# --- DEJIMA_HOST ----------------------------------------------------------
+# Prompt for the server's tailnet IP/hostname; probe :7273; persist as a
+# User-scope environment variable so future PowerShell sessions inherit it.
+Write-Host ""
+Write-Bold "Server address"
+Write-Info "On the SERVER (mac mini / linux box), run 'tailscale ip -4' to find its address."
+Write-Info "Example: 100.84.12.7"
+
+$candidate = $null
+if ([Environment]::UserInteractive) {
+  $serverHost = Read-Host "Enter your server's tailnet IP or hostname (blank to skip)"
+  if ($serverHost) {
+    $serverHost = $serverHost -replace ':\d+$',''  # strip user-supplied port
+    $candidate  = "${serverHost}:7273"
+    Write-Info "Probing $candidate..."
+    try {
+      $probe = Test-NetConnection -ComputerName $serverHost -Port 7273 -InformationLevel Quiet -WarningAction SilentlyContinue
+      if ($probe) {
+        Write-Host "  [OK] reached $candidate" -ForegroundColor Green
+      } else {
+        Write-Host "  [!] couldn't reach $candidate -- saving anyway" -ForegroundColor Yellow
+        Write-Info "    (server may be down, or Tailscale not connected yet)"
+      }
+    } catch {
+      Write-Host "  [!] probe failed: $_ -- saving anyway" -ForegroundColor Yellow
+    }
+    [Environment]::SetEnvironmentVariable('DEJIMA_HOST', $candidate, 'User')
+    Write-Info "saved DEJIMA_HOST=$candidate to User environment"
+  }
+}
+
 Write-Host ""
 Write-Bold "Next steps"
-Write-Host @"
+if ($candidate) {
+  Write-Host @"
 
-  1. Find your server's tailnet address. On the Mac mini / Linux host, run:
+  Close + reopen PowerShell so the new PATH and DEJIMA_HOST are picked up.
+  Then:
 
-       tailscale ip -4         # gives 100.x.y.z (foolproof)
-       tailscale status --self # gives the MagicDNS name
+       dejima              # opens the dashboard
+       dejima connect <island>
 
-  2. In a NEW PowerShell window, set DEJIMA_HOST and open the TUI:
+  (No daemon installed here -- this is the client. The full server stack
+   is Unix-only; install on a Mac mini or Linux box with install.sh.)
+"@
+} else {
+  Write-Host @"
+
+  1. Set DEJIMA_HOST (one-time, persistent):
 
        [Environment]::SetEnvironmentVariable("DEJIMA_HOST", "100.x.y.z:7273", "User")
-       dejima
 
-  (Close + reopen PowerShell after step 2 so the env var takes effect.)
+  2. Close + reopen PowerShell, then:
 
-  No daemon installed here -- this is the client. The full server stack
-  (install.sh) is Unix-only.
+       dejima              # opens the dashboard
+       dejima connect <island>
+
+  (No daemon installed here -- this is the client. The full server stack
+   is Unix-only; install on a Mac mini or Linux box with install.sh.)
 "@
+}

@@ -50,9 +50,133 @@ case "$OS" in
 esac
 
 # ---------------------------------------------------------------------------
-# 1. Docker check
+# Tailscale handling — installed early so the DEJIMA_TCP decision later in
+# this script and the service install both see an up-to-date state.
+#
+# Layered behavior:
+#   1. Detect tailscale binary; offer install if missing (brew on macOS,
+#      curl|sh on Linux). Honored automatically when AUTO_INSTALL_TS=1
+#      or stdin is not a TTY (curl|bash flow).
+#   2. If installed but not signed in and stdin is a TTY, run `sudo tailscale up`
+#      so the user can complete the browser auth in-band. Non-interactive
+#      runs skip this; the user can `tailscale up` later.
+#   3. After `up` (or if already up), capture the host's tailnet IP and
+#      MagicDNS name into ~/.dejima/host.json so clients have a single
+#      source of truth to copy.
 # ---------------------------------------------------------------------------
-bold "1. Docker"
+bold "1. Tailscale"
+TAILSCALE_PRESENT=0
+TAILSCALE_RUNNING=0
+TAILSCALE_IP=""
+TAILSCALE_NAME=""
+
+ts_install_prompt() {
+    # Same logic as prompt_yn but keyed off AUTO_INSTALL_TS for clarity.
+    if [[ "${AUTO_INSTALL_TS:-}" == "1" || ! -t 0 ]]; then
+        return 0  # default-yes for non-interactive
+    fi
+    local reply
+    read -r -p "$1 [Y/n] " reply
+    reply=${reply:-y}
+    [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
+if command -v tailscale >/dev/null 2>&1; then
+    ok "tailscale CLI found"
+    TAILSCALE_PRESENT=1
+else
+    warn "Tailscale not installed"
+    info "Tailscale is how Dejima reaches this server from your other devices."
+    info "Without it, the daemon listens only on a local Unix socket — fine for"
+    info "single-machine use, required for remote access."
+    if ts_install_prompt "Install Tailscale now?"; then
+        if [[ "$OS" == "Darwin" ]]; then
+            if command -v brew >/dev/null 2>&1; then
+                info "Running: brew install tailscale"
+                if brew install tailscale; then
+                    TAILSCALE_PRESENT=1
+                    ok "Tailscale installed"
+                else
+                    fail "brew install tailscale failed"
+                fi
+            else
+                fail "Homebrew not found; install from https://brew.sh then re-run."
+            fi
+        else
+            info "Running: curl -fsSL https://tailscale.com/install.sh | sh"
+            if curl -fsSL https://tailscale.com/install.sh | sh; then
+                TAILSCALE_PRESENT=1
+                ok "Tailscale installed"
+            else
+                fail "Tailscale install script failed"
+            fi
+        fi
+    else
+        info "Skipping Tailscale — daemon will listen on local socket only."
+    fi
+fi
+
+if [[ "$TAILSCALE_PRESENT" == "1" ]]; then
+    if tailscale status >/dev/null 2>&1; then
+        TAILSCALE_RUNNING=1
+        ok "Tailscale is signed in"
+    else
+        warn "Tailscale installed but not signed in"
+        if [[ -t 0 ]]; then
+            info "Running 'sudo tailscale up' — a browser tab opens for sign-in."
+            info "(Ctrl-C to skip; you can sign in later with 'sudo tailscale up'.)"
+            if sudo tailscale up; then
+                # Wait up to 60s for backend to report Running.
+                for _ in $(seq 1 60); do
+                    if tailscale status >/dev/null 2>&1; then
+                        TAILSCALE_RUNNING=1
+                        break
+                    fi
+                    sleep 1
+                done
+                if [[ "$TAILSCALE_RUNNING" == "1" ]]; then
+                    ok "Tailscale is signed in"
+                else
+                    warn "Tailscale didn't report Running within 60s"
+                fi
+            else
+                warn "'tailscale up' didn't complete — skip for now"
+            fi
+        else
+            info "Non-interactive run — skipping 'tailscale up'."
+            info "Sign in later with: sudo tailscale up"
+        fi
+    fi
+fi
+
+if [[ "$TAILSCALE_RUNNING" == "1" ]]; then
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
+    # MagicDNS name: pull the DNSName from `tailscale status --json` without
+    # depending on jq. Plain grep/sed is fragile but enough for an info field.
+    TAILSCALE_NAME=$(tailscale status --json 2>/dev/null \
+        | grep -m1 '"DNSName"' | sed -E 's/.*"DNSName": *"([^"]+)\.?".*/\1/' || true)
+    TAILSCALE_NAME="${TAILSCALE_NAME%.}"  # strip trailing dot, if any
+    if [[ -n "$TAILSCALE_IP" ]]; then
+        mkdir -p "$HOME/.dejima"
+        # Single source of truth for "how do my other devices reach this server?"
+        cat > "$HOME/.dejima/host.json" <<EOF
+{
+  "tailscale_ip": "$TAILSCALE_IP",
+  "tailscale_name": "$TAILSCALE_NAME",
+  "dejima_host": "${TAILSCALE_IP}:7273",
+  "captured_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+        ok "wrote $HOME/.dejima/host.json"
+        info "Your DEJIMA_HOST is: ${TAILSCALE_IP}:7273"
+        [[ -n "$TAILSCALE_NAME" ]] && info "  or by name:        ${TAILSCALE_NAME}:7273"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Docker check
+# ---------------------------------------------------------------------------
+bold "2. Docker"
 if docker version >/dev/null 2>&1; then
     ok "Docker is reachable ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'server unknown'))"
 elif command -v docker >/dev/null 2>&1; then
@@ -196,7 +320,7 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Go check + build
 # ---------------------------------------------------------------------------
-bold "2. Build binaries"
+bold "3. Build binaries"
 if ! command -v go >/dev/null 2>&1; then
     fail "Go is not installed"
     if [[ "$OS" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
@@ -213,14 +337,14 @@ ok "built bin/dejima, bin/dejimad"
 # ---------------------------------------------------------------------------
 # 3. Install to /usr/local/bin (or $PREFIX)
 # ---------------------------------------------------------------------------
-bold "3. Install binaries"
+bold "4. Install binaries"
 make install
 ok "installed dejima + dejimad"
 
 # ---------------------------------------------------------------------------
 # 4. Island image
 # ---------------------------------------------------------------------------
-bold "4. Island image"
+bold "5. Island image"
 if docker image inspect dejima/island:latest >/dev/null 2>&1; then
     ok "dejima/island:latest already built"
 else
@@ -237,7 +361,8 @@ fi
 # ---------------------------------------------------------------------------
 DEJIMA_TCP="${DEJIMA_TCP-__unset__}"
 if [[ "$DEJIMA_TCP" == "__unset__" ]]; then
-    if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+    # Step 1 already ran the detect+install+up flow, so we can trust the flag.
+    if [[ "$TAILSCALE_RUNNING" == "1" ]]; then
         DEJIMA_TCP=":7273"
     else
         DEJIMA_TCP=""
@@ -245,12 +370,12 @@ if [[ "$DEJIMA_TCP" == "__unset__" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Service install
+# 6. Service install
 # ---------------------------------------------------------------------------
 if [[ "${SKIP_SERVICE:-}" == "1" ]]; then
-    bold "5. Service install (skipped via SKIP_SERVICE=1)"
+    bold "6. Service install (skipped via SKIP_SERVICE=1)"
 else
-    bold "5. Service install"
+    bold "6. Service install"
     install_args=()
     [[ -n "$DEJIMA_TCP" ]] && install_args+=(--tcp "$DEJIMA_TCP")
     [[ -n "${NOTIFY_URL:-}" ]] && install_args+=(--notify "$NOTIFY_URL")
@@ -292,12 +417,20 @@ if ! dejima doctor 2>/dev/null | grep -q "daemon.*OK"; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Final check
+# 7. Final check
 # ---------------------------------------------------------------------------
-bold "6. Health check"
+bold "7. Health check"
 dejima doctor || true
 
 printf '\n'
 bold "Setup complete."
 info "Try:  dejima init --repo git@github.com:you/repo.git"
 info "Then: dejima connect <name>"
+
+if [[ -n "$TAILSCALE_IP" ]]; then
+    printf '\n'
+    bold "To drive this server from another device:"
+    info "Install the dejima client on the other machine, then set:"
+    info "  export DEJIMA_HOST=${TAILSCALE_IP}:7273"
+    info "(Recorded in ~/.dejima/host.json.)"
+fi
