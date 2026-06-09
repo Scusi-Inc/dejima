@@ -21,6 +21,7 @@ import (
 
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/project"
+	"github.com/aoos/dejima/internal/reposrc"
 	"github.com/aoos/dejima/internal/service"
 	"github.com/aoos/dejima/internal/version"
 )
@@ -28,7 +29,7 @@ import (
 // execLookPath is a small indirection so resolveDaemonBinary stays testable.
 var execLookPath = exec.LookPath
 
-func base64StdEncode(b []byte) string         { return base64.StdEncoding.EncodeToString(b) }
+func base64StdEncode(b []byte) string          { return base64.StdEncoding.EncodeToString(b) }
 func base64StdDecode(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
 
 func main() {
@@ -675,13 +676,14 @@ func resolveDaemonBinary() (string, error) {
 
 func newInitCmd() *cobra.Command {
 	var (
-		repo   string
-		name   string
-		agent  string
-		image  string
-		memory string
-		cpus   string
-		disk   string
+		repo      string
+		name      string
+		agent     string
+		image     string
+		memory    string
+		cpus      string
+		disk      string
+		localCopy bool
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -692,6 +694,13 @@ func newInitCmd() *cobra.Command {
 			if repo == "" {
 				return fmt.Errorf("--repo is required")
 			}
+			// Resolve the repo client-side: a URL clones directly; a local path
+			// clones from its origin by default, or seeds a read-only local copy
+			// (--local-copy, or when there's no remote) against a local daemon.
+			res, err := reposrc.Resolve(repo, os.Getenv("DEJIMA_HOST") == "", localCopy)
+			if err != nil {
+				return err
+			}
 			if name == "" {
 				name = project.DeriveNameFromRepo(repo)
 			}
@@ -699,13 +708,15 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			fmt.Printf("• %s\n", res.Note)
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
 			info, err := c.CreateIsland(ctx, api.CreateIslandRequest{
-				Name:  name,
-				Repo:  repo,
-				Agent: agent,
-				Image: image,
+				Name:     name,
+				Repo:     res.Repo,
+				SeedPath: res.SeedPath,
+				Agent:    agent,
+				Image:    image,
 				Resources: api.Resources{
 					Memory: memory,
 					CPUs:   cpus,
@@ -720,7 +731,8 @@ func newInitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL or local path (required)")
+	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL, or a local path (cloned from its origin by default) (required)")
+	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk (captures unpushed commits) instead of cloning from origin; requires a local daemon")
 	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent to run (default: claude-code)")
 	cmd.Flags().StringVar(&image, "image", "", "island image (default: dejima/island:latest)")

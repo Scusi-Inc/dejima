@@ -16,6 +16,16 @@ type IslandInfo struct {
 	Stats      *IslandStats    `json:"stats,omitempty"`
 	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
 	Git        *GitInfo        `json:"git,omitempty"`
+	Health     *IslandHealth   `json:"health,omitempty"`
+}
+
+// IslandHealth surfaces crash-relevant facts that a remote client can't observe
+// itself (they require container-engine access). Populated on the detail
+// endpoint only. RestartCount > 0 or OOMKilled signal an unhealthy island.
+type IslandHealth struct {
+	OOMKilled    bool `json:"oom_killed"`
+	RestartCount int  `json:"restart_count"`
+	ExitCode     int  `json:"exit_code,omitempty"`
 }
 
 // IslandStats is a snapshot of the container's resource usage.
@@ -69,6 +79,10 @@ type CreateIslandRequest struct {
 	Agent     string    `json:"agent,omitempty"` // defaults to "claude-code"
 	Image     string    `json:"image,omitempty"` // defaults to "dejima/island:latest"
 	Resources Resources `json:"resources,omitempty"`
+	// SeedPath, when set, is a host path bind-mounted read-only as the clone
+	// source (see reposrc local-copy mode). Only valid against a local daemon;
+	// Repo then holds the upstream URL to set as origin, or "" for no remote.
+	SeedPath string `json:"seed_path,omitempty"`
 }
 
 // Resources mirrors project.Resources for API transport.

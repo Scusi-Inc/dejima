@@ -162,6 +162,12 @@ dejima connect foo                 # drops into Claude Code, in foo's island
 
 DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # from your laptop
 </code></pre>
+<p><strong>Or skip the commands entirely.</strong> Run <code>dejima</code> with no arguments for an interactive dashboard: live state and presence for every island, single-key lifecycle (connect / hibernate / wake / reset / purge), and <code>n</code> to launch a new one — it scans your code folder, lists your repos with their git status, and provisions an island in a couple of keystrokes. Press <code>?</code> for the full key map.</p>
+<pre><code>dejima                             # interactive dashboard
+#  n  → pick a repo, choose an agent (Claude Code / Codex), launch
+#  ⏎  → attach   ·   h hibernate   ·   ?  help
+</code></pre>
+<p>Repos can come from anywhere: a git URL, or a <strong>local checkout already on disk</strong> — Dejima clones from its remote by default, or seeds from your working copy (<code>--local-copy</code>) to capture unpushed work. And one repo can back <strong>several islands at once</strong> — Claude Code and Codex side by side, or two agents on parallel tasks.</p>
 <p><strong>Why it's worth it:</strong> islands are real containers. Each has its own <code>$HOME</code>, its own <code>git</code> config, its own <code>gh</code> credentials, its own working directory. Cross-pollination between projects isn't a discipline thing — the kernel won't let it happen. And because sessions are tmux-backed, your laptop closing or your network blipping doesn't kill anything; you reattach where you left off, from wherever you are.</p>
 
 <h2 id="api-builder">Use case: Product builder</h2>
@@ -169,6 +175,7 @@ DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # from your laptop
 <pre><code># Target the Dejima HTTP API from any language.
 POST   /v1/islands          { "repo": "...", "agent": "claude-code" }
 GET    /v1/islands          # list all islands
+GET    /v1/islands/:name     # live detail: presence, cpu/mem, git, crash health
 GET    /v1/islands/:name/session       # websocket PTY stream, multi-attach
 POST   /v1/islands/:name/exec          # one-shot command
 POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
@@ -201,7 +208,8 @@ dejima service install --tcp :7273
 <h2>CLI reference</h2>
 <table>
   <tr><th>Command</th><th>Purpose</th></tr>
-  <tr><td><code>dejima init</code></td><td>Provision a new island.</td></tr>
+  <tr><td><code>dejima</code></td><td>Interactive dashboard — browse, manage, and launch islands. <code>n</code> new · <code>?</code> help.</td></tr>
+  <tr><td><code>dejima init</code></td><td>Provision a new island from a git URL or a local path.</td></tr>
   <tr><td><code>dejima connect</code></td><td>Attach to an island's session (multi-attach).</td></tr>
   <tr><td><code>dejima ls</code></td><td>List all islands.</td></tr>
   <tr><td><code>dejima status</code></td><td>One island in detail: presence, memory, CPU.</td></tr>

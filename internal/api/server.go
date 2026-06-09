@@ -277,6 +277,14 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
 	info.Git = s.gitStatusOf(r, p.ContainerName())
+	// Crash health is one extra inspect; detail-only to keep list refreshes cheap.
+	if h, err := s.rt.Inspect(r.Context(), p.ContainerName()); err == nil {
+		info.Health = &IslandHealth{
+			OOMKilled:    h.OOMKilled,
+			RestartCount: h.RestartCount,
+			ExitCode:     h.ExitCode,
+		}
+	}
 	writeJSON(w, http.StatusOK, info)
 }
 
@@ -317,7 +325,7 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		image = DefaultImage
 	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, req.Resources)
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, req.Resources, req.SeedPath)
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -351,7 +359,7 @@ func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 }
 
 // provision creates the on-disk project, volumes, and a running container.
-func (s *Server) provision(ctx context.Context, name, repo, agent, image string, res Resources) (*project.Project, error) {
+func (s *Server) provision(ctx context.Context, name, repo, agent, image string, res Resources, seedPath string) (*project.Project, error) {
 	exists, err := s.rt.ImageExists(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("check image %s: %w", image, err)
@@ -362,10 +370,10 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image string,
 
 	now := time.Now().UTC()
 	p := &project.Project{
-		Name:         name,
-		RepoURL:      repo,
-		Agent:        agent,
-		Image:        image,
+		Name:    name,
+		RepoURL: repo,
+		Agent:   agent,
+		Image:   image,
 		Resources: project.Resources{
 			Memory: res.Memory,
 			CPUs:   res.CPUs,
@@ -392,7 +400,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image string,
 		return p, fmt.Errorf("create network: %w", err)
 	}
 
-	if err := s.createContainerForProject(ctx, p); err != nil {
+	if err := s.createContainerForProject(ctx, p, seedPath); err != nil {
 		return p, err
 	}
 	return p, nil
@@ -400,10 +408,28 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image string,
 
 // createContainerForProject creates the long-lived container for an existing
 // project. Used by provision() and reset().
-func (s *Server) createContainerForProject(ctx context.Context, p *project.Project) error {
+func (s *Server) createContainerForProject(ctx context.Context, p *project.Project, seedPath string) error {
 	binds, err := credentialBindMounts()
 	if err != nil {
 		return err
+	}
+
+	// A local-copy seed: mount the host repo read-only so the island can clone
+	// from it into its own workspace volume (the silo stays an independent copy).
+	// Only meaningful at first provision; the workspace persists across recreate.
+	env := map[string]string{
+		"DEJIMA_PROJECT_NAME": p.Name,
+		"DEJIMA_REPO_URL":     p.RepoURL,
+		"DEJIMA_AGENT":        p.Agent,
+		"DEJIMA_SOCKET":       "/run/dejima/dejimad.sock",
+	}
+	if seedPath != "" {
+		binds = append(binds, runtime.BindMount{
+			HostPath:      seedPath,
+			ContainerPath: "/opt/host/seed",
+			ReadOnly:      true,
+		})
+		env["DEJIMA_SEED"] = "/opt/host/seed"
 	}
 
 	// Mount the daemon's Unix socket into the container so per-agent shims can
@@ -421,12 +447,7 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	req := runtime.CreateRequest{
 		Name:  p.ContainerName(),
 		Image: p.Image,
-		Env: map[string]string{
-			"DEJIMA_PROJECT_NAME": p.Name,
-			"DEJIMA_REPO_URL":     p.RepoURL,
-			"DEJIMA_AGENT":        p.Agent,
-			"DEJIMA_SOCKET":       "/run/dejima/dejimad.sock",
-		},
+		Env:   env,
 		Volumes: []runtime.VolumeMount{
 			{Name: p.WorkspaceVolume(), Target: "/workspace"},
 			{Name: p.AgentVolume(), Target: agentStateMountTarget(p.Agent)},
@@ -507,7 +528,7 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 	switch status {
 	case runtime.StatusMissing:
 		// Container was removed; recreate it against the existing volumes.
-		if err := s.createContainerForProject(r.Context(), p); err != nil {
+		if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -564,7 +585,8 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("ensure network: %w", err))
 		return
 	}
-	if err := s.createContainerForProject(r.Context(), p); err != nil {
+	// reset preserves the workspace volume, so no re-clone happens; no seed.
+	if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

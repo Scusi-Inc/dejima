@@ -9,12 +9,12 @@ import (
 type ContainerStatus string
 
 const (
-	StatusMissing  ContainerStatus = "missing"
-	StatusCreated  ContainerStatus = "created"
-	StatusRunning  ContainerStatus = "running"
-	StatusStopped  ContainerStatus = "stopped"
-	StatusExited   ContainerStatus = "exited"
-	StatusErrored  ContainerStatus = "errored"
+	StatusMissing ContainerStatus = "missing"
+	StatusCreated ContainerStatus = "created"
+	StatusRunning ContainerStatus = "running"
+	StatusStopped ContainerStatus = "stopped"
+	StatusExited  ContainerStatus = "exited"
+	StatusErrored ContainerStatus = "errored"
 )
 
 // CreateRequest describes a container to be created.
@@ -22,20 +22,20 @@ type CreateRequest struct {
 	Name        string
 	Image       string
 	Env         map[string]string
-	Volumes     []VolumeMount    // named volumes
-	BindMounts  []BindMount      // host path → container path (read-only by default in M1)
-	Command     []string         // override entrypoint command (optional)
+	Volumes     []VolumeMount // named volumes
+	BindMounts  []BindMount   // host path → container path (read-only by default in M1)
+	Command     []string      // override entrypoint command (optional)
 	Labels      map[string]string
-	Memory      string           // e.g. "4G" → --memory
-	CPUs        string           // e.g. "2.0" → --cpus
-	StorageSize string           // e.g. "20G" → --storage-opt size=
-	Network     string           // user-defined bridge network name (empty = default)
+	Memory      string // e.g. "4G" → --memory
+	CPUs        string // e.g. "2.0" → --cpus
+	StorageSize string // e.g. "20G" → --storage-opt size=
+	Network     string // user-defined bridge network name (empty = default)
 }
 
 // VolumeMount represents a named-volume mount.
 type VolumeMount struct {
-	Name      string
-	Target    string
+	Name   string
+	Target string
 }
 
 // BindMount represents a host-directory bind mount.
@@ -50,6 +50,15 @@ type Stats struct {
 	MemoryUsageBytes uint64
 	MemoryLimitBytes uint64
 	CPUPercent       float64
+}
+
+// Health holds crash-relevant facts from a container inspect. These can't be
+// derived by a remote client (they require engine access), so the daemon
+// surfaces them for monitoring/dashboards.
+type Health struct {
+	OOMKilled    bool // last run was killed by the OOM killer (hit its memory cap)
+	RestartCount int  // cumulative restarts under the restart policy
+	ExitCode     int  // last exit code (0 if running or never exited)
 }
 
 // Runtime is the backend abstraction over a container engine.
@@ -86,6 +95,10 @@ type Runtime interface {
 
 	// Status returns the container's current status.
 	Status(ctx context.Context, name string) (ContainerStatus, error)
+
+	// Inspect returns crash-relevant health facts (OOM, restarts, exit code).
+	// Returns a zero Health if the container is missing or unavailable.
+	Inspect(ctx context.Context, name string) (Health, error)
 
 	// Exec runs a command inside a running container, returning stdout/stderr and exit code.
 	Exec(ctx context.Context, name string, cmd []string) (stdout, stderr string, exitCode int, err error)

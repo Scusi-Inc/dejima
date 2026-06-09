@@ -62,6 +62,18 @@ Targeted fixes and quality-of-life additions surfaced during planning. Sized in 
 
 ---
 
+### Observability — real-time signals for dashboards / wrapper tooling
+
+Dejima's stance: surface rich real-time state via the API and let wrapper tooling own history, aggregation, and per-user/per-org rollups (same division as the built-in-cost-tracking non-goal below). These are the real-time signals still worth exposing.
+
+- [x] **Crash health in island detail** — `oom_killed`, `restart_count`, `exit_code` from `docker inspect`, surfaced on `GET /v1/islands/:name` and in the TUI detail pane. Signals an agent killed by its memory cap or a flapping container — facts a remote client can't observe itself. (done)
+- [ ] **Per-island disk usage** — workspace-volume size surfaced alongside mem/cpu in `status`/TUI. Via `docker system df -v` (one call, mapped by volume name); caveat: size reads `N/A` on some storage drivers and the call is slower than `docker stats`, so poll it less often. The signal most likely to silently bite (clones + builds fill volumes). (half day)
+- [ ] **Prometheus `/metrics` endpoint** — islands-by-state, per-island cpu/mem/disk, agent-idle seconds, restart/OOM counts. Makes Dejima ping-able by any org dashboard (Grafana) with zero bespoke UI, and is the natural fan-in point when many daemons report to one place. Strongest single enabler for the multi-employee high-level dashboard. (1-2 days)
+- [ ] **Agent-process liveness** — distinguish a crashed *agent* inside a still-running container (`start.sh`'s `tail -f` keeps the container up even if the agent dies) from a healthy one. Cheap-but-pollish by checking the tmux pane command, or via a heartbeat from the agent shim. Complements the container watchdog, which only sees container exits. (1 day)
+- [ ] **Island ownership + tags** — persist a creator label and free-form tags (`--tag team=web`) on each island; surface in `IslandInfo`. Enables per-user / per-team rollups in wrapper dashboards. Storable now even before the auth model lands; pairs with the token/roles work in v2. (half day)
+
+---
+
 ## v1.x — open design questions
 
 Questions worth answering before committing to an implementation.
@@ -84,6 +96,7 @@ Substantial engineering. Defer until v1 dogfood proves the foundation.
 - [ ] **MCP server brokering** — proxy host MCP servers into islands (or run them inside); declarative per-project. (weeks)
 - [ ] **Multi-user / RBAC** — team scenario. Auth model, identity, per-user quotas, project ownership. (weeks)
 - [ ] **Cross-host CLI** — `dejima --host <name>` first-class; multi-host registry; remote orchestration. (week)
+- [ ] **Optional natural-language control layer** — `dejima ask "spin up an island for the api repo and hibernate the idle ones"`, and/or a TUI command palette, that translates intent into existing API calls with confirmation before any mutating action. Reuses the user's *already-present* agent credentials (e.g. Claude) — **no bundled model weights**. Wrapper-adjacent; could ship as a thin opt-in in core or as a separate tool. (open design, week)
 - [ ] **Web / PWA reference client** — xterm.js-based browser client for the session API. Mobile-friendly. (weeks; separate repo)
 - [ ] **Lock-based session check-in/check-out** — for explicit handoff between devices instead of shared-tmux. Add iff real demand. (week)
 
@@ -114,4 +127,5 @@ Things worth saying "no" to clearly so they don't keep coming up:
 - **Windows host support** (running `dejimad` + Docker on Windows). The client works on Windows; the host doesn't. Out of scope.
 - **Enterprise compliance certifications.** SOC 2 etc. are post-team-product, not v1/v2.
 - **Built-in cost tracking for LLM API spend.** Out of scope; consume webhook events into your own dashboard.
+- **Bundling LLM weights into Dejima itself.** The agents are the LLMs, and they live *inside* islands; a model baked into the daemon would bloat the binary, assume hardware (GPU/RAM), and go stale. Any natural-language / assistant features reuse credentials the user already has (see the optional NL control layer in v2) — Dejima ships no weights. Same principle as no-built-in-cost-tracking.
 - **Real-time collaborative editing inside the workspace.** Sessions are shared-tmux, not shared-Cursor. Different problem.

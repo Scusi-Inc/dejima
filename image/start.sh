@@ -38,13 +38,32 @@ if [[ -x "${SHIM_DIR}/init.sh" ]]; then
 fi
 
 # --- clone the repo (idempotent) ------------------------------------------
-if [[ -n "$REPO" && ! -d "${WORKSPACE}/.git" ]]; then
-    echo "cloning ${REPO} into ${WORKSPACE}"
-    # WORKSPACE is a volume mount; clone into a temp dir then move contents.
+# Two sources, in priority order:
+#   * DEJIMA_SEED — a read-only host repo mounted at /opt/host/seed. We clone
+#     from it (capturing local/unpushed commits) into the island's own volume,
+#     then repoint origin at the real upstream (REPO) so `git push` works. The
+#     workspace ends up fully independent of the host copy.
+#   * REPO — a remote URL cloned directly (origin is correct out of the box).
+SEED="${DEJIMA_SEED:-}"
+if [[ ! -d "${WORKSPACE}/.git" ]]; then
     TMP=$(mktemp -d)
-    git clone "$REPO" "$TMP/repo"
-    shopt -s dotglob nullglob
-    mv "$TMP/repo/"* "${WORKSPACE}/"
+    if [[ -n "$SEED" && -d "${SEED}/.git" ]]; then
+        echo "seeding ${WORKSPACE} from local copy ${SEED}"
+        git clone "$SEED" "$TMP/repo"
+        if [[ -n "$REPO" ]]; then
+            git -C "$TMP/repo" remote set-url origin "$REPO"
+        else
+            git -C "$TMP/repo" remote remove origin 2>/dev/null || true
+        fi
+    elif [[ -n "$REPO" ]]; then
+        echo "cloning ${REPO} into ${WORKSPACE}"
+        git clone "$REPO" "$TMP/repo"
+    fi
+    if [[ -d "$TMP/repo" ]]; then
+        # WORKSPACE is a volume mount; move cloned contents (incl. dotfiles) in.
+        shopt -s dotglob nullglob
+        mv "$TMP/repo/"* "${WORKSPACE}/"
+    fi
     rm -rf "$TMP"
 fi
 

@@ -173,6 +173,22 @@ func (d *Docker) Status(ctx context.Context, name string) (ContainerStatus, erro
 	}
 }
 
+func (d *Docker) Inspect(ctx context.Context, name string) (Health, error) {
+	out, _, err := d.run(ctx, "inspect", "-f",
+		"{{.State.OOMKilled}}|{{.RestartCount}}|{{.State.ExitCode}}", name)
+	if err != nil {
+		return Health{}, nil // missing/unavailable: best-effort, no health
+	}
+	parts := strings.Split(strings.TrimSpace(out), "|")
+	if len(parts) != 3 {
+		return Health{}, nil
+	}
+	h := Health{OOMKilled: parts[0] == "true"}
+	fmt.Sscanf(parts[1], "%d", &h.RestartCount)
+	fmt.Sscanf(parts[2], "%d", &h.ExitCode)
+	return h, nil
+}
+
 func (d *Docker) CreateContainer(ctx context.Context, req CreateRequest) (string, error) {
 	args := []string{"run", "-d", "--name", req.Name, "--restart", "unless-stopped"}
 	if req.Network != "" {

@@ -76,9 +76,13 @@ type tuiModel struct {
 	width     int
 	height    int
 	lastError string
-	connectTo string  // set on quit-to-connect; main() acts on this
+	connectTo string // set on quit-to-connect; main() acts on this
 	confirm   *confirmPrompt
 	dirtyOps  map[string]string // name → "hibernating" etc. (transient hint)
+
+	help         bool          // help overlay visible
+	helpAdvanced bool          // advanced section of the help overlay expanded
+	creator      *creatorModel // non-nil while the new-island flow is active
 }
 
 type confirmPrompt struct {
@@ -214,11 +218,50 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
 		}
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+
+	case reposDiscoveredMsg:
+		if m.creator != nil {
+			m.creator.onReposDiscovered(msg)
+		}
+		return m, nil
+
+	case repoStatusMsg:
+		if m.creator != nil {
+			m.creator.onRepoStatus(msg)
+		}
+		return m, nil
+
+	case islandCreatedMsg:
+		if m.creator != nil {
+			if msg.err != nil {
+				m.creator.creating = false
+				m.creator.err = msg.err.Error()
+				return m, nil
+			}
+			m.creator = nil
+			m.connectTo = msg.name // drop straight into the new island's session
+			return m, tea.Quit
+		}
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The new-island creator owns all keys while active.
+	if m.creator != nil {
+		return m.creatorKey(msg)
+	}
+	// The help overlay owns keys while shown.
+	if m.help {
+		switch msg.String() {
+		case "?", "esc", "q":
+			m.help = false
+		case "a":
+			m.helpAdvanced = !m.helpAdvanced
+		}
+		return m, nil
+	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
 		switch msg.String() {
@@ -245,6 +288,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "?":
+		m.help = true
+		return m, nil
+	case "n":
+		return m.openCreator()
 	case "j", "down":
 		if m.selected < len(m.islands)-1 {
 			m.selected++
@@ -370,6 +418,17 @@ func (m tuiModel) View() string {
 	}
 
 	header := m.renderHeader()
+
+	// Full-pane overlays take over the body + footer.
+	if m.creator != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - 3).Render(m.creator.view(m.width - 6))
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.help {
+		body := stylePane.Width(m.width - 2).Height(m.height - 3).Render(m.renderHelp())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+
 	footer := m.renderFooter()
 	body := m.renderBody()
 
@@ -418,7 +477,7 @@ func (m tuiModel) renderBody() string {
 func (m tuiModel) renderList(_ int) string {
 	if len(m.islands) == 0 {
 		if m.lastError != "" {
-			return styleErrored.Render("error: " + m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)")
+			return styleErrored.Render("error: "+m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)")
 		}
 		return styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`")
 	}
@@ -487,6 +546,20 @@ func (m tuiModel) renderDetail(_ int) string {
 		}
 		b.WriteString("attached:  " + strings.Join(labels, ", ") + "\n")
 	}
+	// Crash health — only worth showing when something's wrong.
+	if h := d.Health; h != nil && (h.OOMKilled || h.RestartCount > 0) {
+		var warn string
+		if h.OOMKilled {
+			warn = "OOM-killed (hit memory cap)"
+		}
+		if h.RestartCount > 0 {
+			if warn != "" {
+				warn += " · "
+			}
+			warn += fmt.Sprintf("%d restart(s)", h.RestartCount)
+		}
+		b.WriteString("health:    " + styleErrored.Render(warn) + "\n")
+	}
 
 	if len(m.events_) > 0 {
 		b.WriteString("\n")
@@ -505,7 +578,7 @@ func (m tuiModel) renderDetail(_ int) string {
 }
 
 func (m tuiModel) renderFooter() string {
-	keys := "[↑/↓] nav   [⏎] connect   [h] hibernate   [w] wake   [r] reset   [d] purge   [R] refresh   [q] quit"
+	keys := "[n] new   [⏎] connect   [h] hibernate   [w] wake   [r] reset   [d] purge   [?] help   [q] quit"
 	left := m.renderFooterLeft()
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(keys) - 2
 	if pad < 1 {
@@ -539,6 +612,70 @@ func (m tuiModel) renderFooterLeft() string {
 		parts = append(parts, styleMuted.Render(fmt.Sprintf("%d webhook(s)", o.WebhookCount)))
 	}
 	return strings.Join(parts, styleMuted.Render(" · "))
+}
+
+// renderHelp draws the help overlay: a Basic Usage section always, and an
+// expandable Advanced section toggled with `a`.
+func (m tuiModel) renderHelp() string {
+	var b strings.Builder
+	b.WriteString(styleTitle.Render("Dejima — how to use it"))
+	b.WriteString("\n\n")
+
+	b.WriteString(styleHeader.Render("Basic usage"))
+	b.WriteString("\n")
+	basic := [][2]string{
+		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
+		{"⏎", "connect to the highlighted island (shared tmux session)"},
+		{"↑/↓ j/k", "move between islands   ·   g/G jump to top/bottom"},
+		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
+		{"q", "quit the dashboard"},
+	}
+	for _, kv := range basic {
+		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-9s", kv[0])), styleMuted.Render(kv[1])))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("An island = one agent in a contained workspace. The same repo can back\nseveral islands (e.g. claude-code and codex, or two agents on parallel tasks)."))
+	b.WriteString("\n\n")
+
+	if !m.helpAdvanced {
+		b.WriteString(styleAccent.Render("[a]") + styleMuted.Render(" show advanced commands ▾    ") + styleAccent.Render("[?/esc]") + styleMuted.Render(" close"))
+		return b.String()
+	}
+
+	b.WriteString(styleHeader.Render("Manage (single-key, on the highlighted island)"))
+	b.WriteString("\n")
+	manage := [][2]string{
+		{"h", "hibernate — stop the container, keep all data"},
+		{"w", "wake a hibernated island"},
+		{"r", "reset agent state (workspace preserved) — confirms first"},
+		{"d", "purge — destroy the island and its volumes — confirms first"},
+		{"R", "refresh now"},
+	}
+	for _, kv := range manage {
+		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-9s", kv[0])), styleMuted.Render(kv[1])))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styleHeader.Render("From the shell (scriptable; the TUI is just a front-end)"))
+	b.WriteString("\n")
+	shell := [][2]string{
+		{"dejima init --repo <url|path>", "provision an island (--local-copy to seed unpushed work)"},
+		{"dejima connect <name>", "attach a terminal into an island"},
+		{"dejima ls / status <name>", "list islands / detail view"},
+		{"dejima exec <name> -- <cmd>", "run a one-shot command inside an island"},
+		{"dejima cp <src> <dst>", "copy files in or out"},
+		{"dejima logs <name>", "tail an island's container logs"},
+		{"dejima hibernate|wake|reset|purge", "lifecycle from the CLI"},
+		{"DEJIMA_HOST=host:7273 dejima …", "drive a remote daemon over your tailnet"},
+	}
+	for _, kv := range shell {
+		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-32s", kv[0])), styleMuted.Render(kv[1])))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styleAccent.Render("[a]") + styleMuted.Render(" hide advanced ▴    ") + styleAccent.Render("[?/esc]") + styleMuted.Render(" close"))
+	return b.String()
 }
 
 // healthGlyph picks the right colored bullet for a boolean health signal.
