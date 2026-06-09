@@ -88,6 +88,7 @@ type tuiModel struct {
 
 	activeHost  string // current target: "" = local socket, else host:port
 	activeLabel string // profile name for the active target, if known
+	skew        string // client/daemon version-skew warning, or ""
 }
 
 type confirmPrompt struct {
@@ -203,6 +204,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case overviewMsg:
 		m.overview = msg
+		if msg != nil {
+			m.skew = versionSkew(msg.DaemonVersion, msg.APIVersion)
+		}
 		return m, nil
 
 	case detailMsg:
@@ -639,6 +643,9 @@ func (m tuiModel) renderFooterLeft() string {
 	}
 	if o.WebhookCount > 0 {
 		parts = append(parts, styleMuted.Render(fmt.Sprintf("%d webhook(s)", o.WebhookCount)))
+	}
+	if m.skew != "" {
+		parts = append(parts, styleWaiting.Render("⚠ "+truncate(m.skew, 70)))
 	}
 	return strings.Join(parts, styleMuted.Render(" · "))
 }

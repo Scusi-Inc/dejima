@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/version"
 )
 
 // handleExec runs a one-shot command inside an island.
@@ -166,6 +167,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		TotalIslands:    len(projects),
 		DaemonStartedAt: s.startedAt,
 		IslandImage:     DefaultImage,
+		DaemonVersion:   version.Version,
+		APIVersion:      version.APIVersion,
 	}
 	if s.events != nil {
 		out.WebhookCount = len(s.events.List())

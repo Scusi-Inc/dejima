@@ -39,7 +39,7 @@ type IslandStats struct {
 // derived from agent-event hooks (currently emitted by the Claude Code shim).
 // Latest may be empty if the agent hasn't emitted any events.
 type AgentStateInfo struct {
-	Latest    string    `json:"latest"`     // e.g. "waiting-for-input", "task-complete", "error"
+	Latest    string    `json:"latest"` // e.g. "waiting-for-input", "task-complete", "error"
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -70,6 +70,10 @@ type OverviewResponse struct {
 	DockerReachable    bool      `json:"docker_reachable"`
 	IslandImagePresent bool      `json:"island_image_present"`
 	IslandImage        string    `json:"island_image,omitempty"`
+	// DaemonVersion / APIVersion let a client detect skew against the daemon.
+	// APIVersion is 0 from daemons predating version reporting.
+	DaemonVersion string `json:"daemon_version,omitempty"`
+	APIVersion    int    `json:"api_version,omitempty"`
 }
 
 // CreateIslandRequest is the body of POST /v1/islands.

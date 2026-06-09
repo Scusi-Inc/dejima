@@ -1,8 +1,10 @@
 # Dejima Roadmap
 
-**Last updated:** 2026-05-21
+**Last updated:** 2026-06-09
 
 This is the living roadmap for Dejima. Items are grouped by phase and sized roughly. Status legend: `[x]` = built, `[~]` = in progress, `[ ]` = pending.
+
+**Phases ≠ versions.** The `v1` / `v1.x` / `v2` headings are *planning buckets*, not release numbers. Released builds follow semver: the **first public release is `v0.1.0`**, and we stay in **0.x** — where the CLI/API may still break and `api_version` may bump — until we deliberately commit to API stability at **`v1.0.0`** ("safe to build on"). `api_version` (an integer client/daemon contract) is tracked separately from the semver tag.
 
 ---
 
@@ -21,9 +23,25 @@ The v1 vertical slice. Buildable, testable. Real-world dogfood pending.
 
 ---
 
-## v1.x — hardening (the easy wins)
+## 🚢 Release 0.1.0 — the cut line
 
-Targeted fixes and quality-of-life additions surfaced during planning. Sized in hours unless noted.
+Everything in this section gates the **first public release** — the moment we open Dejima to others. Nothing below this section blocks shipping 0.1.0.
+
+- [ ] **🧑 USER TASK — Push the repo to `github.com/aoos/dejima`** so install URLs resolve. (5 min)
+- [ ] **🧑 USER TASK — Enable GitHub Pages from `master:/(root)`** so `aoos.github.io/dejima/install.sh` works. See [`docs/distribution.md`](distribution.md). (5 min, free)
+- [ ] **🧑 USER TASK — Create `aoos/homebrew-dejima` tap repo + copy `homebrew/dejima.rb` to `Formula/dejima.rb`**. (1 hour, free)
+- [ ] **GitHub Releases with prebuilt binaries** — tag-driven CI (`v*`) builds darwin+linux (arm64/amd64) for `dejima` and `dejimad`, plus the six client targets, with `SHA256SUMS`, attached to the release. Unblocks Go-free installs and `brew`. (hours)
+- [ ] **macOS notarization** — sign + notarize + staple the darwin binaries with the Apple Developer ID (already held) so downloads aren't quarantined by Gatekeeper. CI holds the signing secrets. *Do this before opening to others.* (half day + Apple setup)
+- [ ] **Version + `api_version` + skew detection** — daemon advertises its build version and `api_version`; client compares and warns on mismatch (in `doctor` and the TUI) instead of silently degrading (the `seed_path` lesson). Semver tags drive the build version. (afternoon)
+- [ ] **install.sh + Homebrew consume release assets** — switch the installer and the formula from build-from-source to downloading the matching released binary + verifying its checksum (source build stays as the edge/fallback path). (half day)
+
+---
+
+⬇ **Everything below ships *after* the 0.1.0 release.**
+
+## v1.x — post-release hardening
+
+Targeted fixes and quality-of-life additions. Sized in hours unless noted.
 
 - [x] **Inter-island network isolation** — each island gets its own user-defined Docker bridge network so containers can reach the internet but not each other. (hours)
 - [x] **`dejima doctor`** — single command health check: daemon, Docker, image, Tailscale, every project's container/volume/network/config, webhook subscriptions. (hours)
@@ -35,12 +53,12 @@ Targeted fixes and quality-of-life additions surfaced during planning. Sized in 
 - [x] **One-liner installer** — `curl … | bash` that bootstraps Go + clones source + runs `make setup`. (hours)
 - [x] **GitHub Pages site (`index.html` + `install.sh` at repo root + `.nojekyll`)** — works at `aoos.github.io/dejima/` once Pages is enabled. (hours)
 - [x] **Homebrew formula (`homebrew/dejima.rb`)** — HEAD-only build-from-source formula ready to drop into a `homebrew-dejima` tap repo. (hours)
-- [ ] **🧑 USER TASK — Push the repo to `github.com/aoos/dejima`** so the install URLs actually resolve. (5 min)
-- [ ] **🧑 USER TASK — Enable GitHub Pages from `master:/(root)`** so `aoos.github.io/dejima/install.sh` works. See [`docs/distribution.md`](distribution.md). (5 min, free)
-- [ ] **🧑 USER TASK — Create `aoos/homebrew-dejima` repo + copy `homebrew/dejima.rb` to `Formula/dejima.rb`**. (1 hour, free)
 - [ ] **🧑 USER TASK — Pick + register a custom short domain** (e.g. `dejima.sh`, `dejima.app`). Optional polish on top of GitHub Pages. (~$10-45/yr, 30 min)
-- [ ] **GitHub Releases with prebuilt binaries** — tag-driven CI builds darwin-arm64/amd64 and linux-arm64/amd64 archives, attaches to releases. Unlocks fast `brew install` and Go-free curl installs. (hours)
 - [ ] **Submit to homebrew-core** — eventual `brew install dejima` without the tap prefix. Months of stewardship; defer until v1.x has users. (months)
+- [ ] **`dejima self-update`** — client downloads the latest release asset, verifies its checksum, and swaps its own binary in place (sudo for `/usr/local/bin`). Fast-follow right after 0.1.0 so the *second* release reaches users easily. (half day)
+- [ ] **Update-available check** — daily, opt-in, cached: compare the local semver to the latest GitHub release and surface a quiet hint in `doctor`/TUI; optionally emit an `update.available` webhook event so wrappers (Dispatch/ntfy) can notify. No telemetry, never auto-applies. (half day)
+- [ ] **Stable vs edge channels** — released tags = stable; HEAD source build = edge. Today's Homebrew formula is fragile HEAD-only; split once Releases exist. (half day)
+- [ ] **Daemon self-upgrade / restart** — the hard one: update a running `dejimad` (download new binary, stop, swap, restart), including the remote case (SSH to the host or a signed self-update endpoint) and the headless-launchd reload. Notify-then-apply, never silent. (open design, days)
 - [ ] **Container watchdog goroutine** — daemon polls `Status()` every 30s; emits `container.crashed` on unexpected exits. (day)
 - [ ] **`dejima upgrade <name>`** — recreate a container against a fresher island image while preserving volumes. (day)
 - [ ] **`dejima panic`** — stop every island immediately; write a `~/.dejima/PANIC` flag preventing auto-restart until removed. (day)
@@ -54,7 +72,7 @@ Targeted fixes and quality-of-life additions surfaced during planning. Sized in 
 - [ ] **Headless-Mac service install via LaunchDaemon** — when there's no GUI session, LaunchAgents can't load. Detect this case and offer a sudo-elevated LaunchDaemon install (`/Library/LaunchDaemons/dev.dejima.dejimad.plist` running as `aoos`) as the persistent alternative. Today the fallback is starting `dejimad` via `nohup` which doesn't survive reboots. (1 day)
 - [ ] **Auto-login detection + recommendation** — during host provisioning, detect whether auto-login is enabled and recommend turning it on for headless Mac mini setups (so LaunchAgents survive reboots without needing a LaunchDaemon). (hours)
 - [ ] **Mac mini host setup runbook (`docs/mac-mini-host-setup.md`)** — Companion screenshots-and-paragraphs guide for people who'd rather read than be wizard'd. Shipping cost: ~3 hours. (low effort)
-- [ ] **Interactive TUI (`dejima` with no args)** — bubbletea-based dashboard for browse/manage/dive: live state, presence, keyboard nav, single-key actions (connect / hibernate / wake / reset). One-shot CLI verbs still work for scripts. (1 day)
+- [x] **Interactive TUI (`dejima` with no args)** — bubbletea dashboard: live state, presence, keyboard nav, single-key lifecycle, a help overlay (`?`), an `n` repo-picker creator, a connection switcher (`s`), and open-in-new-window (`o`). One-shot CLI verbs still work for scripts. (done)
 - [ ] **Default-on attach notifications at install** — `dejima service install --notify <url>` becomes the recommended path; first install prompts for a webhook URL. Awareness without surveillance. (hour)
 - [ ] **Opt-in audit log (`Ledger`)** — append-only `~/.dejima/ledger.jsonl` of operational events. **Off by default**, never silently enabled, easy to disable. For compliance contexts only. (week)
 - [ ] **Opt-in trust-on-first-use** for new clients — paranoid mode for users who want stronger-than-tailnet auth. Off by default. (week)

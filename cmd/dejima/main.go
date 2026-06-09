@@ -596,6 +596,24 @@ func clientForHost(host string) (*api.Client, error) {
 	return api.NewTCPClient(host)
 }
 
+// versionSkew compares the daemon's reported API version against this client's
+// compiled-in one and returns a human-readable warning, or "" if aligned. This
+// is what turns a silent-degradation bug (old daemon ignoring a new field) into
+// a visible "update X" message.
+func versionSkew(daemonVersion string, daemonAPI int) string {
+	switch {
+	case daemonAPI == 0:
+		return fmt.Sprintf("daemon predates version reporting (client api v%d) — update the daemon", version.APIVersion)
+	case daemonAPI < version.APIVersion:
+		return fmt.Sprintf("daemon api v%d is older than this client (v%d) — update the daemon (%s)",
+			daemonAPI, version.APIVersion, daemonVersion)
+	case daemonAPI > version.APIVersion:
+		return fmt.Sprintf("daemon api v%d is newer than this client (v%d) — update this client",
+			daemonAPI, version.APIVersion)
+	}
+	return ""
+}
+
 func serviceMgr() (service.Manager, error) {
 	return service.New()
 }

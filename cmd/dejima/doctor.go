@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aoos/dejima/internal/version"
 )
 
 // newDoctorCmd produces a single-shot health-check for the host's dejima state.
@@ -154,6 +156,17 @@ func checkDaemon(ctx context.Context, r *doctorReport) {
 		return
 	}
 	r.add("System", "daemon", "OK", "reachable", "")
+
+	// Version + client/daemon skew (a stale remote daemon silently misbehaves).
+	if o, err := c.Overview(ctx); err == nil {
+		if skew := versionSkew(o.DaemonVersion, o.APIVersion); skew != "" {
+			r.add("System", "version", "WARN", skew,
+				"update the older side (`make install`, then restart dejimad)")
+		} else {
+			r.add("System", "version", "OK",
+				fmt.Sprintf("client %s · daemon %s (api v%d)", version.Version, o.DaemonVersion, o.APIVersion), "")
+		}
+	}
 }
 
 func checkDocker(ctx context.Context, r *doctorReport) {
