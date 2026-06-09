@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+// canOpenNewWindow reports whether openInNewWindow has a backend it can use
+// in the current environment. The Enter key uses this to choose between
+// "open in a new window" (default) and "attach in-place, replacing the TUI"
+// (the graceful fallback).
+func canOpenNewWindow() bool {
+	return os.Getenv("TMUX") != "" || goruntime.GOOS == "darwin"
+}
+
 // openInNewWindow launches `dejima connect <name>` in a separate window so the
 // TUI can stay up as an overview. tmux is the portable path (a sibling window);
 // macOS can script Terminal/iTerm directly. Elsewhere we point the user at the

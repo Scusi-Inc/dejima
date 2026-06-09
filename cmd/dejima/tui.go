@@ -325,20 +325,33 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "G", "end":
 		m.selected = len(m.islands) - 1
 		return m, m.fetchDetailCmd(m.selectedName())
-	case "enter":
+	case "enter", "o":
+		// Default behavior: open the island in a new window so the dashboard
+		// stays up. When no new-window backend is available (e.g. Linux
+		// without tmux), fall back to attaching in-place by quitting the TUI
+		// — better than dead-ending the user.
+		if name := m.selectedName(); name != "" {
+			if m.detail != nil && m.detail.Container != "running" {
+				m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
+				return m, nil
+			}
+			if canOpenNewWindow() {
+				if err := m.openInNewWindow(name); err != nil {
+					m.lastError = err.Error()
+				}
+				return m, nil
+			}
+			m.connectTo = name
+			return m, tea.Quit
+		}
+	case "a":
+		// Explicit "attach in this terminal" — replaces the dashboard. Useful
+		// when the user actually wants the old behavior even though a
+		// new-window backend is available.
 		if name := m.selectedName(); name != "" && m.detail != nil && m.detail.Container == "running" {
 			m.connectTo = name
 			return m, tea.Quit
 		}
-	case "o":
-		if name := m.selectedName(); name != "" {
-			if m.detail != nil && m.detail.Container != "running" {
-				m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
-			} else if err := m.openInNewWindow(name); err != nil {
-				m.lastError = err.Error()
-			}
-		}
-		return m, nil
 	case "h":
 		if name := m.selectedName(); name != "" {
 			m.dirtyOps[name] = "hibernating"
@@ -611,7 +624,7 @@ func (m tuiModel) renderDetail(_ int) string {
 }
 
 func (m tuiModel) renderFooter() string {
-	keys := "[n] new   [⏎] connect   [o] +window   [h] hibernate   [w] wake   [r] reset   [d] purge   [s] server   [?] help   [q] quit"
+	keys := "[n] new   [⏎] open   [a] attach here   [h] hibernate   [w] wake   [r] reset   [d] purge   [s] server   [?] help   [q] quit"
 	left := m.renderFooterLeft()
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(keys) - 2
 	if pad < 1 {
@@ -661,8 +674,8 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n")
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
-		{"⏎", "connect to the highlighted island (shared tmux session)"},
-		{"o", "open it in a new window (tmux window / macOS terminal), keeping this overview up"},
+		{"⏎ / o", "open the highlighted island in a new window — dashboard stays up"},
+		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between islands   ·   g/G jump to top/bottom"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
 		{"q", "quit the dashboard"},
