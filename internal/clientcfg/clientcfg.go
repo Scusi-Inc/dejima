@@ -11,11 +11,23 @@ import (
 	"github.com/aoos/dejima/internal/paths"
 )
 
+// Profile is a saved connection target. Host is "" for the local Unix socket,
+// or "host:port" for a remote daemon reached over TCP.
+type Profile struct {
+	Name string `json:"name"`
+	Host string `json:"host,omitempty"`
+}
+
 // Config holds client-side preferences.
 type Config struct {
 	// RepoRoot is the directory the TUI repo picker scans for git repos.
 	// Empty means the user hasn't chosen one yet (first-load prompt pending).
 	RepoRoot string `json:"repo_root,omitempty"`
+
+	// Profiles are saved connection targets (local + remote daemons), switchable
+	// from the TUI. ActiveProfile records the last one selected.
+	Profiles      []Profile `json:"profiles,omitempty"`
+	ActiveProfile string    `json:"active_profile,omitempty"`
 }
 
 func configPath() (string, error) {

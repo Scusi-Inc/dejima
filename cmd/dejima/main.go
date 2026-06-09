@@ -583,10 +583,17 @@ func newResetCmd() *cobra.Command {
 }
 
 func client() (*api.Client, error) {
-	if h := os.Getenv("DEJIMA_HOST"); h != "" {
-		return api.NewTCPClient(h)
+	return clientForHost(os.Getenv("DEJIMA_HOST"))
+}
+
+// clientForHost builds an API client for a connection target: the local Unix
+// socket when host is empty, otherwise a TCP client to host:port. Shared by the
+// env-driven default and the TUI's connection switcher.
+func clientForHost(host string) (*api.Client, error) {
+	if strings.TrimSpace(host) == "" {
+		return api.NewUnixClient()
 	}
-	return api.NewUnixClient()
+	return api.NewTCPClient(host)
 }
 
 func serviceMgr() (service.Manager, error) {

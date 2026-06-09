@@ -44,7 +44,8 @@ func runTUI(ctx context.Context) error {
 	}
 	final := finalRaw.(tuiModel)
 	if final.connectTo != "" {
-		return runConnectFromTUI(ctx, c, final.connectTo)
+		// Use the model's client, which may have been swapped via the switcher.
+		return runConnectFromTUI(ctx, final.client, final.connectTo)
 	}
 	return nil
 }
@@ -80,9 +81,13 @@ type tuiModel struct {
 	confirm   *confirmPrompt
 	dirtyOps  map[string]string // name → "hibernating" etc. (transient hint)
 
-	help         bool          // help overlay visible
-	helpAdvanced bool          // advanced section of the help overlay expanded
-	creator      *creatorModel // non-nil while the new-island flow is active
+	help         bool           // help overlay visible
+	helpAdvanced bool           // advanced section of the help overlay expanded
+	creator      *creatorModel  // non-nil while the new-island flow is active
+	switcher     *switcherModel // non-nil while the connection switcher is open
+
+	activeHost  string // current target: "" = local socket, else host:port
+	activeLabel string // profile name for the active target, if known
 }
 
 type confirmPrompt struct {
@@ -93,8 +98,9 @@ type confirmPrompt struct {
 
 func initialTUIModel(c *api.Client) tuiModel {
 	return tuiModel{
-		client:   c,
-		dirtyOps: map[string]string{},
+		client:     c,
+		dirtyOps:   map[string]string{},
+		activeHost: os.Getenv("DEJIMA_HOST"),
 	}
 }
 
@@ -252,6 +258,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.creator != nil {
 		return m.creatorKey(msg)
 	}
+	// The connection switcher owns all keys while open.
+	if m.switcher != nil {
+		return m.switcherKey(msg)
+	}
 	// The help overlay owns keys while shown.
 	if m.help {
 		switch msg.String() {
@@ -293,6 +303,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		return m.openCreator()
+	case "s":
+		return m.openSwitcher()
 	case "j", "down":
 		if m.selected < len(m.islands)-1 {
 			m.selected++
@@ -424,6 +436,10 @@ func (m tuiModel) View() string {
 		body := stylePane.Width(m.width - 2).Height(m.height - 3).Render(m.creator.view(m.width - 6))
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.switcher != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - 3).Render(m.switcher.view())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 	if m.help {
 		body := stylePane.Width(m.width - 2).Height(m.height - 3).Render(m.renderHelp())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
@@ -436,12 +452,16 @@ func (m tuiModel) View() string {
 }
 
 func (m tuiModel) renderHeader() string {
-	host := os.Getenv("DEJIMA_HOST")
-	if host == "" {
-		host = "local"
+	label := m.activeLabel
+	if label == "" {
+		if m.activeHost == "" {
+			label = "local"
+		} else {
+			label = m.activeHost
+		}
 	}
 	title := styleTitle.Render("Dejima")
-	right := styleMuted.Render(host)
+	right := styleMuted.Render(label + " ⇄ [s]")
 	pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
 	if pad < 1 {
 		pad = 1
@@ -578,7 +598,7 @@ func (m tuiModel) renderDetail(_ int) string {
 }
 
 func (m tuiModel) renderFooter() string {
-	keys := "[n] new   [⏎] connect   [h] hibernate   [w] wake   [r] reset   [d] purge   [?] help   [q] quit"
+	keys := "[n] new   [⏎] connect   [h] hibernate   [w] wake   [r] reset   [d] purge   [s] server   [?] help   [q] quit"
 	left := m.renderFooterLeft()
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(keys) - 2
 	if pad < 1 {
@@ -650,6 +670,7 @@ func (m tuiModel) renderHelp() string {
 		{"w", "wake a hibernated island"},
 		{"r", "reset agent state (workspace preserved) — confirms first"},
 		{"d", "purge — destroy the island and its volumes — confirms first"},
+		{"s", "switch connection target (local / saved remote daemons)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
