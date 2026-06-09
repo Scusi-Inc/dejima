@@ -36,8 +36,12 @@ fi
 # --- gh credentials --------------------------------------------------------
 # GH_CONFIG_DIR points at /opt/host/gh-config (read-only) if the host has gh.
 # `gh auth setup-git` writes the credential helper into the agent's gitconfig.
+# That helper only covers HTTPS remotes, and the island has no SSH keys — so
+# rewrite SSH GitHub URLs to HTTPS, or a repo seeded with an SSH origin could
+# never push.
 if [[ -d "/opt/host/gh-config" ]]; then
     gh auth setup-git 2>/dev/null || echo "warning: gh auth setup-git failed; pushes may need a separate credential path"
+    git config --global url."https://github.com/".insteadOf "git@github.com:"
 fi
 
 # --- per-agent shim --------------------------------------------------------
