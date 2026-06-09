@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dejima — the secure substrate for multi-device, multi-agent workflows</title>
+<title>Dejima — the persistent runtime for isolated AI agents, on your own infrastructure</title>
 <meta name="description" content="Run multiple AI coding agents on your own server in isolated containers. Manage them with a clean CLI, drive them from any device, or build a product on top of the API.">
 <meta property="og:title" content="Dejima">
 <meta property="og:description" content="OSS substrate for running AI coding agents on your own infrastructure. Per-project containers, multi-device sessions, brokered API.">
@@ -93,7 +93,7 @@
   <img src="assets/logo-transparent.png" alt="Dejima">
   <div>
     <h1>Dejima</h1>
-    <div class="tagline">The secure substrate for multi-device, multi-agent workflows. <span class="pill">pre-alpha</span></div>
+    <div class="tagline">The persistent runtime for isolated AI agents — reachable from every device, on hardware you own. <span class="pill">pre-alpha</span></div>
   </div>
 </header>
 
@@ -129,12 +129,12 @@
 
 <h2>Architecture</h2>
 <pre><code>┌──────────────────────────┐
-│  Your devices            │   laptop · phone · web client
+│  Control plane / UI      │   CLI · TUI · Dispatch · your app
 └────────────┬─────────────┘
-             │  websocket over Tailscale
+             │  websocket + HTTP API, over Tailscale
              ▼
 ┌──────────────────────────┐
-│  Dejima daemon           │   on your Mac mini / VPS
+│  Dejima runtime          │   Mac mini · VPS · cloud VM
 └────────────┬─────────────┘
              │  isolation boundary
              ▼
@@ -172,6 +172,7 @@ DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # from your laptop
 
 <h2 id="api-builder">Use case: Product builder</h2>
 <p><strong>If you're building a product on top of agent CLIs</strong> — a multi-agent dashboard, a chat-driven coding bot, a web IDE, a team-internal tool — Dejima is the execution substrate so you don't reinvent container lifecycle, PTY multiplexing, session management, and credential injection for your one product.</p>
+<p>It's the persistent runtime layer for agent-native work — your control plane (a UI, a bot, the CLI) on top, your compute underneath, isolation in between. The boring middle is done and OSS; you build the interesting part.</p>
 <pre><code># Target the Dejima HTTP API from any language.
 POST   /v1/islands          { "repo": "...", "agent": "claude-code" }
 GET    /v1/islands          # list all islands
@@ -231,10 +232,11 @@ dejima service install --tcp :7273
   <tr><th>Term</th><th>Meaning</th></tr>
   <tr><td><code>Island</code></td><td>The container holding a single project and a single agent.</td></tr>
   <tr><td><code>Bridge</code></td><td>The brokered I/O channel between host and island.</td></tr>
-  <tr><td><code>Trade</code></td><td>A synced export of changes from island to host.</td></tr>
-  <tr><td><code>Intake</code></td><td>Files passed into the island via <code>dejima import</code>.</td></tr>
-  <tr><td><code>Ledger</code></td><td>(Post-v1) An audit log of every bridge transaction.</td></tr>
+  <tr><td><code>Trade</code></td><td><em>(planned)</em> A brokered, synced export of changes from island to host.</td></tr>
+  <tr><td><code>Intake</code></td><td><em>(planned)</em> Files brokered into the island from the host.</td></tr>
+  <tr><td><code>Ledger</code></td><td><em>(planned)</em> An audit log of every brokered transaction.</td></tr>
 </table>
+<p class="small"><code>Intake</code> / <code>Trade</code> / <code>Ledger</code> are the planned brokered-context primitives — the seam a memory or context layer attaches to <em>without</em> breaking island isolation. See the <a href="https://github.com/aoos/dejima/blob/master/docs/positioning.md">positioning note</a>.</p>
 
 <h2>Built with Dejima</h2>
 <p class="small">Projects building on the Dejima API will be listed here. <em>(None yet — it's pre-alpha.)</em></p>
