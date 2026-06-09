@@ -32,6 +32,18 @@ func TestUniqueName(t *testing.T) {
 	}
 }
 
+func TestQuoting(t *testing.T) {
+	if got := shquote("a'b"); got != `'a'\''b'` {
+		t.Errorf("shquote = %q", got)
+	}
+	if got := shquote(""); got != "''" {
+		t.Errorf("shquote(empty) = %q", got)
+	}
+	if got := appleStr(`a"b\c`); got != `"a\"b\\c"` {
+		t.Errorf("appleStr = %q", got)
+	}
+}
+
 func TestIslandsForRepo(t *testing.T) {
 	c := &creatorModel{existing: []api.IslandInfo{
 		{Name: "a", Repo: "git@github.com:o/r.git"},

@@ -326,6 +326,15 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.connectTo = name
 			return m, tea.Quit
 		}
+	case "o":
+		if name := m.selectedName(); name != "" {
+			if m.detail != nil && m.detail.Container != "running" {
+				m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
+			} else if err := m.openInNewWindow(name); err != nil {
+				m.lastError = err.Error()
+			}
+		}
+		return m, nil
 	case "h":
 		if name := m.selectedName(); name != "" {
 			m.dirtyOps[name] = "hibernating"
@@ -598,7 +607,7 @@ func (m tuiModel) renderDetail(_ int) string {
 }
 
 func (m tuiModel) renderFooter() string {
-	keys := "[n] new   [⏎] connect   [h] hibernate   [w] wake   [r] reset   [d] purge   [s] server   [?] help   [q] quit"
+	keys := "[n] new   [⏎] connect   [o] +window   [h] hibernate   [w] wake   [r] reset   [d] purge   [s] server   [?] help   [q] quit"
 	left := m.renderFooterLeft()
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(keys) - 2
 	if pad < 1 {
@@ -646,6 +655,7 @@ func (m tuiModel) renderHelp() string {
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
 		{"⏎", "connect to the highlighted island (shared tmux session)"},
+		{"o", "open it in a new window (tmux window / macOS terminal), keeping this overview up"},
 		{"↑/↓ j/k", "move between islands   ·   g/G jump to top/bottom"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
 		{"q", "quit the dashboard"},
