@@ -727,7 +727,7 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n")
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
-		{"⏎ / o", "open the highlighted island in a new window — dashboard stays up"},
+		{"⏎", "open the highlighted island in a new window — dashboard stays up"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between islands   ·   g/G jump to top/bottom"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
