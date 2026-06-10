@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -165,9 +166,17 @@ func probeExistingDaemon(socket string) error {
 // remote address isn't on the local tailnet.
 type tailscaleListener struct {
 	net.Listener
-	tailnet []netip.Prefix
-	log     *slog.Logger
+	log *slog.Logger
+
+	mu          sync.Mutex
+	tailnet     []netip.Prefix
+	lastRefresh time.Time
 }
+
+// tailnetRefreshMinInterval rate-limits allowlist refreshes triggered by
+// unknown addresses, so an off-tailnet scanner can't make us shell out to
+// `tailscale status` on every probe.
+const tailnetRefreshMinInterval = 10 * time.Second
 
 func (l *tailscaleListener) Accept() (net.Conn, error) {
 	for {
@@ -185,13 +194,38 @@ func (l *tailscaleListener) Accept() (net.Conn, error) {
 			_ = c.Close()
 			continue
 		}
-		if !addrOnTailnet(addr, l.tailnet) {
+		if !l.allowed(addr) {
 			l.log.Warn("rejecting non-tailnet connection", "remote", host)
 			_ = c.Close()
 			continue
 		}
 		return c, nil
 	}
+}
+
+// allowed reports whether addr is on the tailnet. On a miss it refreshes the
+// allowlist (rate-limited) and re-checks: a peer that joined the tailnet after
+// dejimad started isn't in the startup snapshot, and without this every new
+// device would be rejected until the daemon restarts. Refreshing replaces the
+// whole list, so removed peers also drop out on the next refresh.
+func (l *tailscaleListener) allowed(addr netip.Addr) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if addrOnTailnet(addr, l.tailnet) {
+		return true
+	}
+	if time.Since(l.lastRefresh) < tailnetRefreshMinInterval {
+		return false
+	}
+	l.lastRefresh = time.Now()
+	fresh, err := loadTailscaleIPs(l.log)
+	if err != nil {
+		l.log.Warn("tailnet allowlist refresh failed", "err", err)
+		return false
+	}
+	l.tailnet = fresh
+	l.log.Info("refreshed tailnet allowlist", "size", len(fresh))
+	return addrOnTailnet(addr, l.tailnet)
 }
 
 func addrOnTailnet(a netip.Addr, prefixes []netip.Prefix) bool {
