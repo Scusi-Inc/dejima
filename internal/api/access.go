@@ -178,12 +178,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		out.DockerReachable = true
 		out.IslandImagePresent = exists
 	}
+	allStats := s.statsAll(r.Context())
 	for _, p := range projects {
 		status, _ := s.rt.Status(r.Context(), p.ContainerName())
 		switch status {
 		case runtime.StatusRunning:
 			out.Running++
-			if stats, err := s.rt.Stats(r.Context(), p.ContainerName()); err == nil {
+			if stats, ok := allStats[p.ContainerName()]; ok {
 				out.MemoryUsageBytes += stats.MemoryUsageBytes
 				out.MemoryLimitBytes += stats.MemoryLimitBytes
 				out.CPUPercent += stats.CPUPercent

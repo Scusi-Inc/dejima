@@ -81,6 +81,12 @@ type Runtime interface {
 	// stats if the container is not running or stats are unavailable.
 	Stats(ctx context.Context, name string) (Stats, error)
 
+	// StatsAll returns current resource usage for every running container in
+	// one engine query, keyed by container name. One `docker stats` sampling
+	// interval (~2s) covers any number of containers — callers serving lists
+	// must use this instead of per-container Stats calls.
+	StatsAll(ctx context.Context) (map[string]Stats, error)
+
 	// CreateContainer creates and starts a container. Returns the container ID.
 	CreateContainer(ctx context.Context, req CreateRequest) (string, error)
 

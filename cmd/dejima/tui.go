@@ -132,7 +132,7 @@ func tickCmd() tea.Cmd {
 
 func (m tuiModel) fetchListCmd() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		list, err := m.client.ListIslands(ctx)
 		if err != nil {
@@ -144,7 +144,7 @@ func (m tuiModel) fetchListCmd() tea.Cmd {
 
 func (m tuiModel) fetchOverviewCmd() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		o, err := m.client.Overview(ctx)
 		if err != nil {
@@ -156,7 +156,7 @@ func (m tuiModel) fetchOverviewCmd() tea.Cmd {
 
 func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		info, err := m.client.GetIsland(ctx, name)
 		if err != nil {

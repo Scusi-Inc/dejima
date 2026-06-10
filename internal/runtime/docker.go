@@ -96,6 +96,28 @@ func (d *Docker) Stats(ctx context.Context, name string) (Stats, error) {
 	}, nil
 }
 
+func (d *Docker) StatsAll(ctx context.Context) (map[string]Stats, error) {
+	out, _, err := d.run(ctx, "stats", "--no-stream", "--format",
+		"{{.Name}}|{{.MemUsage}}|{{.MemPerc}}|{{.CPUPerc}}")
+	if err != nil {
+		return nil, err
+	}
+	all := map[string]Stats{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.Split(strings.TrimSpace(line), "|")
+		if len(parts) != 4 {
+			continue
+		}
+		used, limit := parseMemUsage(parts[1])
+		all[parts[0]] = Stats{
+			MemoryUsageBytes: used,
+			MemoryLimitBytes: limit,
+			CPUPercent:       parsePercent(parts[3]),
+		}
+	}
+	return all, nil
+}
+
 func parsePercent(s string) float64 {
 	s = strings.TrimSpace(s)
 	s = strings.TrimSuffix(s, "%")

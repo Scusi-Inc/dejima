@@ -56,7 +56,33 @@ type Server struct {
 	events_   map[string][]events.Event
 	eventsCap int
 
+	// Container-stats cache. One `docker stats` sample takes ~2s regardless
+	// of container count, and the TUI fires several requests per tick that
+	// each want stats — single-flight + short TTL keeps that to one engine
+	// query per interval instead of one per island per request.
+	statsMu   sync.Mutex
+	statsData map[string]runtime.Stats
+	statsAt   time.Time
+
 	startedAt time.Time
+}
+
+// statsAll returns per-container stats, serving from a short-TTL cache.
+// Holding statsMu across the engine query makes concurrent callers wait for
+// the in-flight result rather than stacking duplicate `docker stats` calls.
+// On query failure it serves the previous snapshot — stale beats absent.
+func (s *Server) statsAll(ctx context.Context) map[string]runtime.Stats {
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	if time.Since(s.statsAt) < 2*time.Second {
+		return s.statsData
+	}
+	data, err := s.rt.StatsAll(ctx)
+	if err != nil {
+		return s.statsData
+	}
+	s.statsData, s.statsAt = data, time.Now()
+	return data
 }
 
 // NewServer constructs a server backed by the given runtime.
@@ -779,7 +805,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	if status, err := s.rt.Status(ctx, p.ContainerName()); err == nil {
 		info.Container = string(status)
 		if status == runtime.StatusRunning {
-			if stats, err := s.rt.Stats(ctx, p.ContainerName()); err == nil {
+			if stats, ok := s.statsAll(ctx)[p.ContainerName()]; ok {
 				info.Stats = &IslandStats{
 					MemoryUsageBytes: stats.MemoryUsageBytes,
 					MemoryLimitBytes: stats.MemoryLimitBytes,
