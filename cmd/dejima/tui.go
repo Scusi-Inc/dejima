@@ -503,25 +503,38 @@ func (m tuiModel) View() string {
 	}
 
 	header := m.renderHeader()
+	hh := lipgloss.Height(header)
 
 	// Full-pane overlays take over the body + footer.
 	if m.creator != nil {
-		body := stylePane.Width(m.width - 2).Height(m.height - 3).Render(m.creator.view(m.width - 6))
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.creator.view(m.width - 6))
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.switcher != nil {
-		body := stylePane.Width(m.width - 2).Height(m.height - 3).Render(m.switcher.view())
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.switcher.view())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.help {
-		body := stylePane.Width(m.width - 2).Height(m.height - 3).Render(m.renderHelp())
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderHelp())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 
 	footer := m.renderFooter()
-	body := m.renderBody()
+	body := m.renderBody(hh)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+// asciiLogo is the fan-shaped island with its gate over the water — a
+// terminal rendering of assets/logo-transparent.png. All lines are the same
+// printed width so it composes as a block.
+var asciiLogo = []string{
+	"  .-~~======~~-.  ",
+	" /              \\ ",
+	" \\     ____     / ",
+	"  `-._|    |_.-'  ",
+	"      |_[]_|      ",
+	"~~~~~~~~~~~~~~~~~~",
 }
 
 func (m tuiModel) renderHeader() string {
@@ -533,16 +546,41 @@ func (m tuiModel) renderHeader() string {
 			label = m.activeHost
 		}
 	}
-	title := styleTitle.Render("Dejima")
-	right := styleMuted.Render(label + " ⇄ [s]")
-	pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
-	if pad < 1 {
-		pad = 1
+
+	// Compact single-line header when the terminal can't spare the rows, or
+	// is too narrow for the info lines (longest is 69 cols + 27 logo/chrome).
+	if m.height < 24 || m.width < 96 {
+		title := styleTitle.Render("Dejima")
+		right := styleMuted.Render(label + " ⇄ [s]")
+		pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
+		if pad < 1 {
+			pad = 1
+		}
+		return " " + title + strings.Repeat(" ", pad) + right
 	}
-	return " " + title + strings.Repeat(" ", pad) + right
+
+	logoLines := make([]string, len(asciiLogo))
+	for i, l := range asciiLogo {
+		logoLines[i] = styleAccent.Render(l)
+	}
+	logo := strings.Join(logoLines, "\n")
+
+	info := strings.Join([]string{
+		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
+		"",
+		styleMuted.Render("Each island is one repo + one agent in its own container."),
+		styleAccent.Render("↑/↓") + styleMuted.Render(" pick an island  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open in a new window  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
+		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
+		styleMuted.Render("server: ") + styleAccent.Render(label) + styleMuted.Render("  ·  [s] switch  ·  [?] all keys"),
+	}, "\n")
+	infoW := m.width - lipgloss.Width(asciiLogo[0]) - 9
+	info = lipgloss.NewStyle().MaxWidth(infoW).Render(info)
+
+	box := lipgloss.JoinHorizontal(lipgloss.Top, logo, "   ", info)
+	return stylePane.Width(m.width - 2).Render(box)
 }
 
-func (m tuiModel) renderBody() string {
+func (m tuiModel) renderBody(headerHeight int) string {
 	leftW := m.width / 2
 	if leftW < 30 {
 		leftW = 30
@@ -551,7 +589,7 @@ func (m tuiModel) renderBody() string {
 	if rightW < 20 {
 		rightW = 20
 	}
-	bodyHeight := m.height - 4
+	bodyHeight := m.height - headerHeight - 4
 	if bodyHeight < 5 {
 		bodyHeight = 5
 	}
@@ -671,13 +709,22 @@ func (m tuiModel) renderDetail(_ int) string {
 }
 
 func (m tuiModel) renderFooter() string {
-	keys := "[n] new   [⏎] open   [a] attach here   [h] hibernate   [w] wake   [r] reset   [d] purge   [s] server   [?] help   [q] quit"
+	// Two key lines, right-aligned to a shared edge: global commands on top,
+	// island lifecycle below. The substrate-health strip keeps the left of
+	// the first line.
+	keys1 := "[n] new   [⏎] open   [s] server   [?] help   [q] quit"
+	keys2 := "[a] attach here   [h] hibernate   [w] wake   [r] reset   [d] purge"
 	left := m.renderFooterLeft()
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(keys) - 2
-	if pad < 1 {
-		pad = 1
+	pad1 := m.width - lipgloss.Width(left) - lipgloss.Width(keys1) - 2
+	if pad1 < 1 {
+		pad1 = 1
 	}
-	return " " + left + strings.Repeat(" ", pad) + styleFooter.Render(keys)
+	pad2 := m.width - lipgloss.Width(keys2) - 2
+	if pad2 < 1 {
+		pad2 = 1
+	}
+	return " " + left + strings.Repeat(" ", pad1) + styleFooter.Render(keys1) + "\n" +
+		strings.Repeat(" ", pad2) + styleFooter.Render(keys2) + " "
 }
 
 // renderFooterLeft assembles the substrate-health strip + island totals (or
