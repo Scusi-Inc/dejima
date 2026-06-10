@@ -224,6 +224,8 @@ The agent fundamentally needs *some* credential to call its LLM API. You can't i
 
 - **Mount host's agent credential dir read-only** into the island (e.g., `~/.claude`, `~/.codex`).
 - User logs in once on host; all islands share the same OAuth credentials.
+- **macOS hosts:** Claude Code stores its OAuth blob in the login Keychain, not `~/.claude`, so the dir mount alone carries no credentials there. The daemon extracts it (`security find-generic-password -s "Claude Code-credentials" -w`) at island create and materializes it as `~/.dejima/secrets/claude/.credentials.json`, mounted read-only at `/opt/host/claude-seed`.
+- **Hosts with no Claude login** (headless box, browser OAuth impractical): `dejima auth push` sends the client machine's credentials to the daemon, which stores them in the same seed file. `dejima auth status` / `dejima doctor` report whether new islands will get credentials.
 - No browser inside the container; no OAuth tunneling code in v1.
 - Threat model documented: your agent has your LLM credentials by definition; Dejima isolates everything else.
 

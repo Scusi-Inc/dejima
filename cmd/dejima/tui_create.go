@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -139,6 +140,17 @@ func (c *creatorModel) createCmd() tea.Cmd {
 		Agent:    knownAgents[c.agentCur],
 	}
 	return func() tea.Msg {
+		// Auto-build the island image when the daemon doesn't have it yet
+		// (fresh host) — first island creation Just Works, it just takes the
+		// build's few extra minutes.
+		if o, err := client.Overview(context.Background()); err == nil && !o.IslandImagePresent {
+			bctx, bcancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			err := client.BuildImage(bctx, io.Discard)
+			bcancel()
+			if err != nil {
+				return islandCreatedMsg{err: fmt.Errorf("build island image: %w", err)}
+			}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		info, err := client.CreateIsland(ctx, req)

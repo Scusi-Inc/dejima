@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -80,6 +81,7 @@ type tuiModel struct {
 	connectTo string // set on quit-to-connect; main() acts on this
 	confirm   *confirmPrompt
 	dirtyOps  map[string]string // name → "hibernating" etc. (transient hint)
+	building  bool              // island image build in flight
 
 	help         bool           // help overlay visible
 	helpAdvanced bool           // advanced section of the help overlay expanded
@@ -122,6 +124,7 @@ type opCompleteMsg struct {
 	verb string
 	err  error
 }
+type imageBuildDoneMsg struct{ err error }
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
@@ -228,6 +231,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
 		}
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+
+	case imageBuildDoneMsg:
+		m.building = false
+		if msg.err != nil {
+			m.lastError = fmt.Sprintf("image build: %v", msg.err)
+		}
+		return m, m.fetchOverviewCmd()
 
 	case reposDiscoveredMsg:
 		if m.creator != nil {
@@ -366,6 +376,14 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if name := m.selectedName(); name != "" {
 			m.confirm = &confirmPrompt{verb: "reset", island: name}
 		}
+	case "u":
+		if name := m.selectedName(); name != "" {
+			m.confirm = &confirmPrompt{verb: "upgrade", island: name}
+		}
+	case "b":
+		if !m.building {
+			m.confirm = &confirmPrompt{verb: "build-image"}
+		}
 	case "d":
 		if name := m.selectedName(); name != "" {
 			m.confirm = &confirmPrompt{verb: "purge", island: name}
@@ -383,6 +401,16 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			m.dirtyOps[c.island] = "resetting"
 			return m, m.opCmd(c.island, "reset")
 		}
+	case "upgrade":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			m.dirtyOps[c.island] = "upgrading"
+			return m, m.opCmd(c.island, "upgrade")
+		}
+	case "build-image":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			m.building = true
+			return m, m.buildImageCmd()
+		}
 	case "purge":
 		if strings.TrimSpace(c.answer) == c.island {
 			m.dirtyOps[c.island] = "purging"
@@ -392,9 +420,26 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// buildImageCmd rebuilds the island image from the daemon's embedded build
+// context. Output is discarded — the footer shows an in-flight indicator and
+// the CLI (`dejima image build`) is the place to watch full build logs.
+func (m tuiModel) buildImageCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		return imageBuildDoneMsg{err: m.client.BuildImage(ctx, io.Discard)}
+	}
+}
+
 func (m tuiModel) opCmd(name, verb string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Upgrade stops, removes, and recreates the container; give it longer
+		// than the quick start/stop verbs.
+		timeout := 30 * time.Second
+		if verb == "upgrade" {
+			timeout = 2 * time.Minute
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		var err error
 		switch verb {
@@ -404,6 +449,8 @@ func (m tuiModel) opCmd(name, verb string) tea.Cmd {
 			_, err = m.client.WakeIsland(ctx, name)
 		case "reset":
 			_, err = m.client.ResetIsland(ctx, name)
+		case "upgrade":
+			_, err = m.client.UpgradeIsland(ctx, name)
 		case "purge":
 			err = m.client.DeleteIsland(ctx, name)
 		}
@@ -644,10 +691,16 @@ func (m tuiModel) renderFooterLeft() string {
 		return styleMuted.Render("loading…")
 	}
 	dockerGlyph := healthGlyph(o.DockerReachable)
-	imageGlyph := healthGlyph(o.IslandImagePresent)
+	imagePart := healthGlyph(o.IslandImagePresent) + " " + styleMuted.Render("image")
+	switch {
+	case m.building:
+		imagePart = styleWaiting.Render("⏳ image building…")
+	case !o.IslandImagePresent:
+		imagePart = styleWaiting.Render("✗ image missing — press b to build")
+	}
 	parts := []string{
 		dockerGlyph + " " + styleMuted.Render("docker"),
-		imageGlyph + " " + styleMuted.Render("image"),
+		imagePart,
 		styleMuted.Render(fmt.Sprintf("%d islands · %d running · %d hibernated",
 			o.TotalIslands, o.Running, o.Hibernated)),
 	}
@@ -699,6 +752,8 @@ func (m tuiModel) renderHelp() string {
 		{"h", "hibernate — stop the container, keep all data"},
 		{"w", "wake a hibernated island"},
 		{"r", "reset agent state (workspace preserved) — confirms first"},
+		{"u", "upgrade — recreate on the current island image, all state kept — confirms first"},
+		{"b", "build the island image on the daemon host — confirms first"},
 		{"d", "purge — destroy the island and its volumes — confirms first"},
 		{"s", "switch connection target (local / saved remote daemons)"},
 		{"R", "refresh now"},
@@ -718,6 +773,8 @@ func (m tuiModel) renderHelp() string {
 		{"dejima cp <src> <dst>", "copy files in or out"},
 		{"dejima logs <name>", "tail an island's container logs"},
 		{"dejima hibernate|wake|reset|purge", "lifecycle from the CLI"},
+		{"dejima image build / upgrade <name>", "rebuild the island image / roll an island onto it"},
+		{"dejima auth push / status", "send this machine's Claude login to the daemon host"},
 		{"DEJIMA_HOST=host:7273 dejima …", "drive a remote daemon over your tailnet"},
 	}
 	for _, kv := range shell {
@@ -744,6 +801,12 @@ func (m tuiModel) renderConfirm() string {
 	case "reset":
 		prompt = fmt.Sprintf("Clear agent state for %q (workspace preserved)? Type 'y' and press Enter: %s",
 			c.island, c.answer)
+	case "upgrade":
+		prompt = fmt.Sprintf("Recreate %q on the current island image (all state preserved)? Type 'y' and press Enter: %s",
+			c.island, c.answer)
+	case "build-image":
+		prompt = fmt.Sprintf("Rebuild the island image? Takes a few minutes; islands pick it up on upgrade. Type 'y' and press Enter: %s",
+			c.answer)
 	case "purge":
 		prompt = fmt.Sprintf("DESTROY %q (including all volumes). Type the island name to confirm: %s",
 			c.island, c.answer)

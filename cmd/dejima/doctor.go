@@ -98,6 +98,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkDocker(ctx, r)
 	checkIslandImage(ctx, r)
 	checkTailscale(ctx, r)
+	checkClaudeCreds(ctx, r)
 
 	// --- Projects -------------------------------------------------------
 	c, err := client()
@@ -192,6 +193,29 @@ func checkIslandImage(ctx context.Context, r *doctorReport) {
 		id = id[:19]
 	}
 	r.add("System", "island image", "OK", id, "")
+}
+
+// checkClaudeCreds reports whether new islands will get Claude credentials.
+// Without them every island starts with an interactive login prompt the user
+// can't realistically complete from inside a container.
+func checkClaudeCreds(ctx context.Context, r *doctorReport) {
+	c, err := client()
+	if err != nil {
+		return // daemon check already reports the connection failure
+	}
+	st, err := c.ClaudeCredentialsStatus(ctx)
+	if err != nil {
+		return // older daemon without the endpoint; version check flags the skew
+	}
+	switch {
+	case st.HostSource != "":
+		r.add("System", "claude creds", "OK", "daemon host logged in ("+st.HostSource+")", "")
+	case st.SeedPresent:
+		r.add("System", "claude creds", "OK", "seeded via `dejima auth push`", "")
+	default:
+		r.add("System", "claude creds", "FAIL", "new islands will start without Claude credentials",
+			"run `dejima auth push` from a machine where `claude` is logged in")
+	}
 }
 
 func checkTailscale(ctx context.Context, r *doctorReport) {

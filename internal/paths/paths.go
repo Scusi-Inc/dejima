@@ -64,6 +64,21 @@ func ProjectConfigPath(name string) (string, error) {
 	return filepath.Join(dir, "config.toml"), nil
 }
 
+// ClaudeSeedDir returns ~/.dejima/secrets/claude — where the daemon
+// materializes Claude credentials (from the host Keychain/file or a
+// `dejima auth push`) for read-only mounting into islands. Created 0700.
+func ClaudeSeedDir() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, "secrets", "claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // HostGHConfigDir returns the user's ~/.config/gh dir (may not exist).
 func HostGHConfigDir() (string, error) {
 	home, err := os.UserHomeDir()

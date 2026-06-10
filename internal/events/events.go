@@ -10,21 +10,22 @@ type Type string
 
 // Daemon-observable events (always agnostic).
 const (
-	TypeIslandCreated         Type = "island.created"
-	TypeIslandRunning         Type = "island.running"
-	TypeIslandHibernated      Type = "island.hibernated"
-	TypeIslandWoken           Type = "island.woken"
-	TypeIslandReset           Type = "island.reset"
-	TypeIslandPurged          Type = "island.purged"
-	TypeContainerCrashed      Type = "container.crashed"
-	TypeClientAttached        Type = "client.attached"
-	TypeClientDetached        Type = "client.detached"
-	TypeLastClientDetached    Type = "last-client.detached"
+	TypeIslandCreated      Type = "island.created"
+	TypeIslandRunning      Type = "island.running"
+	TypeIslandHibernated   Type = "island.hibernated"
+	TypeIslandWoken        Type = "island.woken"
+	TypeIslandReset        Type = "island.reset"
+	TypeIslandUpgraded     Type = "island.upgraded"
+	TypeIslandPurged       Type = "island.purged"
+	TypeContainerCrashed   Type = "container.crashed"
+	TypeClientAttached     Type = "client.attached"
+	TypeClientDetached     Type = "client.detached"
+	TypeLastClientDetached Type = "last-client.detached"
 
 	// Agent-emitted events (via per-agent shims; opt-in).
-	TypeAgentWaitingForInput  Type = "agent.waiting-for-input"
-	TypeAgentTaskComplete     Type = "agent.task-complete"
-	TypeAgentError            Type = "agent.error"
+	TypeAgentWaitingForInput Type = "agent.waiting-for-input"
+	TypeAgentTaskComplete    Type = "agent.task-complete"
+	TypeAgentError           Type = "agent.error"
 )
 
 // Event is the JSON envelope POSTed to webhook subscribers.

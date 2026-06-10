@@ -108,6 +108,26 @@ type ExecResponse struct {
 	ExitCode int    `json:"exit_code"`
 }
 
+// PushCredentialsRequest is the body of PUT /v1/credentials/claude.
+// CredentialsJSON is the verbatim content of a Claude Code credentials file
+// (the {"claudeAiOauth": ...} blob).
+type PushCredentialsRequest struct {
+	CredentialsJSON string `json:"credentials_json"`
+}
+
+// ClaudeCredentialsStatus is the body of GET /v1/credentials/claude.
+// It never carries the secret itself.
+type ClaudeCredentialsStatus struct {
+	// SeedPresent reports whether a materialized seed file exists, i.e.
+	// whether new islands will start with Claude credentials.
+	SeedPresent   bool      `json:"seed_present"`
+	SeedUpdatedAt time.Time `json:"seed_updated_at,omitempty"`
+	// HostSource is where the daemon host can read credentials right now:
+	// "keychain", "file", or "" when the host has no Claude login (the seed
+	// then only refreshes via `dejima auth push`).
+	HostSource string `json:"host_source,omitempty"`
+}
+
 // ErrorResponse is the body of any non-2xx response.
 type ErrorResponse struct {
 	Error string `json:"error"`

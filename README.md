@@ -292,13 +292,16 @@ dejima status    Detail view of a single island, including presence.
 dejima hibernate Stop the container, preserve volumes.
 dejima wake      Start a hibernated island.
 dejima reset     Clear agent state. Preserves workspace.
+dejima upgrade   Recreate container(s) on the current island image; all state kept.
 dejima purge     Destroy island and volumes.
 dejima exec      Run a one-shot command inside an island.
 dejima cp        Copy files in or out of an island.
 dejima logs      Tail an island's container logs (--follow).
+dejima auth      Push this machine's Claude login to the daemon host (push/status).
 dejima doctor    Health check: daemon, Docker, image, projects, networks, webhooks.
+dejima image     Build the island image on the daemon host (no source checkout needed).
 dejima onboard   Walk through Dejima setup; safe to re-run.
-dejima service   Install / uninstall dejimad as a host service (--notify <url>).
+dejima service   Install / uninstall / restart dejimad as a host service (--notify <url>).
 dejima webhook   Subscribe a URL to receive state-change events.
 ```
 
@@ -337,7 +340,7 @@ For more, see [`docs/v1-spec.md`](docs/v1-spec.md).
 
 See [`docs/roadmap.md`](docs/roadmap.md) for the full prioritized list. Highlights:
 
-- **v1.x hardening** — container watchdog, `upgrade`, `panic`, credential refresh, Keychain-backed secrets, idle auto-hibernate.
+- **v1.x hardening** — container watchdog, `panic`, Keychain-backed secrets, idle auto-hibernate. (`upgrade` and credential refresh have shipped.)
 - **v2** — trust-on-first-use for new device attaches (the 2FA-shaped feature), audit ledger, backup/restore, microVM backend, MCP brokering, multi-user / RBAC, web/PWA reference client.
 - **Tier-2 integrations** (separate repos): `dejima-slack`, `dejima-telegram`, ntfy.sh and macOS notification helpers.
 

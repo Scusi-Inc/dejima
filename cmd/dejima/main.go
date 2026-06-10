@@ -79,11 +79,14 @@ func newRootCmd() *cobra.Command {
 		newWakeCmd(),
 		newResetCmd(),
 		newPurgeCmd(),
+		newUpgradeCmd(),
 		newExecCmd(),
 		newCpCmd(),
 		newLogsCmd(),
+		newImageCmd(),
 		newServiceCmd(),
 		newWebhookCmd(),
+		newAuthCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),
 		newOverviewCmd(),
@@ -290,6 +293,9 @@ func newServiceCmd() *cobra.Command {
 		Use:   "service",
 		Short: "Install or uninstall dejimad as a host service.",
 	}
+	var systemSvc bool
+	cmd.PersistentFlags().BoolVar(&systemSvc, "system", false,
+		"manage dejimad as a system-wide LaunchDaemon (macOS only; loads at boot with no desktop login — use on headless Macs; needs sudo)")
 	var notifyURL, notifySecret string
 	var skipNotifyPrompt bool
 	var tcpAddr string
@@ -302,7 +308,7 @@ func newServiceCmd() *cobra.Command {
 			"devices can connect) and to set a notification webhook, unless those are " +
 			"provided as flags.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := serviceMgr()
+			mgr, err := serviceMgr(systemSvc)
 			if err != nil {
 				return err
 			}
@@ -392,7 +398,7 @@ func newServiceCmd() *cobra.Command {
 			Use:   "uninstall",
 			Short: "Remove the dejimad service.",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				mgr, err := serviceMgr()
+				mgr, err := serviceMgr(systemSvc)
 				if err != nil {
 					return err
 				}
@@ -404,10 +410,25 @@ func newServiceCmd() *cobra.Command {
 			},
 		},
 		&cobra.Command{
+			Use:   "restart",
+			Short: "Restart the dejimad service (e.g. after installing a new binary).",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				mgr, err := serviceMgr(systemSvc)
+				if err != nil {
+					return err
+				}
+				if err := mgr.Restart(); err != nil {
+					return err
+				}
+				fmt.Println("restarted dejimad")
+				return nil
+			},
+		},
+		&cobra.Command{
 			Use:   "status",
 			Short: "Report whether the dejimad service is loaded.",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				mgr, err := serviceMgr()
+				mgr, err := serviceMgr(systemSvc)
 				if err != nil {
 					return err
 				}
@@ -614,8 +635,8 @@ func versionSkew(daemonVersion string, daemonAPI int) string {
 	return ""
 }
 
-func serviceMgr() (service.Manager, error) {
-	return service.New()
+func serviceMgr(system bool) (service.Manager, error) {
+	return service.New(system)
 }
 
 // tailnetFQDN returns this host's Tailscale DNS name (without trailing dot),
@@ -734,6 +755,13 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("• %s\n", res.Note)
+			// Auto-build the default island image when the daemon doesn't have
+			// it yet (fresh host). Custom images stay the user's responsibility.
+			if image == "" || image == api.DefaultImage {
+				if err := ensureIslandImage(cmd.Context(), c); err != nil {
+					return err
+				}
+			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
 			info, err := c.CreateIsland(ctx, api.CreateIslandRequest{

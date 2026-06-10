@@ -13,6 +13,15 @@ HOME_CLAUDE="$HOME/.claude"
 mkdir -p "$HOME_CLAUDE/hooks"
 
 # --- credentials -----------------------------------------------------------
+# Prefer the daemon-materialized seed: on macOS hosts the OAuth blob lives in
+# the login Keychain, so /opt/host/claude never carries .credentials.json
+# there. The seed also holds credentials sent via `dejima auth push`.
+SEED_CLAUDE="/opt/host/claude-seed"
+if [[ -f "$SEED_CLAUDE/.credentials.json" && ! -f "$HOME_CLAUDE/.credentials.json" ]]; then
+    cp "$SEED_CLAUDE/.credentials.json" "$HOME_CLAUDE/.credentials.json"
+    chmod 600 "$HOME_CLAUDE/.credentials.json"
+fi
+
 if [[ -d "$HOST_CLAUDE" ]]; then
     for f in .credentials.json credentials.json settings.json; do
         if [[ -f "$HOST_CLAUDE/$f" && ! -f "$HOME_CLAUDE/$f" ]]; then

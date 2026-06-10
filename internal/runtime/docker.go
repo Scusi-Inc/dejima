@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -255,6 +256,31 @@ func (d *Docker) Logs(ctx context.Context, name string, follow bool) (io.ReadClo
 	}
 	go func() {
 		_ = cmd.Wait()
+		_ = w.Close()
+	}()
+	return &cmdReadCloser{cmd: cmd, reader: r}, nil
+}
+
+// BuildImage builds tag from contextDir using dockerfile (a path relative to
+// contextDir). The returned stream carries combined build output; when the
+// build fails the stream's final Read returns the build error instead of EOF
+// (via CloseWithError), so callers distinguish success from failure without a
+// side channel.
+func (d *Docker) BuildImage(ctx context.Context, contextDir, dockerfile, tag string) (io.ReadCloser, error) {
+	cmd := exec.CommandContext(ctx, d.bin(), "build", "-t", tag,
+		"-f", filepath.Join(contextDir, dockerfile), contextDir)
+	r, w := io.Pipe()
+	cmd.Stdout = w
+	cmd.Stderr = w
+	if err := cmd.Start(); err != nil {
+		_ = w.Close()
+		return nil, err
+	}
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			w.CloseWithError(fmt.Errorf("docker build failed: %w", err))
+			return
+		}
 		_ = w.Close()
 	}()
 	return &cmdReadCloser{cmd: cmd, reader: r}, nil

@@ -106,6 +106,11 @@ type Runtime interface {
 	// ImageExists reports whether the runtime has the named image locally.
 	ImageExists(ctx context.Context, image string) (bool, error)
 
+	// BuildImage builds tag from the build context at contextDir (dockerfile
+	// is relative to it), streaming combined build output. A failed build
+	// surfaces as a non-EOF error from the stream's final Read.
+	BuildImage(ctx context.Context, contextDir, dockerfile, tag string) (io.ReadCloser, error)
+
 	// CopyToContainer copies a file or directory from host to container path.
 	CopyToContainer(ctx context.Context, name, hostPath, containerPath string) error
 

@@ -59,40 +59,51 @@ func (m *launchdManager) Install(binaryPath string, args []string) error {
 		return err
 	}
 
-	// Idempotent: clear any prior load before re-loading. Both commands are
-	// expected to no-op if nothing's loaded; we ignore their errors.
+	// Idempotent: clear any prior load before re-loading. These are expected
+	// to no-op if nothing's loaded; we ignore their errors.
 	_ = exec.Command("launchctl", "bootout", "gui/"+currentUID()+"/"+launchdLabel).Run()
+	_ = exec.Command("launchctl", "bootout", "user/"+currentUID()+"/"+launchdLabel).Run()
 	_ = exec.Command("launchctl", "unload", path).Run()
 
-	// Try the modern `bootstrap` first; if that fails (commonly when called
-	// from an SSH session with no Aqua/GUI session), fall back to the older
-	// `load -w`. Capture stderr on each so we can surface useful errors.
-	//
-	// If both fail (headless Mac — no console login yet), we leave the plist
-	// in place and warn loudly rather than erroring out. The plist will load
-	// next time someone logs into the desktop; the caller is expected to
-	// start `dejimad` manually for the current session.
-	if stderr, err := runCaptureStderr("launchctl", "bootstrap", "gui/"+currentUID(), path); err != nil {
-		if stderr2, err2 := runCaptureStderr("launchctl", "load", "-w", path); err2 != nil {
-			fmt.Fprintln(os.Stderr)
-			fmt.Fprintf(os.Stderr, "warning: plist written to %s, but launchctl couldn't load it.\n", path)
-			fmt.Fprintf(os.Stderr, "  bootstrap → %v: %s\n", err, strings.TrimSpace(stderr))
-			fmt.Fprintf(os.Stderr, "  load -w   → %v: %s\n", err2, strings.TrimSpace(stderr2))
-			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, "Likely cause: no Aqua/GUI session is active on this Mac (headless setup).")
-			fmt.Fprintln(os.Stderr, "LaunchAgents need a logged-in user session. Two ways forward:")
-			fmt.Fprintln(os.Stderr, "  • Run dejimad manually for now (won't persist across reboots):")
-			fmt.Fprintf(os.Stderr, "      nohup %s \\\n", strings.Join(append([]string{binaryPath}, args...), " "))
-			fmt.Fprintf(os.Stderr, "        > %s \\\n", outLog)
-			fmt.Fprintf(os.Stderr, "        2> %s < /dev/null &\n", errLog)
-			fmt.Fprintln(os.Stderr, "      disown")
-			fmt.Fprintln(os.Stderr, "  • Log into the Mac's desktop once (Screen Sharing or physical),")
-			fmt.Fprintln(os.Stderr, "    then `dejima service install` will load the plist correctly.")
-			fmt.Fprintln(os.Stderr, "    Enable auto-login for the host in System Settings → Users & Groups")
-			fmt.Fprintln(os.Stderr, "    so the GUI session survives reboots.")
-			fmt.Fprintln(os.Stderr)
-			return nil // soft failure — plist is in place, user just needs to start dejimad
-		}
+	// Try the GUI domain first — that's where LaunchAgents normally live and
+	// where launchd auto-loads them on desktop login. On a headless Mac (SSH,
+	// no console login) the gui domain doesn't exist, but the per-user
+	// `user/<uid>` domain does, so fall back to it: the daemon is then still
+	// supervised (KeepAlive restarts) for this boot. The user domain is torn
+	// down at shutdown and nothing re-bootstraps the agent at the next boot
+	// until someone logs in, so it's not reboot-durable — for that, point at
+	// the system LaunchDaemon install. `load -w` remains as a last resort for
+	// old launchctl versions without `bootstrap`.
+	stderrGUI, errGUI := runCaptureStderr("launchctl", "bootstrap", "gui/"+currentUID(), path)
+	if errGUI == nil {
+		return nil
+	}
+	if _, errUser := runCaptureStderr("launchctl", "bootstrap", "user/"+currentUID(), path); errUser == nil {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "note: no GUI session on this Mac — loaded dejimad into your user launchd")
+		fmt.Fprintln(os.Stderr, "domain instead. It's supervised (auto-restarts on crash) but will NOT start")
+		fmt.Fprintln(os.Stderr, "by itself after a reboot until someone logs in. For a headless Mac that")
+		fmt.Fprintln(os.Stderr, "must survive reboots, install a system daemon instead (needs sudo):")
+		fmt.Fprintf(os.Stderr, "  dejima service install --system %s\n", strings.Join(args, " "))
+		fmt.Fprintln(os.Stderr)
+		return nil
+	}
+	if stderr2, err2 := runCaptureStderr("launchctl", "load", "-w", path); err2 != nil {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "warning: plist written to %s, but launchctl couldn't load it.\n", path)
+		fmt.Fprintf(os.Stderr, "  bootstrap → %v: %s\n", errGUI, strings.TrimSpace(stderrGUI))
+		fmt.Fprintf(os.Stderr, "  load -w   → %v: %s\n", err2, strings.TrimSpace(stderr2))
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Ways forward:")
+		fmt.Fprintf(os.Stderr, "  • Install as a system LaunchDaemon (loads at boot, no login needed):\n")
+		fmt.Fprintf(os.Stderr, "      dejima service install --system %s\n", strings.Join(args, " "))
+		fmt.Fprintln(os.Stderr, "  • Run dejimad manually for now (won't persist across reboots):")
+		fmt.Fprintf(os.Stderr, "      nohup %s \\\n", strings.Join(append([]string{binaryPath}, args...), " "))
+		fmt.Fprintf(os.Stderr, "        > %s \\\n", outLog)
+		fmt.Fprintf(os.Stderr, "        2> %s < /dev/null &\n", errLog)
+		fmt.Fprintln(os.Stderr, "      disown")
+		fmt.Fprintln(os.Stderr)
+		return nil // soft failure — plist is in place, user just needs to start dejimad
 	}
 	return nil
 }
@@ -115,6 +126,7 @@ func (m *launchdManager) Uninstall() error {
 	}
 	// Best-effort: bootout then unload, then remove the plist.
 	_ = exec.Command("launchctl", "bootout", "gui/"+currentUID()+"/"+launchdLabel).Run()
+	_ = exec.Command("launchctl", "bootout", "user/"+currentUID()+"/"+launchdLabel).Run()
 	_ = exec.Command("launchctl", "unload", path).Run()
 	return os.Remove(path)
 }
@@ -125,6 +137,22 @@ func (m *launchdManager) Status() (string, error) {
 		return "not loaded", nil
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func (m *launchdManager) Restart() error {
+	// The agent may live in either the gui domain (desktop login) or the
+	// user domain (headless fallback) — kick whichever has it.
+	guiTarget := "gui/" + currentUID() + "/" + launchdLabel
+	stderr, err := runCaptureStderr("launchctl", "kickstart", "-k", guiTarget)
+	if err == nil {
+		return nil
+	}
+	userTarget := "user/" + currentUID() + "/" + launchdLabel
+	if _, err2 := runCaptureStderr("launchctl", "kickstart", "-k", userTarget); err2 == nil {
+		return nil
+	}
+	return fmt.Errorf("launchctl kickstart %s: %w: %s — is the service installed? (`dejima service install`)",
+		guiTarget, err, strings.TrimSpace(stderr))
 }
 
 func currentUID() string {
@@ -146,6 +174,10 @@ const launchdTemplate = `<?xml version="1.0" encoding="UTF-8"?>
   </array>
   <key>WorkingDirectory</key>
   <string>{{.WorkingDir}}</string>
+{{- if .UserName}}
+  <key>UserName</key>
+  <string>{{.UserName}}</string>
+{{- end}}
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

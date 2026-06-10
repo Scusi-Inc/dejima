@@ -5,15 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/aoos/dejima/internal/agentcreds"
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/islandimage"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
@@ -189,8 +193,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/islands/{name}/hibernate", s.hibernateIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/wake", s.wakeIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/reset", s.resetIsland)
+	mux.HandleFunc("POST /v1/islands/{name}/upgrade", s.upgradeIsland)
+	mux.HandleFunc("POST /v1/image/build", s.handleImageBuild)
 	mux.HandleFunc("GET /v1/islands/{name}/session", s.sessionWS)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
+	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
+	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
 	mux.HandleFunc("GET /v1/events/subscriptions", s.listSubscriptions)
 	mux.HandleFunc("POST /v1/events/subscribe", s.subscribeWebhook)
 	mux.HandleFunc("DELETE /v1/events/subscriptions/{id}", s.unsubscribeWebhook)
@@ -252,6 +260,50 @@ func (s *Server) projectLock(name string) *sync.Mutex {
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handlePushClaudeCreds stores client-supplied Claude credentials as the seed
+// new islands are provisioned from. This is how a logged-in laptop authorizes
+// a daemon host that has no Claude login of its own (e.g. headless box where
+// the browser OAuth flow is impractical).
+func (s *Server) handlePushClaudeCreds(w http.ResponseWriter, r *http.Request) {
+	var req PushCredentialsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	blob := []byte(req.CredentialsJSON)
+	if err := agentcreds.ValidateClaude(blob); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	dir, err := paths.ClaudeSeedDir()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if _, err := agentcreds.WriteSeed(dir, blob); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.log.Info("claude credentials pushed by client")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleClaudeCredsStatus reports whether new islands will get Claude
+// credentials, and from where, without ever returning the secret itself.
+func (s *Server) handleClaudeCredsStatus(w http.ResponseWriter, _ *http.Request) {
+	var st ClaudeCredentialsStatus
+	if _, source, err := agentcreds.LoadClaude(); err == nil {
+		st.HostSource = string(source)
+	}
+	if dir, err := paths.ClaudeSeedDir(); err == nil {
+		if info, statErr := os.Stat(filepath.Join(dir, ".credentials.json")); statErr == nil {
+			st.SeedPresent = true
+			st.SeedUpdatedAt = info.ModTime().UTC()
+		}
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *Server) listIslands(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +418,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image string,
 		return nil, fmt.Errorf("check image %s: %w", image, err)
 	}
 	if !exists {
-		return nil, fmt.Errorf("image %s not found locally; build it with `make image` first", image)
+		return nil, fmt.Errorf("image %s not found locally; build it with `dejima image build`", image)
 	}
 
 	now := time.Now().UTC()
@@ -614,6 +666,106 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
+// upgradeIsland recreates the container against the current island image while
+// preserving BOTH volumes (workspace and agent state). Besides picking up a
+// freshly built image, recreating also re-assembles bind mounts, so islands
+// created before a daemon upgrade gain any newly introduced mounts (e.g. the
+// claude-seed credentials mount) without losing state.
+func (s *Server) upgradeIsland(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+
+	wasRunning := false
+	if status, _ := s.rt.Status(r.Context(), p.ContainerName()); status == runtime.StatusRunning {
+		wasRunning = true
+	}
+
+	_ = s.rt.StopContainer(r.Context(), p.ContainerName())
+	_ = s.rt.RemoveContainer(r.Context(), p.ContainerName(), true)
+
+	if err := s.rt.EnsureNetwork(r.Context(), p.NetworkName()); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("ensure network: %w", err))
+		return
+	}
+	// Both volumes persist; the new container mounts them as-is. No seed —
+	// the workspace already holds the clone.
+	if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Honor the prior desired state, as reset does.
+	if !wasRunning && p.DesiredState == project.StateHibernated {
+		_ = s.rt.StopContainer(r.Context(), p.ContainerName())
+	}
+
+	p.LastUsedAt = time.Now().UTC()
+	if err := p.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.emit(events.Event{Type: events.TypeIslandUpgraded, Island: p.Name})
+	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
+}
+
+// handleImageBuild rebuilds the island image from the build context embedded
+// in the dejimad binary, streaming combined docker-build output as text/plain.
+// A build failure is reported in-stream as a trailing "ERROR: …" line (the
+// status code is already sent by then); the client converts it back to an error.
+func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
+	dir, cleanup, err := islandimage.Materialize()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("materialize build context: %w", err))
+		return
+	}
+	defer cleanup()
+
+	stream, err := s.rt.BuildImage(r.Context(), dir, islandimage.Dockerfile, DefaultImage)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer stream.Close()
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := stream.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return // client went away; ctx cancellation kills the build
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if readErr == io.EOF {
+			s.log.Info("island image rebuilt", "image", DefaultImage)
+			fmt.Fprintf(w, "\n%s\n", imageBuildOKMarker)
+			return
+		}
+		if readErr != nil {
+			s.log.Error("island image build failed", "error", readErr)
+			fmt.Fprintf(w, "\nERROR: %v\n", readErr)
+			return
+		}
+	}
+}
+
+// imageBuildOKMarker terminates a successful build stream so clients can tell
+// success from a build that died mid-stream.
+const imageBuildOKMarker = "--- dejima: image build succeeded ---"
+
 func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	info := IslandInfo{
 		Name:       p.Name,
@@ -678,6 +830,23 @@ func credentialBindMounts() ([]runtime.BindMount, error) {
 		if _, statErr := os.Stat(claudeDir); statErr == nil {
 			binds = append(binds, runtime.BindMount{
 				HostPath: claudeDir, ContainerPath: "/opt/host/claude", ReadOnly: true,
+			})
+		}
+	}
+
+	// Materialized Claude credentials. On macOS hosts the OAuth blob lives in
+	// the login Keychain, never in ~/.claude, so the dir mount above carries no
+	// credentials there. Refresh the seed from the freshest local source each
+	// time a container is created; when no local source exists (headless host
+	// that never logged in), a copy previously stored via `dejima auth push`
+	// survives untouched.
+	if seedDir, err := paths.ClaudeSeedDir(); err == nil {
+		if blob, _, err := agentcreds.LoadClaude(); err == nil {
+			_, _ = agentcreds.WriteSeed(seedDir, blob)
+		}
+		if _, statErr := os.Stat(filepath.Join(seedDir, ".credentials.json")); statErr == nil {
+			binds = append(binds, runtime.BindMount{
+				HostPath: seedDir, ContainerPath: "/opt/host/claude-seed", ReadOnly: true,
 			})
 		}
 	}

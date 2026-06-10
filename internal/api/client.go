@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -95,6 +97,23 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	return nil
 }
 
+// PushClaudeCredentials stores a Claude credentials blob on the daemon host
+// as the seed for new islands.
+func (c *Client) PushClaudeCredentials(ctx context.Context, credentialsJSON []byte) error {
+	req := PushCredentialsRequest{CredentialsJSON: string(credentialsJSON)}
+	return c.do(ctx, http.MethodPut, "/v1/credentials/claude", req, nil)
+}
+
+// ClaudeCredentialsStatus reports whether the daemon can seed islands with
+// Claude credentials, and from where.
+func (c *Client) ClaudeCredentialsStatus(ctx context.Context) (*ClaudeCredentialsStatus, error) {
+	var st ClaudeCredentialsStatus
+	if err := c.do(ctx, http.MethodGet, "/v1/credentials/claude", nil, &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
 // Health returns nil if dejimad is reachable and healthy.
 func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/v1/healthz", nil, nil)
@@ -148,6 +167,69 @@ func (c *Client) WakeIsland(ctx context.Context, name string) (*IslandInfo, erro
 		return nil, err
 	}
 	return &out, nil
+}
+
+// UpgradeIsland recreates an island's container against the current island
+// image, preserving both workspace and agent state.
+func (c *Client) UpgradeIsland(ctx context.Context, name string) (*IslandInfo, error) {
+	var info IslandInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/upgrade", nil, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// BuildImage asks the daemon to rebuild the island image from its embedded
+// build context, copying build output to out. Returns nil only when the
+// daemon confirms the build succeeded.
+func (c *Client) BuildImage(ctx context.Context, out io.Writer) error {
+	body, err := c.stream(ctx, http.MethodPost, "/v1/image/build")
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+
+	// The build's exit status arrives in-stream (the 200 header is long gone
+	// by then): a success marker line, or a trailing "ERROR: …" line.
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	last := ""
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.TrimSpace(line) == imageBuildOKMarker {
+			return nil
+		}
+		if strings.TrimSpace(line) != "" {
+			last = line
+		}
+		fmt.Fprintln(out, line)
+	}
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("build stream interrupted: %w", err)
+	}
+	if strings.HasPrefix(last, "ERROR: ") {
+		return errors.New(strings.TrimPrefix(last, "ERROR: "))
+	}
+	return errors.New("build stream ended without a result (daemon restarted?)")
+}
+
+// stream issues a request whose response body may outlive the standard client
+// timeout (followed logs, image builds). Cancellation still flows through ctx.
+func (c *Client) stream(ctx context.Context, method, path string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	sc := &http.Client{Transport: c.httpc.Transport}
+	resp, err := sc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("daemon unreachable: %w (is dejimad running?)", err)
+	}
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		return nil, decodeErr(resp)
+	}
+	return resp.Body, nil
 }
 
 // ResetIsland clears agent state, preserves workspace.
@@ -204,25 +286,14 @@ func (c *Client) WriteFile(ctx context.Context, name, path string, body io.Reade
 }
 
 // StreamLogs returns a reader yielding the container's logs. follow keeps the
-// stream open until ctx is canceled.
+// stream open until ctx is canceled. Uses the timeout-free stream path so a
+// followed stream isn't cut off by the standard 30s client timeout.
 func (c *Client) StreamLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error) {
 	q := ""
 	if follow {
 		q = "?follow=true"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/islands/"+name+"/logs"+q, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.httpc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= 400 {
-		defer resp.Body.Close()
-		return nil, decodeErr(resp)
-	}
-	return resp.Body, nil
+	return c.stream(ctx, http.MethodGet, "/v1/islands/"+name+"/logs"+q)
 }
 
 func decodeErr(resp *http.Response) error {
@@ -259,7 +330,9 @@ func (c *Client) UnsubscribeWebhook(ctx context.Context, id string) error {
 
 // RevokeAllSessions drops every active client websocket. Returns the count.
 func (c *Client) RevokeAllSessions(ctx context.Context) (int, error) {
-	var out struct{ Revoked int `json:"revoked"` }
+	var out struct {
+		Revoked int `json:"revoked"`
+	}
 	if err := c.do(ctx, http.MethodPost, "/v1/sessions/revoke", nil, &out); err != nil {
 		return 0, err
 	}

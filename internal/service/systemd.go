@@ -62,6 +62,14 @@ func (m *systemdManager) Uninstall() error {
 	return nil
 }
 
+func (m *systemdManager) Restart() error {
+	if err := exec.Command("systemctl", "--user", "restart", systemdUnitName).Run(); err != nil {
+		return fmt.Errorf("systemctl restart %s: %w — is the service installed? (`dejima service install`)",
+			systemdUnitName, err)
+	}
+	return nil
+}
+
 func (m *systemdManager) Status() (string, error) {
 	out, _ := exec.Command("systemctl", "--user", "is-active", systemdUnitName).Output()
 	return strings.TrimSpace(string(out)), nil
