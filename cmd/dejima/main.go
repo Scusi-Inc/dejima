@@ -879,14 +879,18 @@ func runSession(ctx context.Context, c *api.Client, name, label string) error {
 	defer cancel()
 
 	// Send an initial resize so tmux opens at the right dimensions.
-	if rows, cols, err := terminalSize(stdinFd); err == nil {
-		_ = writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+	rows, cols, tsErr := terminalSize(stdinFd)
+	resizeDebug("initial: isterm=%v rows=%d cols=%d err=%v", term.IsTerminal(stdinFd), rows, cols, tsErr)
+	if tsErr == nil {
+		werr := writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+		resizeDebug("initial write err=%v", werr)
 	}
 
 	// Forward terminal resizes for the life of the session. The mechanism is
 	// OS-specific (SIGWINCH on Unix, polling on Windows) — see resize_*.go.
 	watchTerminalResize(sessionCtx, stdinFd, func(rows, cols uint16) {
-		_ = writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+		werr := writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+		resizeDebug("live: rows=%d cols=%d write_err=%v", rows, cols, werr)
 	})
 
 	// Server → stdout pump.
@@ -957,6 +961,23 @@ func terminalSize(fd int) (rows, cols uint16, err error) {
 		return 0, 0, err
 	}
 	return uint16(h), uint16(w), nil
+}
+
+// resizeDebug appends a line to ~/.dejima-resize.log. Temporary instrumentation
+// for diagnosing the window-resize chain; raw-mode-safe (writes to a file, not
+// the terminal).
+func resizeDebug(format string, args ...any) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(home, ".dejima-resize.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s "+format+"\n", append([]any{time.Now().Format("15:04:05.000")}, args...)...)
 }
 
 func printPresence(prefix string, entries []api.PresenceEntry) {
