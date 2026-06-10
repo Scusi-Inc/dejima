@@ -139,6 +139,14 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if p.Agent == AgentHeadless {
+		// Headless islands run a user-supplied command as their main process
+		// — there's no tmux to attach to. Surface that as a precondition
+		// failure with the right next step.
+		writeError(w, http.StatusConflict,
+			fmt.Errorf("island %q is headless; it has no attach surface — use `dejima logs %s --follow`", name, name))
+		return
+	}
 	status, err := s.rt.Status(r.Context(), p.ContainerName())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -187,7 +195,68 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxSession)
+	// Read envelopes from the WS through this channel so we can race the
+	// first one against a short timer (to size the PTY before opening it)
+	// without using a child timeout context on conn.Read — coder/websocket
+	// closes the whole connection when a Read's ctx fires. The reader uses
+	// the long-lived session ctx and exits cleanly on cancel.
+	type wsRead struct {
+		env *SessionEnvelope
+		err error
+	}
+	envCh := make(chan wsRead)
+	go func() {
+		defer close(envCh)
+		for {
+			_, data, err := conn.Read(ctx)
+			if err != nil {
+				select {
+				case envCh <- wsRead{err: err}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			var env SessionEnvelope
+			if jerr := json.Unmarshal(data, &env); jerr != nil {
+				s.log.Debug("ws envelope parse", "err", jerr)
+				continue
+			}
+			select {
+			case envCh <- wsRead{env: &env}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Wait briefly for the client's first envelope. The dejima client (see
+	// cmd/dejima/main.go's "Send an initial resize" block) sends a resize as
+	// its very first message after the WS opens; using it to size the PTY
+	// up-front prevents the inner tmux client (and the agent it runs) from
+	// rendering at 80x24 and then racing a late SIGWINCH. Non-TTY clients
+	// (automation) may not send one — fall through to the PTY default.
+	//
+	// pending holds a non-resize first envelope so we don't drop client input
+	// during the size handshake; in practice it stays nil.
+	var (
+		initRows, initCols uint16
+		pending            *SessionEnvelope
+	)
+	select {
+	case r := <-envCh:
+		if r.err == nil && r.env != nil {
+			if r.env.Type == "resize" {
+				initRows, initCols = r.env.Rows, r.env.Cols
+			} else {
+				pending = r.env
+			}
+		}
+	case <-time.After(500 * time.Millisecond):
+	case <-ctx.Done():
+		return
+	}
+
+	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxSession, initRows, initCols)
 	if err != nil {
 		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
 		return
@@ -196,6 +265,11 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 
 	// Send initial hello with the existing client list.
 	_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "hello", Attached: others})
+
+	// Replay a non-resize first envelope (rare; see above).
+	if pending != nil {
+		applyEnvelope(sess, pending)
+	}
 
 	// PTY → websocket pump.
 	go func() {
@@ -219,35 +293,39 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Websocket → PTY pump (and resize handling).
+	// Websocket → PTY pump (and resize handling) — consumes the channel the
+	// reader goroutine above is already feeding.
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-		}
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			return
-		}
-		var env SessionEnvelope
-		if err := json.Unmarshal(data, &env); err != nil {
-			s.log.Debug("ws envelope parse", "err", err)
-			continue
-		}
-		switch env.Type {
-		case "data":
-			raw, err := decodeB64(env.B64)
-			if err != nil {
-				continue
-			}
-			if _, err := sess.Write(raw); err != nil {
+		case r, ok := <-envCh:
+			if !ok || r.err != nil {
 				return
 			}
-		case "resize":
-			_ = sess.Resize(env.Rows, env.Cols)
+			if !applyEnvelope(sess, r.env) {
+				return
+			}
 		}
 	}
+}
+
+// applyEnvelope dispatches one client→server envelope to the PTY. Returns
+// false if a write fails and the session should tear down.
+func applyEnvelope(sess *bridge.PTYSession, env *SessionEnvelope) bool {
+	switch env.Type {
+	case "data":
+		raw, err := decodeB64(env.B64)
+		if err != nil {
+			return true
+		}
+		if _, err := sess.Write(raw); err != nil {
+			return false
+		}
+	case "resize":
+		_ = sess.Resize(env.Rows, env.Cols)
+	}
+	return true
 }
 
 func sendEnvelope(ctx context.Context, conn *websocket.Conn, env SessionEnvelope) error {

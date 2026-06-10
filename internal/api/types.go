@@ -4,10 +4,14 @@ import "time"
 
 // IslandInfo is the public view of an island returned by the API.
 type IslandInfo struct {
-	Name       string          `json:"name"`
-	Repo       string          `json:"repo"`
-	Agent      string          `json:"agent"`
-	Image      string          `json:"image"`
+	Name string `json:"name"`
+	Repo string `json:"repo"`
+	// Agent is the island's agent type (e.g. "claude-code", "codex", "headless").
+	Agent string `json:"agent"`
+	Image string `json:"image"`
+	// Cmd is the user-supplied entrypoint for headless islands; empty for
+	// the built-in CLI agents.
+	Cmd        string          `json:"cmd,omitempty"`
 	State      string          `json:"state"`     // desired state from config
 	Container  string          `json:"container"` // observed status from runtime
 	CreatedAt  time.Time       `json:"created_at"`
@@ -87,6 +91,11 @@ type CreateIslandRequest struct {
 	// source (see reposrc local-copy mode). Only valid against a local daemon;
 	// Repo then holds the upstream URL to set as origin, or "" for no remote.
 	SeedPath string `json:"seed_path,omitempty"`
+	// Cmd is the entrypoint command for agent="headless" islands (e.g.
+	// "python my_loop.py"). Required when Agent is "headless"; ignored
+	// otherwise. The container runs the command via /bin/sh -c, so shell
+	// quoting applies.
+	Cmd string `json:"cmd,omitempty"`
 }
 
 // Resources mirrors project.Resources for API transport.

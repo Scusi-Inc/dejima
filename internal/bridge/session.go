@@ -22,13 +22,27 @@ type PTYSession struct {
 // against a host PTY and returns the session. Caller should Copy() to bridge
 // bytes between the PTY and a client transport (e.g., a websocket), and Close()
 // when the client disconnects.
-func AttachToTmux(ctx context.Context, dockerBin, container, tmuxSession string) (*PTYSession, error) {
+//
+// rows/cols, when non-zero, size the PTY at creation. This matters: without an
+// initial size the docker exec PTY (and the tmux client that runs in it) come
+// up at creack/pty's 80x24 default, the agent renders its TUI at that size,
+// and the SIGWINCH that arrives from the client's first resize envelope races
+// the agent's initial render. Sizing up-front eliminates the race.
+func AttachToTmux(ctx context.Context, dockerBin, container, tmuxSession string, rows, cols uint16) (*PTYSession, error) {
 	if dockerBin == "" {
 		dockerBin = "docker"
 	}
 	cmd := exec.CommandContext(ctx, dockerBin, "exec", "-it", container,
 		"tmux", "new-session", "-A", "-s", tmuxSession)
-	ptyFile, err := pty.Start(cmd)
+	var (
+		ptyFile *os.File
+		err     error
+	)
+	if rows > 0 && cols > 0 {
+		ptyFile, err = pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
+	} else {
+		ptyFile, err = pty.Start(cmd)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("pty start: %w", err)
 	}

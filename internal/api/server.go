@@ -28,6 +28,12 @@ const (
 	DefaultImage = "dejima/island:latest"
 	// DefaultAgent is the agent run inside the island when none is specified.
 	DefaultAgent = "claude-code"
+	// AgentHeadless is the reserved agent type for islands that run a
+	// user-provided command directly (no tmux, no interactive attach surface).
+	// The command is supplied via CreateIslandRequest.Cmd → Project.Cmd →
+	// DEJIMA_AGENT_CMD env var. Useful for API-SDK agents, background
+	// workers, and anything that doesn't need an attach surface.
+	AgentHeadless = "headless"
 )
 
 // Server is the Dejima HTTP API server.
@@ -403,8 +409,18 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	if image == "" {
 		image = DefaultImage
 	}
+	cmd := strings.TrimSpace(req.Cmd)
+	if agent == AgentHeadless && cmd == "" {
+		writeError(w, http.StatusBadRequest, errors.New(`agent "headless" requires a non-empty cmd`))
+		return
+	}
+	if agent != AgentHeadless && cmd != "" {
+		writeError(w, http.StatusBadRequest,
+			fmt.Errorf("cmd is only meaningful with agent=%q", AgentHeadless))
+		return
+	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, req.Resources, req.SeedPath)
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Resources, req.SeedPath)
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -438,7 +454,7 @@ func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 }
 
 // provision creates the on-disk project, volumes, and a running container.
-func (s *Server) provision(ctx context.Context, name, repo, agent, image string, res Resources, seedPath string) (*project.Project, error) {
+func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd string, res Resources, seedPath string) (*project.Project, error) {
 	exists, err := s.rt.ImageExists(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("check image %s: %w", image, err)
@@ -453,6 +469,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image string,
 		RepoURL: repo,
 		Agent:   agent,
 		Image:   image,
+		Cmd:     cmd,
 		Resources: project.Resources{
 			Memory: res.Memory,
 			CPUs:   res.CPUs,
@@ -501,6 +518,9 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		"DEJIMA_REPO_URL":     p.RepoURL,
 		"DEJIMA_AGENT":        p.Agent,
 		"DEJIMA_SOCKET":       "/run/dejima/dejimad.sock",
+	}
+	if p.Cmd != "" {
+		env["DEJIMA_AGENT_CMD"] = p.Cmd
 	}
 	if seedPath != "" {
 		binds = append(binds, runtime.BindMount{
@@ -798,6 +818,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		Repo:       p.RepoURL,
 		Agent:      p.Agent,
 		Image:      p.Image,
+		Cmd:        p.Cmd,
 		State:      string(p.DesiredState),
 		CreatedAt:  p.CreatedAt,
 		LastUsedAt: p.LastUsedAt,

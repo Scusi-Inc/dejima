@@ -31,10 +31,14 @@ type Resources struct {
 
 // Project is the persisted record for a single island.
 type Project struct {
-	Name         string    `toml:"name"`
-	RepoURL      string    `toml:"repo"`
-	Agent        string    `toml:"agent"`
-	Image        string    `toml:"image"`
+	Name    string `toml:"name"`
+	RepoURL string `toml:"repo"`
+	Agent   string `toml:"agent"`
+	Image   string `toml:"image"`
+	// Cmd is the command to run inside the island when Agent is "headless".
+	// It is ignored for the built-in CLI agents (claude-code, codex), which
+	// have a baked-in command. Persisted so reset/reprovision can reuse it.
+	Cmd          string    `toml:"cmd,omitempty"`
 	Resources    Resources `toml:"resources,omitempty"`
 	CreatedAt    time.Time `toml:"created_at"`
 	LastUsedAt   time.Time `toml:"last_used_at"`

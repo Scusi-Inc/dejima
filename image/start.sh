@@ -87,13 +87,35 @@ cd "$WORKSPACE"
 # Each known agent maps to its binary + any flags needed when running inside a
 # container. Codex's own OS-level sandboxing (Seatbelt/Landlock) doesn't apply
 # inside Docker, so we disable it and rely on the container as the sandbox.
+#
+# "headless" is the escape hatch: the agent is a user-supplied command
+# (DEJIMA_AGENT_CMD), run as the container's main process, with stdout/stderr
+# captured by Docker so `dejima logs` works. No tmux, no attach surface — for
+# API-SDK agents, background workers, anything that doesn't need a REPL.
 case "$AGENT" in
     claude-code) AGENT_CMD="claude" ;;
     codex)       AGENT_CMD="codex --sandbox-policy=no-sandbox" ;;
+    headless)
+        if [[ -z "${DEJIMA_AGENT_CMD:-}" ]]; then
+            echo "dejima: agent=headless requires DEJIMA_AGENT_CMD" >&2
+            exit 64
+        fi
+        AGENT_CMD="$DEJIMA_AGENT_CMD"
+        ;;
     *)           AGENT_CMD="${AGENT}" ;;
 esac
 
-# --- start (or attach to existing) tmux session ---------------------------
+# --- launch the agent -----------------------------------------------------
+# CLI agents run under tmux so multiple clients can attach to the same screen
+# and the session survives client disconnects. Headless agents run directly:
+# stdout/stderr flow to docker logs (and thence `dejima logs`), and when the
+# command exits, the container exits with it (clean lifecycle, no restart-on-
+# crash — that's a future supervisor's job).
+if [[ "$AGENT" == "headless" ]]; then
+    echo "dejima island '${PROJECT}' ready; running headless: ${AGENT_CMD}"
+    exec /bin/sh -c "$AGENT_CMD"
+fi
+
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     tmux new-session -d -s "$SESSION" -c "$WORKSPACE" "$AGENT_CMD"
 fi

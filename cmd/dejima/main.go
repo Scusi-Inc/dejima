@@ -726,6 +726,7 @@ func newInitCmd() *cobra.Command {
 		name      string
 		agent     string
 		image     string
+		cmdStr    string
 		memory    string
 		cpus      string
 		disk      string
@@ -735,10 +736,17 @@ func newInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Provision a new island.",
 		Long: "Create a contained workspace for an agent. The repo is cloned into a " +
-			"persistent volume inside the island; the agent is started in a tmux session.",
+			"persistent volume inside the island; the agent runs in a tmux session " +
+			"(claude-code, codex) or directly (headless, with --cmd).",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if repo == "" {
 				return fmt.Errorf("--repo is required")
+			}
+			if agent == api.AgentHeadless && strings.TrimSpace(cmdStr) == "" {
+				return fmt.Errorf("--cmd is required when --agent %s", api.AgentHeadless)
+			}
+			if agent != api.AgentHeadless && strings.TrimSpace(cmdStr) != "" {
+				return fmt.Errorf("--cmd is only meaningful with --agent %s", api.AgentHeadless)
 			}
 			// Resolve the repo client-side: a URL clones directly; a local path
 			// clones from its origin by default, or seeds a read-only local copy
@@ -770,6 +778,7 @@ func newInitCmd() *cobra.Command {
 				SeedPath: res.SeedPath,
 				Agent:    agent,
 				Image:    image,
+				Cmd:      cmdStr,
 				Resources: api.Resources{
 					Memory: memory,
 					CPUs:   cpus,
@@ -780,15 +789,20 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("created island %q (container: %s)\n", info.Name, info.Container)
-			fmt.Printf("connect: dejima connect %s\n", info.Name)
+			if info.Agent == api.AgentHeadless {
+				fmt.Printf("logs:    dejima logs %s --follow\n", info.Name)
+			} else {
+				fmt.Printf("connect: dejima connect %s\n", info.Name)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL, or a local path (cloned from its origin by default) (required)")
 	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk (captures unpushed commits) instead of cloning from origin; requires a local daemon")
 	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent to run (default: claude-code)")
+	cmd.Flags().StringVar(&agent, "agent", "", "agent to run: claude-code (default), codex, or headless (with --cmd)")
 	cmd.Flags().StringVar(&image, "image", "", "island image (default: dejima/island:latest)")
+	cmd.Flags().StringVar(&cmdStr, "cmd", "", `entrypoint command for --agent headless (e.g. "python my_loop.py"); ignored for other agents`)
 	cmd.Flags().StringVar(&memory, "memory", "", "memory limit (e.g. 4G); default: unlimited")
 	cmd.Flags().StringVar(&cpus, "cpus", "", "CPU limit (e.g. 2.0); default: unlimited")
 	cmd.Flags().StringVar(&disk, "disk", "", "disk size (e.g. 20G); default: unlimited")
