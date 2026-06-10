@@ -4,13 +4,13 @@
 
 <h1 align="center">Dejima</h1>
 
-<p align="center"><em>The secure substrate for multi-device, multi-agent workflows.</em></p>
+<p align="center"><em>The persistent runtime for isolated AI agents, on your own infrastructure.</em></p>
 
 ---
 
-**Dejima** is an OSS containment layer for autonomous AI coding agents. Each project runs in its own *island*: an isolated container with the target repo, the agent of your choice, and a strictly brokered *bridge* back to the host.
+**Dejima** turns a Mac mini or Linux box into a secure, persistent host for AI agents. Built for **coding agent CLIs** (Claude Code, Codex; Aider/Goose/etc. via custom image), and **usable for any agent that wants isolation, persistence, and an API to drive it** — including headless API-SDK loops via `--agent headless --cmd "…"`.
 
-It is the interstitial layer between an agent and your machine. Not an interface. Not a product. Plumbing meant to be consumed by other applications — your CLI, a phone app, a Slack bot, a custom agent harness — all hitting the same API.
+Each project runs in its own *island*: an isolated container with the target repo, the agent of your choice, and a strictly brokered *bridge* back to the host.
 
 > The name and silhouette borrow from the historical island of Dejima in Nagasaki Bay — a single-bridge trading post, for two centuries the only sanctioned point of contact between Japan and the outside world. Same idea here.
 
@@ -18,11 +18,20 @@ It is the interstitial layer between an agent and your machine. Not an interface
 
 Pre-alpha. v1 milestones M0–M5 are implemented; M6 (real-world dogfood on a Mac mini) is in progress. See [`docs/v1-spec.md`](docs/v1-spec.md) and [`docs/v1-milestones.md`](docs/v1-milestones.md).
 
+## Who it's for
+
+Two audiences, same substrate:
+
+- **You run Claude Code / Codex on your home server.** Multiple projects, each in its own container, attachable from any device on your tailnet, surviving disconnects. The painkiller: no more tmux-session sprawl, no more "which window was I in." `dejima init && dejima connect <name>` and you're in.
+- **You're building tooling around agents.** The same HTTP/WebSocket API the CLI uses is yours to target — spawn islands, drive sessions, subscribe to lifecycle/agent events, run one-shot commands. Headless agents (any process, not just terminal CLIs) get the same isolation, volumes, credential mounts, and event hooks; you skip the interactive attach surface. Dejima is the substrate; bring your own LangChain / CrewAI / custom loop. See [`docs/agent-adapters.md`](docs/agent-adapters.md).
+
+A note on "API": throughout the docs, *the Dejima API* refers to Dejima's own HTTP/WebSocket control surface. Upstream LLM provider APIs (Anthropic, OpenAI) are reached by the agents *inside* islands, on their own.
+
 ## What you get
 
 - **Isolation** — agents run inside containers with no path to your host filesystem, other projects, or unrelated secrets.
 - **Multi-project, multi-agent** — N islands on one host, each its own repo and agent. No context bleed.
-- **Persistent sessions** — long-running agent work survives disconnects and host reboots via tmux + named volumes.
+- **Persistent sessions** — long-running agent work survives disconnects and host reboots via tmux + named volumes (interactive agents) or supervised processes with captured logs (headless agents).
 - **Multi-device attach** — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.
 - **Direct push to GitHub** — host credentials mounted read-only into the island; `git push` just works.
 - **API-first** — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.

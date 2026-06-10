@@ -131,8 +131,8 @@
 <p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
 <section>
-  <p><strong>Dejima</strong> is the missing layer for running AI coding agents on your own infrastructure. Each project lives in its own island — an isolated container with an agent — accessible from any of your devices.</p>
-  <p class="plain">In other words: it lets you run a bunch of Claude Code sessions on your own Mac mini or server without losing your mind to tmux.</p>
+  <p><strong>Dejima</strong> turns a Mac mini or Linux box into a secure, persistent host for AI agents. Built for <strong>coding agent CLIs</strong> (Claude Code, Codex); usable for any agent that wants isolation, persistence, and an API to drive it — including <strong>headless API-SDK loops</strong>. Each project lives in its own island — an isolated container with an agent — accessible from any of your devices.</p>
+  <p class="plain">In other words: it lets you run a bunch of Claude Code sessions on your own Mac mini or server without losing your mind to tmux — and gives you the API to build dashboards, phone clients, or your own agent harness on top.</p>
   <div class="pain">
     Managing multiple instances of Claude Code shouldn't require manually provisioning tmux sessions, fighting SSH drops, and wrestling with folder permissions for every parallel task. You shouldn't have to baby your environment just to let an agent work in the background. There's a better way.
   </div>
@@ -172,7 +172,9 @@
 ┌──────────────────────────┐
 │  Agent in an island      │   one container per project
 └──────────────────────────┘</code></pre>
-<p>Inside each island, the agent process runs under a long-lived <strong>tmux</strong> session — that's what keeps it alive when no client is attached, and how multiple clients can share the same screen. The daemon bridges your websocket to that tmux session via a host-side <strong>PTY</strong>, which handles terminal sizing, multi-client multiplexing, and clean detach on disconnect.</p>
+<p>Inside each island, an interactive CLI agent (Claude Code, Codex) runs under a long-lived <strong>tmux</strong> session — that's what keeps it alive when no client is attached, and how multiple clients can share the same screen. The daemon bridges your websocket to that tmux session via a host-side <strong>PTY</strong>, which handles terminal sizing, multi-client multiplexing, and clean detach on disconnect. A <strong>headless</strong> agent (any user-supplied command, e.g. a Python SDK loop) skips tmux entirely: it runs as the container's main process, with stdout/stderr captured for <code>dejima logs</code>. Two modes, same isolation + lifecycle + events.</p>
+
+<p class="plain"><em>"API" in these docs means Dejima's HTTP/WebSocket control surface — the thing your CLI, dashboard, or phone client targets. Anthropic's and OpenAI's APIs are reached by the agents inside islands, on their own.</em></p>
 
 <h2>Install</h2>
 <p>Pick where you're installing it. The page rewrites itself for your choice.</p>
@@ -436,6 +438,7 @@ dejima service install --tcp :7273
   <tr><td>Multi-device shared session</td><td>✗</td><td>manual</td><td>web only</td><td><strong>✓</strong></td></tr>
   <tr><td>Self-hosted, your hardware</td><td>✓</td><td>✓</td><td>✗</td><td><strong>✓</strong></td></tr>
   <tr><td>Claude Code + Codex bundled (others via custom image)</td><td>n/a</td><td>n/a</td><td>✗</td><td><strong>✓</strong></td></tr>
+  <tr><td>Also runs headless / non-CLI agents (Python SDK loops, workers)</td><td>n/a</td><td>n/a</td><td>vendor-locked</td><td><strong>✓</strong> (<code>--agent headless --cmd</code>)</td></tr>
   <tr><td>API for third-party integrations</td><td>✗</td><td>✗</td><td>vendor-only</td><td><strong>✓</strong></td></tr>
 </table>
 <p class="small">Dejima isn't a replacement for tmux — it uses tmux inside each island. It's the layer above that adds isolation, lifecycle verbs (<code>hibernate</code> / <code>reset</code>), webhook events, and the cross-device API.</p>
@@ -458,7 +461,7 @@ dejima service install --tcp :7273
 </table>
 
 <h2>Webhooks</h2>
-<p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code> via the Claude Code shim). This is how mobile push, Slack notifications, and custom dashboards integrate.</p>
+<p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code>) emitted by the per-agent shims — Claude Code and Codex today, headless agents on their own via <code>POST /v1/internal/agent-event</code>. This is how mobile push, Slack notifications, and custom dashboards integrate. See <a href="https://github.com/aoos/dejima/blob/master/docs/agent-adapters.md"><code>docs/agent-adapters.md</code></a> for adding your own.</p>
 <pre><code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code></pre>
 
 <h2 id="uninstall">Uninstall</h2>
