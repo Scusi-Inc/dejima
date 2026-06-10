@@ -163,16 +163,32 @@ Re-run the one-liner. The script does a `git pull` on the existing checkout and 
 
 ## Uninstall
 
+> **Get your work out first.** Dejima never touches your host repo folders — but work done
+> *inside* an island lives in that island's Docker volume, and purging destroys it. Before
+> removing anything, check each island for uncommitted/unpushed work and push it (or copy
+> it out):
+>
+> ```bash
+> dejima exec <name> -- git status     # anything uncommitted or unpushed?
+> dejima exec <name> -- git push       # send it to the remote
+> dejima cp <name>:/workspace/file ./  # or copy files out directly
+> ```
+
 ```bash
+dejima purge <name>                               # each island: container + volumes
 dejima service uninstall                          # stop the daemon
 sudo rm /usr/local/bin/dejima /usr/local/bin/dejimad
 rm -rf ~/.dejima-src                              # source checkout
-# Optional: also remove islands and persisted state:
+rm -rf ~/.dejima                                  # persisted state, config, credential seed
+# Leftovers, if you skipped purging some islands:
 docker ps -aq --filter label=dejima.project | xargs -r docker rm -f
 docker volume ls -q --filter label=dejima.project | xargs -r docker volume rm
 docker network ls -q --filter name=dejima-net- | xargs -r docker network rm
-rm -rf ~/.dejima
 ```
+
+Docker and Tailscale are left in place — Dejima uses them but didn't install-own them. On a
+client device, uninstalling is just deleting the `dejima` binary and removing `DEJIMA_HOST`
+from your shell profile.
 
 ## Install paths under the hood
 

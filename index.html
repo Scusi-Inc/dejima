@@ -383,19 +383,23 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
 </script>
 
 <h2 id="home-server">Use case: Home server</h2>
-<p><strong>If you run AI agents over ssh on a home server</strong> — Mac mini, VPS, an always-on Linux box on your shelf — Dejima is the layer that fixes the parts of that workflow that suck.</p>
-<p>Each project gets a named island. <code>dejima init</code> derives the name from the repo, <code>dejima ls</code> shows everything at a glance, and <code>dejima connect &lt;name&gt;</code> is the same command every time. No tmux mnemonics to memorize. No <code>claude1</code>/<code>claude2</code> ambiguity.</p>
+<p><strong>If you run AI agents on a home server</strong> — Mac mini, VPS, an always-on Linux box on your shelf — Dejima is the layer that fixes the parts of that workflow that suck. And it's two steps: one line to install, one word to run.</p>
+<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash   # on the server, once
+dejima                                                       # that's the interface
+</code></pre>
+<p>(The installer walks you through everything — Tailscale, Docker, the service. Step-by-step per platform in <a href="#install">Install</a> above.)</p>
+<p>Running <code>dejima</code> opens an interactive dashboard: live state and presence for every island — a project plus its agent, in its own container. Press <code>n</code> to launch one: it scans your code folder, lists your repos with their git status, and provisions the island in a couple of keystrokes. Press <code>⏎</code> to open an island in a new window, <code>?</code> for the full key map. No tmux mnemonics to memorize, no <code>claude1</code>/<code>claude2</code> ambiguity — and closing your laptop kills nothing; the agent keeps working and you reattach from any device.</p>
+<pre><code>dejima                             # interactive dashboard
+#  n  → pick a repo, choose an agent (Claude Code / Codex), launch
+#  ⏎  → open in a new window   ·   h hibernate   ·   ?  help
+</code></pre>
+<p><strong>Prefer typed commands?</strong> Everything in the dashboard is also a one-shot verb. Each project gets a named island: <code>dejima init</code> derives the name from the repo, <code>dejima ls</code> shows everything at a glance, and <code>dejima connect &lt;name&gt;</code> is the same command every time.</p>
 <pre><code>dejima init --repo git@github.com:you/foo.git
 dejima ls                          # one row per island, last-used first
 dejima connect foo                 # drops into Claude Code, in foo's island
 # Ctrl-b d to detach. Or just close the terminal — session keeps running.
 
 DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # from your laptop
-</code></pre>
-<p><strong>Or skip the commands entirely.</strong> Run <code>dejima</code> with no arguments for an interactive dashboard: live state and presence for every island, single-key lifecycle (connect / hibernate / wake / reset / purge), and <code>n</code> to launch a new one — it scans your code folder, lists your repos with their git status, and provisions an island in a couple of keystrokes. Press <code>?</code> for the full key map.</p>
-<pre><code>dejima                             # interactive dashboard
-#  n  → pick a repo, choose an agent (Claude Code / Codex), launch
-#  ⏎  → attach   ·   h hibernate   ·   ?  help
 </code></pre>
 <p>Repos can come from anywhere: a git URL, or a <strong>local checkout already on disk</strong> — Dejima clones from its remote by default, or seeds from your working copy (<code>--local-copy</code>) to capture unpushed work. And one repo can back <strong>several islands at once</strong> — Claude Code and Codex side by side, or two agents on parallel tasks.</p>
 <p><strong>Why it's worth it:</strong> islands are real containers. Each has its own <code>$HOME</code>, its own <code>git</code> config, its own <code>gh</code> credentials, its own working directory. Cross-pollination between projects isn't a discipline thing — the kernel won't let it happen. And because sessions are tmux-backed, your laptop closing or your network blipping doesn't kill anything; you reattach where you left off, from wherever you are.</p>
@@ -456,6 +460,20 @@ dejima service install --tcp :7273
 <h2>Webhooks</h2>
 <p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code> via the Claude Code shim). This is how mobile push, Slack notifications, and custom dashboards integrate.</p>
 <pre><code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code></pre>
+
+<h2 id="uninstall">Uninstall</h2>
+<p><strong>Get your work out first.</strong> Dejima never touches your host folders — but work done <em>inside</em> an island lives in that island's Docker volume, and <code>dejima purge</code> destroys it. Before removing anything, make sure each island's work is pushed to its remote (or copied out):</p>
+<pre><code>dejima exec foo -- git status        # anything uncommitted or unpushed?
+dejima exec foo -- git push          # send it to your remote
+dejima cp foo:/workspace/file ./     # or copy files out directly
+</code></pre>
+<p>Then remove Dejima from the server:</p>
+<pre><code>dejima purge &lt;name&gt;                  # each island: container + volumes
+dejima service uninstall             # stop + deregister the daemon
+sudo rm /usr/local/bin/dejima /usr/local/bin/dejimad
+rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
+</code></pre>
+<p class="small">On a client device, uninstalling is just deleting the <code>dejima</code> binary and removing <code>DEJIMA_HOST</code> from your shell profile. Docker and Tailscale are left in place — Dejima uses them but didn't install-own them; remove them separately if nothing else needs them.</p>
 
 <h2>Concepts</h2>
 <table>
