@@ -525,16 +525,19 @@ func (m tuiModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
-// asciiLogo is the fan-shaped island with its gate over the water — a
-// terminal rendering of assets/logo-transparent.png. All lines are the same
-// printed width so it composes as a block.
+// asciiLogo is a terminal rendering of assets/logo-transparent.png: the
+// island is an annulus sector (parallel top/bottom arcs joined by angled
+// sides), with a gate hanging from the bottom arc and a bridge crossing
+// beneath the curved shore. All lines are the same printed width so it
+// composes as a block.
 var asciiLogo = []string{
-	"  .-~~======~~-.  ",
-	" /              \\ ",
-	" \\     ____     / ",
-	"  `-._|    |_.-'  ",
-	"      |_[]_|      ",
-	"~~~~~~~~~~~~~~~~~~",
+	"  _.----------._  ",
+	"   \\          /   ",
+	"     \\_.--._/     ",
+	"       |  |       ",
+	"       |[]|       ",
+	"   _.-'|  |'-._   ",
+	" .'    |__|    '. ",
 }
 
 func (m tuiModel) renderHeader() string {
