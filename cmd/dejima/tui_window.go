@@ -13,7 +13,7 @@ import (
 // "open in a new window" (default) and "attach in-place, replacing the TUI"
 // (the graceful fallback).
 func canOpenNewWindow() bool {
-	return os.Getenv("TMUX") != "" || goruntime.GOOS == "darwin"
+	return os.Getenv("TMUX") != "" || goruntime.GOOS == "darwin" || goruntime.GOOS == "windows"
 }
 
 // openInNewWindow launches `dejima connect <name>` in a separate window so the
@@ -38,9 +38,30 @@ func (m tuiModel) openInNewWindow(name string) error {
 		return exec.Command("tmux", "new-window", "-n", name, inner).Run()
 	case goruntime.GOOS == "darwin":
 		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, name, m.activeHost)
 	default:
-		return fmt.Errorf("open-in-new-window needs tmux or macOS — run the TUI inside tmux, or `dejima connect %s` in another terminal", name)
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run the TUI inside tmux, or `dejima connect %s` in another terminal", name)
 	}
+}
+
+// openWindowsTerminal opens `dejima connect` in a new Windows Terminal tab
+// (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
+// pinned via a cmd wrapper because wt/start don't reliably inherit the
+// caller's environment.
+func openWindowsTerminal(exe, name, host string) error {
+	// Island names and hosts feed a cmd.exe command line, which has no sane
+	// quoting — refuse anything beyond the characters they legitimately use.
+	for _, s := range []string{name, host} {
+		if strings.ContainsAny(s, `"&|<>^%!`) {
+			return fmt.Errorf("can't open a window for %q — run `dejima connect %s` manually", s, name)
+		}
+	}
+	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& "%s" connect %s`, host, exe, name)
+	if wt, err := exec.LookPath("wt.exe"); err == nil {
+		return exec.Command(wt, "-w", "-1", "new-tab", "--title", name, "cmd", "/c", inner).Run()
+	}
+	return exec.Command("cmd", "/c", "start", name, "cmd", "/c", inner).Run()
 }
 
 // openMacTerminal opens the command in a new iTerm or Terminal.app window.
