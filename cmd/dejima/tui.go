@@ -531,13 +531,13 @@ func (m tuiModel) View() string {
 // beneath the curved shore. All lines are the same printed width so it
 // composes as a block.
 var asciiLogo = []string{
-	"  _.----------._  ",
-	"   \\          /   ",
-	"     \\_.--._/     ",
+	" _.------------._ ",
+	"  \\            /  ",
+	"    \\_.----._/    ",
 	"       |  |       ",
 	"       |[]|       ",
 	"   _.-'|  |'-._   ",
-	" .'    |__|    '. ",
+	" .'    |  |    '. ",
 }
 
 func (m tuiModel) renderHeader() string {
