@@ -40,11 +40,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Bundled agents. Both are npm-distributed CLI agents that talk to their
-# respective vendor APIs. Other agents (Aider, Goose, etc.) are supported
-# via a custom image — see docs/custom-agents.md.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
-
 # Non-root user. Ubuntu 24.04 ships with a default `ubuntu` user at UID 1000;
 # delete it so we can keep the canonical UID for our `dejima` user.
 RUN userdel -r ubuntu 2>/dev/null || true \
@@ -73,8 +68,22 @@ RUN chmod +x /usr/local/bin/dejima-start.sh
 
 USER dejima
 WORKDIR /workspace
+# NPM_CONFIG_PREFIX gives the dejima user a writable global npm location so
+# the bundled CLI agents' auto-updaters (`npm i -g …`) actually succeed
+# instead of failing with EACCES against the root-owned /usr/lib/node_modules
+# default. The package bin dir goes on PATH so `claude` / `codex` resolve.
 ENV HOME=/home/dejima \
-    GH_CONFIG_DIR=/opt/host/gh-config
+    GH_CONFIG_DIR=/opt/host/gh-config \
+    NPM_CONFIG_PREFIX=/home/dejima/.npm-global \
+    PATH=/home/dejima/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Bundled agents. Both are npm-distributed CLI agents that talk to their
+# respective vendor APIs. Installed as the dejima user into NPM_CONFIG_PREFIX
+# so on-disk paths are user-owned; auto-updates write to the same prefix.
+# Other agents (Aider, Goose, etc.) are supported via a custom image — see
+# docs/custom-agents.md.
+RUN mkdir -p /home/dejima/.npm-global \
+    && npm install -g @anthropic-ai/claude-code @openai/codex
 
 # Containers stay alive via dejima-start.sh, which manages tmux + agent process.
 ENTRYPOINT ["/usr/local/bin/dejima-start.sh"]
