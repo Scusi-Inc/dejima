@@ -17,6 +17,7 @@ import (
 
 	"github.com/aoos/dejima/internal/agentcreds"
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/islandimage"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/project"
@@ -859,16 +860,16 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 
 // agentStateMountTarget returns the container path where the agent volume should
 // be mounted, based on which agent the project runs. Each agent has its own
-// conventional state dir.
+// conventional state dir, sourced from the handler registry. An empty agent
+// defaults to claude-code; an unknown custom agent falls back to ~/.agent-state.
 func agentStateMountTarget(agent string) string {
-	switch agent {
-	case "codex":
-		return "/home/dejima/.codex"
-	case "claude-code", "":
-		return "/home/dejima/.claude"
-	default:
-		return "/home/dejima/.agent-state"
+	if agent == "" {
+		agent = DefaultAgent
 	}
+	if h, ok := handlers.Lookup(agent); ok {
+		return h.StateDir
+	}
+	return "/home/dejima/.agent-state"
 }
 
 // credentialBindMounts assembles the host paths to mount read-only into the island.

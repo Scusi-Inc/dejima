@@ -14,6 +14,7 @@ import (
 
 	"github.com/aoos/dejima/internal/bridge"
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
 )
@@ -139,7 +140,7 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	if p.Agent == AgentHeadless {
+	if !handlers.Attachable(p.Agent) {
 		// Headless islands run a user-supplied command as their main process
 		// — there's no tmux to attach to. Surface that as a precondition
 		// failure with the right next step.
