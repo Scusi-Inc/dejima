@@ -4,7 +4,7 @@
 
 <h1 align="center">Dejima</h1>
 
-<p align="center"><em>The persistent runtime for isolated AI agents, on your own infrastructure.</em></p>
+<p align="center"><em>The secure runtime for isolated AI agents — a fleet per project, on your own infrastructure.</em></p>
 
 ---
 
