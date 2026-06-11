@@ -293,6 +293,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/islands/{name}/agents", s.addAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}", s.getAgent)
 	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
+	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
@@ -604,6 +605,43 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		Agent:  id,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// updateAgent changes an agent's cosmetic label. Everything else (id, type,
+// worktree, session) is immutable — the id is the stable handle, the label is
+// the renamable display name, mirroring the island Name / agent Label split.
+func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("name"), r.PathValue("id")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	a, ok := p.AgentByID(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
+		return
+	}
+	var req AgentSpecRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	a.Label = strings.TrimSpace(req.Label) // empty clears the label
+	if err := p.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	for _, ai := range s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)) {
+		if ai.ID == id {
+			writeJSON(w, http.StatusOK, ai)
+			return
+		}
+	}
 }
 
 // removeAgentSession kills an agent's tmux session and prunes its worktree dir.

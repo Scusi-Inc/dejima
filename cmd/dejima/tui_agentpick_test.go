@@ -75,6 +75,29 @@ func TestAgentPickerHeadlessNeedsCmd(t *testing.T) {
 	}
 }
 
+// After a type is chosen the adder asks for an optional label; esc returns to
+// type selection.
+func TestAgentAdderLabelStep(t *testing.T) {
+	m := initialTUIModel(nil)
+	a := &agentAdder{island: "myrepo", picker: newAgentPicker()}
+	m.agentAdder = a
+
+	m.agentAdderKey(key("enter")) // pick claude-code → label step
+	if a.phase != adderLabel {
+		t.Fatalf("after type pick: phase = %v, want adderLabel", a.phase)
+	}
+	for _, c := range []string{"a", "p", "i"} {
+		m.agentAdderKey(key(c))
+	}
+	if a.label != "api" {
+		t.Errorf("label = %q, want api", a.label)
+	}
+	m.agentAdderKey(key("esc")) // back to type selection
+	if a.phase != adderPick {
+		t.Errorf("esc on label step: phase = %v, want adderPick", a.phase)
+	}
+}
+
 // Esc on the command step returns to type selection (not a cancel); esc on the
 // type step backs out.
 func TestAgentPickerEscape(t *testing.T) {

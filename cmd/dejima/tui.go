@@ -403,6 +403,15 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.confirm = &confirmPrompt{verb: "remove-agent", island: r.island, answer: "", agent: r.agentID}
 		}
+	case "e":
+		// Rename: relabel the selected agent (cosmetic; its id is unchanged).
+		if r := m.currentRow(); r.kind == rowAgent {
+			cur := ""
+			if isl, ok := m.islandByName(r.island); ok {
+				cur = agentByID(isl, r.agentID).Label
+			}
+			m.confirm = &confirmPrompt{verb: "relabel-agent", island: r.island, agent: r.agentID, answer: cur}
+		}
 	case "h":
 		if name := m.selectedName(); name != "" {
 			m.dirtyOps[name] = "hibernating"
@@ -462,8 +471,22 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			m.dirtyOps[c.island] = "removing agent"
 			return m, m.removeAgentCmd(c.island, c.agent)
 		}
+	case "relabel-agent":
+		// The typed text is the new label (blank clears it); no y/n gate.
+		m.dirtyOps[c.island] = "renaming agent"
+		return m, m.relabelAgentCmd(c.island, c.agent, strings.TrimSpace(c.answer))
 	}
 	return m, nil
+}
+
+// relabelAgentCmd renames (relabels) an agent. An empty label clears it.
+func (m tuiModel) relabelAgentCmd(name, agentID, label string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err := m.client.RelabelAgent(ctx, name, agentID, label)
+		return opCompleteMsg{name: name, verb: "relabel-agent", err: err}
+	}
 }
 
 // removeAgentCmd removes an agent from an island.
@@ -1086,7 +1109,7 @@ func (m tuiModel) renderFooter() string {
 	// The strip used to share line one with the global commands, which collided
 	// on narrow terminals — giving it its own row keeps both readable.
 	keys1 := "[n] new   [⏎] open   [space] expand   [+] add agent   [s] server   [?] help   [q] quit"
-	keys2 := "[a] attach here   [X] rm agent   [h] hibernate   [w] wake   [r] reset   [d] purge"
+	keys2 := "[a] attach here   [e] rename   [X] rm agent   [h] hibernate   [w] wake   [r] reset   [d] purge"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -1151,6 +1174,7 @@ func (m tuiModel) renderHelp() string {
 		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"+", "add an agent — Claude Code, Codex, or a headless background command"},
+		{"e", "rename — relabel the highlighted agent (cosmetic; its id is unchanged)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
@@ -1244,6 +1268,9 @@ func (m tuiModel) renderConfirm() string {
 	case "purge":
 		prompt = fmt.Sprintf("DESTROY %q (including all volumes). Type the island name to confirm: %s",
 			c.island, c.answer)
+	case "relabel-agent":
+		prompt = fmt.Sprintf("Rename agent %s (blank clears the label). Type a name and press Enter: %s",
+			c.agent, c.answer)
 	}
 	return styleErrored.Render("┌── ") + prompt + styleErrored.Render(" ──┐")
 }

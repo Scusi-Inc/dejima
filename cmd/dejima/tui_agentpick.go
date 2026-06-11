@@ -133,11 +133,22 @@ func (p agentPicker) view(b *strings.Builder, title string) {
 // Standalone "add an agent to this island" overlay
 // ---------------------------------------------------------------------------
 
-// agentAdder wraps the shared picker with a target island and an in-flight /
-// error state. Owned by tuiModel as a pointer (nil when inactive).
+// agentAdderPhase tracks the standalone add flow: pick a type (+ headless cmd)
+// via the shared picker, then an optional label, then the request is in flight.
+type agentAdderPhase int
+
+const (
+	adderPick  agentAdderPhase = iota // choosing type via the picker
+	adderLabel                        // typing an optional label
+)
+
+// agentAdder wraps the shared picker with a target island, an optional label,
+// and an in-flight / error state. Owned by tuiModel as a pointer (nil = inactive).
 type agentAdder struct {
 	island string
 	picker agentPicker
+	phase  agentAdderPhase
+	label  string
 	adding bool
 	err    string
 }
@@ -167,12 +178,30 @@ func (m tuiModel) agentAdderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.agentAdder = nil
 		return m, nil
 	}
+	if a.phase == adderLabel {
+		switch msg.String() {
+		case "esc":
+			a.phase = adderPick // back to type selection
+		case "enter":
+			a.adding, a.err = true, ""
+			return m, m.addAgentSpecCmd(a.island, api.AgentSpecRequest{
+				Type: a.picker.typ(), Cmd: a.picker.cmd(), Label: strings.TrimSpace(a.label)})
+		case "backspace":
+			if a.label != "" {
+				a.label = a.label[:len(a.label)-1]
+			}
+		default:
+			if len(msg.String()) == 1 {
+				a.label += msg.String()
+			}
+		}
+		return m, nil
+	}
 	switch a.picker.handleKey(msg) {
 	case pickerBack:
 		m.agentAdder = nil
 	case pickerDone:
-		a.adding, a.err = true, ""
-		return m, m.addAgentSpecCmd(a.island, api.AgentSpecRequest{Type: a.picker.typ(), Cmd: a.picker.cmd()})
+		a.phase = adderLabel // type chosen → ask for an optional label
 	}
 	return m, nil
 }
@@ -195,7 +224,16 @@ func (a *agentAdder) view() string {
 		b.WriteString(styleAccent.Render("adding " + a.picker.typ() + "…"))
 		return b.String()
 	}
-	a.picker.view(&b, "Agent type")
+	if a.phase == adderLabel {
+		b.WriteString(styleHeader.Render("Label"))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("Optional display name for the " + a.picker.typ() + " agent (e.g. \"frontend\").\nLeave blank to use its id."))
+		b.WriteString("\n\n")
+		b.WriteString("label: " + styleAccent.Render(a.label+"_"))
+		b.WriteString("\n\n" + styleMuted.Render("[⏎] add   [esc] back to type"))
+	} else {
+		a.picker.view(&b, "Agent type")
+	}
 	if a.err != "" {
 		b.WriteString("\n\n" + styleErrored.Render("✗ "+a.err))
 	}

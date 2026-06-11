@@ -237,6 +237,31 @@ func TestMultiAgentLifecycle(t *testing.T) {
 		t.Errorf("interactive agent logs: got %d, want 409", rr.Code)
 	}
 
+	// Relabel an agent (cosmetic rename); the id and type are untouched.
+	rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/a2", `{"label":"frontend"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("relabel a2: got %d, body %s", rr.Code, rr.Body.String())
+	}
+	var relabeled AgentInfo
+	_ = json.Unmarshal(rr.Body.Bytes(), &relabeled)
+	if relabeled.ID != "a2" || relabeled.Label != "frontend" {
+		t.Fatalf("relabeled = %+v, want a2 labeled frontend", relabeled)
+	}
+	// An empty label clears it.
+	rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/a2", `{"label":""}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear label a2: got %d", rr.Code)
+	}
+	var cleared AgentInfo
+	_ = json.Unmarshal(rr.Body.Bytes(), &cleared)
+	if cleared.Label != "" {
+		t.Errorf("cleared label = %q, want empty", cleared.Label)
+	}
+	// Relabeling a missing agent is a 404.
+	if rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/a9", `{"label":"x"}`); rr.Code != http.StatusNotFound {
+		t.Errorf("relabel missing agent: got %d, want 404", rr.Code)
+	}
+
 	// Remove the second agent: kills its session, prunes its worktree.
 	rr = do(t, h, http.MethodDelete, "/v1/islands/proj/agents/a2", "")
 	if rr.Code != http.StatusNoContent {

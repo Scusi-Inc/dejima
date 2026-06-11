@@ -430,3 +430,12 @@ func (c *Client) AddAgent(ctx context.Context, name string, req AgentSpecRequest
 func (c *Client) RemoveAgent(ctx context.Context, name, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/agents/"+id, nil, nil)
 }
+
+// RelabelAgent sets an agent's cosmetic label (its id and type are immutable).
+func (c *Client) RelabelAgent(ctx context.Context, name, id, label string) (*AgentInfo, error) {
+	var out AgentInfo
+	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+name+"/agents/"+id, AgentSpecRequest{Label: label}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
