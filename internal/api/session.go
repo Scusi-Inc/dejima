@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,23 +114,63 @@ type SessionEnvelope struct {
 	Attached []PresenceEntry `json:"attached,omitempty"`
 }
 
-// trackerFor returns (or lazily creates) the presence tracker for a project name.
-func (s *Server) trackerFor(name string) *presenceTracker {
+// presenceKey is the composite map key for an (island, agent) presence tracker.
+// The NUL separator can't appear in either component, so the prefix scan in
+// islandPresence is unambiguous.
+func presenceKey(island, agentID string) string {
+	return island + "\x00" + agentID
+}
+
+// trackerFor returns (or lazily creates) the presence tracker for one agent.
+func (s *Server) trackerFor(island, agentID string) *presenceTracker {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.presence == nil {
 		s.presence = map[string]*presenceTracker{}
 	}
-	t, ok := s.presence[name]
+	key := presenceKey(island, agentID)
+	t, ok := s.presence[key]
 	if !ok {
 		t = newPresenceTracker()
-		s.presence[name] = t
+		s.presence[key] = t
 	}
 	return t
 }
 
+// islandPresence returns the union of every agent's attached clients for an
+// island (used for the island-level Attached field and overview counts).
+func (s *Server) islandPresence(island string) []PresenceEntry {
+	prefix := island + "\x00"
+	s.mu.Lock()
+	trackers := make([]*presenceTracker, 0)
+	for k, t := range s.presence {
+		if strings.HasPrefix(k, prefix) {
+			trackers = append(trackers, t)
+		}
+	}
+	s.mu.Unlock()
+	var out []PresenceEntry
+	for _, t := range trackers {
+		out = append(out, t.Snapshot()...)
+	}
+	return out
+}
+
+// presenceSnapshot returns the attached clients for one agent without creating a
+// tracker (read path).
+func (s *Server) presenceSnapshot(island, agentID string) []PresenceEntry {
+	s.mu.Lock()
+	t, ok := s.presence[presenceKey(island, agentID)]
+	s.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return t.Snapshot()
+}
+
 func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	agentID := r.PathValue("id") // empty for the legacy /session route → primary
 	label := r.URL.Query().Get("label")
 	if label == "" {
 		label = "anonymous"
@@ -140,13 +181,30 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	if !handlers.Attachable(p.Agent) {
-		// Headless islands run a user-supplied command as their main process
-		// — there's no tmux to attach to. Surface that as a precondition
-		// failure with the right next step.
-		writeError(w, http.StatusConflict,
-			fmt.Errorf("island %q is headless; it has no attach surface — use `dejima logs %s --follow`", name, name))
+	// Resolve which agent to attach to: an explicit id, or the primary.
+	spec := p.PrimaryAgent()
+	if agentID != "" {
+		a, ok := p.AgentByID(agentID)
+		if !ok {
+			writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, agentID))
+			return
+		}
+		spec = a
+	}
+	if spec == nil {
+		writeError(w, http.StatusConflict, fmt.Errorf("island %q has no agents to attach to", name))
 		return
+	}
+	if !handlers.Attachable(spec.Type) {
+		// Headless agents run a user-supplied command as their main process —
+		// there's no tmux to attach to. Surface the right next step.
+		writeError(w, http.StatusConflict,
+			fmt.Errorf("agent %q in island %q is headless; it has no attach surface — use `dejima logs %s --follow`", spec.ID, name, name))
+		return
+	}
+	tmuxName := spec.Tmux
+	if tmuxName == "" {
+		tmuxName = tmuxSession // defensive: legacy/primary default
 	}
 	status, err := s.rt.Status(r.Context(), p.ContainerName())
 	if err != nil {
@@ -172,14 +230,14 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	tracker := s.trackerFor(name)
+	tracker := s.trackerFor(name, spec.ID)
 	handle, others := tracker.Attach(label, cancel)
 	attachedAt := time.Now().UTC()
 	s.recordClientHistory(ClientHistoryEntry{Label: label, Island: name, AttachedAt: attachedAt})
 	s.emit(events.Event{
 		Type:    events.TypeClientAttached,
 		Island:  name,
-		Payload: map[string]any{"label": label},
+		Payload: map[string]any{"label": label, "agent": spec.ID},
 	})
 	defer func() {
 		tracker.Detach(handle)
@@ -189,9 +247,10 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		s.emit(events.Event{
 			Type:    events.TypeClientDetached,
 			Island:  name,
-			Payload: map[string]any{"label": label},
+			Payload: map[string]any{"label": label, "agent": spec.ID},
 		})
-		if len(tracker.Snapshot()) == 0 {
+		// "last client" is island-wide: fire only when no agent has any client.
+		if len(s.islandPresence(name)) == 0 {
 			s.emit(events.Event{Type: events.TypeLastClientDetached, Island: name})
 		}
 	}()
@@ -264,12 +323,12 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	// stomping the real interactive client's size. Match the largest client
 	// already attached instead, so the new client can't shrink the window.
 	if initRows == 0 || initCols == 0 {
-		if r, c, ok := bridge.MaxClientSize(ctx, "docker", p.ContainerName(), tmuxSession); ok {
+		if r, c, ok := bridge.MaxClientSize(ctx, "docker", p.ContainerName(), tmuxName); ok {
 			initRows, initCols = r, c
 		}
 	}
 
-	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxSession, initRows, initCols)
+	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxName, initRows, initCols)
 	if err != nil {
 		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
 		return

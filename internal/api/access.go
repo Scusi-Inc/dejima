@@ -196,9 +196,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 				out.Hibernated++
 			}
 		}
-		if tracker := s.presence[p.Name]; tracker != nil {
-			out.AttachedClients += len(tracker.Snapshot())
-		}
+		out.AttachedClients += len(s.islandPresence(p.Name))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

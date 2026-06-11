@@ -233,6 +233,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/islands/{name}/agents", s.addAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}", s.getAgent)
 	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
+	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
@@ -1153,9 +1154,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	} else {
 		info.Container = string(runtime.StatusErrored)
 	}
-	if tracker := s.presence[p.Name]; tracker != nil {
-		info.Attached = tracker.Snapshot()
-	}
+	info.Attached = s.islandPresence(p.Name)
 	info.AgentState = s.agentStateOf(p.Name)
 	info.Agents = s.agentInfos(ctx, p, false)
 	return info
@@ -1184,6 +1183,7 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 				ai.State = "stopped"
 			}
 		}
+		ai.Attached = s.presenceSnapshot(p.Name, a.ID)
 		out = append(out, ai)
 	}
 	return out
