@@ -25,18 +25,41 @@ func canOpenNewWindow() bool {
 // DEJIMA_HOST — which may differ from the env that launched the TUI if the user
 // switched profiles — so the new window hits the same daemon.
 func (m tuiModel) openInNewWindow(name, agentID string) error {
+	return m.openAgentWindow("connect", name, agentID, nil)
+}
+
+// openAgentLogsWindow opens `dejima logs <name> [--agent id] --follow` in a
+// separate window — the open path for headless agents, which have no attach
+// surface.
+func (m tuiModel) openAgentLogsWindow(name, agentID string) error {
+	return m.openAgentWindow("logs", name, agentID, []string{"--follow"})
+}
+
+// openAgentWindow launches `dejima <verb> <name> [--agent id] [extra…]` in a
+// separate window so the TUI can stay up as an overview. tmux is the portable
+// path (a sibling window); macOS scripts Terminal/iTerm; Windows opens a tab.
+//
+// Critically, the child inherits the TUI's *current* connection target via
+// DEJIMA_HOST — which may differ from the env that launched the TUI if the user
+// switched profiles — so the new window hits the same daemon. extra args are
+// trusted constants (e.g. "--follow"), so they're appended without quoting.
+func (m tuiModel) openAgentWindow(verb, name, agentID string, extra []string) error {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
 		exe = "dejima"
 	}
-	// A shell command string: pin DEJIMA_HOST, then exec the connect. A specific
-	// agent is targeted via `--agent`; the bare name attaches to the primary.
-	inner := fmt.Sprintf("DEJIMA_HOST=%s exec %s connect %s",
-		shquote(m.activeHost), shquote(exe), shquote(name))
 	winLabel := name
 	if agentID != "" {
-		inner += " --agent " + shquote(agentID)
 		winLabel = name + "/" + agentID
+	}
+	// A shell command string: pin DEJIMA_HOST, then exec the verb.
+	inner := fmt.Sprintf("DEJIMA_HOST=%s exec %s %s %s",
+		shquote(m.activeHost), shquote(exe), verb, shquote(name))
+	if agentID != "" {
+		inner += " --agent " + shquote(agentID)
+	}
+	for _, e := range extra {
+		inner += " " + e
 	}
 
 	switch {
@@ -45,29 +68,32 @@ func (m tuiModel) openInNewWindow(name, agentID string) error {
 	case goruntime.GOOS == "darwin":
 		return openMacTerminal(inner)
 	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, name, agentID, m.activeHost)
+		return openWindowsTerminal(exe, verb, name, agentID, extra, m.activeHost)
 	default:
-		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run the TUI inside tmux, or `dejima connect %s` in another terminal", name)
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run the TUI inside tmux, or `dejima %s %s` in another terminal", verb, name)
 	}
 }
 
-// openWindowsTerminal opens `dejima connect` in a new Windows Terminal tab
+// openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the
 // caller's environment.
-func openWindowsTerminal(exe, name, agentID, host string) error {
+func openWindowsTerminal(exe, verb, name, agentID string, extra []string, host string) error {
 	// Island names, agent ids, and hosts feed a cmd.exe command line, which has
 	// no sane quoting — refuse anything beyond the characters they legitimately use.
 	for _, s := range []string{name, agentID, host} {
 		if strings.ContainsAny(s, `"&|<>^%!`) {
-			return fmt.Errorf("can't open a window for %q — run `dejima connect %s` manually", s, name)
+			return fmt.Errorf("can't open a window for %q — run `dejima %s %s` manually", s, verb, name)
 		}
 	}
-	connect := `"` + exe + `" connect ` + name
+	run := `"` + exe + `" ` + verb + ` ` + name
 	if agentID != "" {
-		connect += " --agent " + agentID
+		run += " --agent " + agentID
 	}
-	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& %s`, host, connect)
+	for _, e := range extra {
+		run += " " + e
+	}
+	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& %s`, host, run)
 	if wt, err := exec.LookPath("wt.exe"); err == nil {
 		return exec.Command(wt, "-w", "-1", "new-tab", "--title", name, "cmd", "/c", inner).Run()
 	}

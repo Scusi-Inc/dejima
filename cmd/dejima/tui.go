@@ -84,10 +84,12 @@ type tuiModel struct {
 	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
 	building     bool              // island image build in flight
 
-	help         bool           // help overlay visible
-	helpAdvanced bool           // advanced section of the help overlay expanded
-	creator      *creatorModel  // non-nil while the new-island flow is active
-	switcher     *switcherModel // non-nil while the connection switcher is open
+	help         bool            // help overlay visible
+	helpAdvanced bool            // advanced section of the help overlay expanded
+	creator      *creatorModel   // non-nil while the new-island flow is active
+	switcher     *switcherModel  // non-nil while the connection switcher is open
+	agentAdder   *agentAdder     // non-nil while the add-agent flow is active
+	expanded     map[string]bool // island name → agents-revealed (default: multi-agent islands)
 
 	activeHost  string // current target: "" = local socket, else host:port
 	activeLabel string // profile name for the active target, if known
@@ -105,6 +107,7 @@ func initialTUIModel(c *api.Client) tuiModel {
 	return tuiModel{
 		client:     c,
 		dirtyOps:   map[string]string{},
+		expanded:   map[string]bool{},
 		activeHost: os.Getenv("DEJIMA_HOST"),
 	}
 }
@@ -157,6 +160,9 @@ func (m tuiModel) fetchOverviewCmd() tea.Cmd {
 }
 
 func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
+	if name == "" {
+		return nil // e.g. the trailing "+ new island" row has no island
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -253,6 +259,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case agentAddedMsg:
+		if m.agentAdder != nil {
+			if msg.err != nil {
+				m.agentAdder.adding = false
+				m.agentAdder.err = msg.err.Error()
+				return m, nil
+			}
+			m.agentAdder = nil
+		}
+		m.expanded[msg.island] = true // reveal the island so the new agent shows
+		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+
 	case islandCreatedMsg:
 		if m.creator != nil {
 			if msg.err != nil {
@@ -277,6 +295,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The connection switcher owns all keys while open.
 	if m.switcher != nil {
 		return m.switcherKey(msg)
+	}
+	// The add-agent overlay owns keys while open.
+	if m.agentAdder != nil {
+		return m.agentAdderKey(msg)
 	}
 	// The help overlay owns keys while shown.
 	if m.help {
@@ -338,42 +360,47 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selected = m.rowCount() - 1
 		return m, m.fetchDetailCmd(m.selectedName())
 	case "enter", "o":
-		// Default behavior: open the island in a new window so the dashboard
-		// stays up. When no new-window backend is available (e.g. Linux
-		// without tmux), fall back to attaching in-place by quitting the TUI
-		// — better than dead-ending the user.
-		if name := m.selectedName(); name != "" {
-			if m.detail != nil && m.detail.Container != "running" {
-				m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
-				return m, nil
+		// Dispatch on the row kind: the affordance rows open the creator /
+		// add-agent flow; island and agent rows open a workspace (or, for a
+		// headless agent, its logs).
+		return m.activateRow()
+	case " ", "right", "left":
+		// Expand/collapse an island to reveal its agents + the add-agent row.
+		if r := m.currentRow(); r.kind == rowIsland {
+			switch msg.String() {
+			case "right":
+				m.expanded[r.island] = true
+			case "left":
+				m.expanded[r.island] = false
+			default:
+				m.expanded[r.island] = !m.islandExpandedByName(r.island)
 			}
-			agent := m.selectedAgent()
-			if canOpenNewWindow() {
-				if err := m.openInNewWindow(name, agent); err != nil {
-					m.lastError = err.Error()
-				}
-				return m, nil
-			}
-			m.connectTo, m.connectAgent = name, agent
-			return m, tea.Quit
 		}
+		return m, nil
 	case "a":
 		// Explicit "attach in this terminal" — replaces the dashboard. Useful
 		// when the user actually wants the old behavior even though a
 		// new-window backend is available.
-		if name := m.selectedName(); name != "" && m.detail != nil && m.detail.Container == "running" {
-			m.connectTo, m.connectAgent = name, m.selectedAgent()
+		if r := m.currentRow(); (r.kind == rowIsland || r.kind == rowAgent) && m.detail != nil && m.detail.Container == "running" {
+			if m.isHeadlessAgent(r.island, r.agentID) {
+				m.lastError = "headless agent — press ⏎ to view its logs"
+				return m, nil
+			}
+			m.connectTo, m.connectAgent = r.island, r.agentID
 			return m, tea.Quit
 		}
 	case "+":
-		// Add an agent (same type as the primary) to the current island.
-		if name := m.selectedName(); name != "" {
-			m.dirtyOps[name] = "adding agent"
-			return m, m.addAgentCmd(name)
+		// Add an agent to the current island (pick type; headless prompts a cmd).
+		if r := m.currentRow(); r.island != "" {
+			return m.openAgentAdder(r.island)
 		}
 	case "X":
-		// Remove the selected agent (agent rows only; not the primary).
-		if r := m.currentRow(); r.agentID != "" {
+		// Remove the selected agent (agent rows only; never the last one).
+		if r := m.currentRow(); r.kind == rowAgent {
+			if isl, ok := m.islandByName(r.island); ok && len(isl.Agents) <= 1 {
+				m.lastError = "can't remove the only agent — purge the island instead"
+				return m, nil
+			}
 			m.confirm = &confirmPrompt{verb: "remove-agent", island: r.island, answer: "", agent: r.agentID}
 		}
 	case "h":
@@ -439,16 +466,6 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// addAgentCmd adds an agent (same type as the primary) to an island.
-func (m tuiModel) addAgentCmd(name string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		_, err := m.client.AddAgent(ctx, name, api.AgentSpecRequest{})
-		return opCompleteMsg{name: name, verb: "add-agent", err: err}
-	}
-}
-
 // removeAgentCmd removes an agent from an island.
 func (m tuiModel) removeAgentCmd(name, agentID string) tea.Cmd {
 	return func() tea.Msg {
@@ -497,27 +514,136 @@ func (m tuiModel) opCmd(name, verb string) tea.Cmd {
 	}
 }
 
-// treeRow is one visible line in the two-level island→agent list. An empty
-// agentID marks an island header row; otherwise it's an agent under that island.
+// rowKind tags each visible line in the island→agent tree.
+type rowKind int
+
+const (
+	rowIsland    rowKind = iota // an island header (also the primary, when collapsed)
+	rowAgent                    // an agent under an expanded island
+	rowAddAgent                 // the "+ add agent" affordance under an expanded island
+	rowNewIsland                // the trailing "+ new island" affordance
+)
+
+// treeRow is one visible line in the two-level island→agent list.
 type treeRow struct {
+	kind    rowKind
 	island  string
 	agentID string
 }
 
-// visibleRows flattens the sorted islands into the navigable row list. A
-// single-agent island is one row (the island is the agent). A multi-agent
-// island shows a header row followed by one row per agent.
+// islandExpanded reports whether an island's agents are revealed. Multi-agent
+// islands default to expanded; single-agent ones default collapsed. Either can
+// be toggled (space / ←/→), which is remembered in m.expanded.
+func (m tuiModel) islandExpanded(isl api.IslandInfo) bool {
+	if v, ok := m.expanded[isl.Name]; ok {
+		return v
+	}
+	return len(isl.Agents) > 1
+}
+
+func (m tuiModel) islandExpandedByName(name string) bool {
+	if isl, ok := m.islandByName(name); ok {
+		return m.islandExpanded(isl)
+	}
+	return false
+}
+
+// visibleRows flattens the sorted islands into the navigable row list: each
+// island header, its agents + an add-agent row when expanded, and one trailing
+// new-island row.
 func (m tuiModel) visibleRows() []treeRow {
-	rows := make([]treeRow, 0, len(m.islands))
+	rows := make([]treeRow, 0, len(m.islands)+1)
 	for _, isl := range m.islands {
-		rows = append(rows, treeRow{island: isl.Name})
-		if len(isl.Agents) > 1 {
+		rows = append(rows, treeRow{kind: rowIsland, island: isl.Name})
+		if m.islandExpanded(isl) {
 			for _, a := range isl.Agents {
-				rows = append(rows, treeRow{island: isl.Name, agentID: a.ID})
+				rows = append(rows, treeRow{kind: rowAgent, island: isl.Name, agentID: a.ID})
 			}
+			rows = append(rows, treeRow{kind: rowAddAgent, island: isl.Name})
 		}
 	}
+	rows = append(rows, treeRow{kind: rowNewIsland})
 	return rows
+}
+
+// islandByName finds a loaded island by name.
+func (m tuiModel) islandByName(name string) (api.IslandInfo, bool) {
+	for _, isl := range m.islands {
+		if isl.Name == name {
+			return isl, true
+		}
+	}
+	return api.IslandInfo{}, false
+}
+
+// isHeadlessAgent reports whether the given agent (or, for agentID=="", the
+// island's primary agent) has no attach surface and should open logs instead.
+func (m tuiModel) isHeadlessAgent(island, agentID string) bool {
+	isl, ok := m.islandByName(island)
+	if !ok {
+		return false
+	}
+	if agentID == "" {
+		if len(isl.Agents) > 0 {
+			return !isl.Agents[0].Attachable
+		}
+		return isl.Agent == api.AgentHeadless // older daemon: no Agents list
+	}
+	for _, a := range isl.Agents {
+		if a.ID == agentID {
+			return !a.Attachable
+		}
+	}
+	return false
+}
+
+// activateRow handles Enter/o on the selected row: affordance rows open the
+// creator or add-agent flow; island and agent rows open a workspace, except
+// headless agents, which open their logs (they have no attach surface).
+func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
+	row := m.currentRow()
+	switch row.kind {
+	case rowNewIsland:
+		return m.openCreator()
+	case rowAddAgent:
+		return m.openAgentAdder(row.island)
+	}
+	name := row.island
+	if name == "" {
+		return m, nil
+	}
+	if m.detail != nil && m.detail.Container != "running" {
+		m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
+		return m, nil
+	}
+	if m.isHeadlessAgent(name, row.agentID) {
+		return m.openAgentLogs(name, row.agentID)
+	}
+	if canOpenNewWindow() {
+		if err := m.openInNewWindow(name, row.agentID); err != nil {
+			m.lastError = err.Error()
+		}
+		return m, nil
+	}
+	m.connectTo, m.connectAgent = name, row.agentID
+	return m, tea.Quit
+}
+
+// openAgentLogs opens a headless agent's logs in a new window, or points the
+// user at the CLI when no new-window backend is available.
+func (m tuiModel) openAgentLogs(name, agentID string) (tea.Model, tea.Cmd) {
+	if canOpenNewWindow() {
+		if err := m.openAgentLogsWindow(name, agentID); err != nil {
+			m.lastError = err.Error()
+		}
+		return m, nil
+	}
+	hint := "dejima logs " + name + " --follow"
+	if agentID != "" {
+		hint = "dejima logs " + name + " --agent " + agentID + " --follow"
+	}
+	m.lastError = "headless agent — `" + hint + "`"
+	return m, nil
 }
 
 // currentRow returns the selected tree row, or a zero row if none.
@@ -593,6 +719,10 @@ func (m tuiModel) View() string {
 	}
 	if m.switcher != nil {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.switcher.view())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.agentAdder != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.agentAdder.view())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.help {
@@ -708,23 +838,29 @@ func (m tuiModel) renderList(_ int) string {
 	b.WriteString(styleHeader.Render("Islands"))
 	b.WriteString("\n\n")
 	for i, row := range m.visibleRows() {
-		isl, ok := byName[row.island]
-		if !ok {
-			continue
-		}
 		var line string
-		if row.agentID == "" {
-			// Island header (or, for single-agent islands, the island itself).
-			glyph := glyphFor(isl)
+		switch row.kind {
+		case rowNewIsland:
+			line = styleAccent.Render("+ new island")
+		case rowAddAgent:
+			line = "   " + styleMuted.Render("+ add agent")
+		case rowAgent:
+			a := agentByID(byName[row.island], row.agentID)
+			line = "   └ " + agentRowText(a)
+		default: // rowIsland
+			isl, ok := byName[row.island]
+			if !ok {
+				continue
+			}
+			caret := "▸"
+			if m.islandExpanded(isl) {
+				caret = "▾"
+			}
 			label := truncate(isl.Name, 16)
 			if len(isl.Agents) > 1 {
 				label = truncate(isl.Name, 12) + fmt.Sprintf(" (%d)", len(isl.Agents))
 			}
-			line = fmt.Sprintf("%s  %-16s  %s", glyph, label, shortStatus(isl, m.dirtyOps[isl.Name]))
-		} else {
-			// Agent row, indented under its island.
-			a := agentByID(isl, row.agentID)
-			line = "   └ " + agentRowText(a)
+			line = fmt.Sprintf("%s %s  %-16s  %s", caret, glyphFor(isl), label, shortStatus(isl, m.dirtyOps[isl.Name]))
 		}
 		if i == m.selected {
 			line = styleSelected.Render("▶ " + line)
@@ -768,6 +904,15 @@ func agentRowText(a api.AgentInfo) string {
 }
 
 func (m tuiModel) renderDetail(_ int) string {
+	// The trailing "+ new island" row has no island behind it.
+	if m.currentRow().kind == rowNewIsland {
+		return styleTitle.Render("+ New island") + "\n\n" +
+			styleMuted.Render("Press ⏎ to pick a repo and an agent, then launch.")
+	}
+	if m.currentRow().kind == rowAddAgent {
+		return styleTitle.Render("+ Add agent") + "\n\n" +
+			styleMuted.Render("Press ⏎ to add an agent to "+styleAccent.Render(m.selectedName())+styleMuted.Render(".\nClaude Code, Codex, or a headless background command."))
+	}
 	if m.detail == nil {
 		if name := m.selectedName(); name != "" {
 			return styleMuted.Render("loading " + name + "…")
@@ -900,7 +1045,11 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		b.WriteString("attached:  " + strings.Join(labels, ", ") + "\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("[⏎] attach   [X] remove   [+] add another"))
+	open := "[⏎] attach"
+	if !a.Attachable {
+		open = "[⏎] logs (headless — no attach surface)"
+	}
+	b.WriteString(styleMuted.Render(open + "   [X] remove   [+] add another"))
 	return b.String()
 }
 
@@ -909,7 +1058,7 @@ func (m tuiModel) renderFooter() string {
 	// (global commands, then island lifecycle), right-aligned to a shared edge.
 	// The strip used to share line one with the global commands, which collided
 	// on narrow terminals — giving it its own row keeps both readable.
-	keys1 := "[n] new   [⏎] open   [+] add agent   [s] server   [?] help   [q] quit"
+	keys1 := "[n] new   [⏎] open   [space] expand   [+] add agent   [s] server   [?] help   [q] quit"
 	keys2 := "[a] attach here   [X] rm agent   [h] hibernate   [w] wake   [r] reset   [d] purge"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
@@ -972,9 +1121,11 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n")
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
-		{"⏎", "open the highlighted island in a new window — dashboard stays up"},
+		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
+		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
+		{"+", "add an agent — Claude Code, Codex, or a headless background command"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
-		{"↑/↓ j/k", "move between islands   ·   g/G jump to top/bottom"},
+		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
 		{"q", "quit the dashboard"},
 	}
@@ -983,7 +1134,7 @@ func (m tuiModel) renderHelp() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("An island = one agent in a contained workspace. The same repo can back\nseveral islands (e.g. claude-code and codex, or two agents on parallel tasks)."))
+	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. Expand one with [space], then [+] add agents (interactive or a\nheadless background command). Headless agents have no screen — ⏎ opens their logs."))
 	b.WriteString("\n\n")
 
 	if !m.helpAdvanced {

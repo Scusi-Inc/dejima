@@ -16,11 +16,6 @@ import (
 	"github.com/aoos/dejima/internal/reposrc"
 )
 
-// knownAgents are the agents bundled in the island image (see image/agents/).
-// One repo can back several islands, each running a different agent, so agent
-// choice is a first-class step in the creator.
-var knownAgents = []string{"claude-code", "codex"}
-
 type creatorStep int
 
 const (
@@ -67,7 +62,7 @@ type creatorModel struct {
 
 	// resolved selection
 	resolution reposrc.Resolution
-	agentCur   int
+	picker     agentPicker // agent type (and headless command) chooser
 	nameInput  string
 	creating   bool
 }
@@ -99,7 +94,6 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 		daemonLocal: os.Getenv("DEJIMA_HOST") == "",
 		existing:    m.islands,
 		statusCache: map[string]reposrc.Status{},
-		agentCur:    0,
 	}
 	m.creator = c
 	if cfg.RepoRoot == "" {
@@ -137,7 +131,8 @@ func (c *creatorModel) createCmd() tea.Cmd {
 		Name:     c.nameInput,
 		Repo:     c.resolution.Repo,
 		SeedPath: c.resolution.SeedPath,
-		Agent:    knownAgents[c.agentCur],
+		Agent:    c.picker.typ(),
+		Cmd:      c.picker.cmd(), // headless only; empty for interactive agents
 	}
 	return func() tea.Msg {
 		// Auto-build the island image when the daemon doesn't have it yet
@@ -369,18 +364,17 @@ func (m tuiModel) creatorSourceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorEnterAgent(baseName string) (tea.Model, tea.Cmd) {
 	c := m.creator
 	c.step = stepAgent
+	c.picker = newAgentPicker()
 	c.nameInput = c.uniqueName(baseName)
 	return m, nil
 }
 
 func (m tuiModel) creatorAgentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
-	switch msg.String() {
-	case "esc":
+	switch c.picker.handleKey(msg) {
+	case pickerBack:
 		c.step = stepPick
-	case "up", "k", "down", "j":
-		c.agentCur = (c.agentCur + 1) % len(knownAgents)
-	case "enter":
+	case pickerDone:
 		c.step = stepName
 	}
 	return m, nil
@@ -556,16 +550,11 @@ func (c *creatorModel) viewSource(b *strings.Builder) {
 func (c *creatorModel) viewAgent(b *strings.Builder) {
 	b.WriteString(styleMuted.Render(c.resolution.Note))
 	b.WriteString("\n\n")
-	b.WriteString(styleHeader.Render("Agent"))
-	b.WriteString("\n")
-	for i, agent := range knownAgents {
-		c.writeChoice(b, i == c.agentCur, agent)
-	}
-	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] continue   [esc] back"))
+	c.picker.view(b, "Agent")
 }
 
 func (c *creatorModel) viewName(b *strings.Builder) {
-	b.WriteString(styleMuted.Render(fmt.Sprintf("Agent %s · %s", knownAgents[c.agentCur], c.resolution.Note)))
+	b.WriteString(styleMuted.Render(fmt.Sprintf("Agent %s · %s", c.picker.typ(), c.resolution.Note)))
 	b.WriteString("\n\n")
 	b.WriteString("island name: " + styleAccent.Render(c.nameInput+"_"))
 	b.WriteString("\n\n" + styleMuted.Render("[⏎] create & connect   [esc] back"))
