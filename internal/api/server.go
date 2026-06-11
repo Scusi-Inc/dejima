@@ -276,6 +276,10 @@ func (s *Server) AdoptExisting(ctx context.Context) {
 				s.log.Error("adopt: stop failed", "project", p.Name, "err", err)
 			}
 		}
+		// Restore non-primary agent sessions for islands meant to be running.
+		if p.DesiredState == project.StateRunning {
+			s.reconcileAgentsAsync(p)
+		}
 	}
 }
 
@@ -491,8 +495,8 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd st
 	if err := s.rt.EnsureVolume(ctx, p.WorkspaceVolume()); err != nil {
 		return p, fmt.Errorf("create workspace volume: %w", err)
 	}
-	if err := s.rt.EnsureVolume(ctx, p.AgentVolume()); err != nil {
-		return p, fmt.Errorf("create agent volume: %w", err)
+	if err := s.rt.EnsureVolume(ctx, p.HomeVolume()); err != nil {
+		return p, fmt.Errorf("create home volume: %w", err)
 	}
 	if err := s.rt.EnsureNetwork(ctx, p.NetworkName()); err != nil {
 		return p, fmt.Errorf("create network: %w", err)
@@ -501,6 +505,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd st
 	if err := s.createContainerForProject(ctx, p, seedPath); err != nil {
 		return p, err
 	}
+	s.reconcileAgentsAsync(p) // bring up any non-primary agents once the clone lands
 	return p, nil
 }
 
@@ -520,6 +525,12 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		"DEJIMA_REPO_URL":     p.RepoURL,
 		"DEJIMA_AGENT":        p.Agent,
 		"DEJIMA_SOCKET":       "/run/dejima/dejimad.sock",
+	}
+	// The primary agent's id flows to the container so its tmux session (created
+	// by the entrypoint) and event hooks can identify themselves. Non-primary
+	// agents override DEJIMA_AGENT_ID per-session at reconcile time.
+	if pa := p.PrimaryAgent(); pa != nil {
+		env["DEJIMA_AGENT_ID"] = pa.ID
 	}
 	if p.Cmd != "" {
 		env["DEJIMA_AGENT_CMD"] = p.Cmd
@@ -558,7 +569,9 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		Env:   env,
 		Volumes: []runtime.VolumeMount{
 			{Name: p.WorkspaceVolume(), Target: "/workspace"},
-			{Name: p.AgentVolume(), Target: agentStateMountTarget(p.Agent)},
+			// The whole home is one per-island volume shared by every agent, so
+			// tool auth persists and is shared across agents (see HomeVolume).
+			{Name: p.HomeVolume(), Target: "/home/dejima"},
 		},
 		BindMounts:  binds,
 		Memory:      p.Resources.Memory,
@@ -576,6 +589,138 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	return nil
 }
 
+// agentsWorktreeRoot is where non-primary agents' git worktrees live inside the
+// island's workspace.
+const agentsWorktreeRoot = "/workspace/.agents"
+
+// reconcileAgentsAsync ensures the island's non-primary agent sessions exist, in
+// the background. The container entrypoint launches the primary agent; the
+// daemon owns the rest. Safe to call after create, wake, and at adopt.
+func (s *Server) reconcileAgentsAsync(p *project.Project) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := s.reconcileAgents(ctx, p); err != nil {
+			s.log.Warn("reconcile agents", "island", p.Name, "err", err)
+		}
+	}()
+}
+
+// reconcileAgents brings tmux sessions and worktrees into line with p.Agents for
+// every non-primary agent. Idempotent. The primary (Agents[0]) is launched by
+// the entrypoint and skipped here.
+func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error {
+	if len(p.Agents) <= 1 {
+		return nil
+	}
+	if !s.waitForWorkspace(ctx, p) {
+		return fmt.Errorf("workspace not ready for %q", p.Name)
+	}
+	for i := 1; i < len(p.Agents); i++ {
+		a := &p.Agents[i]
+		if !handlers.Attachable(a.Type) {
+			continue // headless agents are supervised separately (Phase 7)
+		}
+		if err := s.ensureAgentSession(ctx, p, a); err != nil {
+			s.log.Warn("ensure agent session", "island", p.Name, "agent", a.ID, "err", err)
+		}
+	}
+	return nil
+}
+
+// waitForWorkspace blocks until the island's repo is cloned (or there is no
+// repo). Returns false if ctx expires first.
+func (s *Server) waitForWorkspace(ctx context.Context, p *project.Project) bool {
+	if p.RepoURL == "" {
+		return true
+	}
+	for {
+		if _, _, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); err == nil && code == 0 {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// ensureAgentSession makes sure one non-primary agent has its worktree and a
+// running tmux session. Idempotent.
+func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *project.AgentSpec) error {
+	wt := a.Worktree
+	if wt == "" {
+		wt = "/workspace"
+	}
+	if wt != "/workspace" {
+		if err := s.ensureWorktree(ctx, p, a, wt); err != nil {
+			s.log.Warn("ensure worktree; falling back to /workspace", "island", p.Name, "agent", a.ID, "err", err)
+			wt = "/workspace"
+		}
+	}
+	if a.Tmux == "" {
+		return fmt.Errorf("agent %q has no tmux session name", a.ID)
+	}
+	if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
+		return nil
+	}
+	h, _ := handlers.Lookup(a.Type)
+	launch := h.Launch
+	if launch == "" {
+		launch = a.Type // unknown/custom agent: run the type string as a command
+	}
+	// Run under sh so DEJIMA_AGENT_ID is scoped to this session without depending
+	// on a specific tmux version's `new-session -e`.
+	script := "DEJIMA_AGENT_ID=" + a.ID + " exec " + launch
+	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{
+		"tmux", "new-session", "-d", "-s", a.Tmux, "-c", wt, "sh", "-c", script,
+	})
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("tmux new-session for %q: %s", a.ID, strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+// ensureWorktree creates the agent's git worktree if absent. Idempotent.
+func (s *Server) ensureWorktree(ctx context.Context, p *project.Project, a *project.AgentSpec, wt string) error {
+	if _, _, code, _ := s.rt.Exec(ctx, p.ContainerName(), []string{"test", "-e", wt + "/.git"}); code == 0 {
+		return nil // already a worktree
+	}
+	if _, _, code, _ := s.rt.Exec(ctx, p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); code != 0 {
+		return fmt.Errorf("no repo at /workspace to base a worktree on")
+	}
+	_, _, _, _ = s.rt.Exec(ctx, p.ContainerName(), []string{"mkdir", "-p", agentsWorktreeRoot})
+	branch := a.Branch
+	if branch == "" {
+		branch = "agent/" + a.ID
+	}
+	// Try a fresh branch; if it already exists, attach to it instead.
+	if _, _, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"git", "-C", "/workspace", "worktree", "add", wt, "-b", branch}); err == nil && code == 0 {
+		return nil
+	}
+	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"git", "-C", "/workspace", "worktree", "add", wt, branch})
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("git worktree add: %s", strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+// tmuxHasSession reports whether a tmux session exists in the island container.
+func (s *Server) tmuxHasSession(ctx context.Context, p *project.Project, session string) (bool, error) {
+	if session == "" {
+		return false, nil
+	}
+	_, _, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"tmux", "has-session", "-t", session})
+	return err == nil && code == 0, err
+}
+
 // teardown removes the container, volumes, network, and on-host config dir.
 func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) error {
 	if p == nil {
@@ -583,7 +728,8 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	}
 	_ = s.rt.RemoveContainer(ctx, p.ContainerName(), force)
 	_ = s.rt.RemoveVolume(ctx, p.WorkspaceVolume(), force)
-	_ = s.rt.RemoveVolume(ctx, p.AgentVolume(), force)
+	_ = s.rt.RemoveVolume(ctx, p.HomeVolume(), force)
+	_ = s.rt.RemoveVolume(ctx, p.AgentVolume(), force) // legacy pre-migration volume
 	_ = s.rt.RemoveNetwork(ctx, p.NetworkName())
 	return project.Delete(p.Name)
 }
@@ -656,6 +802,7 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandWoken, Island: p.Name})
+	s.reconcileAgentsAsync(p) // the entrypoint relaunches the primary; restore the rest
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
@@ -681,12 +828,16 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 	_ = s.rt.StopContainer(r.Context(), p.ContainerName())
 	_ = s.rt.RemoveContainer(r.Context(), p.ContainerName(), true)
 
-	if err := s.rt.RemoveVolume(r.Context(), p.AgentVolume(), true); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("remove agent volume: %w", err))
+	// Clear the shared home-state volume (agent creds + tool auth); the workspace
+	// is preserved. Also drop the legacy agent volume if this island predates the
+	// home-volume migration, so reset starts from a truly clean state.
+	if err := s.rt.RemoveVolume(r.Context(), p.HomeVolume(), true); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("remove home volume: %w", err))
 		return
 	}
-	if err := s.rt.EnsureVolume(r.Context(), p.AgentVolume()); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("recreate agent volume: %w", err))
+	_ = s.rt.RemoveVolume(r.Context(), p.AgentVolume(), true)
+	if err := s.rt.EnsureVolume(r.Context(), p.HomeVolume()); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("recreate home volume: %w", err))
 		return
 	}
 	if err := s.rt.EnsureNetwork(r.Context(), p.NetworkName()); err != nil {
@@ -856,20 +1007,6 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		})
 	}
 	return info
-}
-
-// agentStateMountTarget returns the container path where the agent volume should
-// be mounted, based on which agent the project runs. Each agent has its own
-// conventional state dir, sourced from the handler registry. An empty agent
-// defaults to claude-code; an unknown custom agent falls back to ~/.agent-state.
-func agentStateMountTarget(agent string) string {
-	if agent == "" {
-		agent = DefaultAgent
-	}
-	if h, ok := handlers.Lookup(agent); ok {
-		return h.StateDir
-	}
-	return "/home/dejima/.agent-state"
 }
 
 // credentialBindMounts assembles the host paths to mount read-only into the island.

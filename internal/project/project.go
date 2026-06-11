@@ -166,9 +166,19 @@ func (p *Project) WorkspaceVolume() string {
 	return "dejima-" + p.Name + "-workspace"
 }
 
-// AgentVolume returns the agent on-disk state volume name (e.g., for ~/.claude).
+// AgentVolume returns the legacy single-agent state volume name (mounted at the
+// per-type state dir, e.g. ~/.claude). Superseded by HomeVolume; retained so
+// teardown can clean it up on islands created before the multi-agent migration.
 func (p *Project) AgentVolume() string {
 	return "dejima-" + p.Name + "-agent"
+}
+
+// HomeVolume returns the per-island home-state volume, mounted at /home/dejima
+// and shared by every agent in the island. Persisting the whole home means tool
+// auth set once by any agent (Claude/Codex creds, ~/.npmrc, gh, eas/expo)
+// survives restarts and is shared — the "collective permissioning" goal.
+func (p *Project) HomeVolume() string {
+	return "dejima-" + p.Name + "-home"
 }
 
 // NetworkName returns the per-island Docker network name.

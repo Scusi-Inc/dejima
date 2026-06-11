@@ -21,9 +21,9 @@ SESSION="dejima"
 # even for volumes created before the image pre-created these paths. Shallow
 # chown on the mount root is enough to unblock writes; existing nested files
 # (e.g. a checked-out tree) keep their ownership.
-sudo chown dejima:dejima "$WORKSPACE" "$HOME"/.claude "$HOME"/.codex "$HOME"/.agent-state 2>/dev/null || true
+sudo chown dejima:dejima "$WORKSPACE" "$HOME" "$HOME"/.claude "$HOME"/.codex "$HOME"/.agent-state 2>/dev/null || true
 
-mkdir -p "$HOME/.claude" "$HOME/.config"
+mkdir -p "$HOME/.claude" "$HOME/.config" "$HOME/.dejima/agents" "$WORKSPACE/.agents"
 
 # --- git identity from host (if mounted) ----------------------------------
 if [[ -f /opt/host/gitconfig ]]; then
