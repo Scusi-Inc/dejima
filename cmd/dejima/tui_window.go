@@ -24,22 +24,28 @@ func canOpenNewWindow() bool {
 // Critically, the child inherits the TUI's *current* connection target via
 // DEJIMA_HOST — which may differ from the env that launched the TUI if the user
 // switched profiles — so the new window hits the same daemon.
-func (m tuiModel) openInNewWindow(name string) error {
+func (m tuiModel) openInNewWindow(name, agentID string) error {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
 		exe = "dejima"
 	}
-	// A shell command string: pin DEJIMA_HOST, then exec the connect.
+	// A shell command string: pin DEJIMA_HOST, then exec the connect. A specific
+	// agent is targeted via `--agent`; the bare name attaches to the primary.
 	inner := fmt.Sprintf("DEJIMA_HOST=%s exec %s connect %s",
 		shquote(m.activeHost), shquote(exe), shquote(name))
+	winLabel := name
+	if agentID != "" {
+		inner += " --agent " + shquote(agentID)
+		winLabel = name + "/" + agentID
+	}
 
 	switch {
 	case os.Getenv("TMUX") != "":
-		return exec.Command("tmux", "new-window", "-n", name, inner).Run()
+		return exec.Command("tmux", "new-window", "-n", winLabel, inner).Run()
 	case goruntime.GOOS == "darwin":
 		return openMacTerminal(inner)
 	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, name, m.activeHost)
+		return openWindowsTerminal(exe, name, agentID, m.activeHost)
 	default:
 		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run the TUI inside tmux, or `dejima connect %s` in another terminal", name)
 	}
@@ -49,15 +55,19 @@ func (m tuiModel) openInNewWindow(name string) error {
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the
 // caller's environment.
-func openWindowsTerminal(exe, name, host string) error {
-	// Island names and hosts feed a cmd.exe command line, which has no sane
-	// quoting — refuse anything beyond the characters they legitimately use.
-	for _, s := range []string{name, host} {
+func openWindowsTerminal(exe, name, agentID, host string) error {
+	// Island names, agent ids, and hosts feed a cmd.exe command line, which has
+	// no sane quoting — refuse anything beyond the characters they legitimately use.
+	for _, s := range []string{name, agentID, host} {
 		if strings.ContainsAny(s, `"&|<>^%!`) {
 			return fmt.Errorf("can't open a window for %q — run `dejima connect %s` manually", s, name)
 		}
 	}
-	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& "%s" connect %s`, host, exe, name)
+	connect := `"` + exe + `" connect ` + name
+	if agentID != "" {
+		connect += " --agent " + agentID
+	}
+	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& %s`, host, connect)
 	if wt, err := exec.LookPath("wt.exe"); err == nil {
 		return exec.Command(wt, "-w", "-1", "new-tab", "--title", name, "cmd", "/c", inner).Run()
 	}

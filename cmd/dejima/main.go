@@ -812,16 +812,21 @@ func newInitCmd() *cobra.Command {
 // --- connect --------------------------------------------------------------
 
 func newConnectCmd() *cobra.Command {
-	var label string
+	var label, agentID string
 	cmd := &cobra.Command{
 		Use:   "connect <name>",
 		Short: "Attach to an island's session.",
 		Long: "Open an interactive PTY into the island's tmux session via the Dejima API. " +
 			"Multiple clients can attach simultaneously (shared tmux). Disconnect with the " +
-			"normal tmux detach key (Ctrl-b then d).",
+			"normal tmux detach key (Ctrl-b then d).\n\n" +
+			"For islands with multiple agents, target one with --agent <id> or the " +
+			"`<name>/<agent>` shorthand; the bare name attaches to the primary agent.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
+			name, agent := splitIslandAgent(args[0])
+			if agentID != "" {
+				agent = agentID // explicit flag wins over the shorthand
+			}
 			if label == "" {
 				label = defaultLabel()
 			}
@@ -836,11 +841,21 @@ func newConnectCmd() *cobra.Command {
 			if info.Container != "running" {
 				return fmt.Errorf("island %q is not running (container: %s); `dejima wake %s` first", name, info.Container, name)
 			}
-			return runSession(cmd.Context(), c, name, label)
+			return runSession(cmd.Context(), c, name, agent, label)
 		},
 	}
 	cmd.Flags().StringVar(&label, "as", "", "client label shown in presence (default: $HOSTNAME or 'cli')")
+	cmd.Flags().StringVar(&agentID, "agent", "", "agent id to attach to (default: the island's primary agent)")
 	return cmd
+}
+
+// splitIslandAgent parses an "<island>/<agent>" argument into its parts. A bare
+// "<island>" returns an empty agent (meaning the primary).
+func splitIslandAgent(arg string) (island, agent string) {
+	if i := strings.IndexByte(arg, '/'); i >= 0 {
+		return arg[:i], arg[i+1:]
+	}
+	return arg, ""
 }
 
 // defaultLabel produces a client label for presence: $HOSTNAME or "cli".
@@ -852,8 +867,9 @@ func defaultLabel() string {
 }
 
 // runSession is the websocket ↔ local-stdio bridge driving `dejima connect`.
-func runSession(ctx context.Context, c *api.Client, name, label string) error {
-	conn, err := c.DialSession(ctx, name, label)
+// An empty agentID attaches to the island's primary agent.
+func runSession(ctx context.Context, c *api.Client, name, agentID, label string) error {
+	conn, err := c.DialAgentSession(ctx, name, agentID, label)
 	if err != nil {
 		return err
 	}

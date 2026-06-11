@@ -46,12 +46,12 @@ func runTUI(ctx context.Context) error {
 	final := finalRaw.(tuiModel)
 	if final.connectTo != "" {
 		// Use the model's client, which may have been swapped via the switcher.
-		return runConnectFromTUI(ctx, final.client, final.connectTo)
+		return runConnectFromTUI(ctx, final.client, final.connectTo, final.connectAgent)
 	}
 	return nil
 }
 
-func runConnectFromTUI(ctx context.Context, c *api.Client, name string) error {
+func runConnectFromTUI(ctx context.Context, c *api.Client, name, agentID string) error {
 	info, err := c.GetIsland(ctx, name)
 	if err != nil {
 		return err
@@ -59,7 +59,7 @@ func runConnectFromTUI(ctx context.Context, c *api.Client, name string) error {
 	if info.Container != "running" {
 		return fmt.Errorf("island %q is %s; `dejima wake %s` first", name, info.Container, name)
 	}
-	return runSession(ctx, c, name, defaultLabel())
+	return runSession(ctx, c, name, agentID, defaultLabel())
 }
 
 // ---------------------------------------------------------------------------
@@ -74,14 +74,15 @@ type tuiModel struct {
 	detail   *api.IslandInfo
 	events_  []events.Event
 
-	selected  int
-	width     int
-	height    int
-	lastError string
-	connectTo string // set on quit-to-connect; main() acts on this
-	confirm   *confirmPrompt
-	dirtyOps  map[string]string // name → "hibernating" etc. (transient hint)
-	building  bool              // island image build in flight
+	selected     int
+	width        int
+	height       int
+	lastError    string
+	connectTo    string // set on quit-to-connect; main() acts on this
+	connectAgent string // agent id to attach to alongside connectTo ("" = primary)
+	confirm      *confirmPrompt
+	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
+	building     bool              // island image build in flight
 
 	help         bool           // help overlay visible
 	helpAdvanced bool           // advanced section of the help overlay expanded
@@ -94,8 +95,9 @@ type tuiModel struct {
 }
 
 type confirmPrompt struct {
-	verb   string // "purge", "reset"
+	verb   string // "purge", "reset", "remove-agent"
 	island string
+	agent  string // for "remove-agent"
 	answer string
 }
 
@@ -194,8 +196,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case listMsg:
 		m.islands = sortIslands(msg)
 		m.lastError = ""
-		if m.selected >= len(m.islands) {
-			m.selected = len(m.islands) - 1
+		if n := m.rowCount(); m.selected >= n {
+			m.selected = n - 1
 		}
 		if m.selected < 0 {
 			m.selected = 0
@@ -320,7 +322,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		return m.openSwitcher()
 	case "j", "down":
-		if m.selected < len(m.islands)-1 {
+		if m.selected < m.rowCount()-1 {
 			m.selected++
 			return m, m.fetchDetailCmd(m.selectedName())
 		}
@@ -333,7 +335,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selected = 0
 		return m, m.fetchDetailCmd(m.selectedName())
 	case "G", "end":
-		m.selected = len(m.islands) - 1
+		m.selected = m.rowCount() - 1
 		return m, m.fetchDetailCmd(m.selectedName())
 	case "enter", "o":
 		// Default behavior: open the island in a new window so the dashboard
@@ -345,13 +347,14 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
 				return m, nil
 			}
+			agent := m.selectedAgent()
 			if canOpenNewWindow() {
-				if err := m.openInNewWindow(name); err != nil {
+				if err := m.openInNewWindow(name, agent); err != nil {
 					m.lastError = err.Error()
 				}
 				return m, nil
 			}
-			m.connectTo = name
+			m.connectTo, m.connectAgent = name, agent
 			return m, tea.Quit
 		}
 	case "a":
@@ -359,8 +362,19 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// when the user actually wants the old behavior even though a
 		// new-window backend is available.
 		if name := m.selectedName(); name != "" && m.detail != nil && m.detail.Container == "running" {
-			m.connectTo = name
+			m.connectTo, m.connectAgent = name, m.selectedAgent()
 			return m, tea.Quit
+		}
+	case "+":
+		// Add an agent (same type as the primary) to the current island.
+		if name := m.selectedName(); name != "" {
+			m.dirtyOps[name] = "adding agent"
+			return m, m.addAgentCmd(name)
+		}
+	case "X":
+		// Remove the selected agent (agent rows only; not the primary).
+		if r := m.currentRow(); r.agentID != "" {
+			m.confirm = &confirmPrompt{verb: "remove-agent", island: r.island, answer: "", agent: r.agentID}
 		}
 	case "h":
 		if name := m.selectedName(); name != "" {
@@ -416,8 +430,33 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			m.dirtyOps[c.island] = "purging"
 			return m, m.opCmd(c.island, "purge")
 		}
+	case "remove-agent":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			m.dirtyOps[c.island] = "removing agent"
+			return m, m.removeAgentCmd(c.island, c.agent)
+		}
 	}
 	return m, nil
+}
+
+// addAgentCmd adds an agent (same type as the primary) to an island.
+func (m tuiModel) addAgentCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		_, err := m.client.AddAgent(ctx, name, api.AgentSpecRequest{})
+		return opCompleteMsg{name: name, verb: "add-agent", err: err}
+	}
+}
+
+// removeAgentCmd removes an agent from an island.
+func (m tuiModel) removeAgentCmd(name, agentID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		err := m.client.RemoveAgent(ctx, name, agentID)
+		return opCompleteMsg{name: name, verb: "remove-agent", err: err}
+	}
 }
 
 // buildImageCmd rebuilds the island image from the daemon's embedded build
@@ -458,11 +497,53 @@ func (m tuiModel) opCmd(name, verb string) tea.Cmd {
 	}
 }
 
-func (m tuiModel) selectedName() string {
-	if m.selected < 0 || m.selected >= len(m.islands) {
-		return ""
+// treeRow is one visible line in the two-level island→agent list. An empty
+// agentID marks an island header row; otherwise it's an agent under that island.
+type treeRow struct {
+	island  string
+	agentID string
+}
+
+// visibleRows flattens the sorted islands into the navigable row list. A
+// single-agent island is one row (the island is the agent). A multi-agent
+// island shows a header row followed by one row per agent.
+func (m tuiModel) visibleRows() []treeRow {
+	rows := make([]treeRow, 0, len(m.islands))
+	for _, isl := range m.islands {
+		rows = append(rows, treeRow{island: isl.Name})
+		if len(isl.Agents) > 1 {
+			for _, a := range isl.Agents {
+				rows = append(rows, treeRow{island: isl.Name, agentID: a.ID})
+			}
+		}
 	}
-	return m.islands[m.selected].Name
+	return rows
+}
+
+// currentRow returns the selected tree row, or a zero row if none.
+func (m tuiModel) currentRow() treeRow {
+	rows := m.visibleRows()
+	if m.selected < 0 || m.selected >= len(rows) {
+		return treeRow{}
+	}
+	return rows[m.selected]
+}
+
+// selectedName is the island of the current row (header or agent), used for
+// island-level operations and detail fetching.
+func (m tuiModel) selectedName() string {
+	return m.currentRow().island
+}
+
+// selectedAgent is the agent id of the current row, or "" when an island header
+// (or single-agent island) is selected — meaning the primary agent.
+func (m tuiModel) selectedAgent() string {
+	return m.currentRow().agentID
+}
+
+// rowCount is the number of navigable rows.
+func (m tuiModel) rowCount() int {
+	return len(m.visibleRows())
 }
 
 func sortIslands(in []api.IslandInfo) []api.IslandInfo {
@@ -618,21 +699,69 @@ func (m tuiModel) renderList(_ int) string {
 		return styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`")
 	}
 
+	byName := make(map[string]api.IslandInfo, len(m.islands))
+	for _, isl := range m.islands {
+		byName[isl.Name] = isl
+	}
+
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("Islands"))
 	b.WriteString("\n\n")
-	for i, isl := range m.islands {
-		glyph := glyphFor(isl)
-		row := fmt.Sprintf("%s  %-16s  %s", glyph, truncate(isl.Name, 16), shortStatus(isl, m.dirtyOps[isl.Name]))
-		if i == m.selected {
-			row = styleSelected.Render("▶ " + row)
-		} else {
-			row = "  " + row
+	for i, row := range m.visibleRows() {
+		isl, ok := byName[row.island]
+		if !ok {
+			continue
 		}
-		b.WriteString(row)
+		var line string
+		if row.agentID == "" {
+			// Island header (or, for single-agent islands, the island itself).
+			glyph := glyphFor(isl)
+			label := truncate(isl.Name, 16)
+			if len(isl.Agents) > 1 {
+				label = truncate(isl.Name, 12) + fmt.Sprintf(" (%d)", len(isl.Agents))
+			}
+			line = fmt.Sprintf("%s  %-16s  %s", glyph, label, shortStatus(isl, m.dirtyOps[isl.Name]))
+		} else {
+			// Agent row, indented under its island.
+			a := agentByID(isl, row.agentID)
+			line = "   └ " + agentRowText(a)
+		}
+		if i == m.selected {
+			line = styleSelected.Render("▶ " + line)
+		} else {
+			line = "  " + line
+		}
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// agentByID finds an agent within an island, or returns a zero value.
+func agentByID(isl api.IslandInfo, id string) api.AgentInfo {
+	for _, a := range isl.Agents {
+		if a.ID == id {
+			return a
+		}
+	}
+	return api.AgentInfo{ID: id}
+}
+
+// agentRowText renders one agent's list line: id, label/type, state, signal.
+func agentRowText(a api.AgentInfo) string {
+	name := a.Type
+	if a.Label != "" {
+		name = a.Label
+	}
+	glyph := "○"
+	if a.State == "running" {
+		glyph = "●"
+	}
+	sig := ""
+	if a.AgentState != nil && a.AgentState.Latest != "" {
+		sig = "  " + a.AgentState.Latest
+	}
+	return fmt.Sprintf("%s %s  %s%s", glyph, a.ID, truncate(name, 18), sig)
 }
 
 func (m tuiModel) renderDetail(_ int) string {
@@ -643,11 +772,19 @@ func (m tuiModel) renderDetail(_ int) string {
 		return styleMuted.Render("select an island")
 	}
 	d := m.detail
+	// When an agent row is selected, show that agent's focused detail.
+	if agentID := m.selectedAgent(); agentID != "" {
+		return m.renderAgentDetail(d, agentID)
+	}
 	var b strings.Builder
 	b.WriteString(styleTitle.Render(d.Name))
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("repo:      %s\n", styleAccent.Render(truncate(d.Repo, 60))))
-	b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(d.Agent)))
+	if len(d.Agents) > 1 {
+		b.WriteString(fmt.Sprintf("agents:    %s\n", styleAccent.Render(fmt.Sprintf("%d", len(d.Agents)))))
+	} else {
+		b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(d.Agent)))
+	}
 	b.WriteString(fmt.Sprintf("state:     %s\n", coloredStateText(d)))
 	if d.Stats != nil {
 		b.WriteString(fmt.Sprintf("memory:    %s / %s\n",
@@ -697,6 +834,16 @@ func (m tuiModel) renderDetail(_ int) string {
 		b.WriteString("health:    " + styleErrored.Render(warn) + "\n")
 	}
 
+	if len(d.Agents) > 1 {
+		b.WriteString("\n")
+		b.WriteString(styleHeader.Render("Agents"))
+		b.WriteString("\n")
+		for _, a := range d.Agents {
+			b.WriteString("  " + agentRowText(a) + "\n")
+		}
+		b.WriteString(styleMuted.Render("  [+] add   [X] remove (on an agent)") + "\n")
+	}
+
 	if len(m.events_) > 0 {
 		b.WriteString("\n")
 		b.WriteString(styleHeader.Render("Recent"))
@@ -713,13 +860,51 @@ func (m tuiModel) renderDetail(_ int) string {
 	return b.String()
 }
 
+// renderAgentDetail shows one agent's focused view within its island.
+func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
+	a := agentByID(*d, agentID)
+	var b strings.Builder
+	b.WriteString(styleTitle.Render(d.Name + " / " + a.ID))
+	b.WriteString("\n\n")
+	typ := a.Type
+	if a.Label != "" {
+		typ = fmt.Sprintf("%s (%s)", a.Label, a.Type)
+	}
+	b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(typ)))
+	state := a.State
+	if state == "" {
+		state = "—"
+	}
+	b.WriteString(fmt.Sprintf("session:   %s\n", state))
+	if a.Branch != "" {
+		b.WriteString(fmt.Sprintf("branch:    %s\n", a.Branch))
+	}
+	if a.Worktree != "" {
+		b.WriteString(fmt.Sprintf("worktree:  %s\n", truncate(a.Worktree, 50)))
+	}
+	if a.AgentState != nil && a.AgentState.Latest != "" {
+		b.WriteString(fmt.Sprintf("signal:    %s (%s ago)\n",
+			a.AgentState.Latest, time.Since(a.AgentState.UpdatedAt).Round(time.Second)))
+	}
+	if len(a.Attached) > 0 {
+		labels := make([]string, 0, len(a.Attached))
+		for _, c := range a.Attached {
+			labels = append(labels, c.Label)
+		}
+		b.WriteString("attached:  " + strings.Join(labels, ", ") + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("[⏎] attach   [X] remove   [+] add another"))
+	return b.String()
+}
+
 func (m tuiModel) renderFooter() string {
 	// Substrate-health strip on its own line, then two key-hint lines below it
 	// (global commands, then island lifecycle), right-aligned to a shared edge.
 	// The strip used to share line one with the global commands, which collided
 	// on narrow terminals — giving it its own row keeps both readable.
-	keys1 := "[n] new   [⏎] open   [s] server   [?] help   [q] quit"
-	keys2 := "[a] attach here   [h] hibernate   [w] wake   [r] reset   [d] purge"
+	keys1 := "[n] new   [⏎] open   [+] add agent   [s] server   [?] help   [q] quit"
+	keys2 := "[a] attach here   [X] rm agent   [h] hibernate   [w] wake   [r] reset   [d] purge"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
