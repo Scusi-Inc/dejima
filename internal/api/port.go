@@ -6,11 +6,39 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/project"
 )
+
+// handleAudit returns the brokered-operation Ledger and verifies its hash chain.
+// ?limit=N tails the last N entries (the full chain is still verified).
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	lg, err := ledger.Default()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	entries, err := lg.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	resp := AuditResponse{Total: len(entries), Verified: true}
+	if verr := lg.Verify(); verr != nil {
+		resp.Verified = false
+		resp.Error = verr.Error()
+	}
+	if n := r.URL.Query().Get("limit"); n != "" {
+		if lim, e := strconv.Atoi(n); e == nil && lim >= 0 && lim < len(entries) {
+			entries = entries[len(entries)-lim:]
+		}
+	}
+	resp.Entries = entries
+	writeJSON(w, http.StatusOK, resp)
+}
 
 // handleListPortScopes returns the brokered host-file grants for an island.
 func (s *Server) handleListPortScopes(w http.ResponseWriter, r *http.Request) {

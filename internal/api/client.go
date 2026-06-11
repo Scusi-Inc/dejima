@@ -153,6 +153,20 @@ func (c *Client) PortIntake(ctx context.Context, name, scope, srcRel, dest strin
 	return &out, nil
 }
 
+// Audit returns the brokered-operation Ledger plus its chain-verification
+// result. limit>0 tails the last N entries (the whole chain is still verified).
+func (c *Client) Audit(ctx context.Context, limit int) (*AuditResponse, error) {
+	path := "/v1/audit"
+	if limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	var out AuditResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // PortExport copies a file out of the island into host-owned export staging.
 func (c *Client) PortExport(ctx context.Context, name, src string) (*PortExportResponse, error) {
 	var out PortExportResponse

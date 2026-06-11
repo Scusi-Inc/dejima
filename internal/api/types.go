@@ -1,6 +1,10 @@
 package api
 
-import "time"
+import (
+	"time"
+
+	"github.com/aoos/dejima/internal/ledger"
+)
 
 // IslandInfo is the public view of an island returned by the API.
 type IslandInfo struct {
@@ -236,6 +240,15 @@ type PortExportResponse struct {
 	Dest   string `json:"dest"` // host staging path
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
+}
+
+// AuditResponse is the body of GET /v1/audit — the brokered-operation Ledger,
+// plus the result of verifying its hash chain.
+type AuditResponse struct {
+	Entries  []ledger.Entry `json:"entries"`
+	Total    int            `json:"total"`
+	Verified bool           `json:"verified"`
+	Error    string         `json:"error,omitempty"` // chain-verification failure detail
 }
 
 // ErrorResponse is the body of any non-2xx response.
