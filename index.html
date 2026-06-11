@@ -99,6 +99,18 @@
   .topnav a:hover { color: var(--accent); }
   .topnav a + a { margin-left: 1.1rem; }
   .topnav a + a::before { content: "·"; color: var(--border); margin-right: 1.1rem; }
+  /* Sticky platform selector ----------------------------------------- */
+  .platbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem;
+    padding: 0.55rem 1rem; background: rgba(10,23,45,0.94);
+    border-top: 1px solid var(--border); backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px); }
+  .platbar-label { color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.06em; font-size: 0.72rem; }
+  .platbar-link { margin-left: auto; color: var(--accent); font-size: 0.82rem;
+    text-decoration: none; }
+  .platbar-link:hover { color: var(--hover); }
+  main { padding-bottom: 7rem; } /* clear the fixed bar */
   /* Install picker --------------------------------------------------- */
   .picker { margin: 1.2rem 0 1.6rem; display: flex; flex-direction: column; gap: 0.7rem; }
   .pick-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
@@ -166,17 +178,17 @@
 <section class="pillars">
   <div class="pillar">
     <h3 class="lead">Running agents on a Mac mini or server?</h3>
-    <p class="plain">Then Dejima is your own agent server — run a fleet of Claude Code / Codex agents, each sandboxed, all sharing one set of credentials, with live state and simple controls on one dashboard.</p>
+    <p class="plain">Dejima is your own agent server — run a fleet of Claude Code / Codex agents, each sandboxed in its own container; the ones on a project share credentials, so you permission them once. Live state and simple controls on one dashboard.</p>
     <div class="pain">Six agents in tmux you can't tell apart, context bleeding between projects, re-authing every one — and one bad command from touching the wrong repo.</div>
     <a class="usecase" href="#home-server">
       <h3>Run agents securely on your own box</h3>
-      <p>Several Claude Code / Codex agents per project, each sandboxed in its own container — no context bleed, no agent trashing your host or another repo. Each on its own git worktree, all sharing one set of credentials so you permission them once. See every agent's state at a glance and manage them with simple controls.</p>
+      <p>Several Claude Code / Codex agents per project, each sandboxed in its own container — no context bleed, no agent trashing your host or another repo. Each on its own git worktree; agents in the same project share one set of credentials, so you permission them once. See every agent's state at a glance and manage them with simple controls.</p>
       <span class="cta">Run it yourself →</span>
     </a>
   </div>
   <div class="pillar">
     <h3 class="lead">Building a product on top of agents?</h3>
-    <p class="plain">Then Dejima is your agent backend — target one API and get isolated containers, sessions, lifecycle, agent-state events, and management controls, without building any of it.</p>
+    <p class="plain">Dejima is your agent backend — one API for isolated containers, sessions, lifecycle, real-time agent status events, and management controls, without building any of it.</p>
     <div class="pain">Shipping on agents shouldn't mean reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth from scratch.</div>
     <a class="usecase" href="#api-builder">
       <h3>Build services on isolated, secured agents</h3>
@@ -353,46 +365,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
   </ol>
 </div>
 
-<script>
-(function () {
-  var state = { role: 'server', os: 'macos' };
 
-  function detectOS() {
-    var ua = navigator.userAgent || '';
-    var p  = navigator.platform || '';
-    if (/Win/i.test(p) || /Windows/i.test(ua)) return 'windows';
-    if (/Mac/i.test(p) || /Mac OS X|Macintosh/i.test(ua)) return 'macos';
-    if (/Linux/i.test(p) || /Linux/i.test(ua)) return 'linux';
-    return 'macos';
-  }
-
-  function update() {
-    document.querySelectorAll('[data-role]').forEach(function (b) {
-      b.setAttribute('aria-pressed', b.dataset.role === state.role ? 'true' : 'false');
-    });
-    // Server + Windows isn't supported — keep the OS button enabled so the user
-    // can see the explanatory panel, just visually mute it.
-    document.querySelectorAll('[data-os]').forEach(function (b) {
-      b.setAttribute('aria-pressed', b.dataset.os === state.os ? 'true' : 'false');
-    });
-    var key = state.role + '-' + state.os;
-    document.querySelectorAll('.install-panel').forEach(function (p) {
-      p.classList.toggle('show', p.dataset.show === key);
-    });
-  }
-
-  document.querySelectorAll('.seg-btn').forEach(function (b) {
-    b.addEventListener('click', function () {
-      if (b.dataset.role) state.role = b.dataset.role;
-      if (b.dataset.os)   state.os   = b.dataset.os;
-      update();
-    });
-  });
-
-  state.os = detectOS();
-  update();
-})();
-</script>
 
 <h2 id="home-server">Use case: Run it yourself</h2>
 <p>One line to install on the server, one word to run. The installer handles Tailscale, Docker, and the service (per-platform steps in <a href="#install">Install</a>).</p>
@@ -527,5 +500,61 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
 </ul>
 
 </main>
+
+<div class="platbar" role="group" aria-label="Platform selector">
+  <span class="platbar-label">Platform</span>
+  <div class="seg" role="radiogroup" aria-label="Role">
+    <button type="button" data-role="server" class="seg-btn" aria-pressed="true">Server</button>
+    <button type="button" data-role="client" class="seg-btn" aria-pressed="false">Client</button>
+  </div>
+  <div class="seg" role="radiogroup" aria-label="OS">
+    <button type="button" data-os="macos"   class="seg-btn" aria-pressed="true">macOS</button>
+    <button type="button" data-os="linux"   class="seg-btn" aria-pressed="false">Linux</button>
+    <button type="button" data-os="windows" class="seg-btn" aria-pressed="false">Windows</button>
+  </div>
+  <a class="platbar-link" href="#install">Install steps ↑</a>
+</div>
+
+<script>
+(function () {
+  var state = { role: 'server', os: 'macos' };
+
+  function detectOS() {
+    var ua = navigator.userAgent || '';
+    var p  = navigator.platform || '';
+    if (/Win/i.test(p) || /Windows/i.test(ua)) return 'windows';
+    if (/Mac/i.test(p) || /Mac OS X|Macintosh/i.test(ua)) return 'macos';
+    if (/Linux/i.test(p) || /Linux/i.test(ua)) return 'linux';
+    return 'macos';
+  }
+
+  function update() {
+    document.querySelectorAll('[data-role]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.role === state.role ? 'true' : 'false');
+    });
+    // Server + Windows isn't supported — keep the OS button enabled so the user
+    // can see the explanatory panel, just visually mute it.
+    document.querySelectorAll('[data-os]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.os === state.os ? 'true' : 'false');
+    });
+    var key = state.role + '-' + state.os;
+    document.querySelectorAll('.install-panel').forEach(function (p) {
+      p.classList.toggle('show', p.dataset.show === key);
+    });
+  }
+
+  document.querySelectorAll('.seg-btn').forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (b.dataset.role) state.role = b.dataset.role;
+      if (b.dataset.os)   state.os   = b.dataset.os;
+      update();
+    });
+  });
+
+  state.os = detectOS();
+  update();
+})();
+</script>
+
 </body>
 </html>
