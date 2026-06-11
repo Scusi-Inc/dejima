@@ -9,6 +9,10 @@ import (
 	"syscall"
 )
 
+// sizingFd is the fd to read the terminal size from. On Unix the size is a
+// property of the tty itself, so any tty fd (the stdin fd callers pass) works.
+func sizingFd(stdinFd int) int { return stdinFd }
+
 // watchTerminalResize forwards terminal-size changes for the life of ctx.
 // On Unix we listen for SIGWINCH, which the kernel raises whenever the
 // controlling terminal's window size changes.

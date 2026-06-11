@@ -956,7 +956,10 @@ func writeEnvelope(ctx context.Context, conn *websocket.Conn, env api.SessionEnv
 }
 
 func terminalSize(fd int) (rows, cols uint16, err error) {
-	w, h, err := term.GetSize(fd)
+	// On Windows the size lives on the console *output* handle —
+	// GetConsoleScreenBufferInfo fails on the stdin handle callers pass here.
+	// sizingFd (build-tagged) redirects to stdout on Windows, identity on Unix.
+	w, h, err := term.GetSize(sizingFd(fd))
 	if err != nil {
 		return 0, 0, err
 	}
