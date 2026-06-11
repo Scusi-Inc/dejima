@@ -35,11 +35,14 @@ type AgentInfo struct {
 	Branch     string `json:"branch,omitempty"`
 	Worktree   string `json:"worktree,omitempty"`
 	Attachable bool   `json:"attachable"`
-	// State is the agent's session liveness ("running"/"stopped"/""); populated
-	// from Phase 2 onward.
+	// State is the agent's session liveness ("running"/"stopped"/"").
 	State      string          `json:"state,omitempty"`
 	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
 	Attached   []PresenceEntry `json:"attached,omitempty"`
+	// Error is the last orchestration failure for this agent — e.g. its worktree
+	// or tmux session couldn't be created. Empty when the agent came up cleanly.
+	Error   string    `json:"error,omitempty"`
+	ErrorAt time.Time `json:"error_at,omitempty"`
 }
 
 // IslandHealth surfaces crash-relevant facts that a remote client can't observe

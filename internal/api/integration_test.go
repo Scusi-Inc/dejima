@@ -19,10 +19,11 @@ import (
 // the daemon issues and the last CreateContainer request, so a test can assert
 // the multi-agent orchestration without a real container engine.
 type fakeRuntime struct {
-	mu         sync.Mutex
-	execs      [][]string
-	lastCreate runtime.CreateRequest
-	status     runtime.ContainerStatus
+	mu             sync.Mutex
+	execs          [][]string
+	lastCreate     runtime.CreateRequest
+	status         runtime.ContainerStatus
+	failNewSession bool // when true, `tmux new-session` exits non-zero
 }
 
 func (f *fakeRuntime) record(cmd []string) {
@@ -76,6 +77,8 @@ func (f *fakeRuntime) Exec(_ context.Context, _ string, cmd []string) (string, s
 		return "", "", 0, nil // primary repo present
 	case len(cmd) >= 2 && cmd[0] == "tmux" && cmd[1] == "has-session":
 		return "", "", 1, nil // session not running yet
+	case len(cmd) >= 2 && cmd[0] == "tmux" && cmd[1] == "new-session" && f.failNewSession:
+		return "", "no server running on /tmp/tmux", 1, nil
 	default:
 		return "", "", 0, nil
 	}
@@ -251,6 +254,37 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	rr = do(t, h, http.MethodDelete, "/v1/islands/proj/agents/a1", "")
 	if rr.Code != http.StatusConflict {
 		t.Errorf("remove primary: got %d, want 409", rr.Code)
+	}
+}
+
+// TestAgentOrchestrationErrorSurfaced verifies that when an agent's session
+// fails to come up, the reason is captured on AgentInfo (not just logged).
+func TestAgentOrchestrationErrorSurfaced(t *testing.T) {
+	h, f := newTestServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"proj","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	f.mu.Lock()
+	f.failNewSession = true
+	f.mu.Unlock()
+
+	if rr := do(t, h, http.MethodPost, "/v1/islands/proj/agents", `{"type":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("add agent: %d %s", rr.Code, rr.Body.String()) // add still succeeds; the launch failure is surfaced, not fatal
+	}
+	rr := do(t, h, http.MethodGet, "/v1/islands/proj/agents", "")
+	var agents []AgentInfo
+	_ = json.Unmarshal(rr.Body.Bytes(), &agents)
+	var a2 *AgentInfo
+	for i := range agents {
+		if agents[i].ID == "a2" {
+			a2 = &agents[i]
+		}
+	}
+	if a2 == nil {
+		t.Fatal("a2 not found")
+	}
+	if a2.Error == "" || !strings.Contains(a2.Error, "tmux new-session") {
+		t.Errorf("a2.Error = %q, want it to mention the tmux new-session failure", a2.Error)
 	}
 }
 

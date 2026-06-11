@@ -57,6 +57,11 @@ type Server struct {
 	agentStateMu sync.Mutex
 	agentStates  map[string]AgentStateInfo
 
+	// Per-(island,agent) last orchestration error (failed worktree/session
+	// setup), surfaced in AgentInfo so failures aren't silent.
+	agentErrMu  sync.Mutex
+	agentErrors map[string]agentErrInfo
+
 	// Per-island bounded event log (for `dejima status` recent-events display
 	// and the GET /v1/islands/:name/events endpoint).
 	eventsMu  sync.Mutex
@@ -102,6 +107,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		events:      ev,
 		historyCap:  200,
 		agentStates: map[string]AgentStateInfo{},
+		agentErrors: map[string]agentErrInfo{},
 		events_:     map[string][]events.Event{},
 		eventsCap:   50,
 		startedAt:   time.Now().UTC(),
@@ -219,6 +225,36 @@ func (s *Server) agentStateOf(island, agentID string) *AgentStateInfo {
 		return &st
 	}
 	return nil
+}
+
+// agentErrInfo is a captured orchestration failure for one agent.
+type agentErrInfo struct {
+	Message string
+	At      time.Time
+}
+
+// setAgentError records the last orchestration failure for an agent.
+func (s *Server) setAgentError(island, agentID string, err error) {
+	s.agentErrMu.Lock()
+	s.agentErrors[agentStateKey(island, agentID)] = agentErrInfo{Message: err.Error(), At: time.Now().UTC()}
+	s.agentErrMu.Unlock()
+}
+
+// clearAgentError drops any recorded failure for an agent (it came up cleanly).
+func (s *Server) clearAgentError(island, agentID string) {
+	s.agentErrMu.Lock()
+	delete(s.agentErrors, agentStateKey(island, agentID))
+	s.agentErrMu.Unlock()
+}
+
+// agentErrorOf returns the last recorded failure for an agent, if any.
+func (s *Server) agentErrorOf(island, agentID string) (string, time.Time, bool) {
+	s.agentErrMu.Lock()
+	defer s.agentErrMu.Unlock()
+	if e, ok := s.agentErrors[agentStateKey(island, agentID)]; ok {
+		return e.Message, e.At, true
+	}
+	return "", time.Time{}, false
 }
 
 // islandAgentState returns the most recently updated agent-state across all of
@@ -506,7 +542,10 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.agentsLive(r.Context(), p) {
 		if err := s.ensureAgentSession(r.Context(), p, &p.Agents[len(p.Agents)-1]); err != nil {
+			s.setAgentError(name, id, err)
 			s.log.Warn("add agent: ensure session", "island", name, "agent", id, "err", err)
+		} else {
+			s.clearAgentError(name, id)
 		}
 	}
 	s.emit(events.Event{
@@ -554,6 +593,7 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		s.removeAgentSession(r.Context(), p, a)
 	}
 	p.RemoveAgent(id)
+	s.clearAgentError(name, id)
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -825,7 +865,10 @@ func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error 
 	for i := 1; i < len(p.Agents); i++ {
 		a := &p.Agents[i]
 		if err := s.ensureAgentSession(ctx, p, a); err != nil {
+			s.setAgentError(p.Name, a.ID, err)
 			s.log.Warn("ensure agent session", "island", p.Name, "agent", a.ID, "err", err)
+		} else {
+			s.clearAgentError(p.Name, a.ID)
 		}
 	}
 	return nil
@@ -1258,6 +1301,9 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 		if ai.AgentState == nil && i == 0 {
 			// Surface legacy agent-less events (no DEJIMA_AGENT_ID) on the primary.
 			ai.AgentState = s.agentStateOf(p.Name, "")
+		}
+		if msg, at, ok := s.agentErrorOf(p.Name, a.ID); ok {
+			ai.Error, ai.ErrorAt = msg, at
 		}
 		out = append(out, ai)
 	}

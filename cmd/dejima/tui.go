@@ -758,7 +758,10 @@ func agentRowText(a api.AgentInfo) string {
 		glyph = "●"
 	}
 	sig := ""
-	if a.AgentState != nil && a.AgentState.Latest != "" {
+	if a.Error != "" {
+		glyph = "✗"
+		sig = "  " + styleErrored.Render("error")
+	} else if a.AgentState != nil && a.AgentState.Latest != "" {
 		sig = "  " + a.AgentState.Latest
 	}
 	return fmt.Sprintf("%s %s  %s%s", glyph, a.ID, truncate(name, 18), sig)
@@ -885,6 +888,9 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 	if a.AgentState != nil && a.AgentState.Latest != "" {
 		b.WriteString(fmt.Sprintf("signal:    %s (%s ago)\n",
 			a.AgentState.Latest, time.Since(a.AgentState.UpdatedAt).Round(time.Second)))
+	}
+	if a.Error != "" {
+		b.WriteString("error:     " + styleErrored.Render(truncate(a.Error, 50)) + "\n")
 	}
 	if len(a.Attached) > 0 {
 		labels := make([]string, 0, len(a.Attached))
