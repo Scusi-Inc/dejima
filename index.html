@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dejima — the persistent runtime for isolated AI agents, on your own infrastructure</title>
-<meta name="description" content="Run multiple AI coding agents on your own server in isolated containers. Manage them with a clean CLI, drive them from any device, or build a product on top of the API.">
+<meta name="description" content="Run a fleet of AI coding agents on your own server — several per project, each sandboxed in its own container on its own git worktree, sharing one set of credentials. Drive them from any device, or build a product on top of the API.">
 <meta property="og:title" content="Dejima">
-<meta property="og:description" content="OSS substrate for running AI coding agents on your own infrastructure. Per-project containers, multi-device sessions, brokered API.">
+<meta property="og:description" content="OSS substrate for running a fleet of AI coding agents on your own infrastructure. Isolated per-project containers, multiple agents per project, one HTTP/WebSocket API.">
 <meta property="og:image" content="https://raw.githubusercontent.com/aoos/dejima/master/assets/logo.png">
 <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
 <link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
@@ -131,30 +131,23 @@
 <p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
 <section>
-  <p><strong>Dejima</strong> turns a Mac mini or Linux box into a secure, persistent host for AI agents. Built for <strong>coding agent CLIs</strong> (Claude Code, Codex); usable for any agent that wants isolation, persistence, and an API to drive it — including <strong>headless API-SDK loops</strong>. Each project lives in its own island — an isolated container running <strong>one or more agents together</strong>, accessible from any of your devices.</p>
-  <p class="plain">In other words: it lets you run a bunch of Claude Code sessions on your own Mac mini or server without losing your mind to tmux — and gives you the API to build dashboards, phone clients, or your own agent harness on top.</p>
+  <p><strong>Dejima</strong> turns a Mac mini or Linux box into a secure host for AI agents. Built for <strong>coding agent CLIs</strong> (Claude Code, Codex); usable for any agent that wants isolation and an API to drive it — including <strong>headless API-SDK loops</strong>. Each project lives in its own island — an isolated container running <strong>one or more agents together</strong>, each sandboxed from your machine and from each other, on hardware you control.</p>
+  <p class="plain">In other words: run a <strong>fleet</strong> of Claude Code / Codex agents on your own Mac mini or server — each in its own container so they can't step on each other or your host, sharing one set of credentials so you permission them once — and get the API to build dashboards, phone clients, or your own agent harness on top. Your code never leaves your box.</p>
   <div class="pain">
-    Managing multiple instances of Claude Code shouldn't require manually provisioning tmux sessions, fighting SSH drops, and wrestling with folder permissions for every parallel task. You shouldn't have to baby your environment just to let an agent work in the background. There's a better way.
+    Running a handful of agents shouldn't mean tmux sessions you forget, context bleeding between projects, an agent touching the wrong repo, and re-approving permissions for every single one. You shouldn't have to baby your environment just to let agents work. There's a better way.
   </div>
 </section>
 
 <section class="usecases">
   <a class="usecase" href="#home-server">
-    <h3>Run agents on your own server</h3>
-    <p>Managing multiple Claude Code or Codex sessions over tmux + ssh is hostile UX. Session names you forget. Context bleed across projects. Lost windows.</p>
-    <span class="cta">Home server →</span>
+    <h3>Run a fleet of agents on your own box</h3>
+    <p>Several Claude Code / Codex agents per project, each sandboxed in its own container — no context bleed, no agent trashing your host or another repo. Run a few on one codebase, each on its own git worktree, permissioned once. Your hardware; your code never leaves it.</p>
+    <span class="cta">Run it yourself →</span>
   </a>
   <a class="usecase" href="#api-builder">
-    <h3>Build a product on top of agent execution</h3>
-    <p>Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools. You need isolated containers + sessions + lifecycle, without writing them.</p>
+    <h3>Build services on agent execution</h3>
+    <p>Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools. Target one HTTP/WebSocket API and get isolated containers, multi-attach sessions, lifecycle, credential injection, and events — instead of reinventing them.</p>
     <span class="cta">For builders →</span>
-  </a>
-
-  <!-- (API reference linked from "For builders" deep-dive section + the Links section.) -->
-  <a class="usecase" href="#self-host">
-    <h3>Keep code and agents off vendor servers</h3>
-    <p>Compliance, NDA, regulated code, or just distrust of hosted agent products. You want agents — but on your hardware, your network, your rules.</p>
-    <span class="cta">Self-host →</span>
   </a>
 </section>
 
@@ -384,8 +377,8 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
 })();
 </script>
 
-<h2 id="home-server">Use case: Home server</h2>
-<p><strong>If you run AI agents on a home server</strong> — Mac mini, VPS, an always-on Linux box on your shelf — Dejima is the layer that fixes the parts of that workflow that suck. And it's two steps: one line to install, one word to run.</p>
+<h2 id="home-server">Use case: Run it yourself</h2>
+<p><strong>If you run AI agents on a box you control</strong> — a Mac mini, a VPS, an always-on Linux machine on your shelf (or just locally to start) — Dejima is the layer that makes a fleet of them safe and manageable. And it's two steps: one line to install, one word to run.</p>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash   # on the server, once
 dejima                                                       # that's the interface
 </code></pre>
@@ -404,9 +397,12 @@ dejima connect foo                 # drops into Claude Code, in foo's island
 DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # from your laptop
 </code></pre>
 <p>Repos can come from anywhere: a git URL, or a <strong>local checkout already on disk</strong> — Dejima clones from its remote by default, or seeds from your working copy (<code>--local-copy</code>) to capture unpushed work. And one island can run <strong>several agents at once</strong> — Claude Code and Codex side by side, or two agents on parallel tasks, each on its own git worktree but sharing one set of credentials so you permission them once, not N times.</p>
-<p><strong>Why it's worth it:</strong> islands are real containers. Each has its own <code>$HOME</code>, its own <code>git</code> config, its own <code>gh</code> credentials, its own working directory. Cross-pollination between projects isn't a discipline thing — the kernel won't let it happen. And because sessions are tmux-backed, your laptop closing or your network blipping doesn't kill anything; you reattach where you left off, from wherever you are.</p>
+<p><strong>Why it's worth it:</strong> islands are real containers. Each agent gets its own <code>$HOME</code>, <code>git</code> config, <code>gh</code> credentials, and working tree; agents in one island share credentials but work on separate git worktrees, so they collaborate without clobbering each other. Cross-pollination — between projects or between agents — isn't a discipline thing, the kernel won't let it happen. You reattach from any device over the API (it survives disconnects, no SSH), and a runaway agent hits its resource cap instead of your whole machine.</p>
 
-<h2 id="api-builder">Use case: Product builder</h2>
+<h3 id="self-host">Why self-hosted: privacy &amp; compliance</h3>
+<p><strong>If you can't or won't ship your code to a third-party agent service</strong> — NDA work, regulated industries (medical, financial, defense, legal), client confidentiality, or just principle — Dejima runs entirely on your hardware. The agent's LLM API calls go out (that's how agents work at all), but your repo, your generated files, and your auth never leave your box. Network egress is yours to set; auth is your Tailscale identity, not a vendor account; <code>dejima purge</code> erases an island when you're done. No data on someone else's bill.</p>
+
+<h2 id="api-builder">Use case: Build services on the API</h2>
 <p><strong>If you're building a product on top of agent CLIs</strong> — a multi-agent dashboard, a chat-driven coding bot, a web IDE, a team-internal tool — Dejima is the execution substrate so you don't reinvent container lifecycle, PTY multiplexing, session management, and credential injection for your one product.</p>
 <p>It's the persistent runtime layer for agent-native work — your control plane (a UI, a bot, the CLI) on top, your compute underneath, isolation in between. The boring middle is done and OSS; you build the interesting part.</p>
 <pre><code># Target the Dejima HTTP API from any language.
@@ -420,17 +416,6 @@ POST   /v1/islands/:name/exec           # one-shot command
 POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 </code></pre>
 <p><strong>Why it's worth it:</strong> the boring substrate work — container lifecycle, host-side PTY, multi-client multiplexing, credential injection, webhook events, service install, Tailscale-pinned remote access — is done and OSS. You build the interesting part. The same API the CLI uses is the one you target; if a feature exists in <code>dejima</code>, it exists for you too. Full surface documented at <a href="api.html">the API reference</a>.</p>
-
-<h2 id="self-host">Use case: Self-hosted privacy / compliance</h2>
-<p><strong>If you can't or won't ship your code to a third-party agent service</strong> — NDA work, regulated industries (medical, financial, defense, legal), client confidentiality, or just principle — Dejima runs entirely on your hardware. The agent's LLM API calls go out (that's how agents work at all), but your repo, your generated files, and your auth never leave your box.</p>
-<pre><code># Install on a regulated server.
-curl -fsSL https://aoos.github.io/dejima/install.sh | bash
-
-# Expose the daemon to your tailnet (off-tailnet connections are refused).
-# Bakes --tcp into the service so remote access survives reboots.
-dejima service install --tcp :7273
-</code></pre>
-<p><strong>Why it's worth it:</strong> your code, your workspace, your generated artifacts stay on your disk. Network egress is yours to set — block what you want, allow only LLM endpoints if your policy demands it. Auth is via Tailscale identity, not a vendor cloud's account model. When you're done, <code>dejima purge</code> erases the island. No data on someone else's bill.</p>
 
 <h2>How it compares</h2>
 <table>
