@@ -394,25 +394,6 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
 })();
 </script>
 
-<h2>Architecture</h2>
-<pre><code>┌──────────────────────────┐
-│  Control plane / UI      │   CLI · TUI · Dispatch · your app
-└────────────┬─────────────┘
-             │  websocket + HTTP API, over Tailscale
-             ▼
-┌──────────────────────────┐
-│  Dejima runtime          │   Mac mini · VPS · cloud VM
-└────────────┬─────────────┘
-             │  isolation boundary
-             ▼
-┌──────────────────────────┐
-│  Agents in an island     │   one container, N agents per project
-└──────────────────────────┘</code></pre>
-<p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other.</p>
-<p class="bundled-note"><strong>Two kinds of agents.</strong> <strong>Terminal</strong> agents are CLIs you attach to (Claude Code, Codex) — a host-side PTY bridges your websocket to the agent's tmux session, so it survives detach and multiple devices share one screen. <strong>Headless</strong> agents run on their own (a Python SDK loop, a worker) — output captured to <code>dejima logs</code>. Both get the same isolation, lifecycle, events, and one-API management.</p>
-
-<p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your CLI, dashboard, or phone client targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
-
 <h2 id="home-server">Use case: Run it yourself</h2>
 <p>One line to install on the server, one word to run. The installer handles Tailscale, Docker, and the service (per-platform steps in <a href="#install">Install</a>).</p>
 <pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash   # on the server, once
@@ -444,6 +425,27 @@ POST   /v1/islands/:name/exec           # one-shot command
 POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 </code></pre>
 <p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and OSS. Full surface at <a href="api.html">the API reference</a>.</p>
+
+<h2>Architecture</h2>
+<pre><code>        CLI · TUI · Dispatch · your app        (control plane)
+                    │
+                    │  websocket + HTTP API · over Tailscale
+                    ▼
+┌─ Dejima host · Mac mini / VPS / cloud VM ──────────────────────┐
+│                                                                │
+│   ┌─ island: web ──────────┐    ┌─ island: api ──────────┐     │
+│   │ a1  claude-code        │    │ a1  codex              │     │
+│   │ a2  codex              │    │ a2  claude-code        │     │
+│   │ a3  headless           │    │                        │     │
+│   └────────────────────────┘    └────────────────────────┘     │
+│                                                                │
+│ per island: one container · shared home + credentials          │
+│ per agent:  own git worktree · sandboxed from host & others    │
+└────────────────────────────────────────────────────────────────┘</code></pre>
+<p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other.</p>
+<p class="bundled-note"><strong>Two kinds of agents.</strong> <strong>Terminal</strong> agents are CLIs you attach to (Claude Code, Codex) — a host-side PTY bridges your websocket to the agent's tmux session, so it survives detach and multiple devices share one screen. <strong>Headless</strong> agents run on their own (a Python SDK loop, a worker) — output captured to <code>dejima logs</code>. Both get the same isolation, lifecycle, events, and one-API management.</p>
+
+<p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your CLI, dashboard, or phone client targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
 
 <h2>How it compares</h2>
 <table>
