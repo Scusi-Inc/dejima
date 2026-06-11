@@ -288,12 +288,19 @@ func (c *Client) WriteFile(ctx context.Context, name, path string, body io.Reade
 // StreamLogs returns a reader yielding the container's logs. follow keeps the
 // stream open until ctx is canceled. Uses the timeout-free stream path so a
 // followed stream isn't cut off by the standard 30s client timeout.
-func (c *Client) StreamLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error) {
-	q := ""
+func (c *Client) StreamLogs(ctx context.Context, name, agentID string, follow bool) (io.ReadCloser, error) {
+	q := url.Values{}
 	if follow {
-		q = "?follow=true"
+		q.Set("follow", "true")
 	}
-	return c.stream(ctx, http.MethodGet, "/v1/islands/"+name+"/logs"+q)
+	if agentID != "" {
+		q.Set("agent", agentID)
+	}
+	path := "/v1/islands/" + name + "/logs"
+	if e := q.Encode(); e != "" {
+		path += "?" + e
+	}
+	return c.stream(ctx, http.MethodGet, path)
 }
 
 func decodeErr(resp *http.Response) error {

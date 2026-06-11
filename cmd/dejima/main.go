@@ -265,16 +265,24 @@ func splitIslandPath(s string) (island, path string, isRemote bool) {
 
 func newLogsCmd() *cobra.Command {
 	var follow bool
+	var agentID string
 	cmd := &cobra.Command{
 		Use:   "logs <name>",
-		Short: "Tail an island's container logs.",
-		Args:  cobra.ExactArgs(1),
+		Short: "Tail an island's logs (or a headless agent's, with --agent).",
+		Long: "Tail an island's container logs. For a co-located headless agent, " +
+			"use --agent <id> (or the `<name>/<agent>` shorthand) to tail that " +
+			"agent's log file. Interactive agents have no logs — attach instead.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			name, agent := splitIslandAgent(args[0])
+			if agentID != "" {
+				agent = agentID
+			}
 			c, err := client()
 			if err != nil {
 				return err
 			}
-			rc, err := c.StreamLogs(cmd.Context(), args[0], follow)
+			rc, err := c.StreamLogs(cmd.Context(), name, agent, follow)
 			if err != nil {
 				return err
 			}
@@ -284,6 +292,7 @@ func newLogsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream new output until interrupted")
+	cmd.Flags().StringVar(&agentID, "agent", "", "tail a specific headless agent's log")
 	return cmd
 }
 

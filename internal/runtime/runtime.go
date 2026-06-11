@@ -109,6 +109,11 @@ type Runtime interface {
 	// Exec runs a command inside a running container, returning stdout/stderr and exit code.
 	Exec(ctx context.Context, name string, cmd []string) (stdout, stderr string, exitCode int, err error)
 
+	// ExecStream runs a command inside a running container and streams its
+	// combined stdout/stderr until the command exits or ctx is canceled. Used
+	// for following a per-agent log file (`tail -f`).
+	ExecStream(ctx context.Context, name string, cmd []string) (io.ReadCloser, error)
+
 	// ImageExists reports whether the runtime has the named image locally.
 	ImageExists(ctx context.Context, image string) (bool, error)
 

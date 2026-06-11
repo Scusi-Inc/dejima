@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
 	"github.com/aoos/dejima/internal/version"
@@ -113,13 +115,39 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 // open until the client disconnects.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	agentID := r.URL.Query().Get("agent")
 	p, err := project.Load(name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
 	follow := r.URL.Query().Get("follow") == "true"
-	rc, err := s.rt.Logs(r.Context(), p.ContainerName(), follow)
+
+	var rc io.ReadCloser
+	primary := p.PrimaryAgent()
+	switch {
+	case agentID == "" || (primary != nil && agentID == primary.ID):
+		// The island/primary logs are the container's stdout/stderr.
+		rc, err = s.rt.Logs(r.Context(), p.ContainerName(), follow)
+	default:
+		a, ok := p.AgentByID(agentID)
+		if !ok {
+			writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, agentID))
+			return
+		}
+		if handlers.Attachable(a.Type) {
+			writeError(w, http.StatusConflict,
+				fmt.Errorf("agent %q is interactive — attach with `dejima connect %s/%s`; only headless agents have logs", agentID, name, agentID))
+			return
+		}
+		// A co-located headless agent writes to a per-agent log file.
+		tailArgs := []string{"tail", "-n", "+1"}
+		if follow {
+			tailArgs = []string{"tail", "-F", "-n", "+1"}
+		}
+		tailArgs = append(tailArgs, headlessLogPath(agentID))
+		rc, err = s.rt.ExecStream(r.Context(), p.ContainerName(), tailArgs)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

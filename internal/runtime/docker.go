@@ -364,5 +364,24 @@ func (d *Docker) Exec(ctx context.Context, name string, cmd []string) (string, s
 	return stdout.String(), stderr.String(), exit, nil
 }
 
+// ExecStream runs a command inside a container and streams its combined output.
+// Modeled on Logs: the command's stdout/stderr feed an io.Pipe the caller reads.
+func (d *Docker) ExecStream(ctx context.Context, name string, cmd []string) (io.ReadCloser, error) {
+	args := append([]string{"exec", name}, cmd...)
+	command := exec.CommandContext(ctx, d.bin(), args...)
+	r, w := io.Pipe()
+	command.Stdout = w
+	command.Stderr = w
+	if err := command.Start(); err != nil {
+		_ = w.Close()
+		return nil, err
+	}
+	go func() {
+		_ = command.Wait()
+		_ = w.Close()
+	}()
+	return &cmdReadCloser{cmd: command, reader: r}, nil
+}
+
 // Ensure Docker satisfies Runtime at compile time.
 var _ Runtime = (*Docker)(nil)

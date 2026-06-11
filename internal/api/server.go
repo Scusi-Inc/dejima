@@ -471,11 +471,15 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 			typ = DefaultAgent
 		}
 	}
-	if !handlers.Attachable(typ) {
-		// Co-located headless agents are supervised separately and land in a
-		// later phase; for now only interactive agents can join an island.
+	cmd := strings.TrimSpace(req.Cmd)
+	if !handlers.Attachable(typ) && cmd == "" {
 		writeError(w, http.StatusBadRequest,
-			fmt.Errorf("agent type %q has no attach surface; non-interactive agents can't be added to an island yet", typ))
+			fmt.Errorf("agent type %q is headless; it requires a command (cmd)", typ))
+		return
+	}
+	if handlers.Attachable(typ) && cmd != "" {
+		writeError(w, http.StatusBadRequest,
+			fmt.Errorf("cmd is only meaningful for headless agents, not %q", typ))
 		return
 	}
 
@@ -484,10 +488,16 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		ID:        id,
 		Type:      typ,
 		Label:     strings.TrimSpace(req.Label),
+		Cmd:       cmd,
 		Tmux:      "agent-" + id,
 		Branch:    "agent/" + id,
 		Worktree:  agentsWorktreeRoot + "/" + id,
 		CreatedAt: time.Now().UTC(),
+	}
+	// Co-located headless agents self-restart by default so a crash doesn't end
+	// the agent silently.
+	if !handlers.Attachable(typ) {
+		spec.Restart = true
 	}
 	p.AddAgent(spec)
 	if err := p.Save(); err != nil {
@@ -807,9 +817,6 @@ func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error 
 	}
 	for i := 1; i < len(p.Agents); i++ {
 		a := &p.Agents[i]
-		if !handlers.Attachable(a.Type) {
-			continue // headless agents are supervised separately (Phase 7)
-		}
 		if err := s.ensureAgentSession(ctx, p, a); err != nil {
 			s.log.Warn("ensure agent session", "island", p.Name, "agent", a.ID, "err", err)
 		}
@@ -854,14 +861,11 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
 		return nil
 	}
-	h, _ := handlers.Lookup(a.Type)
-	launch := h.Launch
-	if launch == "" {
-		launch = a.Type // unknown/custom agent: run the type string as a command
-	}
-	// Run under sh so DEJIMA_AGENT_ID is scoped to this session without depending
-	// on a specific tmux version's `new-session -e`.
-	script := "DEJIMA_AGENT_ID=" + a.ID + " exec " + launch
+	// Both interactive and headless agents run inside a tmux session (the host
+	// process), scoped to DEJIMA_AGENT_ID via sh so we don't depend on a specific
+	// tmux version's `new-session -e`. Headless agents are marked non-attachable,
+	// redirect to a per-agent log file, and optionally restart on crash.
+	script := agentLaunchScript(a)
 	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{
 		"tmux", "new-session", "-d", "-s", a.Tmux, "-c", wt, "sh", "-c", script,
 	})
@@ -872,6 +876,37 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 		return fmt.Errorf("tmux new-session for %q: %s", a.ID, strings.TrimSpace(stderr))
 	}
 	return nil
+}
+
+// headlessLogPath is the per-agent log file for a co-located headless agent.
+func headlessLogPath(agentID string) string {
+	return "/home/dejima/.dejima/agents/" + agentID + ".log"
+}
+
+// agentLaunchScript builds the sh -c script that a tmux session runs for one
+// agent. Interactive agents exec their launch command directly; headless agents
+// redirect output to a per-agent log file and (when Restart) self-respawn.
+func agentLaunchScript(a *project.AgentSpec) string {
+	idEnv := "DEJIMA_AGENT_ID=" + a.ID + " "
+	if handlers.Attachable(a.Type) {
+		h, _ := handlers.Lookup(a.Type)
+		launch := h.Launch
+		if launch == "" {
+			launch = a.Type // unknown/custom interactive agent: run the type as a command
+		}
+		return idEnv + "exec " + launch
+	}
+	// Headless: capture output to the per-agent log, optionally with a restart loop.
+	cmd := a.Cmd
+	if cmd == "" {
+		cmd = a.Type
+	}
+	log := headlessLogPath(a.ID)
+	if a.Restart {
+		return fmt.Sprintf("exec >> %s 2>&1; while true; do %s%s; echo \"[dejima] agent %s exited ($?); restarting in 3s\"; sleep 3; done",
+			log, idEnv, cmd, a.ID)
+	}
+	return fmt.Sprintf("exec >> %s 2>&1; %s%s", log, idEnv, cmd)
 }
 
 // ensureWorktree creates the agent's git worktree if absent. Idempotent.
