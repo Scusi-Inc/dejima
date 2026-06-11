@@ -27,6 +27,15 @@ const (
 	StateHibernated State = "hibernated"
 )
 
+// Island roles. Empty (RoleProject) is the default work/coding island. RoleHome
+// marks a persistent "Home Island" that hosts an always-on assistant
+// orchestrator (the brain), which reaches host content only through the Port
+// and spawns work islands via the API. See docs/port-island-spec.md §3.2.
+const (
+	RoleProject = ""
+	RoleHome    = "home"
+)
+
 // Resources captures the docker resource caps applied to the container.
 // All fields optional; zero/empty means unlimited.
 type Resources struct {
@@ -80,10 +89,16 @@ type Project struct {
 	LastUsedAt   time.Time   `toml:"last_used_at"`
 	DesiredState State       `toml:"state"`
 	Agents       []AgentSpec `toml:"agents,omitempty"`
+	// Role is the island's purpose: "" (a work island) or "home" (a Home Island
+	// hosting an assistant brain). Empty for islands created before roles existed.
+	Role string `toml:"role,omitempty"`
 	// Ports are brokered host-filesystem grants for this island (see ports.go).
 	// Empty means deny-all: the island reaches no host content outside its repo.
 	Ports []PortScope `toml:"ports,omitempty"`
 }
+
+// IsHome reports whether this island is a Home Island (hosts an assistant brain).
+func (p *Project) IsHome() bool { return p.Role == RoleHome }
 
 // EnsureAgents back-fills Agents from the legacy scalar Agent field for projects
 // persisted under the pre-multi-agent schema. Idempotent: a no-op once Agents is

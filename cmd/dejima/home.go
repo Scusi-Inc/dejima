@@ -1,0 +1,121 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/project"
+	"github.com/aoos/dejima/internal/reposrc"
+)
+
+// --- home -----------------------------------------------------------------
+
+func newHomeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "home",
+		Short: "Manage Home Islands — persistent islands that host an assistant brain.",
+		Long: "A Home Island runs an always-on assistant orchestrator (an OpenClaw / Hermes / " +
+			"Letta-style gateway) inside containment instead of native on the host. It reaches " +
+			"your files only through the Port (scoped + ledgered) and spawns work islands via " +
+			"the API. Containing the brain matters because it reads untrusted inbound channels " +
+			"(chat, email) — the prime prompt-injection surface. Run native only when the brain " +
+			"needs host-OS APIs; see `dejima home create --explain-native`.",
+	}
+	cmd.AddCommand(newHomeCreateCmd())
+	return cmd
+}
+
+func newHomeCreateCmd() *cobra.Command {
+	var (
+		repo, name, image, cmdStr string
+		memory, cpus, disk        string
+		localCopy, explainNative  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "create --cmd \"<brain launch>\" --repo <url>",
+		Short: "Create a Home Island running an assistant brain (headless).",
+		Long: "Provisions a persistent, headless island whose command is the assistant brain's " +
+			"launch (e.g. \"openclaw gateway\"). Grant it host files with `dejima port grant`.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if explainNative {
+				printNativeGuidance()
+				return nil
+			}
+			if strings.TrimSpace(cmdStr) == "" {
+				return fmt.Errorf(`--cmd is required: the brain's launch command (e.g. "openclaw gateway")`)
+			}
+			if repo == "" {
+				return fmt.Errorf("--repo is required (the brain's config/workspace repo); repo-less home islands are a follow-up")
+			}
+			res, err := reposrc.Resolve(repo, os.Getenv("DEJIMA_HOST") == "", localCopy)
+			if err != nil {
+				return err
+			}
+			if name == "" {
+				name = project.DeriveNameFromRepo(repo)
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("• %s\n", res.Note)
+			if image == "" || image == api.DefaultImage {
+				if err := ensureIslandImage(cmd.Context(), c); err != nil {
+					return err
+				}
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+			defer cancel()
+			info, err := c.CreateIsland(ctx, api.CreateIslandRequest{
+				Name:      name,
+				Repo:      res.Repo,
+				SeedPath:  res.SeedPath,
+				Agent:     api.AgentHeadless,
+				Image:     image,
+				Cmd:       cmdStr,
+				Role:      project.RoleHome,
+				Resources: api.Resources{Memory: memory, CPUs: cpus, Disk: disk},
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("created home island %q (container: %s)\n", info.Name, info.Container)
+			fmt.Printf("logs:           dejima logs %s --follow\n", info.Name)
+			fmt.Printf("grant it files: dejima port grant %s <host-path>:ro\n", info.Name)
+			fmt.Println("note: the brain drives the Port over the in-island socket on Linux daemon hosts.")
+			fmt.Println("      on a macOS daemon host that socket is unavailable — enable the daemon TCP")
+			fmt.Println("      listener for brain-driven Port/spawn (see `dejima service`).")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cmdStr, "cmd", "", `the brain's launch command (e.g. "openclaw gateway") (required)`)
+	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL or local path for the brain's config/workspace (required)")
+	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk instead of cloning from origin")
+	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")
+	cmd.Flags().StringVar(&image, "image", "", "island image (default: dejima/island:latest)")
+	cmd.Flags().StringVar(&memory, "memory", "", "memory limit (e.g. 4G); default: unlimited")
+	cmd.Flags().StringVar(&cpus, "cpus", "", "CPU limit (e.g. 2.0); default: unlimited")
+	cmd.Flags().StringVar(&disk, "disk", "", "disk size (e.g. 20G); default: unlimited")
+	cmd.Flags().BoolVar(&explainNative, "explain-native", false, "explain when to run the brain native on the host instead, and how")
+	return cmd
+}
+
+func printNativeGuidance() {
+	fmt.Println(`Run the brain NATIVE on the host (not in a Home Island) only when it needs
+host-OS-native capabilities a container can't reach through a file broker:
+  · macOS Shortcuts / Automations
+  · Apple Notes / Reminders (APIs, not files)
+  · iMessage / native-app control (AppleScript)
+
+For everything that is files + code execution, prefer a Home Island: the brain
+stays contained, reaches your files only through the scoped + ledgered Port, and
+spawns work islands via the API. Running native trades that containment for
+host-OS reach — Dejima then contains the brain's file/code actions (Port + work
+islands) but not the orchestrator itself.`)
+}

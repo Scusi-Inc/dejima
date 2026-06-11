@@ -72,6 +72,7 @@ func newRootCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newInitCmd(),
+		newHomeCmd(),
 		newConnectCmd(),
 		newLsCmd(),
 		newAgentCmd(),

@@ -14,7 +14,9 @@ type IslandInfo struct {
 	Image string `json:"image"`
 	// Cmd is the user-supplied entrypoint for headless islands; empty for
 	// the built-in CLI agents.
-	Cmd        string          `json:"cmd,omitempty"`
+	Cmd string `json:"cmd,omitempty"`
+	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
+	Role       string          `json:"role,omitempty"`
 	State      string          `json:"state"`     // desired state from config
 	Container  string          `json:"container"` // observed status from runtime
 	CreatedAt  time.Time       `json:"created_at"`
@@ -125,6 +127,9 @@ type CreateIslandRequest struct {
 	// the scalar Agent/Cmd above describe a single agent (back-compat). Consumed
 	// from Phase 2 onward; accepted-but-unused before then.
 	Agents []AgentSpecRequest `json:"agents,omitempty"`
+	// Role is the island's purpose: "" (work island, default) or "home" (a Home
+	// Island hosting an assistant brain). A home island must be headless (+cmd).
+	Role string `json:"role,omitempty"`
 }
 
 // UpdateIslandRequest is the body of PATCH /v1/islands/{name}. Only cosmetic,

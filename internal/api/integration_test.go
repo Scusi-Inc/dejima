@@ -327,6 +327,35 @@ func TestHeadlessAgentNotAttachable(t *testing.T) {
 	}
 }
 
+// TestHomeIslandRole covers Home Island creation: role=home requires a headless
+// brain, an unknown role is rejected, and a valid home island surfaces its role
+// and gets the DEJIMA_HOME env so the brain can self-identify.
+func TestHomeIslandRole(t *testing.T) {
+	h, f := newTestServer(t)
+
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"badhome","agent":"claude-code","role":"home"}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("home+claude-code: got %d, want 400 (%s)", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"badrole","agent":"headless","cmd":"x","role":"bogus"}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("invalid role: got %d, want 400 (%s)", rr.Code, rr.Body.String())
+	}
+
+	rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"jarvis","agent":"headless","cmd":"openclaw gateway","role":"home"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create home island: %d %s", rr.Code, rr.Body.String())
+	}
+	var info IslandInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Role != "home" {
+		t.Errorf("role = %q, want home", info.Role)
+	}
+	if f.lastCreate.Env["DEJIMA_HOME"] != "1" {
+		t.Errorf("home island missing DEJIMA_HOME=1 env; got %q", f.lastCreate.Env["DEJIMA_HOME"])
+	}
+}
+
 // TestIslandTitle covers the cosmetic display title: it's editable in place,
 // surfaces on GET, and clears with an empty value — Name is never touched.
 func TestIslandTitle(t *testing.T) {

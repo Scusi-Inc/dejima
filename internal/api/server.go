@@ -733,8 +733,20 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("cmd is only meaningful with agent=%q", AgentHeadless))
 		return
 	}
+	switch req.Role {
+	case project.RoleProject, project.RoleHome:
+		// ok
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid role %q (want %q or %q)", req.Role, project.RoleProject, project.RoleHome))
+		return
+	}
+	if req.Role == project.RoleHome && agent != AgentHeadless {
+		writeError(w, http.StatusBadRequest,
+			fmt.Errorf("a home island runs an assistant brain — it must be headless (agent=%q with a cmd)", AgentHeadless))
+		return
+	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Resources, req.SeedPath)
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.Resources, req.SeedPath)
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -768,7 +780,7 @@ func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 }
 
 // provision creates the on-disk project, volumes, and a running container.
-func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd string, res Resources, seedPath string) (*project.Project, error) {
+func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role string, res Resources, seedPath string) (*project.Project, error) {
 	exists, err := s.rt.ImageExists(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("check image %s: %w", image, err)
@@ -784,6 +796,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd st
 		Agent:   agent,
 		Image:   image,
 		Cmd:     cmd,
+		Role:    role,
 		Resources: project.Resources{
 			Memory: res.Memory,
 			CPUs:   res.CPUs,
@@ -833,6 +846,12 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		"DEJIMA_PROJECT_NAME": p.Name,
 		"DEJIMA_REPO_URL":     p.RepoURL,
 		"DEJIMA_SOCKET":       "/run/dejima/dejimad.sock",
+	}
+	// A Home Island hosts an assistant brain; let it self-identify so it can
+	// drive the Port (intake/export) and spawn work islands via the daemon API
+	// reachable over DEJIMA_SOCKET.
+	if p.IsHome() {
+		env["DEJIMA_HOME"] = "1"
 	}
 	// Everything the entrypoint needs about the primary agent flows via env, so
 	// the launch command lives in one place (the handler registry) rather than
@@ -1320,6 +1339,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		Agent:      agentType,
 		Image:      p.Image,
 		Cmd:        cmd,
+		Role:       p.Role,
 		State:      string(p.DesiredState),
 		CreatedAt:  p.CreatedAt,
 		LastUsedAt: p.LastUsedAt,
