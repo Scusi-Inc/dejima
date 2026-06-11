@@ -92,6 +92,13 @@
   /* The card fills its shared-height row; its flex space-between keeps the
      CTA pinned to the bottom, so both CTAs line up too. */
   .pillar .usecase { align-self: stretch; }
+  /* Top anchor nav --------------------------------------------------- */
+  .topnav { display: flex; flex-wrap: wrap; align-items: center; margin: 0.6rem 0 0;
+    padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+  .topnav a { color: var(--muted); text-decoration: none; }
+  .topnav a:hover { color: var(--accent); }
+  .topnav a + a { margin-left: 1.1rem; }
+  .topnav a + a::before { content: "·"; color: var(--border); margin-right: 1.1rem; }
   /* Install picker --------------------------------------------------- */
   .picker { margin: 1.2rem 0 1.6rem; display: flex; flex-direction: column; gap: 0.7rem; }
   .pick-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
@@ -142,6 +149,14 @@
   </div>
 </header>
 
+<nav class="topnav" aria-label="Sections">
+  <a href="#install">Install</a>
+  <a href="#home-server">Run it yourself</a>
+  <a href="#api-builder">Build</a>
+  <a href="api.html">API</a>
+  <a href="#cli">CLI</a>
+</nav>
+
 <p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
 <section>
@@ -190,7 +205,39 @@
 
 <p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your CLI, dashboard, or phone client targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
 
-<h2>Install</h2>
+<h2 id="home-server">Use case: Run it yourself</h2>
+<p>One line to install on the server, one word to run. The installer handles Tailscale, Docker, and the service (per-platform steps in <a href="#install">Install</a>).</p>
+<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash   # on the server, once
+dejima                                                       # the dashboard
+
+# In the dashboard:
+#   n → pick a repo + agent, launch       + → add another agent
+#   ⏎ → open an island/agent in a window   ? → all keys
+</code></pre>
+<p>Every dashboard action is also a one-shot command:</p>
+<pre><code>dejima init --repo git@github.com:you/foo.git    # or --local-copy for unpushed work
+dejima ls                                         # all islands, last-used first
+dejima agent add foo --type codex                 # a 2nd agent in foo's island
+dejima connect foo                                # attach (Ctrl-b d detaches)
+DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # …from your laptop
+</code></pre>
+
+<h3 id="self-host">Why self-hosted: privacy &amp; compliance</h3>
+<p>The LLM calls go out, but your code, files, and auth never leave your box. Egress is yours to set; auth is your Tailscale identity, not a vendor account; <code>dejima purge</code> erases an island when you're done. Fits NDA, regulated, and client-confidential work.</p>
+
+<h2 id="api-builder">Use case: Build services on the API</h2>
+<p>Your control plane (a dashboard, a bot, the CLI) on top; your compute underneath; isolation in between. Target one HTTP/WebSocket API from any language — the same one the CLI uses.</p>
+<pre><code>POST   /v1/islands                     { "repo": "...", "agent": "claude-code" }
+GET    /v1/islands                      # list all islands
+GET    /v1/islands/:name                # live detail: agents, presence, cpu/mem, git, health
+POST   /v1/islands/:name/agents         { "type": "codex" }   # add an agent
+GET    /v1/islands/:name/agents/:id/session   # websocket PTY stream, multi-attach
+POST   /v1/islands/:name/exec           # one-shot command
+POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
+</code></pre>
+<p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and OSS. Full surface at <a href="api.html">the API reference</a>.</p>
+
+<h2 id="install">Install</h2>
 <p>Pick where you're installing it. The page rewrites itself for your choice.</p>
 
 <div class="picker" role="group" aria-label="Install configuration">
@@ -398,38 +445,6 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
 })();
 </script>
 
-<h2 id="home-server">Use case: Run it yourself</h2>
-<p>One line to install on the server, one word to run. The installer handles Tailscale, Docker, and the service (per-platform steps in <a href="#install">Install</a>).</p>
-<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash   # on the server, once
-dejima                                                       # the dashboard
-
-# In the dashboard:
-#   n → pick a repo + agent, launch       + → add another agent
-#   ⏎ → open an island/agent in a window   ? → all keys
-</code></pre>
-<p>Every dashboard action is also a one-shot command:</p>
-<pre><code>dejima init --repo git@github.com:you/foo.git    # or --local-copy for unpushed work
-dejima ls                                         # all islands, last-used first
-dejima agent add foo --type codex                 # a 2nd agent in foo's island
-dejima connect foo                                # attach (Ctrl-b d detaches)
-DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # …from your laptop
-</code></pre>
-
-<h3 id="self-host">Why self-hosted: privacy &amp; compliance</h3>
-<p>The LLM calls go out, but your code, files, and auth never leave your box. Egress is yours to set; auth is your Tailscale identity, not a vendor account; <code>dejima purge</code> erases an island when you're done. Fits NDA, regulated, and client-confidential work.</p>
-
-<h2 id="api-builder">Use case: Build services on the API</h2>
-<p>Your control plane (a dashboard, a bot, the CLI) on top; your compute underneath; isolation in between. Target one HTTP/WebSocket API from any language — the same one the CLI uses.</p>
-<pre><code>POST   /v1/islands                     { "repo": "...", "agent": "claude-code" }
-GET    /v1/islands                      # list all islands
-GET    /v1/islands/:name                # live detail: agents, presence, cpu/mem, git, health
-POST   /v1/islands/:name/agents         { "type": "codex" }   # add an agent
-GET    /v1/islands/:name/agents/:id/session   # websocket PTY stream, multi-attach
-POST   /v1/islands/:name/exec           # one-shot command
-POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
-</code></pre>
-<p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and OSS. Full surface at <a href="api.html">the API reference</a>.</p>
-
 <h2>How it compares</h2>
 <table>
   <tr><th>Feature</th><th>Raw local CLI</th><th>tmux + SSH</th><th>Vendor cloud</th><th>Dejima</th></tr>
@@ -443,7 +458,7 @@ POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 </table>
 <p class="small">Dejima isn't a replacement for tmux — it uses tmux inside each island. It's the layer above that adds isolation, lifecycle verbs (<code>hibernate</code> / <code>reset</code>), webhook events, and the cross-device API.</p>
 
-<h2>CLI reference</h2>
+<h2 id="cli">CLI reference</h2>
 <table>
   <tr><th>Command</th><th>Purpose</th></tr>
   <tr><td><code>dejima</code></td><td>Interactive dashboard — browse, manage, and launch islands. <code>n</code> new · <code>?</code> help.</td></tr>
