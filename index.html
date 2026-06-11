@@ -79,14 +79,19 @@
   .usecase p { margin: 0 0 0.8rem; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
   .usecase .cta { color: var(--accent); font-size: 0.85rem; font-weight: 600;
     letter-spacing: 0.02em; }
-  /* Two-pillar split (operator / builder) ---------------------------- */
-  .pillars { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.6rem;
-    margin: 1.6rem 0 0; }
-  .pillar { display: flex; flex-direction: column; }
-  .pillar .lead { margin: 0 0 0.45rem; font-size: 1.15rem; color: var(--hover); }
-  .pillar .plain { margin: 0 0 0.8rem; }
-  .pillar .pain { margin: 0 0 1rem; font-size: 0.9rem; }
-  .pillar .usecase { margin-top: auto; }
+  /* Two-pillar split (operator / builder). Each pillar shares the parent's
+     row tracks via subgrid so lead / in-other-words / gripe / card line up
+     across both columns, regardless of text length. */
+  .pillars { display: grid; grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(4, auto); gap: 0.85rem 1.6rem; margin: 1.6rem 0 0; }
+  .pillar { display: grid; grid-template-rows: subgrid; grid-row: span 4;
+    gap: 0.85rem; align-content: start; }
+  .pillar .lead { margin: 0; font-size: 1.15rem; color: var(--hover); }
+  .pillar .plain { margin: 0; }
+  .pillar .pain { margin: 0; font-size: 0.9rem; align-self: stretch; }
+  /* The card fills its shared-height row; its flex space-between keeps the
+     CTA pinned to the bottom, so both CTAs line up too. */
+  .pillar .usecase { align-self: stretch; }
   /* Install picker --------------------------------------------------- */
   .picker { margin: 1.2rem 0 1.6rem; display: flex; flex-direction: column; gap: 0.7rem; }
   .pick-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
@@ -118,7 +123,8 @@
     font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.85em;
     color: var(--fg); }
   @media (max-width: 720px) {
-    .usecases, .pillars { grid-template-columns: 1fr; }
+    .usecases, .pillars { grid-template-columns: 1fr; grid-template-rows: none; }
+    .pillar { display: flex; flex-direction: column; gap: 0.85rem; grid-row: auto; }
     main { padding: 3rem 1.25rem 5rem; }
     header h1 { font-size: 2rem; }
     .pick-label { min-width: 0; }
