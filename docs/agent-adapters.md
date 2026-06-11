@@ -16,6 +16,15 @@ Both paths get the same substrate: per-project workspace volume, GitHub
 credentials, lifecycle events, the `agent.*` event endpoint, multi-device API
 control. The only difference is whether you ship a shim with the image.
 
+> **Multi-agent note.** An island now hosts N agents (see
+> [`multi-agent-spec.md`](multi-agent-spec.md)). Each interactive agent gets its
+> own tmux session and git worktree; all agents share the island's home volume,
+> so credentials/tool-auth are set once and shared. Agent-type knowledge
+> (launch command, attachability, state dir) lives in the declarative handler
+> registry at `internal/handlers`; a first-class type is a registry entry plus
+> the image shim described below. Add agents to a running island with
+> `dejima agent add <island> [--type <id>]`.
+
 ---
 
 ## Path 1: Headless agent (no image changes)

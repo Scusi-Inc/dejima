@@ -74,6 +74,7 @@ func newRootCmd() *cobra.Command {
 		newInitCmd(),
 		newConnectCmd(),
 		newLsCmd(),
+		newAgentCmd(),
 		newStatusCmd(),
 		newHibernateCmd(),
 		newWakeCmd(),
@@ -992,7 +993,8 @@ func printPresence(prefix string, entries []api.PresenceEntry) {
 // --- ls -------------------------------------------------------------------
 
 func newLsCmd() *cobra.Command {
-	return &cobra.Command{
+	var showAgents bool
+	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List all islands.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1011,10 +1013,104 @@ func newLsCmd() *cobra.Command {
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 			fmt.Fprintln(tw, "NAME\tAGENT\tREPO\tSTATE\tCONTAINER")
 			for _, i := range items {
+				agentCol := i.Agent
+				if len(i.Agents) > 1 {
+					agentCol = fmt.Sprintf("%d agents", len(i.Agents))
+				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-					i.Name, i.Agent, shortenRepo(i.Repo), i.State, i.Container)
+					i.Name, agentCol, shortenRepo(i.Repo), i.State, i.Container)
+				if showAgents && len(i.Agents) > 1 {
+					for _, a := range i.Agents {
+						label := a.Type
+						if a.Label != "" {
+							label = a.Label
+						}
+						fmt.Fprintf(tw, "  └ %s\t%s\t%s\t%s\t\n", a.ID, label, "", a.State)
+					}
+				}
 			}
 			return tw.Flush()
+		},
+	}
+	cmd.Flags().BoolVarP(&showAgents, "agents", "a", false, "expand each island's agents")
+	return cmd
+}
+
+// newAgentCmd groups per-agent management verbs.
+func newAgentCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agent",
+		Short: "Manage the agents within an island.",
+	}
+	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRmCmd())
+	return cmd
+}
+
+func newAgentLsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ls <island>",
+		Short: "List the agents in an island.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			agents, err := c.ListAgents(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tTYPE\tLABEL\tSTATE\tBRANCH\tWORKTREE")
+			for _, a := range agents {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					a.ID, a.Type, a.Label, a.State, a.Branch, a.Worktree)
+			}
+			return tw.Flush()
+		},
+	}
+}
+
+func newAgentAddCmd() *cobra.Command {
+	var typ, label string
+	cmd := &cobra.Command{
+		Use:   "add <island>",
+		Short: "Add an agent to an island.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			a, err := c.AddAgent(cmd.Context(), args[0], api.AgentSpecRequest{Type: typ, Label: label})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("added agent %s (%s) to %s — attach with `dejima connect %s/%s`\n",
+				a.ID, a.Type, args[0], args[0], a.ID)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&typ, "type", "", "agent type (default: same as the island's primary agent)")
+	cmd.Flags().StringVar(&label, "label", "", "optional label for the agent")
+	return cmd
+}
+
+func newAgentRmCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rm <island> <agent-id>",
+		Short: "Remove an agent from an island (keeps its branch).",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.RemoveAgent(cmd.Context(), args[0], args[1]); err != nil {
+				return err
+			}
+			fmt.Printf("removed agent %s from %s\n", args[1], args[0])
+			return nil
 		},
 	}
 }

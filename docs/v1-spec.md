@@ -74,7 +74,7 @@ Target the Docker API as the lowest common denominator for v1. All P0–P2 hosts
 - **Host daemon (`dejimad`)** managing islands and exposing the Dejima API.
 - **Installed as a launchd service (macOS) or systemd user unit (Linux)** so it survives reboots.
 - **CLI (`dejima`)** as a thin client of the API: `init`, `connect`, `ls`, `status`, `hibernate`, `wake`, `import`, `export`, `purge`, `service`.
-- **One container per island**, hosting one repo and one agent. Each island is a `(repo, agent, name)` tuple.
+- **One container per island**, hosting one repo and one or more agents. Each island is a `(repo, name)` with N agents; the first is the primary (legacy clients attach to it). Single-agent islands behave exactly as before. See [`multi-agent-spec.md`](multi-agent-spec.md).
 - **Always-on containers by default**, with first-class `hibernate`/`wake` lifecycle for memory pressure relief.
 - **Persistent volumes** for workspace and agent on-disk state, surviving container restart and host reboot. `purge` is the only destructive operation.
 - **Multi-attach sessions**: multiple clients see the same screen simultaneously (tmux semantics).
@@ -94,7 +94,7 @@ Target the Docker API as the lowest common denominator for v1. All P0–P2 hosts
 - Fine-grained network egress allow-list (default: open egress).
 - Multi-user / RBAC.
 - Cross-host orchestration via the CLI (each daemon stays independent; clients orchestrate multi-host).
-- Concurrent agents inside a single island.
+- ~~Concurrent agents inside a single island.~~ **Now supported** — an island hosts N agents (one container, per-agent git worktrees, shared home for collective permissioning). See [`multi-agent-spec.md`](multi-agent-spec.md) and [`multi-agent-impl-plan.md`](multi-agent-impl-plan.md).
 - Multiple repos per island.
 - MCP server brokering between host and island.
 - SSH-only / token-auth modes for the daemon (Tailscale only for v1).

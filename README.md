@@ -30,7 +30,7 @@ A note on "API": throughout the docs, *the Dejima API* refers to Dejima's own HT
 ## What you get
 
 - **Isolation** — agents run inside containers with no path to your host filesystem, other projects, or unrelated secrets.
-- **Multi-project, multi-agent** — N islands on one host, each its own repo and agent. No context bleed.
+- **Multi-project, multi-agent** — N islands on one host, each its own repo; and N agents *within* an island (one container, per-agent git worktrees, shared credentials/tool-auth). No context bleed between islands. See [`docs/multi-agent-spec.md`](docs/multi-agent-spec.md).
 - **Persistent sessions** — long-running agent work survives disconnects and host reboots via tmux + named volumes (interactive agents) or supervised processes with captured logs (headless agents).
 - **Multi-device attach** — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.
 - **Direct push to GitHub** — host credentials mounted read-only into the island; `git push` just works.
