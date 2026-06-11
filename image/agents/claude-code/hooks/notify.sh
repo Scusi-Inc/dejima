@@ -13,6 +13,7 @@ set -euo pipefail
 
 SOCKET="${DEJIMA_SOCKET:-/run/dejima/dejimad.sock}"
 ISLAND="${DEJIMA_PROJECT_NAME:-unknown}"
+AGENT="${DEJIMA_AGENT_ID:-}"
 TYPE="${1:-agent.waiting-for-input}"
 
 if [[ ! -S "$SOCKET" ]]; then
@@ -23,9 +24,10 @@ fi
 payload=$(cat 2>/dev/null || echo '{}')
 body=$(jq -n \
     --arg island "$ISLAND" \
+    --arg agent "$AGENT" \
     --arg type "$TYPE" \
     --argjson payload "$payload" \
-    '{island: $island, type: $type, payload: $payload}')
+    '{island: $island, agent: $agent, type: $type, payload: $payload}')
 
 curl --silent --show-error --max-time 3 \
      --unix-socket "$SOCKET" \

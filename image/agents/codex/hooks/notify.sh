@@ -18,6 +18,7 @@ set -euo pipefail
 
 SOCKET="${DEJIMA_SOCKET:-/run/dejima/dejimad.sock}"
 ISLAND="${DEJIMA_PROJECT_NAME:-unknown}"
+AGENT="${DEJIMA_AGENT_ID:-}"
 payload_json="${1:-{}}"
 
 if [[ ! -S "$SOCKET" ]]; then
@@ -34,9 +35,10 @@ esac
 
 body=$(jq -n \
     --arg island "$ISLAND" \
+    --arg agent  "$AGENT" \
     --arg type   "$event_type" \
     --argjson payload "$payload_json" \
-    '{island: $island, type: $type, payload: $payload}')
+    '{island: $island, agent: $agent, type: $type, payload: $payload}')
 
 curl --silent --show-error --max-time 3 \
      --unix-socket "$SOCKET" \

@@ -237,7 +237,8 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	s.emit(events.Event{
 		Type:    events.TypeClientAttached,
 		Island:  name,
-		Payload: map[string]any{"label": label, "agent": spec.ID},
+		Agent:   spec.ID,
+		Payload: map[string]any{"label": label},
 	})
 	defer func() {
 		tracker.Detach(handle)
@@ -247,7 +248,8 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		s.emit(events.Event{
 			Type:    events.TypeClientDetached,
 			Island:  name,
-			Payload: map[string]any{"label": label, "agent": spec.ID},
+			Agent:   spec.ID,
+			Payload: map[string]any{"label": label},
 		})
 		// "last client" is island-wide: fire only when no agent has any client.
 		if len(s.islandPresence(name)) == 0 {

@@ -32,8 +32,11 @@ const (
 
 // Event is the JSON envelope POSTed to webhook subscribers.
 type Event struct {
-	Type      Type           `json:"type"`
-	Island    string         `json:"island,omitempty"`
+	Type   Type   `json:"type"`
+	Island string `json:"island,omitempty"`
+	// Agent is the agent within the island this event concerns (empty for
+	// island-level events or agents that don't identify themselves).
+	Agent     string         `json:"agent,omitempty"`
 	Timestamp time.Time      `json:"timestamp"`
 	Payload   map[string]any `json:"payload,omitempty"`
 }

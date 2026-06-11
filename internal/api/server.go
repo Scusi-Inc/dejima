@@ -202,18 +202,42 @@ func (s *Server) maybeUpdateAgentState(e events.Event) {
 	}
 	short := strings.TrimPrefix(string(e.Type), "agent.")
 	s.agentStateMu.Lock()
-	s.agentStates[e.Island] = AgentStateInfo{Latest: short, UpdatedAt: e.Timestamp}
+	s.agentStates[agentStateKey(e.Island, e.Agent)] = AgentStateInfo{Latest: short, UpdatedAt: e.Timestamp}
 	s.agentStateMu.Unlock()
 }
 
-// agentStateOf returns the latest agent-state entry for an island, or nil.
-func (s *Server) agentStateOf(island string) *AgentStateInfo {
+// agentStateKey is the composite map key for an (island, agent) agent-state.
+func agentStateKey(island, agentID string) string {
+	return island + "\x00" + agentID
+}
+
+// agentStateOf returns the latest agent-state entry for one agent, or nil.
+func (s *Server) agentStateOf(island, agentID string) *AgentStateInfo {
 	s.agentStateMu.Lock()
 	defer s.agentStateMu.Unlock()
-	if st, ok := s.agentStates[island]; ok {
+	if st, ok := s.agentStates[agentStateKey(island, agentID)]; ok {
 		return &st
 	}
 	return nil
+}
+
+// islandAgentState returns the most recently updated agent-state across all of
+// the island's agents — the island-level rollup signal.
+func (s *Server) islandAgentState(island string) *AgentStateInfo {
+	prefix := island + "\x00"
+	s.agentStateMu.Lock()
+	defer s.agentStateMu.Unlock()
+	var best *AgentStateInfo
+	for k, st := range s.agentStates {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if best == nil || st.UpdatedAt.After(best.UpdatedAt) {
+			c := st
+			best = &c
+		}
+	}
+	return best
 }
 
 // Handler returns an http.Handler suitable for the daemon's listener.
@@ -478,7 +502,8 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 	s.emit(events.Event{
 		Type:    events.TypeIslandAgentAdded,
 		Island:  name,
-		Payload: map[string]any{"agent": id, "type": typ},
+		Agent:   id,
+		Payload: map[string]any{"type": typ},
 	})
 	for _, ai := range s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)) {
 		if ai.ID == id {
@@ -524,9 +549,9 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{
-		Type:    events.TypeIslandAgentRemoved,
-		Island:  name,
-		Payload: map[string]any{"agent": id},
+		Type:   events.TypeIslandAgentRemoved,
+		Island: name,
+		Agent:  id,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1155,7 +1180,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		info.Container = string(runtime.StatusErrored)
 	}
 	info.Attached = s.islandPresence(p.Name)
-	info.AgentState = s.agentStateOf(p.Name)
+	info.AgentState = s.islandAgentState(p.Name)
 	info.Agents = s.agentInfos(ctx, p, false)
 	return info
 }
@@ -1184,6 +1209,11 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 			}
 		}
 		ai.Attached = s.presenceSnapshot(p.Name, a.ID)
+		ai.AgentState = s.agentStateOf(p.Name, a.ID)
+		if ai.AgentState == nil && i == 0 {
+			// Surface legacy agent-less events (no DEJIMA_AGENT_ID) on the primary.
+			ai.AgentState = s.agentStateOf(p.Name, "")
+		}
 		out = append(out, ai)
 	}
 	return out

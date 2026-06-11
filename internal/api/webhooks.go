@@ -17,6 +17,7 @@ type SubscribeWebhookRequest struct {
 // AgentEventRequest is the body of POST /v1/internal/agent-event.
 type AgentEventRequest struct {
 	Island  string         `json:"island"`
+	Agent   string         `json:"agent,omitempty"`
 	Type    events.Type    `json:"type"`
 	Payload map[string]any `json:"payload,omitempty"`
 }
@@ -76,6 +77,7 @@ func (s *Server) handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 	s.emit(events.Event{
 		Type:    req.Type,
 		Island:  req.Island,
+		Agent:   req.Agent,
 		Payload: req.Payload,
 	})
 	w.WriteHeader(http.StatusAccepted)
