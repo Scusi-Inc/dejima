@@ -31,6 +31,21 @@ assert_has(){ if printf '%s' "$1" | grep -qF -- "$2"; then pass "$3"; else fail 
 # expect_ok / expect_fail: run a command, assert its exit status, never abort.
 expect_ok(){ local d="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$d"; else fail "$d — command failed: $*"; fi; }
 expect_fail(){ local d="$1"; shift; if "$@" >/dev/null 2>&1; then fail "$d — expected failure but it succeeded"; else pass "$d"; fi; }
+# expect_err_match <desc> <substring> <cmd...>: assert the command FAILS *and*
+# its output contains <substring> — so an unrelated non-zero exit can't pass for
+# a security guard. Used for traversal/deny-all refusals.
+expect_err_match(){
+  local d="$1" want="$2"; shift 2
+  local out rc
+  out="$("$@" 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    fail "$d — expected failure but it succeeded"
+  elif printf '%s' "$out" | grep -qF -- "$want"; then
+    pass "$d"
+  else
+    fail "$d — failed but error did not contain [$want]; got: $out"
+  fi
+}
 
 command -v docker >/dev/null || die "docker not found / not running"
 command -v go     >/dev/null || die "go not found"
@@ -88,7 +103,7 @@ pass "island $ISLAND created and running"
 
 # ---------------------------------------------------------------------------
 step "Scope: deny-all before any grant"
-expect_fail "intake refused before any scope is granted" \
+expect_err_match "intake refused before any scope is granted" "no Port scope" \
   dejima port intake "$ISLAND" "vault:note.md"
 
 step "Set up a host scope with nested files + an escaping symlink"
@@ -119,10 +134,10 @@ expect_ok "intake to a custom dest" dejima port intake "$ISLAND" "vault:note.md"
 GOT="$(dejima exec "$ISLAND" -- cat /tmp/custom.md 2>/dev/null)"
 assert_eq "$GOT" "hello vault" "custom dest honored"
 
-step "Traversal guards: escapes must be REFUSED"
-expect_fail "../ parent traversal refused" \
+step "Traversal guards: escapes must be REFUSED (with the right error)"
+expect_err_match "../ parent traversal refused as scope-escape" "escapes the scope" \
   dejima port intake "$ISLAND" "vault:../../etc/hostname"
-expect_fail "symlink-escape refused"       \
+expect_err_match "symlink-escape refused as scope-escape" "escapes the scope" \
   dejima port intake "$ISLAND" "vault:escape"
 # And prove the secret never crossed:
 if dejima exec "$ISLAND" -- sh -c 'cat /intake/vault/escape 2>/dev/null; cat /intake/vault/../../etc/hostname 2>/dev/null' 2>/dev/null | grep -q "TOP SECRET"; then
@@ -163,7 +178,8 @@ expect_ok "restored ledger verifies again" dejima audit --verify
 # ---------------------------------------------------------------------------
 step "Revoke → back to deny-all"
 expect_ok "revoke vault" dejima port revoke "$ISLAND" "vault"
-expect_fail "intake refused after revoke" dejima port intake "$ISLAND" "vault:note.md"
+expect_err_match "intake refused after revoke" "no Port scope" \
+  dejima port intake "$ISLAND" "vault:note.md"
 
 # ---------------------------------------------------------------------------
 step "Multi-agent: seed two agents at create time"
