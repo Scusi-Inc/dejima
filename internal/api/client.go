@@ -119,6 +119,30 @@ func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/v1/healthz", nil, nil)
 }
 
+// ListPortScopes returns an island's brokered host-file grants.
+func (c *Client) ListPortScopes(ctx context.Context, name string) (*PortScopesResponse, error) {
+	var out PortScopesResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+name+"/port/scopes", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GrantPortScope grants an island brokered access to a host directory.
+func (c *Client) GrantPortScope(ctx context.Context, name, hostPath, mode string) (*PortScopeView, error) {
+	var out PortScopeView
+	req := PortScopeRequest{HostPath: hostPath, Mode: mode}
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/port/scopes", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RevokePortScope drops a grant by scope name.
+func (c *Client) RevokePortScope(ctx context.Context, name, scope string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/port/scopes/"+url.PathEscape(scope), nil, nil)
+}
+
 // ListIslands returns every island known to the daemon.
 func (c *Client) ListIslands(ctx context.Context) ([]IslandInfo, error) {
 	var out []IslandInfo

@@ -29,6 +29,16 @@ func SocketPath() (string, error) {
 	return filepath.Join(root, "dejimad.sock"), nil
 }
 
+// LedgerPath returns ~/.dejima/ledger.jsonl — the append-only, hash-chained
+// audit log of brokered Port operations (scope grants and file Trades).
+func LedgerPath() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "ledger.jsonl"), nil
+}
+
 // ProjectsDir returns ~/.dejima/projects, creating it if necessary.
 func ProjectsDir() (string, error) {
 	root, err := Root()

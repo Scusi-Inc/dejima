@@ -180,6 +180,25 @@ type ClaudeCredentialsStatus struct {
 	HostSource string `json:"host_source,omitempty"`
 }
 
+// PortScopeRequest is the body of POST /v1/islands/:name/port/scopes.
+type PortScopeRequest struct {
+	HostPath string `json:"host_path"`
+	Mode     string `json:"mode"` // "ro" (V1); "rw" is rejected until the read-write milestone
+}
+
+// PortScopeView is one brokered host-file grant as returned by the API.
+type PortScopeView struct {
+	Name      string    `json:"name"`
+	HostPath  string    `json:"host_path"`
+	Mode      string    `json:"mode"`
+	GrantedAt time.Time `json:"granted_at"`
+}
+
+// PortScopesResponse is the body of GET /v1/islands/:name/port/scopes.
+type PortScopesResponse struct {
+	Scopes []PortScopeView `json:"scopes"`
+}
+
 // ErrorResponse is the body of any non-2xx response.
 type ErrorResponse struct {
 	Error string `json:"error"`

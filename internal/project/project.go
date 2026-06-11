@@ -80,6 +80,9 @@ type Project struct {
 	LastUsedAt   time.Time   `toml:"last_used_at"`
 	DesiredState State       `toml:"state"`
 	Agents       []AgentSpec `toml:"agents,omitempty"`
+	// Ports are brokered host-filesystem grants for this island (see ports.go).
+	// Empty means deny-all: the island reaches no host content outside its repo.
+	Ports []PortScope `toml:"ports,omitempty"`
 }
 
 // EnsureAgents back-fills Agents from the legacy scalar Agent field for projects
