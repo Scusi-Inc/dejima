@@ -79,6 +79,14 @@
   .usecase p { margin: 0 0 0.8rem; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
   .usecase .cta { color: var(--accent); font-size: 0.85rem; font-weight: 600;
     letter-spacing: 0.02em; }
+  /* Two-pillar split (operator / builder) ---------------------------- */
+  .pillars { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.6rem;
+    margin: 1.6rem 0 0; }
+  .pillar { display: flex; flex-direction: column; }
+  .pillar .lead { margin: 0 0 0.45rem; font-size: 1.15rem; color: var(--hover); }
+  .pillar .plain { margin: 0 0 0.8rem; }
+  .pillar .pain { margin: 0 0 1rem; font-size: 0.9rem; }
+  .pillar .usecase { margin-top: auto; }
   /* Install picker --------------------------------------------------- */
   .picker { margin: 1.2rem 0 1.6rem; display: flex; flex-direction: column; gap: 0.7rem; }
   .pick-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
@@ -110,7 +118,7 @@
     font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.85em;
     color: var(--fg); }
   @media (max-width: 720px) {
-    .usecases { grid-template-columns: 1fr; }
+    .usecases, .pillars { grid-template-columns: 1fr; }
     main { padding: 3rem 1.25rem 5rem; }
     header h1 { font-size: 2rem; }
     .pick-label { min-width: 0; }
@@ -131,24 +139,30 @@
 <p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
 <section>
-  <p><strong>Dejima</strong> turns a Mac mini or Linux box into a secure host for AI agents. Built for <strong>coding agent CLIs</strong> (Claude Code, Codex); usable for any agent that wants isolation and an API to drive it — including <strong>headless API-SDK loops</strong>. Each project lives in its own island — an isolated container running <strong>one or more agents together</strong>, each sandboxed from your machine and from each other, on hardware you control.</p>
-  <p class="plain">In other words: run a <strong>fleet</strong> of Claude Code / Codex agents on your own Mac mini or server — each in its own container so they can't step on each other or your host, sharing one set of credentials so you permission them once — and get the API to build dashboards, phone clients, or your own agent harness on top. Your code never leaves your box.</p>
-  <div class="pain">
-    Running a handful of agents shouldn't mean tmux sessions you forget, context bleeding between projects, an agent touching the wrong repo, and re-approving permissions for every single one. You shouldn't have to baby your environment just to let agents work. There's a better way.
-  </div>
+  <p>Whether you're running agents on a server you control or building a product that runs agents on machines like it, <strong>Dejima</strong> is the secure substrate underneath. It turns a Mac mini or Linux box into an isolated host for AI agents — each project in its own island, a container running <strong>one or more agents together</strong>, sandboxed from your machine and from each other, driven by a clean API. Built for <strong>coding agent CLIs</strong> (Claude Code, Codex) and <strong>headless API-SDK loops</strong> alike.</p>
 </section>
 
-<section class="usecases">
-  <a class="usecase" href="#home-server">
-    <h3>Run a fleet of agents on your own box</h3>
-    <p>Several Claude Code / Codex agents per project, each sandboxed in its own container — no context bleed, no agent trashing your host or another repo. Run a few on one codebase, each on its own git worktree, permissioned once. Your hardware; your code never leaves it.</p>
-    <span class="cta">Run it yourself →</span>
-  </a>
-  <a class="usecase" href="#api-builder">
-    <h3>Build services on agent execution</h3>
-    <p>Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools. Target one HTTP/WebSocket API and get isolated containers, multi-attach sessions, lifecycle, credential injection, and events — instead of reinventing them.</p>
-    <span class="cta">For builders →</span>
-  </a>
+<section class="pillars">
+  <div class="pillar">
+    <h3 class="lead">Running agents on a Mac mini or Linux box?</h3>
+    <p class="plain">Then Dejima is your own agent server — run a fleet of Claude Code / Codex agents, each sandboxed, all sharing one set of credentials, with live state and simple controls on one dashboard.</p>
+    <div class="pain">Six agents in tmux you can't tell apart, context bleeding between projects, re-authing every one — and one bad command from touching the wrong repo.</div>
+    <a class="usecase" href="#home-server">
+      <h3>Run agents securely on your own box</h3>
+      <p>Several Claude Code / Codex agents per project, each sandboxed in its own container — no context bleed, no agent trashing your host or another repo. Each on its own git worktree, all sharing one set of credentials so you permission them once. See every agent's state at a glance and manage them with simple controls.</p>
+      <span class="cta">Run it yourself →</span>
+    </a>
+  </div>
+  <div class="pillar">
+    <h3 class="lead">Building a product on top of agents?</h3>
+    <p class="plain">Then Dejima is your agent backend — target one API and get isolated containers, sessions, lifecycle, agent-state events, and management controls, without building any of it.</p>
+    <div class="pain">Shipping on agents shouldn't mean reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth from scratch.</div>
+    <a class="usecase" href="#api-builder">
+      <h3>Build services on isolated, secured agents</h3>
+      <p>Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools. Target one HTTP/WebSocket API and get isolated containers, multi-attach sessions, lifecycle, credential injection, agent-state events &amp; analytics, and management controllers — instead of reinventing them.</p>
+      <span class="cta">For builders →</span>
+    </a>
+  </div>
 </section>
 
 <h2>Architecture</h2>
