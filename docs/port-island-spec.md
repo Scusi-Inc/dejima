@@ -216,14 +216,14 @@ and logs every operation).
 
 ## 7. Phases (rollout)
 
-| Phase | Goal |
-|-------|------|
-| **0** | Port daemon skeleton: one-per-host, per-island scope registry, deny-all default. |
-| **1** | `Intake` / `Trade` copy-in / copy-out, **read-only**, every crossing ledgered. |
-| **2** | Home Island handler: run an assistant orchestrator as a persistent headless island; wire it to the Port and the spawn-Project-Island API. |
-| **3** | SSH-target façade + first upstreamed backend adapter (Hermes or Goose). |
-| **4** | Read-write trading (hardened scope + Ledger; explicit opt-in per scope). |
-| **5** | Live brokered mount (FUSE/9p) — only after RW copy mode is proven. |
+| Phase | Status | Goal |
+|-------|--------|------|
+| **0** | Built | Scope registry on `Project` (deny-all default), hash-chained `internal/ledger`, `dejima port grant/list/revoke`. |
+| **1** | Built | `Intake` (host→island) + `Export` (island→host staging), **read-only**, symlink-safe, fail-closed-ledgered. `dejima port intake/export`. |
+| **2** | Partial | `Role`=home on `Project`, `DEJIMA_HOME` env, `dejima home create` + native-vs-island fork. **Deferred:** in-island brain-orchestration helpers and the macOS TCP-auth path for brain-driven Port/spawn (couples to multi-agent; surfaced as a caveat, not shipped). |
+| **3** | Not started | SSH-target façade + first upstreamed backend adapter (Hermes or Goose). |
+| **4** | Not started | Read-write trading (hardened scope + Ledger; explicit opt-in per scope). |
+| **5** | Not started | Live brokered mount (FUSE/9p) — only after RW copy mode is proven. |
 
 Capability brokering (§3.4) and the native-execution tooling (§3.3) are **not** on this ladder;
 they are tracked as open questions (§10).
