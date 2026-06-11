@@ -736,7 +736,7 @@ func newInitCmd() *cobra.Command {
 	var (
 		repo      string
 		name      string
-		agent     string
+		agents    []string
 		image     string
 		cmdStr    string
 		memory    string
@@ -754,10 +754,20 @@ func newInitCmd() *cobra.Command {
 			if repo == "" {
 				return fmt.Errorf("--repo is required")
 			}
-			if agent == api.AgentHeadless && strings.TrimSpace(cmdStr) == "" {
+			multi := len(agents) > 1
+			if multi && strings.TrimSpace(cmdStr) != "" {
+				return fmt.Errorf("--cmd can't be combined with multiple --agent; create, then `dejima agent add --cmd` for headless agents")
+			}
+			// Single-agent path keeps the existing scalar validation. With one or
+			// zero --agent, agent is that value (or "" → server default).
+			agent := ""
+			if len(agents) == 1 {
+				agent = agents[0]
+			}
+			if !multi && agent == api.AgentHeadless && strings.TrimSpace(cmdStr) == "" {
 				return fmt.Errorf("--cmd is required when --agent %s", api.AgentHeadless)
 			}
-			if agent != api.AgentHeadless && strings.TrimSpace(cmdStr) != "" {
+			if !multi && agent != api.AgentHeadless && strings.TrimSpace(cmdStr) != "" {
 				return fmt.Errorf("--cmd is only meaningful with --agent %s", api.AgentHeadless)
 			}
 			// Resolve the repo client-side: a URL clones directly; a local path
@@ -782,6 +792,13 @@ func newInitCmd() *cobra.Command {
 					return err
 				}
 			}
+			// With multiple --agent, seed them via Agents (element 0 is primary).
+			var reqAgents []api.AgentSpecRequest
+			if multi {
+				for _, a := range agents {
+					reqAgents = append(reqAgents, api.AgentSpecRequest{Type: a})
+				}
+			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
 			info, err := c.CreateIsland(ctx, api.CreateIslandRequest{
@@ -789,6 +806,7 @@ func newInitCmd() *cobra.Command {
 				Repo:     res.Repo,
 				SeedPath: res.SeedPath,
 				Agent:    agent,
+				Agents:   reqAgents,
 				Image:    image,
 				Cmd:      cmdStr,
 				Resources: api.Resources{
@@ -801,6 +819,9 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("created island %q (container: %s)\n", info.Name, info.Container)
+			if multi {
+				fmt.Printf("agents:  dejima agent ls %s\n", info.Name)
+			}
 			if info.Agent == api.AgentHeadless {
 				fmt.Printf("logs:    dejima logs %s --follow\n", info.Name)
 			} else {
@@ -812,7 +833,7 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL, or a local path (cloned from its origin by default) (required)")
 	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk (captures unpushed commits) instead of cloning from origin; requires a local daemon")
 	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent to run: claude-code (default), codex, or headless (with --cmd)")
+	cmd.Flags().StringArrayVar(&agents, "agent", nil, "agent to run: claude-code (default), codex, or headless (with --cmd); repeat to seed multiple agents")
 	cmd.Flags().StringVar(&image, "image", "", "island image (default: dejima/island:latest)")
 	cmd.Flags().StringVar(&cmdStr, "cmd", "", `entrypoint command for --agent headless (e.g. "python my_loop.py"); ignored for other agents`)
 	cmd.Flags().StringVar(&memory, "memory", "", "memory limit (e.g. 4G); default: unlimited")

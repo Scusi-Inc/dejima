@@ -490,22 +490,10 @@ func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
 // addAgent adds an agent to an existing island. The agent gets its own git
 // worktree + tmux session; if the island is running the session is brought up
 // immediately, otherwise it materializes on the next wake (via reconcile).
-func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	lock := s.projectLock(name)
-	lock.Lock()
-	defer lock.Unlock()
-
-	p, err := project.Load(name)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	var req AgentSpecRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
-		return
-	}
+// newAgentSpec validates an agent request and builds a non-primary AgentSpec
+// with a freshly allocated id. Type defaults to the island's primary agent type
+// (or DefaultAgent) when unset. Shared by addAgent and create-time seeding.
+func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project.AgentSpec, error) {
 	typ := strings.TrimSpace(req.Type)
 	if typ == "" {
 		if pa := p.PrimaryAgent(); pa != nil {
@@ -516,16 +504,11 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	cmd := strings.TrimSpace(req.Cmd)
 	if !handlers.Attachable(typ) && cmd == "" {
-		writeError(w, http.StatusBadRequest,
-			fmt.Errorf("agent type %q is headless; it requires a command (cmd)", typ))
-		return
+		return project.AgentSpec{}, fmt.Errorf("agent type %q is headless; it requires a command (cmd)", typ)
 	}
 	if handlers.Attachable(typ) && cmd != "" {
-		writeError(w, http.StatusBadRequest,
-			fmt.Errorf("cmd is only meaningful for headless agents, not %q", typ))
-		return
+		return project.AgentSpec{}, fmt.Errorf("cmd is only meaningful for headless agents, not %q", typ)
 	}
-
 	id := p.NextAgentID()
 	spec := project.AgentSpec{
 		ID:        id,
@@ -542,6 +525,32 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 	if !handlers.Attachable(typ) {
 		spec.Restart = true
 	}
+	return spec, nil
+}
+
+func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	var req AgentSpecRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	spec, err := s.newAgentSpec(p, req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	id := spec.ID
+	typ := spec.Type
 	p.AddAgent(spec)
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -715,7 +724,15 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent := req.Agent
+	// Agents, when present, is the source of truth; element 0 defines the primary.
+	// Otherwise fall back to the scalar agent/cmd (single-agent back-compat).
+	agent := strings.TrimSpace(req.Agent)
+	cmd := strings.TrimSpace(req.Cmd)
+	if len(req.Agents) > 0 {
+		primary := req.Agents[0]
+		agent = strings.TrimSpace(primary.Type)
+		cmd = strings.TrimSpace(primary.Cmd)
+	}
 	if agent == "" {
 		agent = DefaultAgent
 	}
@@ -723,7 +740,6 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	if image == "" {
 		image = DefaultImage
 	}
-	cmd := strings.TrimSpace(req.Cmd)
 	if agent == AgentHeadless && cmd == "" {
 		writeError(w, http.StatusBadRequest, errors.New(`agent "headless" requires a non-empty cmd`))
 		return
@@ -745,8 +761,28 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("a home island runs an assistant brain — it must be headless (agent=%q with a cmd)", AgentHeadless))
 		return
 	}
+	// Validate extra seed agents up front so bad input is a clean 400, not a
+	// provisioning 500. Element 0 is the primary, already validated above.
+	for i, a := range req.Agents {
+		if i == 0 {
+			continue
+		}
+		t := strings.TrimSpace(a.Type)
+		if t == "" {
+			t = agent
+		}
+		ac := strings.TrimSpace(a.Cmd)
+		if !handlers.Attachable(t) && ac == "" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("agent %d (%q) is headless; it requires a cmd", i, t))
+			return
+		}
+		if handlers.Attachable(t) && ac != "" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("agent %d (%q): cmd is only meaningful for headless agents", i, t))
+			return
+		}
+	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.Resources, req.SeedPath)
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.Resources, req.SeedPath, req.Agents)
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -780,7 +816,10 @@ func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 }
 
 // provision creates the on-disk project, volumes, and a running container.
-func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role string, res Resources, seedPath string) (*project.Project, error) {
+// seedAgents, when non-empty, describes the island's agents (element 0 is the
+// primary, already synthesized from the scalar agent/cmd); the rest are added
+// as co-located agents before the container is reconciled.
+func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role string, res Resources, seedPath string, seedAgents []AgentSpecRequest) (*project.Project, error) {
 	exists, err := s.rt.ImageExists(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("check image %s: %w", image, err)
@@ -807,6 +846,21 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		LastUsedAt:   now,
 	}
 	p.EnsureAgents() // mirror the scalar agent into Agents[0] for new islands
+	// Seed any additional agents requested at create time. Agents[0] is the
+	// primary (just synthesized); apply its label and add the rest as co-located
+	// agents — reconcileAgents brings up their worktrees + sessions below.
+	if len(seedAgents) > 0 {
+		if lbl := strings.TrimSpace(seedAgents[0].Label); lbl != "" {
+			p.Agents[0].Label = lbl
+		}
+		for _, ar := range seedAgents[1:] {
+			spec, err := s.newAgentSpec(p, ar)
+			if err != nil {
+				return p, err
+			}
+			p.AddAgent(spec)
+		}
+	}
 	if err := project.EnsureProjectSubdirs(name); err != nil {
 		return p, err
 	}

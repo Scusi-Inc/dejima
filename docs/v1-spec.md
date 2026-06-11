@@ -302,7 +302,7 @@ The agent fundamentally needs *some* credential to call its LLM API. You can't i
 
 | Term     | Meaning                                                       |
 |----------|---------------------------------------------------------------|
-| Island   | The container holding a single project and a single agent.   |
+| Island   | The container holding a single project and one or more agents. |
 | Bridge   | The brokered I/O channel between host and island.            |
 | Trade    | A synced export of changes from island to host.              |
 | Intake   | Files passed into the island via `dejima import`.            |

@@ -327,6 +327,38 @@ func TestHeadlessAgentNotAttachable(t *testing.T) {
 	}
 }
 
+// TestCreateSeedsMultipleAgents covers seeding >1 agent at create time via the
+// Agents field: element 0 is the primary, the rest are co-located agents.
+func TestCreateSeedsMultipleAgents(t *testing.T) {
+	h, _ := newTestServer(t)
+	body := `{"repo":"r","name":"multi","agents":[{"type":"claude-code"},{"type":"codex","label":"backend"}]}`
+	rr := do(t, h, http.MethodPost, "/v1/islands", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	var info IslandInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Agents) != 2 {
+		t.Fatalf("want 2 agents, got %d (%+v)", len(info.Agents), info.Agents)
+	}
+	if info.Agents[0].ID != "a1" || info.Agents[0].Type != "claude-code" {
+		t.Errorf("primary = %+v, want a1/claude-code", info.Agents[0])
+	}
+	if info.Agents[1].ID != "a2" || info.Agents[1].Type != "codex" || info.Agents[1].Label != "backend" {
+		t.Errorf("second = %+v, want a2/codex/backend", info.Agents[1])
+	}
+	if info.Agent != "claude-code" {
+		t.Errorf("scalar back-compat agent = %q, want claude-code", info.Agent)
+	}
+
+	// A headless extra without a cmd is a clean 400, not a 500.
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"bad","agents":[{"type":"claude-code"},{"type":"headless"}]}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("headless extra without cmd: got %d, want 400 (%s)", rr.Code, rr.Body.String())
+	}
+}
+
 // TestHomeIslandRole covers Home Island creation: role=home requires a headless
 // brain, an unknown role is rejected, and a valid home island surfaces its role
 // and gets the DEJIMA_HOME env so the brain can self-identify.
