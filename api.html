@@ -247,6 +247,32 @@ curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
 
 <p>Bytes are base64 because tmux output is raw binary (escape sequences, control bytes) and JSON-over-websocket is the simplest cross-language transport for it.</p>
 
+<p>The bare <code>/session</code> route attaches to the island's <strong>primary</strong> agent. To target a specific agent, use <code>/v1/islands/{name}/agents/{id}/session</code> (see Agents, below). Presence and shared-screen are scoped per agent.</p>
+
+<!-- ============================================================ -->
+<h2 id="agents">Agents</h2>
+<p>An island hosts one or more agents in a single container. Each interactive agent has its own tmux session and git worktree; all agents share the island's home (credentials + tool-auth). A headless agent runs as a supervised process with a per-agent log.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/agents</span><span class="desc">List the agents in an island</span></div>
+<pre><code>[ { "id": "a1", "type": "claude-code", "tmux": "agent-a1", "branch": "",
+    "worktree": "/workspace", "attachable": true, "state": "running" },
+  { "id": "a2", "type": "codex", "label": "frontend", "branch": "agent/a2",
+    "worktree": "/workspace/.agents/a2", "attachable": true, "state": "running" } ]</code></pre>
+<p>Each entry may also carry <code>agent_state</code> (latest agent-emitted signal), <code>attached</code> (clients on that agent), and <code>error</code> (last orchestration failure, if any).</p>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/agents</span><span class="desc">Add an agent</span></div>
+<pre><code>POST { "type": "codex", "label": "frontend" }     // interactive
+POST { "type": "headless", "cmd": "python loop.py" } // supervised process
+→ 201 AgentInfo</code></pre>
+<p>The agent gets the next <code>a&lt;N&gt;</code> id, its own worktree/branch (<code>agent/&lt;id&gt;</code>), and — if the island is running — a live session immediately; otherwise it materializes on the next wake. <code>type</code> defaults to the primary agent's type.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/agents/{id}</span><span class="desc">One agent's detail</span></div>
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/islands/{name}/agents/{id}</span><span class="desc">Remove an agent</span></div>
+<p>Kills the agent's session and prunes its worktree (the branch is kept). The primary and the last remaining agent can't be removed. Returns <code>204</code>.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/agents/{id}/session?label=&lt;client&gt;</span><span class="desc">Attach to a specific agent</span></div>
+<p>Same websocket protocol as the island <code>/session</code> route above. Interactive agents only — a headless agent returns <code>409</code> (use its log instead).</p>
+
 <div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/sessions/revoke</span><span class="desc">Drop all active client websockets</span></div>
 <p>Force-disconnects every attached client across every island. Containers and agent processes keep running. Used by <code>dejima logout-all</code>. Returns <code>{ "revoked": N }</code>.</p>
 
@@ -271,8 +297,8 @@ curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
 <div class="endpoint"><span class="method m-put">PUT</span><span class="path">/v1/islands/{name}/files/{path...}</span><span class="desc">Write a file into the island</span></div>
 <p>Body is the raw file bytes. Parent directories are created if missing. Returns <code>204 No Content</code>.</p>
 
-<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/logs?follow=true</span><span class="desc">Stream container logs</span></div>
-<p>Returns a chunked text stream of container stdout + stderr. With <code>?follow=true</code>, the stream stays open until the client disconnects.</p>
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/logs?follow=true</span><span class="desc">Stream container / agent logs</span></div>
+<p>Returns a chunked text stream of container stdout + stderr. With <code>?follow=true</code>, the stream stays open until the client disconnects. Add <code>?agent=&lt;id&gt;</code> to tail a headless agent's log file instead (interactive agents return <code>409</code> — attach to their session).</p>
 
 <!-- ============================================================ -->
 <h2 id="events">Events &amp; webhooks</h2>
@@ -341,6 +367,7 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
 <div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/internal/agent-event</span><span class="desc">Used by per-agent shims inside islands</span></div>
 <p>Per-agent shim scripts (currently Claude Code's hook integration) POST agent-specific events here to surface them through the rest of the system. <strong>Not meant for external clients</strong> — it has no auth beyond access to the daemon socket, and is reachable from inside islands via the bind-mounted socket at <code>/run/dejima/dejimad.sock</code>.</p>
 <pre><code>POST { "island": "foo",
+       "agent": "a2",                  // optional; which agent (from DEJIMA_AGENT_ID)
        "type": "agent.waiting-for-input",
        "payload": { "tool": "..." }    // optional, free-form
      }
@@ -363,8 +390,23 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
   <tr><td><code>last_used_at</code></td><td>RFC3339</td><td></td></tr>
   <tr><td><code>attached</code></td><td>[]PresenceEntry</td><td>Live client list; empty if no one is connected</td></tr>
   <tr><td><code>stats</code></td><td>IslandStats?</td><td>Memory + CPU; nil if not running</td></tr>
-  <tr><td><code>agent_state</code></td><td>AgentStateInfo?</td><td>Latest agent-emitted event</td></tr>
+  <tr><td><code>agent_state</code></td><td>AgentStateInfo?</td><td>Latest agent-emitted event (island rollup)</td></tr>
+  <tr><td><code>agents</code></td><td>[]AgentInfo</td><td>The agents in the island (≥1); <code>agent</code> mirrors the primary's type</td></tr>
   <tr><td><code>git</code></td><td>GitInfo?</td><td>Detail endpoint only (slow path)</td></tr>
+</table>
+
+<h3>AgentInfo</h3>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+  <tr><td><code>id</code></td><td>string</td><td>Stable per-island handle: <code>a1</code>, <code>a2</code>, …</td></tr>
+  <tr><td><code>type</code></td><td>string</td><td><code>claude-code</code> | <code>codex</code> | <code>headless</code> | custom</td></tr>
+  <tr><td><code>label</code></td><td>string</td><td>Optional, user-set</td></tr>
+  <tr><td><code>branch</code> / <code>worktree</code></td><td>string</td><td>The agent's git branch + working directory</td></tr>
+  <tr><td><code>attachable</code></td><td>bool</td><td>False for headless (no PTY)</td></tr>
+  <tr><td><code>state</code></td><td>string</td><td><code>running</code> / <code>stopped</code> (detail/list only)</td></tr>
+  <tr><td><code>agent_state</code></td><td>AgentStateInfo?</td><td>This agent's latest emitted signal</td></tr>
+  <tr><td><code>attached</code></td><td>[]PresenceEntry</td><td>Clients on this agent</td></tr>
+  <tr><td><code>error</code></td><td>string</td><td>Last orchestration failure, if any</td></tr>
 </table>
 
 <h3>IslandStats</h3>

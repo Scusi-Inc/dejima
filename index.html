@@ -131,7 +131,7 @@
 <p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
 <section>
-  <p><strong>Dejima</strong> turns a Mac mini or Linux box into a secure, persistent host for AI agents. Built for <strong>coding agent CLIs</strong> (Claude Code, Codex); usable for any agent that wants isolation, persistence, and an API to drive it — including <strong>headless API-SDK loops</strong>. Each project lives in its own island — an isolated container with an agent — accessible from any of your devices.</p>
+  <p><strong>Dejima</strong> turns a Mac mini or Linux box into a secure, persistent host for AI agents. Built for <strong>coding agent CLIs</strong> (Claude Code, Codex); usable for any agent that wants isolation, persistence, and an API to drive it — including <strong>headless API-SDK loops</strong>. Each project lives in its own island — an isolated container running <strong>one or more agents together</strong>, accessible from any of your devices.</p>
   <p class="plain">In other words: it lets you run a bunch of Claude Code sessions on your own Mac mini or server without losing your mind to tmux — and gives you the API to build dashboards, phone clients, or your own agent harness on top.</p>
   <div class="pain">
     Managing multiple instances of Claude Code shouldn't require manually provisioning tmux sessions, fighting SSH drops, and wrestling with folder permissions for every parallel task. You shouldn't have to baby your environment just to let an agent work in the background. There's a better way.
@@ -170,9 +170,9 @@
              │  isolation boundary
              ▼
 ┌──────────────────────────┐
-│  Agent in an island      │   one container per project
+│  Agents in an island     │   one container, N agents per project
 └──────────────────────────┘</code></pre>
-<p>Inside each island, an interactive CLI agent (Claude Code, Codex) runs under a long-lived <strong>tmux</strong> session — that's what keeps it alive when no client is attached, and how multiple clients can share the same screen. The daemon bridges your websocket to that tmux session via a host-side <strong>PTY</strong>, which handles terminal sizing, multi-client multiplexing, and clean detach on disconnect. A <strong>headless</strong> agent (any user-supplied command, e.g. a Python SDK loop) skips tmux entirely: it runs as the container's main process, with stdout/stderr captured for <code>dejima logs</code>. Two modes, same isolation + lifecycle + events.</p>
+<p>An island holds <strong>one or more agents</strong> in a single container — they share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> so they don't step on each other. Each interactive CLI agent (Claude Code, Codex) runs under its own long-lived <strong>tmux</strong> session — that's what keeps it alive when no client is attached, and how multiple clients share the same screen. The daemon bridges your websocket to a specific agent's tmux session via a host-side <strong>PTY</strong>, which handles terminal sizing, multi-client multiplexing, and clean detach on disconnect. A <strong>headless</strong> agent (any user-supplied command, e.g. a Python SDK loop) runs as a supervised process with its output captured for <code>dejima logs</code>. Same isolation + lifecycle + events, whichever mix you run.</p>
 
 <p class="plain"><em>"API" in these docs means Dejima's HTTP/WebSocket control surface — the thing your CLI, dashboard, or phone client targets. Anthropic's and OpenAI's APIs are reached by the agents inside islands, on their own.</em></p>
 
@@ -390,7 +390,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
 dejima                                                       # that's the interface
 </code></pre>
 <p>(The installer walks you through everything — Tailscale, Docker, the service. Step-by-step per platform in <a href="#install">Install</a> above.)</p>
-<p>Running <code>dejima</code> opens an interactive dashboard: live state and presence for every island — a project plus its agent, in its own container. Press <code>n</code> to launch one: it scans your code folder, lists your repos with their git status, and provisions the island in a couple of keystrokes. Press <code>⏎</code> to open an island in a new window, <code>?</code> for the full key map. No tmux mnemonics to memorize, no <code>claude1</code>/<code>claude2</code> ambiguity — and closing your laptop kills nothing; the agent keeps working and you reattach from any device.</p>
+<p>Running <code>dejima</code> opens an interactive dashboard: live state and presence for every island, expandable into a tree of the agents inside it. Press <code>n</code> to launch one: it scans your code folder, lists your repos with their git status, and provisions the island in a couple of keystrokes; <code>+</code> adds another agent to an island. Press <code>⏎</code> to open an island (or a specific agent) in a new window, <code>?</code> for the full key map. No tmux mnemonics to memorize, no <code>claude1</code>/<code>claude2</code> ambiguity — and closing your laptop kills nothing; the agents keep working and you reattach from any device.</p>
 <pre><code>dejima                             # interactive dashboard
 #  n  → pick a repo, choose an agent (Claude Code / Codex), launch
 #  ⏎  → open in a new window   ·   h hibernate   ·   ?  help
@@ -403,18 +403,20 @@ dejima connect foo                 # drops into Claude Code, in foo's island
 
 DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # from your laptop
 </code></pre>
-<p>Repos can come from anywhere: a git URL, or a <strong>local checkout already on disk</strong> — Dejima clones from its remote by default, or seeds from your working copy (<code>--local-copy</code>) to capture unpushed work. And one repo can back <strong>several islands at once</strong> — Claude Code and Codex side by side, or two agents on parallel tasks.</p>
+<p>Repos can come from anywhere: a git URL, or a <strong>local checkout already on disk</strong> — Dejima clones from its remote by default, or seeds from your working copy (<code>--local-copy</code>) to capture unpushed work. And one island can run <strong>several agents at once</strong> — Claude Code and Codex side by side, or two agents on parallel tasks, each on its own git worktree but sharing one set of credentials so you permission them once, not N times.</p>
 <p><strong>Why it's worth it:</strong> islands are real containers. Each has its own <code>$HOME</code>, its own <code>git</code> config, its own <code>gh</code> credentials, its own working directory. Cross-pollination between projects isn't a discipline thing — the kernel won't let it happen. And because sessions are tmux-backed, your laptop closing or your network blipping doesn't kill anything; you reattach where you left off, from wherever you are.</p>
 
 <h2 id="api-builder">Use case: Product builder</h2>
 <p><strong>If you're building a product on top of agent CLIs</strong> — a multi-agent dashboard, a chat-driven coding bot, a web IDE, a team-internal tool — Dejima is the execution substrate so you don't reinvent container lifecycle, PTY multiplexing, session management, and credential injection for your one product.</p>
 <p>It's the persistent runtime layer for agent-native work — your control plane (a UI, a bot, the CLI) on top, your compute underneath, isolation in between. The boring middle is done and OSS; you build the interesting part.</p>
 <pre><code># Target the Dejima HTTP API from any language.
-POST   /v1/islands          { "repo": "...", "agent": "claude-code" }
-GET    /v1/islands          # list all islands
-GET    /v1/islands/:name     # live detail: presence, cpu/mem, git, crash health
-GET    /v1/islands/:name/session       # websocket PTY stream, multi-attach
-POST   /v1/islands/:name/exec          # one-shot command
+POST   /v1/islands                     { "repo": "...", "agent": "claude-code" }
+GET    /v1/islands                      # list all islands
+GET    /v1/islands/:name                # live detail: agents, presence, cpu/mem, git, health
+POST   /v1/islands/:name/agents         { "type": "codex" }   # add an agent
+GET    /v1/islands/:name/agents         # list the agents in an island
+GET    /v1/islands/:name/agents/:id/session   # websocket PTY stream, multi-attach
+POST   /v1/islands/:name/exec           # one-shot command
 POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 </code></pre>
 <p><strong>Why it's worth it:</strong> the boring substrate work — container lifecycle, host-side PTY, multi-client multiplexing, credential injection, webhook events, service install, Tailscale-pinned remote access — is done and OSS. You build the interesting part. The same API the CLI uses is the one you target; if a feature exists in <code>dejima</code>, it exists for you too. Full surface documented at <a href="api.html">the API reference</a>.</p>
@@ -481,7 +483,8 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
 <h2>Concepts</h2>
 <table>
   <tr><th>Term</th><th>Meaning</th></tr>
-  <tr><td><code>Island</code></td><td>The container holding a single project and a single agent.</td></tr>
+  <tr><td><code>Island</code></td><td>The container holding one project and one or more agents.</td></tr>
+  <tr><td><code>Agent</code></td><td>One CLI (Claude Code, Codex) or headless process inside an island, on its own git worktree.</td></tr>
   <tr><td><code>Bridge</code></td><td>The brokered I/O channel between host and island.</td></tr>
   <tr><td><code>Trade</code></td><td><em>(planned)</em> A brokered, synced export of changes from island to host.</td></tr>
   <tr><td><code>Intake</code></td><td><em>(planned)</em> Files brokered into the island from the host.</td></tr>

@@ -299,7 +299,8 @@ Multiple devices can attach to the same island session simultaneously. Each sees
 
 | Term     | Meaning                                                       |
 |----------|---------------------------------------------------------------|
-| Island   | The container holding a single project and a single agent.   |
+| Island   | The container holding one project and one or more agents.   |
+| Agent    | A CLI (Claude Code, Codex) or headless process in an island, on its own git worktree. |
 | Bridge   | The brokered I/O channel between host and island.            |
 | Trade    | A synced export of changes from island to host.              |
 | Intake   | Files passed into the island via `dejima import`.            |
