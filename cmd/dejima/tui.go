@@ -883,24 +883,46 @@ func agentByID(isl api.IslandInfo, id string) api.AgentInfo {
 	return api.AgentInfo{ID: id}
 }
 
-// agentRowText renders one agent's list line: id, label/type, state, signal.
+// Agent kind glyphs. Shape encodes what the agent *is* (stable identity);
+// color (see agentGlyph) encodes how it's *doing* (state). Islands keep their
+// own lifecycle glyphs (glyphFor) — these are for the indented agent rows.
+const (
+	glyphTerminal = "❯" // interactive agent — owns a tmux session, attachable
+	glyphHeadless = "■" // headless agent — supervised background process, logs only
+)
+
+// agentGlyph renders an agent's kind glyph colored by its state: the shape says
+// terminal vs headless, the color says running / idle / needs-you / error.
+func agentGlyph(a api.AgentInfo) string {
+	g := glyphTerminal
+	if !a.Attachable {
+		g = glyphHeadless
+	}
+	style := styleHibernate // gray: idle / stopped (also the default)
+	switch {
+	case a.Error != "":
+		style = styleErrored
+	case a.AgentState != nil && a.AgentState.Latest == "waiting-for-input":
+		style = styleWaiting
+	case a.State == "running":
+		style = styleRunning
+	}
+	return style.Render(g)
+}
+
+// agentRowText renders one agent's list line: kind glyph, id, label/type, signal.
 func agentRowText(a api.AgentInfo) string {
 	name := a.Type
 	if a.Label != "" {
 		name = a.Label
 	}
-	glyph := "○"
-	if a.State == "running" {
-		glyph = "●"
-	}
 	sig := ""
 	if a.Error != "" {
-		glyph = "✗"
 		sig = "  " + styleErrored.Render("error")
 	} else if a.AgentState != nil && a.AgentState.Latest != "" {
 		sig = "  " + a.AgentState.Latest
 	}
-	return fmt.Sprintf("%s %s  %s%s", glyph, a.ID, truncate(name, 18), sig)
+	return fmt.Sprintf("%s %s  %s%s", agentGlyph(a), a.ID, truncate(name, 18), sig)
 }
 
 func (m tuiModel) renderDetail(_ int) string {
@@ -1019,6 +1041,11 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		typ = fmt.Sprintf("%s (%s)", a.Label, a.Type)
 	}
 	b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(typ)))
+	kind := "terminal — attachable"
+	if !a.Attachable {
+		kind = "headless — background process, logs only"
+	}
+	b.WriteString(fmt.Sprintf("kind:      %s %s\n", agentGlyph(a), styleMuted.Render(kind)))
 	state := a.State
 	if state == "" {
 		state = "—"
@@ -1135,6 +1162,17 @@ func (m tuiModel) renderHelp() string {
 
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. Expand one with [space], then [+] add agents (interactive or a\nheadless background command). Headless agents have no screen — ⏎ opens their logs."))
+	b.WriteString("\n\n")
+	b.WriteString(styleHeader.Render("Glyphs"))
+	b.WriteString("\n  ")
+	b.WriteString(styleMuted.Render(fmt.Sprintf(
+		"%s island   %s terminal agent   %s headless agent", "●", glyphTerminal, glyphHeadless)))
+	b.WriteString("\n  ")
+	b.WriteString(styleMuted.Render("color = state: ") +
+		styleRunning.Render("running") + styleMuted.Render(" · ") +
+		styleHibernate.Render("idle") + styleMuted.Render(" · ") +
+		styleWaiting.Render("needs you") + styleMuted.Render(" · ") +
+		styleErrored.Render("error"))
 	b.WriteString("\n\n")
 
 	if !m.helpAdvanced {
