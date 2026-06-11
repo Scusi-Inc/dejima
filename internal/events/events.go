@@ -17,6 +17,8 @@ const (
 	TypeIslandReset        Type = "island.reset"
 	TypeIslandUpgraded     Type = "island.upgraded"
 	TypeIslandPurged       Type = "island.purged"
+	TypeIslandAgentAdded   Type = "island.agent-added"
+	TypeIslandAgentRemoved Type = "island.agent-removed"
 	TypeContainerCrashed   Type = "container.crashed"
 	TypeClientAttached     Type = "client.attached"
 	TypeClientDetached     Type = "client.detached"

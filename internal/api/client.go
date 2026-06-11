@@ -366,9 +366,14 @@ func (c *Client) IslandEvents(ctx context.Context, name string) ([]events.Event,
 	return out, nil
 }
 
-// DialSession opens a websocket against the daemon's session endpoint and
-// returns the underlying connection.
+// DialSession opens a websocket against the island's primary-agent session.
 func (c *Client) DialSession(ctx context.Context, name, label string) (*websocket.Conn, error) {
+	return c.DialAgentSession(ctx, name, "", label)
+}
+
+// DialAgentSession opens a websocket against a specific agent's session. An
+// empty agentID targets the island's primary agent (the legacy route).
+func (c *Client) DialAgentSession(ctx context.Context, name, agentID, label string) (*websocket.Conn, error) {
 	q := url.Values{}
 	if label != "" {
 		q.Set("label", label)
@@ -379,7 +384,11 @@ func (c *Client) DialSession(ctx context.Context, name, label string) (*websocke
 	if len(wsBase) > 4 && wsBase[:4] == "http" {
 		wsBase = "ws" + wsBase[4:]
 	}
-	wsURL := wsBase + "/v1/islands/" + name + "/session"
+	path := "/v1/islands/" + name + "/session"
+	if agentID != "" {
+		path = "/v1/islands/" + name + "/agents/" + agentID + "/session"
+	}
+	wsURL := wsBase + path
 	if encoded := q.Encode(); encoded != "" {
 		wsURL += "?" + encoded
 	}
@@ -390,4 +399,27 @@ func (c *Client) DialSession(ctx context.Context, name, label string) (*websocke
 		return nil, fmt.Errorf("dial session: %w", err)
 	}
 	return conn, nil
+}
+
+// ListAgents returns the agents in an island.
+func (c *Client) ListAgents(ctx context.Context, name string) ([]AgentInfo, error) {
+	var out []AgentInfo
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+name+"/agents", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// AddAgent adds an agent to an island.
+func (c *Client) AddAgent(ctx context.Context, name string, req AgentSpecRequest) (*AgentInfo, error) {
+	var out AgentInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/agents", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RemoveAgent removes an agent from an island by id.
+func (c *Client) RemoveAgent(ctx context.Context, name, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/agents/"+id, nil, nil)
 }

@@ -229,6 +229,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/islands/{name}/upgrade", s.upgradeIsland)
 	mux.HandleFunc("POST /v1/image/build", s.handleImageBuild)
 	mux.HandleFunc("GET /v1/islands/{name}/session", s.sessionWS)
+	mux.HandleFunc("GET /v1/islands/{name}/agents", s.listAgents)
+	mux.HandleFunc("POST /v1/islands/{name}/agents", s.addAgent)
+	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}", s.getAgent)
+	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
@@ -364,6 +368,8 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	info := s.toInfo(r.Context(), p)
+	// Per-agent session liveness is detail-only (one exec per agent).
+	info.Agents = s.agentInfos(r.Context(), p, info.Container == string(runtime.StatusRunning))
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
 	info.Git = s.gitStatusOf(r, p.ContainerName())
@@ -376,6 +382,163 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, info)
+}
+
+// agentsLive reports whether the island container is running (so callers know
+// whether to probe per-agent session liveness).
+func (s *Server) agentsLive(ctx context.Context, p *project.Project) bool {
+	st, _ := s.rt.Status(ctx, p.ContainerName())
+	return st == runtime.StatusRunning
+}
+
+func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
+	p, err := project.Load(r.PathValue("name"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)))
+}
+
+func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("name"), r.PathValue("id")
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if _, ok := p.AgentByID(id); !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
+		return
+	}
+	for _, ai := range s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)) {
+		if ai.ID == id {
+			writeJSON(w, http.StatusOK, ai)
+			return
+		}
+	}
+}
+
+// addAgent adds an agent to an existing island. The agent gets its own git
+// worktree + tmux session; if the island is running the session is brought up
+// immediately, otherwise it materializes on the next wake (via reconcile).
+func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	var req AgentSpecRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	typ := strings.TrimSpace(req.Type)
+	if typ == "" {
+		if pa := p.PrimaryAgent(); pa != nil {
+			typ = pa.Type
+		} else {
+			typ = DefaultAgent
+		}
+	}
+	if !handlers.Attachable(typ) {
+		// Co-located headless agents are supervised separately and land in a
+		// later phase; for now only interactive agents can join an island.
+		writeError(w, http.StatusBadRequest,
+			fmt.Errorf("agent type %q has no attach surface; non-interactive agents can't be added to an island yet", typ))
+		return
+	}
+
+	id := p.NextAgentID()
+	spec := project.AgentSpec{
+		ID:        id,
+		Type:      typ,
+		Label:     strings.TrimSpace(req.Label),
+		Tmux:      "agent-" + id,
+		Branch:    "agent/" + id,
+		Worktree:  agentsWorktreeRoot + "/" + id,
+		CreatedAt: time.Now().UTC(),
+	}
+	p.AddAgent(spec)
+	if err := p.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if s.agentsLive(r.Context(), p) {
+		if err := s.ensureAgentSession(r.Context(), p, &p.Agents[len(p.Agents)-1]); err != nil {
+			s.log.Warn("add agent: ensure session", "island", name, "agent", id, "err", err)
+		}
+	}
+	s.emit(events.Event{
+		Type:    events.TypeIslandAgentAdded,
+		Island:  name,
+		Payload: map[string]any{"agent": id, "type": typ},
+	})
+	for _, ai := range s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)) {
+		if ai.ID == id {
+			writeJSON(w, http.StatusCreated, ai)
+			return
+		}
+	}
+}
+
+// removeAgent removes a non-primary agent from an island: kills its session and
+// prunes its worktree (the branch is kept). The primary and the last remaining
+// agent cannot be removed.
+func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("name"), r.PathValue("id")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	a, ok := p.AgentByID(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
+		return
+	}
+	if len(p.Agents) <= 1 {
+		writeError(w, http.StatusConflict, errors.New("cannot remove the last agent; purge the island instead"))
+		return
+	}
+	if pa := p.PrimaryAgent(); pa != nil && pa.ID == id {
+		writeError(w, http.StatusConflict, errors.New("cannot remove the primary agent"))
+		return
+	}
+	if s.agentsLive(r.Context(), p) {
+		s.removeAgentSession(r.Context(), p, a)
+	}
+	p.RemoveAgent(id)
+	if err := p.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.emit(events.Event{
+		Type:    events.TypeIslandAgentRemoved,
+		Island:  name,
+		Payload: map[string]any{"agent": id},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeAgentSession kills an agent's tmux session and prunes its worktree dir.
+// Best-effort; the worktree's branch is intentionally preserved.
+func (s *Server) removeAgentSession(ctx context.Context, p *project.Project, a *project.AgentSpec) {
+	if a.Tmux != "" {
+		_, _, _, _ = s.rt.Exec(ctx, p.ContainerName(), []string{"tmux", "kill-session", "-t", a.Tmux})
+	}
+	if a.Worktree != "" && a.Worktree != "/workspace" {
+		_, _, _, _ = s.rt.Exec(ctx, p.ContainerName(), []string{"git", "-C", "/workspace", "worktree", "remove", "--force", a.Worktree})
+	}
 }
 
 func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
@@ -994,19 +1157,36 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		info.Attached = tracker.Snapshot()
 	}
 	info.AgentState = s.agentStateOf(p.Name)
+	info.Agents = s.agentInfos(ctx, p, false)
+	return info
+}
+
+// agentInfos builds the per-agent public view. When live is true, each agent's
+// tmux session liveness is probed (one container exec per agent) — detail-only,
+// since the list view refreshes frequently and would multiply the exec cost.
+func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) []AgentInfo {
+	out := make([]AgentInfo, 0, len(p.Agents))
 	for i := range p.Agents {
 		a := &p.Agents[i]
-		info.Agents = append(info.Agents, AgentInfo{
+		ai := AgentInfo{
 			ID:         a.ID,
 			Type:       a.Type,
 			Label:      a.Label,
 			Tmux:       a.Tmux,
 			Branch:     a.Branch,
 			Worktree:   a.Worktree,
-			Attachable: a.Type != AgentHeadless,
-		})
+			Attachable: handlers.Attachable(a.Type),
+		}
+		if live && a.Tmux != "" {
+			if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
+				ai.State = "running"
+			} else {
+				ai.State = "stopped"
+			}
+		}
+		out = append(out, ai)
 	}
-	return info
+	return out
 }
 
 // credentialBindMounts assembles the host paths to mount read-only into the island.
