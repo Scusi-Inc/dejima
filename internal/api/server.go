@@ -479,6 +479,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd st
 		CreatedAt:    now,
 		LastUsedAt:   now,
 	}
+	p.EnsureAgents() // mirror the scalar agent into Agents[0] for new islands
 	if err := project.EnsureProjectSubdirs(name); err != nil {
 		return p, err
 	}
@@ -841,6 +842,18 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		info.Attached = tracker.Snapshot()
 	}
 	info.AgentState = s.agentStateOf(p.Name)
+	for i := range p.Agents {
+		a := &p.Agents[i]
+		info.Agents = append(info.Agents, AgentInfo{
+			ID:         a.ID,
+			Type:       a.Type,
+			Label:      a.Label,
+			Tmux:       a.Tmux,
+			Branch:     a.Branch,
+			Worktree:   a.Worktree,
+			Attachable: a.Type != AgentHeadless,
+		})
+	}
 	return info
 }
 

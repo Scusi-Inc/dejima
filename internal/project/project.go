@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +13,11 @@ import (
 
 	"github.com/aoos/dejima/internal/paths"
 )
+
+// agentTypeHeadless mirrors api.AgentHeadless. It's duplicated here to avoid an
+// import cycle (the api package imports project, not vice-versa). The handler
+// registry (internal/handlers) centralizes agent-type knowledge in a later phase.
+const agentTypeHeadless = "headless"
 
 // State is the desired state of an island.
 type State string
@@ -29,20 +35,125 @@ type Resources struct {
 	Disk   string `toml:"disk,omitempty"`   // e.g. "20G" — maps to --storage-opt size=
 }
 
+// AgentSpec is one agent running inside an island. An island hosts one or more
+// agents; the first is the "primary" (the attach target for legacy clients).
+type AgentSpec struct {
+	ID   string `toml:"id"`   // stable per-island handle: "a1", "a2", …
+	Type string `toml:"type"` // handler id: "claude-code", "codex", "headless"
+	// Label is a user-facing, renamable name (e.g. "frontend"). Cosmetic.
+	Label string `toml:"label,omitempty"`
+	// Cmd is the entrypoint for headless agents; empty for the CLI agents.
+	Cmd string `toml:"cmd,omitempty"`
+	// Tmux is the in-container tmux session name for interactive agents. Empty
+	// for headless. The migrated primary keeps "dejima" so a live attached
+	// session survives a daemon upgrade; new agents use "agent-<id>".
+	Tmux string `toml:"tmux,omitempty"`
+	// Branch is the git branch backing this agent's worktree.
+	Branch string `toml:"branch,omitempty"`
+	// Worktree is the container path the agent works in: "/workspace" for the
+	// primary, "/workspace/.agents/<id>" for the rest.
+	Worktree string `toml:"worktree,omitempty"`
+	// Restart enables supervise-and-restart-on-crash (headless; wired in Phase 7).
+	Restart   bool      `toml:"restart,omitempty"`
+	CreatedAt time.Time `toml:"created_at,omitempty"`
+}
+
 // Project is the persisted record for a single island.
 type Project struct {
 	Name    string `toml:"name"`
 	RepoURL string `toml:"repo"`
-	Agent   string `toml:"agent"`
-	Image   string `toml:"image"`
+	// Agent and Cmd are the pre-multi-agent scalar fields. They are retained for
+	// backward compatibility (older daemons read them) and mirror Agents[0]. New
+	// code should read Agents; PrimaryAgent() is the accessor.
+	Agent string `toml:"agent"`
+	Image string `toml:"image"`
 	// Cmd is the command to run inside the island when Agent is "headless".
 	// It is ignored for the built-in CLI agents (claude-code, codex), which
 	// have a baked-in command. Persisted so reset/reprovision can reuse it.
-	Cmd          string    `toml:"cmd,omitempty"`
-	Resources    Resources `toml:"resources,omitempty"`
-	CreatedAt    time.Time `toml:"created_at"`
-	LastUsedAt   time.Time `toml:"last_used_at"`
-	DesiredState State     `toml:"state"`
+	Cmd          string      `toml:"cmd,omitempty"`
+	Resources    Resources   `toml:"resources,omitempty"`
+	CreatedAt    time.Time   `toml:"created_at"`
+	LastUsedAt   time.Time   `toml:"last_used_at"`
+	DesiredState State       `toml:"state"`
+	Agents       []AgentSpec `toml:"agents,omitempty"`
+}
+
+// EnsureAgents back-fills Agents from the legacy scalar Agent field for projects
+// persisted under the pre-multi-agent schema. Idempotent: a no-op once Agents is
+// populated. Called on Load and at provision time.
+func (p *Project) EnsureAgents() {
+	if len(p.Agents) > 0 || p.Agent == "" {
+		return
+	}
+	spec := AgentSpec{
+		ID:        "a1",
+		Type:      p.Agent,
+		Cmd:       p.Cmd,
+		Worktree:  "/workspace",
+		CreatedAt: p.CreatedAt,
+	}
+	if p.Agent != agentTypeHeadless {
+		spec.Tmux = "dejima" // preserve a live session across the upgrade
+	}
+	p.Agents = []AgentSpec{spec}
+}
+
+// PrimaryAgent returns the island's first/primary agent (the attach target for
+// legacy clients), or nil if the island has no agents.
+func (p *Project) PrimaryAgent() *AgentSpec {
+	if len(p.Agents) == 0 {
+		return nil
+	}
+	return &p.Agents[0]
+}
+
+// AgentByID returns the agent with the given id.
+func (p *Project) AgentByID(id string) (*AgentSpec, bool) {
+	for i := range p.Agents {
+		if p.Agents[i].ID == id {
+			return &p.Agents[i], true
+		}
+	}
+	return nil, false
+}
+
+// NextAgentID returns the next monotonic "a<N>" id not currently in use. Ids are
+// never reused within an island's life, so a removed agent's id stays retired.
+func (p *Project) NextAgentID() string {
+	max := 0
+	for _, a := range p.Agents {
+		if n, ok := parseAgentID(a.ID); ok && n > max {
+			max = n
+		}
+	}
+	return fmt.Sprintf("a%d", max+1)
+}
+
+func parseAgentID(id string) (int, bool) {
+	if len(id) < 2 || id[0] != 'a' {
+		return 0, false
+	}
+	n, err := strconv.Atoi(id[1:])
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
+
+// AddAgent appends an agent to the island.
+func (p *Project) AddAgent(spec AgentSpec) {
+	p.Agents = append(p.Agents, spec)
+}
+
+// RemoveAgent drops the agent with the given id. Reports whether it was found.
+func (p *Project) RemoveAgent(id string) bool {
+	for i := range p.Agents {
+		if p.Agents[i].ID == id {
+			p.Agents = append(p.Agents[:i], p.Agents[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // ContainerName returns the deterministic container name for this project.
@@ -130,6 +241,7 @@ func Load(name string) (*Project, error) {
 	if err := toml.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal project %q: %w", name, err)
 	}
+	p.EnsureAgents()
 	return &p, nil
 }
 

@@ -21,6 +21,25 @@ type IslandInfo struct {
 	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
 	Git        *GitInfo        `json:"git,omitempty"`
 	Health     *IslandHealth   `json:"health,omitempty"`
+	// Agents is the island's agents. For islands created before multi-agent
+	// support it carries a single synthesized entry mirroring Agent.
+	Agents []AgentInfo `json:"agents,omitempty"`
+}
+
+// AgentInfo is the public view of one agent within an island.
+type AgentInfo struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Label      string `json:"label,omitempty"`
+	Tmux       string `json:"tmux,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	Worktree   string `json:"worktree,omitempty"`
+	Attachable bool   `json:"attachable"`
+	// State is the agent's session liveness ("running"/"stopped"/""); populated
+	// from Phase 2 onward.
+	State      string          `json:"state,omitempty"`
+	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
+	Attached   []PresenceEntry `json:"attached,omitempty"`
 }
 
 // IslandHealth surfaces crash-relevant facts that a remote client can't observe
@@ -96,6 +115,18 @@ type CreateIslandRequest struct {
 	// otherwise. The container runs the command via /bin/sh -c, so shell
 	// quoting applies.
 	Cmd string `json:"cmd,omitempty"`
+	// Agents, when non-empty, seeds the island with multiple agents. When empty,
+	// the scalar Agent/Cmd above describe a single agent (back-compat). Consumed
+	// from Phase 2 onward; accepted-but-unused before then.
+	Agents []AgentSpecRequest `json:"agents,omitempty"`
+}
+
+// AgentSpecRequest describes one agent to create — either as an element of
+// CreateIslandRequest.Agents or the body of POST /v1/islands/{name}/agents.
+type AgentSpecRequest struct {
+	Type  string `json:"type,omitempty"`  // defaults to the island/default agent
+	Label string `json:"label,omitempty"` // optional, renamable
+	Cmd   string `json:"cmd,omitempty"`   // required only for headless
 }
 
 // Resources mirrors project.Resources for API transport.
