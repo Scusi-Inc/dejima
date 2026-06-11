@@ -199,6 +199,40 @@ type PortScopesResponse struct {
 	Scopes []PortScopeView `json:"scopes"`
 }
 
+// PortIntakeRequest is the body of POST /v1/islands/:name/port/intake — a
+// brokered, read-only copy of a host file (within a granted scope) into the
+// island.
+type PortIntakeRequest struct {
+	Scope  string `json:"scope"`          // scope name to read from
+	SrcRel string `json:"src_rel"`        // path relative to the scope's host root
+	Dest   string `json:"dest,omitempty"` // container path; default /intake/<scope>/<src_rel>
+}
+
+// PortIntakeResponse reports a completed intake.
+type PortIntakeResponse struct {
+	Scope  string `json:"scope"`
+	Src    string `json:"src"`  // resolved host path
+	Dest   string `json:"dest"` // container path
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// PortExportRequest is the body of POST /v1/islands/:name/port/export — a
+// brokered copy of a file out of the island into the host-owned export staging
+// area (~/.dejima/projects/<name>/exports/). It never writes into a user scope;
+// writing into a granted scope is the read-write milestone.
+type PortExportRequest struct {
+	Src string `json:"src"` // container path to export
+}
+
+// PortExportResponse reports a completed export to staging.
+type PortExportResponse struct {
+	Src    string `json:"src"`  // container path
+	Dest   string `json:"dest"` // host staging path
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
 // ErrorResponse is the body of any non-2xx response.
 type ErrorResponse struct {
 	Error string `json:"error"`

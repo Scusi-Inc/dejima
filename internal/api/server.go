@@ -314,6 +314,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/islands/{name}/port/scopes", s.handleListPortScopes)
 	mux.HandleFunc("POST /v1/islands/{name}/port/scopes", s.handleGrantPortScope)
 	mux.HandleFunc("DELETE /v1/islands/{name}/port/scopes/{scope}", s.handleRevokePortScope)
+	mux.HandleFunc("POST /v1/islands/{name}/port/intake", s.handlePortIntake)
+	mux.HandleFunc("POST /v1/islands/{name}/port/export", s.handlePortExport)
 	return logMiddleware(s.log, mux)
 }
 

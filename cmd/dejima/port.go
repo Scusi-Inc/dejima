@@ -21,7 +21,8 @@ func newPortCmd() *cobra.Command {
 			"host directory. Every crossing is recorded in the append-only Ledger. V1 is " +
 			"read-only and copy-based (see docs/port-island-spec.md).",
 	}
-	cmd.AddCommand(newPortGrantCmd(), newPortListCmd(), newPortRevokeCmd())
+	cmd.AddCommand(newPortGrantCmd(), newPortListCmd(), newPortRevokeCmd(),
+		newPortIntakeCmd(), newPortExportCmd())
 	return cmd
 }
 
@@ -114,6 +115,61 @@ func newPortRevokeCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("revoked scope %q on %s\n", name, island)
+			return nil
+		},
+	}
+}
+
+func newPortIntakeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "intake <island> <scope>:<path> [container-dest]",
+		Short: "Broker a host file (within a scope) into an island, read-only.",
+		Long: "Copies a file from a granted scope into the island. <path> is relative to " +
+			"the scope's host root. The crossing is recorded in the Ledger; if it can't be " +
+			"logged, the file does not cross.\n\n  dejima port intake myrepo vault:daily/2026-06-11.md",
+		Args: cobra.RangeArgs(2, 3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			island := args[0]
+			scope, rel, ok := strings.Cut(args[1], ":")
+			if !ok || scope == "" || rel == "" {
+				return fmt.Errorf("expected <scope>:<path>, got %q", args[1])
+			}
+			dest := ""
+			if len(args) == 3 {
+				dest = args[2]
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			res, err := c.PortIntake(cmd.Context(), island, scope, rel, dest)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("intake %s → %s (%d bytes, sha256:%s)\n", res.Src, res.Dest, res.Bytes, res.SHA256[:12])
+			return nil
+		},
+	}
+}
+
+func newPortExportCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "export <island> <container-path>",
+		Short: "Broker a file out of an island into host export staging.",
+		Long: "Copies a file out of the island into ~/.dejima/projects/<island>/exports/. " +
+			"It never writes into a user scope (that is the read-write milestone), so it is " +
+			"safe under read-only V1. The crossing is recorded in the Ledger.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			res, err := c.PortExport(cmd.Context(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("export %s → %s (%d bytes, sha256:%s)\n", res.Src, res.Dest, res.Bytes, res.SHA256[:12])
 			return nil
 		},
 	}

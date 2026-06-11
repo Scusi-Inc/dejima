@@ -143,6 +143,25 @@ func (c *Client) RevokePortScope(ctx context.Context, name, scope string) error 
 	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/port/scopes/"+url.PathEscape(scope), nil, nil)
 }
 
+// PortIntake brokers a host file (within a granted scope) into the island.
+func (c *Client) PortIntake(ctx context.Context, name, scope, srcRel, dest string) (*PortIntakeResponse, error) {
+	var out PortIntakeResponse
+	req := PortIntakeRequest{Scope: scope, SrcRel: srcRel, Dest: dest}
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/port/intake", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PortExport copies a file out of the island into host-owned export staging.
+func (c *Client) PortExport(ctx context.Context, name, src string) (*PortExportResponse, error) {
+	var out PortExportResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/port/export", PortExportRequest{Src: src}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ListIslands returns every island known to the daemon.
 func (c *Client) ListIslands(ctx context.Context) ([]IslandInfo, error) {
 	var out []IslandInfo
