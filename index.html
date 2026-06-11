@@ -61,7 +61,7 @@
     border-radius: 999px; font-size: 0.75rem; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.05em; }
   .historical { color: var(--muted); border-left: 2px solid var(--border);
-    padding-left: 1rem; margin: -0.5rem 0 2rem; font-size: 0.95rem; }
+    padding-left: 1rem; margin: 1rem 0 2rem; font-size: 0.95rem; }
   .historical em { color: var(--muted); }
   .plain { color: var(--accent); font-style: italic; }
   .pain { background: var(--code-bg); border: 1px solid var(--border);
@@ -151,8 +151,8 @@
 
 <nav class="topnav" aria-label="Sections">
   <a href="#install">Install</a>
-  <a href="#home-server">Run it yourself</a>
-  <a href="#api-builder">Build</a>
+  <a href="#home-server">Run on local server</a>
+  <a href="#api-builder">Build on Dejima</a>
   <a href="api.html">API</a>
   <a href="#cli">CLI</a>
 </nav>
@@ -185,57 +185,6 @@
     </a>
   </div>
 </section>
-
-<h2>Architecture</h2>
-<pre><code>┌──────────────────────────┐
-│  Control plane / UI      │   CLI · TUI · Dispatch · your app
-└────────────┬─────────────┘
-             │  websocket + HTTP API, over Tailscale
-             ▼
-┌──────────────────────────┐
-│  Dejima runtime          │   Mac mini · VPS · cloud VM
-└────────────┬─────────────┘
-             │  isolation boundary
-             ▼
-┌──────────────────────────┐
-│  Agents in an island     │   one container, N agents per project
-└──────────────────────────┘</code></pre>
-<p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other.</p>
-<p class="bundled-note"><strong>Two kinds of agents.</strong> <strong>Terminal</strong> agents are CLIs you attach to (Claude Code, Codex) — a host-side PTY bridges your websocket to the agent's tmux session, so it survives detach and multiple devices share one screen. <strong>Headless</strong> agents run on their own (a Python SDK loop, a worker) — output captured to <code>dejima logs</code>. Both get the same isolation, lifecycle, events, and one-API management.</p>
-
-<p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your CLI, dashboard, or phone client targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
-
-<h2 id="home-server">Use case: Run it yourself</h2>
-<p>One line to install on the server, one word to run. The installer handles Tailscale, Docker, and the service (per-platform steps in <a href="#install">Install</a>).</p>
-<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash   # on the server, once
-dejima                                                       # the dashboard
-
-# In the dashboard:
-#   n → pick a repo + agent, launch       + → add another agent
-#   ⏎ → open an island/agent in a window   ? → all keys
-</code></pre>
-<p>Every dashboard action is also a one-shot command:</p>
-<pre><code>dejima init --repo git@github.com:you/foo.git    # or --local-copy for unpushed work
-dejima ls                                         # all islands, last-used first
-dejima agent add foo --type codex                 # a 2nd agent in foo's island
-dejima connect foo                                # attach (Ctrl-b d detaches)
-DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # …from your laptop
-</code></pre>
-
-<h3 id="self-host">Why self-hosted: privacy &amp; compliance</h3>
-<p>The LLM calls go out, but your code, files, and auth never leave your box. Egress is yours to set; auth is your Tailscale identity, not a vendor account; <code>dejima purge</code> erases an island when you're done. Fits NDA, regulated, and client-confidential work.</p>
-
-<h2 id="api-builder">Use case: Build services on the API</h2>
-<p>Your control plane (a dashboard, a bot, the CLI) on top; your compute underneath; isolation in between. Target one HTTP/WebSocket API from any language — the same one the CLI uses.</p>
-<pre><code>POST   /v1/islands                     { "repo": "...", "agent": "claude-code" }
-GET    /v1/islands                      # list all islands
-GET    /v1/islands/:name                # live detail: agents, presence, cpu/mem, git, health
-POST   /v1/islands/:name/agents         { "type": "codex" }   # add an agent
-GET    /v1/islands/:name/agents/:id/session   # websocket PTY stream, multi-attach
-POST   /v1/islands/:name/exec           # one-shot command
-POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
-</code></pre>
-<p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and OSS. Full surface at <a href="api.html">the API reference</a>.</p>
 
 <h2 id="install">Install</h2>
 <p>Pick where you're installing it. The page rewrites itself for your choice.</p>
@@ -444,6 +393,57 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
   update();
 })();
 </script>
+
+<h2>Architecture</h2>
+<pre><code>┌──────────────────────────┐
+│  Control plane / UI      │   CLI · TUI · Dispatch · your app
+└────────────┬─────────────┘
+             │  websocket + HTTP API, over Tailscale
+             ▼
+┌──────────────────────────┐
+│  Dejima runtime          │   Mac mini · VPS · cloud VM
+└────────────┬─────────────┘
+             │  isolation boundary
+             ▼
+┌──────────────────────────┐
+│  Agents in an island     │   one container, N agents per project
+└──────────────────────────┘</code></pre>
+<p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other.</p>
+<p class="bundled-note"><strong>Two kinds of agents.</strong> <strong>Terminal</strong> agents are CLIs you attach to (Claude Code, Codex) — a host-side PTY bridges your websocket to the agent's tmux session, so it survives detach and multiple devices share one screen. <strong>Headless</strong> agents run on their own (a Python SDK loop, a worker) — output captured to <code>dejima logs</code>. Both get the same isolation, lifecycle, events, and one-API management.</p>
+
+<p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your CLI, dashboard, or phone client targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
+
+<h2 id="home-server">Use case: Run it yourself</h2>
+<p>One line to install on the server, one word to run. The installer handles Tailscale, Docker, and the service (per-platform steps in <a href="#install">Install</a>).</p>
+<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash   # on the server, once
+dejima                                                       # the dashboard
+
+# In the dashboard:
+#   n → pick a repo + agent, launch       + → add another agent
+#   ⏎ → open an island/agent in a window   ? → all keys
+</code></pre>
+<p>Every dashboard action is also a one-shot command:</p>
+<pre><code>dejima init --repo git@github.com:you/foo.git    # or --local-copy for unpushed work
+dejima ls                                         # all islands, last-used first
+dejima agent add foo --type codex                 # a 2nd agent in foo's island
+dejima connect foo                                # attach (Ctrl-b d detaches)
+DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # …from your laptop
+</code></pre>
+
+<h3 id="self-host">Why self-hosted: privacy &amp; compliance</h3>
+<p>The LLM calls go out, but your code, files, and auth never leave your box. Egress is yours to set; auth is your Tailscale identity, not a vendor account; <code>dejima purge</code> erases an island when you're done. Fits NDA, regulated, and client-confidential work.</p>
+
+<h2 id="api-builder">Use case: Build services on the API</h2>
+<p>Your control plane (a dashboard, a bot, the CLI) on top; your compute underneath; isolation in between. Target one HTTP/WebSocket API from any language — the same one the CLI uses.</p>
+<pre><code>POST   /v1/islands                     { "repo": "...", "agent": "claude-code" }
+GET    /v1/islands                      # list all islands
+GET    /v1/islands/:name                # live detail: agents, presence, cpu/mem, git, health
+POST   /v1/islands/:name/agents         { "type": "codex" }   # add an agent
+GET    /v1/islands/:name/agents/:id/session   # websocket PTY stream, multi-attach
+POST   /v1/islands/:name/exec           # one-shot command
+POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
+</code></pre>
+<p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and OSS. Full surface at <a href="api.html">the API reference</a>.</p>
 
 <h2>How it compares</h2>
 <table>
