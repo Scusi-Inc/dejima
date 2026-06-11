@@ -251,17 +251,31 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 				pending = r.env
 			}
 		}
-		s.log.Info("RESIZEDBG handshake first envelope", "island", name,
+		s.log.Info("RESIZEDBG handshake first envelope", "island", name, "label", label,
 			"err", r.err, "nil_env", r.env == nil,
 			"type", func() string { if r.env != nil { return r.env.Type }; return "" }(),
 			"rows", initRows, "cols", initCols)
 	case <-time.After(500 * time.Millisecond):
-		s.log.Info("RESIZEDBG handshake TIMEOUT (no first envelope in 500ms)", "island", name)
+		s.log.Info("RESIZEDBG handshake TIMEOUT (no first envelope in 500ms)", "island", name, "label", label)
 	case <-ctx.Done():
 		return
 	}
 
-	s.log.Info("RESIZEDBG attaching", "island", name, "init_rows", initRows, "init_cols", initCols)
+	// A sizeless attach (no resize within the handshake window — automation, a
+	// status poller, or a client whose resize arrived late) must NOT come up at
+	// creack/pty's 0x0 default: under `window-size latest` a 0x0 client becomes
+	// the latest client and collapses the shared window to tmux's 80x24 fallback,
+	// stomping the real interactive client's size. Match the largest client
+	// already attached instead, so the new client can't shrink the window.
+	if initRows == 0 || initCols == 0 {
+		if r, c, ok := bridge.MaxClientSize(ctx, "docker", p.ContainerName(), tmuxSession); ok {
+			initRows, initCols = r, c
+			s.log.Info("RESIZEDBG sizeless attach -> matched largest client", "island", name, "label", label,
+				"rows", initRows, "cols", initCols)
+		}
+	}
+
+	s.log.Info("RESIZEDBG attaching", "island", name, "label", label, "init_rows", initRows, "init_cols", initCols)
 	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxSession, initRows, initCols)
 	if err != nil {
 		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
@@ -310,7 +324,7 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if r.env != nil && r.env.Type == "resize" {
-				s.log.Info("RESIZEDBG apply live resize", "island", name, "rows", r.env.Rows, "cols", r.env.Cols)
+				s.log.Info("RESIZEDBG apply live resize", "island", name, "label", label, "rows", r.env.Rows, "cols", r.env.Cols)
 			}
 			if !applyEnvelope(sess, r.env) {
 				return

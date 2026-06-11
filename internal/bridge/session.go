@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/creack/pty"
 )
@@ -47,6 +49,52 @@ func AttachToTmux(ctx context.Context, dockerBin, container, tmuxSession string,
 		return nil, fmt.Errorf("pty start: %w", err)
 	}
 	return &PTYSession{cmd: cmd, pty: ptyFile}, nil
+}
+
+// MaxClientSize returns the largest size (per axis) among the tmux clients
+// already attached to the session, querying via a throwaway `docker exec`. It's
+// used to size a *sizeless* attach (a client that sent no resize — automation,
+// a status poller) so it matches the real interactive client instead of coming
+// up at creack/pty's 0x0 default. A 0x0 client, under `window-size latest`,
+// becomes the "latest" client and collapses the shared window to tmux's 80x24
+// fallback — which is exactly the resize bug. Matching the largest existing
+// client makes a sizeless attach harmless (it can't shrink the window) and even
+// pulls the window toward the real client's dimensions.
+//
+// ok is false when there are no attached clients yet (the very first connect)
+// or the query fails; callers should then fall back to the PTY default.
+func MaxClientSize(ctx context.Context, dockerBin, container, tmuxSession string) (rows, cols uint16, ok bool) {
+	if dockerBin == "" {
+		dockerBin = "docker"
+	}
+	out, err := exec.CommandContext(ctx, dockerBin, "exec", container,
+		"tmux", "list-clients", "-t", tmuxSession,
+		"-F", "#{client_height} #{client_width}").Output()
+	if err != nil {
+		return 0, 0, false
+	}
+	var maxH, maxW uint16
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		h, err1 := strconv.ParseUint(f[0], 10, 16)
+		w, err2 := strconv.ParseUint(f[1], 10, 16)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		if uint16(h) > maxH {
+			maxH = uint16(h)
+		}
+		if uint16(w) > maxW {
+			maxW = uint16(w)
+		}
+	}
+	if maxH == 0 || maxW == 0 {
+		return 0, 0, false
+	}
+	return maxH, maxW, true
 }
 
 // Resize tells the PTY about a new window size.
