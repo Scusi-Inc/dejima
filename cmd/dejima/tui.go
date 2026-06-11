@@ -592,7 +592,9 @@ func (m tuiModel) renderBody(headerHeight int) string {
 	if rightW < 20 {
 		rightW = 20
 	}
-	bodyHeight := m.height - headerHeight - 4
+	// -5 = 3 footer lines (health strip + two key-hint rows) + the body pane's
+	// top/bottom border.
+	bodyHeight := m.height - headerHeight - 5
 	if bodyHeight < 5 {
 		bodyHeight = 5
 	}
@@ -712,13 +714,14 @@ func (m tuiModel) renderDetail(_ int) string {
 }
 
 func (m tuiModel) renderFooter() string {
-	// Two key lines, right-aligned to a shared edge: global commands on top,
-	// island lifecycle below. The substrate-health strip keeps the left of
-	// the first line.
+	// Substrate-health strip on its own line, then two key-hint lines below it
+	// (global commands, then island lifecycle), right-aligned to a shared edge.
+	// The strip used to share line one with the global commands, which collided
+	// on narrow terminals — giving it its own row keeps both readable.
 	keys1 := "[n] new   [⏎] open   [s] server   [?] help   [q] quit"
 	keys2 := "[a] attach here   [h] hibernate   [w] wake   [r] reset   [d] purge"
 	left := m.renderFooterLeft()
-	pad1 := m.width - lipgloss.Width(left) - lipgloss.Width(keys1) - 2
+	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
 		pad1 = 1
 	}
@@ -726,7 +729,8 @@ func (m tuiModel) renderFooter() string {
 	if pad2 < 1 {
 		pad2 = 1
 	}
-	return " " + left + strings.Repeat(" ", pad1) + styleFooter.Render(keys1) + "\n" +
+	return " " + left + "\n" +
+		strings.Repeat(" ", pad1) + styleFooter.Render(keys1) + "\n" +
 		strings.Repeat(" ", pad2) + styleFooter.Render(keys2) + " "
 }
 
