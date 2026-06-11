@@ -722,18 +722,25 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	env := map[string]string{
 		"DEJIMA_PROJECT_NAME": p.Name,
 		"DEJIMA_REPO_URL":     p.RepoURL,
-		"DEJIMA_AGENT":        p.Agent,
 		"DEJIMA_SOCKET":       "/run/dejima/dejimad.sock",
 	}
-	// The primary agent's id flows to the container so its tmux session (created
-	// by the entrypoint) and event hooks can identify themselves. Non-primary
-	// agents override DEJIMA_AGENT_ID per-session at reconcile time.
+	// Everything the entrypoint needs about the primary agent flows via env, so
+	// the launch command lives in one place (the handler registry) rather than
+	// being duplicated in start.sh. Non-primary agents are launched by the daemon
+	// (reconcileAgents), each overriding DEJIMA_AGENT_ID per session.
+	agentType := p.Agent
 	if pa := p.PrimaryAgent(); pa != nil {
+		agentType = pa.Type
 		env["DEJIMA_AGENT_ID"] = pa.ID
+		env["DEJIMA_TMUX"] = pa.Tmux
+		if pa.Cmd != "" {
+			env["DEJIMA_AGENT_CMD"] = pa.Cmd
+		}
+		if h, ok := handlers.Lookup(pa.Type); ok {
+			env["DEJIMA_LAUNCH"] = h.Launch // empty for headless → entrypoint runs DEJIMA_AGENT_CMD as PID 1
+		}
 	}
-	if p.Cmd != "" {
-		env["DEJIMA_AGENT_CMD"] = p.Cmd
-	}
+	env["DEJIMA_AGENT"] = agentType
 	if seedPath != "" {
 		binds = append(binds, runtime.BindMount{
 			HostPath:      seedPath,
@@ -779,7 +786,7 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		Network:     p.NetworkName(),
 		Labels: map[string]string{
 			"dejima.project": p.Name,
-			"dejima.agent":   p.Agent,
+			"dejima.agent":   agentType,
 		},
 	}
 	if _, err := s.rt.CreateContainer(ctx, req); err != nil {
@@ -953,7 +960,6 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	_ = s.rt.RemoveContainer(ctx, p.ContainerName(), force)
 	_ = s.rt.RemoveVolume(ctx, p.WorkspaceVolume(), force)
 	_ = s.rt.RemoveVolume(ctx, p.HomeVolume(), force)
-	_ = s.rt.RemoveVolume(ctx, p.AgentVolume(), force) // legacy pre-migration volume
 	_ = s.rt.RemoveNetwork(ctx, p.NetworkName())
 	return project.Delete(p.Name)
 }
@@ -1053,13 +1059,11 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 	_ = s.rt.RemoveContainer(r.Context(), p.ContainerName(), true)
 
 	// Clear the shared home-state volume (agent creds + tool auth); the workspace
-	// is preserved. Also drop the legacy agent volume if this island predates the
-	// home-volume migration, so reset starts from a truly clean state.
+	// is preserved.
 	if err := s.rt.RemoveVolume(r.Context(), p.HomeVolume(), true); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("remove home volume: %w", err))
 		return
 	}
-	_ = s.rt.RemoveVolume(r.Context(), p.AgentVolume(), true)
 	if err := s.rt.EnsureVolume(r.Context(), p.HomeVolume()); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("recreate home volume: %w", err))
 		return
@@ -1190,12 +1194,18 @@ func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 const imageBuildOKMarker = "--- dejima: image build succeeded ---"
 
 func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
+	// The island's headline agent/cmd is the primary agent's (Agents is the
+	// source of truth; the scalar Project fields are just its input form).
+	agentType, cmd := p.Agent, p.Cmd
+	if pa := p.PrimaryAgent(); pa != nil {
+		agentType, cmd = pa.Type, pa.Cmd
+	}
 	info := IslandInfo{
 		Name:       p.Name,
 		Repo:       p.RepoURL,
-		Agent:      p.Agent,
+		Agent:      agentType,
 		Image:      p.Image,
-		Cmd:        p.Cmd,
+		Cmd:        cmd,
 		State:      string(p.DesiredState),
 		CreatedAt:  p.CreatedAt,
 		LastUsedAt: p.LastUsedAt,

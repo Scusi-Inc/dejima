@@ -62,6 +62,13 @@ COPY image/tmux.conf /etc/tmux.conf
 # Agent shims directory (per-agent, opt-in).
 COPY image/agents/ /opt/dejima/agents/
 
+# The npm global prefix lives OUTSIDE /home/dejima so it is NOT captured by the
+# per-island home volume. That keeps bundled-agent binaries image-managed
+# (refreshed on `dejima upgrade`) while the home volume persists only auth/state
+# (~/.npmrc, ~/.claude, ~/.codex, ~/.config, …). Owned by dejima so the agents'
+# auto-updaters can still write to it.
+RUN mkdir -p /opt/dejima/npm-global && chown -R dejima:dejima /opt/dejima/npm-global
+
 # Entrypoint.
 COPY image/start.sh /usr/local/bin/dejima-start.sh
 RUN chmod +x /usr/local/bin/dejima-start.sh
@@ -71,19 +78,20 @@ WORKDIR /workspace
 # NPM_CONFIG_PREFIX gives the dejima user a writable global npm location so
 # the bundled CLI agents' auto-updaters (`npm i -g …`) actually succeed
 # instead of failing with EACCES against the root-owned /usr/lib/node_modules
-# default. The package bin dir goes on PATH so `claude` / `codex` resolve.
+# default. It lives under /opt (not /home/dejima) so the per-island home volume
+# doesn't shadow image-supplied binaries; the bin dir goes on PATH so `claude` /
+# `codex` resolve.
 ENV HOME=/home/dejima \
     GH_CONFIG_DIR=/opt/host/gh-config \
-    NPM_CONFIG_PREFIX=/home/dejima/.npm-global \
-    PATH=/home/dejima/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    NPM_CONFIG_PREFIX=/opt/dejima/npm-global \
+    PATH=/opt/dejima/npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Bundled agents. Both are npm-distributed CLI agents that talk to their
 # respective vendor APIs. Installed as the dejima user into NPM_CONFIG_PREFIX
 # so on-disk paths are user-owned; auto-updates write to the same prefix.
 # Other agents (Aider, Goose, etc.) are supported via a custom image — see
 # docs/custom-agents.md.
-RUN mkdir -p /home/dejima/.npm-global \
-    && npm install -g @anthropic-ai/claude-code @openai/codex
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 # Containers stay alive via dejima-start.sh, which manages tmux + agent process.
 ENTRYPOINT ["/usr/local/bin/dejima-start.sh"]

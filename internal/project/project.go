@@ -93,7 +93,7 @@ func (p *Project) EnsureAgents() {
 		CreatedAt: p.CreatedAt,
 	}
 	if p.Agent != agentTypeHeadless {
-		spec.Tmux = "dejima" // preserve a live session across the upgrade
+		spec.Tmux = "agent-" + spec.ID // uniform with non-primary agents
 	}
 	p.Agents = []AgentSpec{spec}
 }
@@ -164,13 +164,6 @@ func (p *Project) ContainerName() string {
 // WorkspaceVolume returns the workspace volume name.
 func (p *Project) WorkspaceVolume() string {
 	return "dejima-" + p.Name + "-workspace"
-}
-
-// AgentVolume returns the legacy single-agent state volume name (mounted at the
-// per-type state dir, e.g. ~/.claude). Superseded by HomeVolume; retained so
-// teardown can clean it up on islands created before the multi-agent migration.
-func (p *Project) AgentVolume() string {
-	return "dejima-" + p.Name + "-agent"
 }
 
 // HomeVolume returns the per-island home-state volume, mounted at /home/dejima

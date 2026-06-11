@@ -11,7 +11,11 @@ PROJECT="${DEJIMA_PROJECT_NAME:-island}"
 REPO="${DEJIMA_REPO_URL:-}"
 AGENT="${DEJIMA_AGENT:-claude-code}"
 WORKSPACE="/workspace"
-SESSION="dejima"
+# The daemon supplies the primary agent's tmux session name and launch command
+# (sourced from the handler registry) so they aren't duplicated here. Fallbacks
+# keep the image runnable on its own (e.g. `docker run` for debugging).
+SESSION="${DEJIMA_TMUX:-agent-a1}"
+LAUNCH="${DEJIMA_LAUNCH:-}"
 
 # /workspace and the per-agent state dir (e.g. ~/.claude) are named volumes. A
 # volume mounted over a path the image didn't pre-create lands owned by root,
@@ -83,44 +87,33 @@ fi
 
 cd "$WORKSPACE"
 
-# --- agent command --------------------------------------------------------
-# Each known agent maps to its binary + any flags needed when running inside a
-# container. Codex's own OS-level sandboxing (Seatbelt/Landlock) doesn't apply
-# inside Docker, so we disable it and rely on the container as the sandbox.
-#
-# "headless" is the escape hatch: the agent is a user-supplied command
-# (DEJIMA_AGENT_CMD), run as the container's main process, with stdout/stderr
-# captured by Docker so `dejima logs` works. No tmux, no attach surface — for
-# API-SDK agents, background workers, anything that doesn't need a REPL.
-case "$AGENT" in
-    claude-code) AGENT_CMD="claude" ;;
-    codex)       AGENT_CMD="codex --sandbox-policy=no-sandbox" ;;
-    headless)
-        if [[ -z "${DEJIMA_AGENT_CMD:-}" ]]; then
-            echo "dejima: agent=headless requires DEJIMA_AGENT_CMD" >&2
-            exit 64
-        fi
-        AGENT_CMD="$DEJIMA_AGENT_CMD"
-        ;;
-    *)           AGENT_CMD="${AGENT}" ;;
-esac
-
 # --- launch the agent -----------------------------------------------------
-# CLI agents run under tmux so multiple clients can attach to the same screen
-# and the session survives client disconnects. Headless agents run directly:
-# stdout/stderr flow to docker logs (and thence `dejima logs`), and when the
-# command exits, the container exits with it (clean lifecycle, no restart-on-
-# crash — that's a future supervisor's job).
+# "headless" is the escape hatch: the agent is a user-supplied command
+# (DEJIMA_AGENT_CMD) run as the container's main process, with stdout/stderr
+# captured by Docker so `dejima logs` works — no tmux, no attach surface.
 if [[ "$AGENT" == "headless" ]]; then
-    echo "dejima island '${PROJECT}' ready; running headless: ${AGENT_CMD}"
-    exec /bin/sh -c "$AGENT_CMD"
+    if [[ -z "${DEJIMA_AGENT_CMD:-}" ]]; then
+        echo "dejima: agent=headless requires DEJIMA_AGENT_CMD" >&2
+        exit 64
+    fi
+    echo "dejima island '${PROJECT}' ready; running headless: ${DEJIMA_AGENT_CMD}"
+    exec /bin/sh -c "$DEJIMA_AGENT_CMD"
 fi
 
+# Interactive primary agent: the daemon supplies the launch command via
+# DEJIMA_LAUNCH (from the handler registry). The fallback to the agent name
+# only matters for a bare `docker run` with no daemon (debugging).
+if [[ -z "$LAUNCH" ]]; then
+    LAUNCH="$AGENT"
+fi
+
+# CLI agents run under tmux so multiple clients can attach to the same screen
+# and the session survives client disconnects.
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux new-session -d -s "$SESSION" -c "$WORKSPACE" "$AGENT_CMD"
+    tmux new-session -d -s "$SESSION" -c "$WORKSPACE" "$LAUNCH"
 fi
 
-echo "dejima island '${PROJECT}' ready; tmux session '${SESSION}' running ${AGENT_CMD}"
+echo "dejima island '${PROJECT}' ready; tmux session '${SESSION}' running ${LAUNCH}"
 echo "attach with: docker exec -it dejima-${PROJECT} tmux attach-session -t ${SESSION}"
 
 # Keep container alive while tmux server runs.

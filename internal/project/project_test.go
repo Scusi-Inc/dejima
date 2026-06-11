@@ -49,8 +49,8 @@ func TestContainerAndVolumeNames(t *testing.T) {
 	if got, want := p.WorkspaceVolume(), "dejima-myrepo-workspace"; got != want {
 		t.Errorf("WorkspaceVolume() = %q, want %q", got, want)
 	}
-	if got, want := p.AgentVolume(), "dejima-myrepo-agent"; got != want {
-		t.Errorf("AgentVolume() = %q, want %q", got, want)
+	if got, want := p.HomeVolume(), "dejima-myrepo-home"; got != want {
+		t.Errorf("HomeVolume() = %q, want %q", got, want)
 	}
 }
 
@@ -61,8 +61,8 @@ func TestEnsureAgentsMigratesLegacyScalar(t *testing.T) {
 		t.Fatalf("EnsureAgents() produced %d agents, want 1", len(p.Agents))
 	}
 	a := p.Agents[0]
-	if a.ID != "a1" || a.Type != "claude-code" || a.Worktree != "/workspace" || a.Tmux != "dejima" {
-		t.Errorf("synthesized agent = %+v, want {a1 claude-code /workspace dejima}", a)
+	if a.ID != "a1" || a.Type != "claude-code" || a.Worktree != "/workspace" || a.Tmux != "agent-a1" {
+		t.Errorf("synthesized agent = %+v, want {a1 claude-code /workspace agent-a1}", a)
 	}
 }
 

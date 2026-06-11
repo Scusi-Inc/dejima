@@ -20,8 +20,6 @@ import (
 	"github.com/aoos/dejima/internal/runtime"
 )
 
-const tmuxSession = "dejima"
-
 // PresenceEntry describes one client attached to an island's session.
 type PresenceEntry struct {
 	Label    string    `json:"label"`
@@ -204,7 +202,7 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	}
 	tmuxName := spec.Tmux
 	if tmuxName == "" {
-		tmuxName = tmuxSession // defensive: legacy/primary default
+		tmuxName = "agent-" + spec.ID // defensive: every interactive agent has a session
 	}
 	status, err := s.rt.Status(r.Context(), p.ContainerName())
 	if err != nil {
