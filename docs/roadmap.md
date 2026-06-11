@@ -1,6 +1,6 @@
 # Dejima Roadmap
 
-**Last updated:** 2026-06-09
+**Last updated:** 2026-06-11
 
 This is the living roadmap for Dejima. Items are grouped by phase and sized roughly. Status legend: `[x]` = built, `[~]` = in progress, `[ ]` = pending.
 
@@ -64,6 +64,7 @@ Targeted fixes and quality-of-life additions. Sized in hours unless noted.
 - [ ] **`dejima panic`** — stop every island immediately; write a `~/.dejima/PANIC` flag preventing auto-restart until removed. (day)
 - [ ] **Unpushed-work guard on `purge` + `dejima uninstall`** — `purge` currently destroys an island's volumes even when its workspace has uncommitted or unpushed commits; check first (`git status --porcelain` + `git log @{u}..` via exec) and refuse without `--force`, telling the user what's at risk. Then a one-shot `dejima uninstall` can run the whole clean-removal sequence (guarded purge of every island → service uninstall → binaries → `~/.dejima`) that the README documents manually today. (day)
 - [x] **`dejima refresh-creds <name>`** — covered by `dejima upgrade <name>`: recreating the container re-assembles all credential mounts (and re-materializes the Claude seed) without touching the workspace. `dejima auth push` handles getting fresh Claude credentials onto the daemon host in the first place.
+- [ ] **`dejima clone <name> <new-name>` — copy an island (with its credentials)** — duplicate an island: new config + a copy of its workspace **and** home volumes (throwaway container, `cp -a`). Because all creds / permissions / tool-auth live in the per-island `/home/dejima` home volume ([`multi-agent-spec.md`](multi-agent-spec.md) §6), cloning carries them along for free — so this is the natural "copy an island with everything" primitive, and it also underpins a *true* island rename (clone to a new name + delete the old; today rename is a cosmetic display **title**, since Name is immutable infra identity). Caveats: device/host-bound tokens may not survive a cross-host clone, and duplicating `~/.claude` duplicates session/runtime state (the §6 shared-home note). **Copying *just* credentials/permissions to another island is deliberately out** — it reintroduces the per-tool-token-path enumeration the whole-home volume was chosen to avoid; if ever needed, extend the `dejima auth push` seeding per-tool instead of doing volume surgery. (1-2 days)
 - [ ] **Secrets at rest via Keychain / Secret Service** — webhook HMAC secrets and any future dejima-held tokens out of plaintext config. (day)
 - [ ] **Idle auto-hibernate** — opt-in threshold (e.g., "hibernate after N hours with no client + no agent process"). (day)
 - [ ] **`dejima onboard --provision-host`** — Mac-mini-as-home-server provisioning wizard. Walks through Energy Saver / Sharing / Homebrew / Tailscale / Docker / SSH config / `.zshenv` (auto-doing what it can, instructing for GUI-only steps), then hands off to the existing Dejima onboarding. Closes the "I just unboxed a Mac mini, what now?" gap. **Strategically important: shifts positioning toward "the easy way to turn a Mac mini into a personal AI agent server."** Full plan: [`docs/host-provisioning-plan.md`](host-provisioning-plan.md). (~1 week)
