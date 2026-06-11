@@ -283,6 +283,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/islands", s.createIsland)
 	mux.HandleFunc("GET /v1/islands/{name}", s.getIsland)
 	mux.HandleFunc("DELETE /v1/islands/{name}", s.deleteIsland)
+	mux.HandleFunc("PATCH /v1/islands/{name}", s.updateIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/hibernate", s.hibernateIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/wake", s.wakeIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/reset", s.resetIsland)
@@ -605,6 +606,32 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		Agent:  id,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// updateIsland edits an island's cosmetic display title. Name and all infra
+// identity (container, volumes, network, config dir) are immutable.
+func (s *Server) updateIsland(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	var req UpdateIslandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	p.Title = strings.TrimSpace(req.Title) // empty clears it
+	if err := p.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
 // updateAgent changes an agent's cosmetic label. Everything else (id, type,
@@ -1283,6 +1310,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	}
 	info := IslandInfo{
 		Name:       p.Name,
+		Title:      p.Title,
 		Repo:       p.RepoURL,
 		Agent:      agentType,
 		Image:      p.Image,

@@ -404,13 +404,21 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirm = &confirmPrompt{verb: "remove-agent", island: r.island, answer: "", agent: r.agentID}
 		}
 	case "e":
-		// Rename: relabel the selected agent (cosmetic; its id is unchanged).
-		if r := m.currentRow(); r.kind == rowAgent {
+		// Rename: island rows set a cosmetic display title; agent rows relabel.
+		// Both are cosmetic — the island Name slug and the agent id are unchanged.
+		switch r := m.currentRow(); r.kind {
+		case rowAgent:
 			cur := ""
 			if isl, ok := m.islandByName(r.island); ok {
 				cur = agentByID(isl, r.agentID).Label
 			}
 			m.confirm = &confirmPrompt{verb: "relabel-agent", island: r.island, agent: r.agentID, answer: cur}
+		case rowIsland:
+			cur := ""
+			if isl, ok := m.islandByName(r.island); ok {
+				cur = isl.Title
+			}
+			m.confirm = &confirmPrompt{verb: "rename-island", island: r.island, answer: cur}
 		}
 	case "h":
 		if name := m.selectedName(); name != "" {
@@ -475,8 +483,22 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		// The typed text is the new label (blank clears it); no y/n gate.
 		m.dirtyOps[c.island] = "renaming agent"
 		return m, m.relabelAgentCmd(c.island, c.agent, strings.TrimSpace(c.answer))
+	case "rename-island":
+		// The typed text is the new display title (blank resets to the name).
+		m.dirtyOps[c.island] = "renaming"
+		return m, m.setIslandTitleCmd(c.island, strings.TrimSpace(c.answer))
 	}
 	return m, nil
+}
+
+// setIslandTitleCmd sets an island's cosmetic display title (blank resets it).
+func (m tuiModel) setIslandTitleCmd(name, title string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err := m.client.SetIslandTitle(ctx, name, title)
+		return opCompleteMsg{name: name, verb: "rename-island", err: err}
+	}
 }
 
 // relabelAgentCmd renames (relabels) an agent. An empty label clears it.
@@ -587,6 +609,14 @@ func (m tuiModel) visibleRows() []treeRow {
 	}
 	rows = append(rows, treeRow{kind: rowNewIsland})
 	return rows
+}
+
+// islandDisplay is the user-facing island name: its Title if set, else the slug.
+func islandDisplay(isl api.IslandInfo) string {
+	if isl.Title != "" {
+		return isl.Title
+	}
+	return isl.Name
 }
 
 // islandByName finds a loaded island by name.
@@ -879,9 +909,9 @@ func (m tuiModel) renderList(_ int) string {
 			if m.islandExpanded(isl) {
 				caret = "▾"
 			}
-			label := truncate(isl.Name, 16)
+			label := truncate(islandDisplay(isl), 16)
 			if len(isl.Agents) > 1 {
-				label = truncate(isl.Name, 12) + fmt.Sprintf(" (%d)", len(isl.Agents))
+				label = truncate(islandDisplay(isl), 12) + fmt.Sprintf(" (%d)", len(isl.Agents))
 			}
 			line = fmt.Sprintf("%s %s  %-16s  %s", caret, glyphFor(isl), label, shortStatus(isl, m.dirtyOps[isl.Name]))
 		}
@@ -970,8 +1000,12 @@ func (m tuiModel) renderDetail(_ int) string {
 		return m.renderAgentDetail(d, agentID)
 	}
 	var b strings.Builder
-	b.WriteString(styleTitle.Render(d.Name))
+	b.WriteString(styleTitle.Render(islandDisplay(*d)))
 	b.WriteString("\n\n")
+	// Show the addressable slug when a title is masking it (CLI addresses by slug).
+	if d.Title != "" && d.Title != d.Name {
+		b.WriteString(fmt.Sprintf("name:      %s\n", styleMuted.Render(d.Name)))
+	}
 	b.WriteString(fmt.Sprintf("repo:      %s\n", styleAccent.Render(truncate(d.Repo, 60))))
 	if len(d.Agents) > 1 {
 		b.WriteString(fmt.Sprintf("agents:    %s\n", styleAccent.Render(fmt.Sprintf("%d", len(d.Agents)))))
@@ -1174,7 +1208,7 @@ func (m tuiModel) renderHelp() string {
 		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"+", "add an agent — Claude Code, Codex, or a headless background command"},
-		{"e", "rename — relabel the highlighted agent (cosmetic; its id is unchanged)"},
+		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
@@ -1271,6 +1305,9 @@ func (m tuiModel) renderConfirm() string {
 	case "relabel-agent":
 		prompt = fmt.Sprintf("Rename agent %s (blank clears the label). Type a name and press Enter: %s",
 			c.agent, c.answer)
+	case "rename-island":
+		prompt = fmt.Sprintf("Rename %q (display title; blank resets to the name). Type a title and press Enter: %s",
+			c.island, c.answer)
 	}
 	return styleErrored.Render("┌── ") + prompt + styleErrored.Render(" ──┐")
 }

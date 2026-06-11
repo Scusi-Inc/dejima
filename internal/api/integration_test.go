@@ -326,3 +326,42 @@ func TestHeadlessAgentNotAttachable(t *testing.T) {
 		t.Errorf("headless session: got %d, want 409 (body %q)", rr.Code, rr.Body.String())
 	}
 }
+
+// TestIslandTitle covers the cosmetic display title: it's editable in place,
+// surfaces on GET, and clears with an empty value — Name is never touched.
+func TestIslandTitle(t *testing.T) {
+	h, _ := newTestServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"proj","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr := do(t, h, http.MethodPatch, "/v1/islands/proj", `{"title":"Frontend Rework"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set title: got %d, body %s", rr.Code, rr.Body.String())
+	}
+	var info IslandInfo
+	_ = json.Unmarshal(rr.Body.Bytes(), &info)
+	if info.Name != "proj" || info.Title != "Frontend Rework" {
+		t.Fatalf("after set: name=%q title=%q, want proj / Frontend Rework", info.Name, info.Title)
+	}
+
+	// GET reflects the title.
+	rr = do(t, h, http.MethodGet, "/v1/islands/proj", "")
+	_ = json.Unmarshal(rr.Body.Bytes(), &info)
+	if info.Title != "Frontend Rework" {
+		t.Errorf("GET title = %q, want Frontend Rework", info.Title)
+	}
+
+	// Empty clears it back to nothing (Name still proj).
+	rr = do(t, h, http.MethodPatch, "/v1/islands/proj", `{"title":""}`)
+	var cleared IslandInfo
+	_ = json.Unmarshal(rr.Body.Bytes(), &cleared)
+	if cleared.Title != "" || cleared.Name != "proj" {
+		t.Errorf("after clear: name=%q title=%q, want proj / empty", cleared.Name, cleared.Title)
+	}
+
+	// Patching a missing island is a 404.
+	if rr = do(t, h, http.MethodPatch, "/v1/islands/nope", `{"title":"x"}`); rr.Code != http.StatusNotFound {
+		t.Errorf("patch missing island: got %d, want 404", rr.Code)
+	}
+}

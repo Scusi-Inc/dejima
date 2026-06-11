@@ -23,17 +23,17 @@ import (
 type Subscription struct {
 	ID        string    `json:"id"`
 	URL       string    `json:"url"`
-	Secret    string    `json:"secret,omitempty"`     // HMAC-signs payloads if non-empty
-	Events    []Type    `json:"events,omitempty"`     // empty = all
+	Secret    string    `json:"secret,omitempty"` // HMAC-signs payloads if non-empty
+	Events    []Type    `json:"events,omitempty"` // empty = all
 	CreatedAt time.Time `json:"created_at"`
 }
 
 // Manager fans out events to subscribed webhooks.
 type Manager struct {
-	log     *slog.Logger
-	mu      sync.RWMutex
-	subs    map[string]Subscription
-	httpc   *http.Client
+	log   *slog.Logger
+	mu    sync.RWMutex
+	subs  map[string]Subscription
+	httpc *http.Client
 }
 
 // New constructs a Manager and loads any persisted subscriptions.

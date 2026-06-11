@@ -241,6 +241,15 @@ func (c *Client) ResetIsland(ctx context.Context, name string) (*IslandInfo, err
 	return &out, nil
 }
 
+// SetIslandTitle sets an island's cosmetic display title (empty clears it).
+func (c *Client) SetIslandTitle(ctx context.Context, name, title string) (*IslandInfo, error) {
+	var out IslandInfo
+	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+name, UpdateIslandRequest{Title: title}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ExecInIsland runs a one-shot command inside an island and returns its output.
 func (c *Client) ExecInIsland(ctx context.Context, name string, cmd []string) (*ExecResponse, error) {
 	var out ExecResponse

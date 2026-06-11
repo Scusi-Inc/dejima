@@ -60,7 +60,11 @@ type AgentSpec struct {
 
 // Project is the persisted record for a single island.
 type Project struct {
-	Name    string `toml:"name"`
+	Name string `toml:"name"`
+	// Title is a cosmetic, freely-editable display name. Name stays the durable
+	// infra handle (container/volume/network/config-dir identity, and the slug
+	// addressed by the CLI); Title is what the user reads. Empty → show Name.
+	Title   string `toml:"title,omitempty"`
 	RepoURL string `toml:"repo"`
 	// Agent and Cmd are the pre-multi-agent scalar fields. They are retained for
 	// backward compatibility (older daemons read them) and mirror Agents[0]. New
@@ -154,6 +158,14 @@ func (p *Project) RemoveAgent(id string) bool {
 		}
 	}
 	return false
+}
+
+// DisplayName is the user-facing name: the Title if set, else the Name slug.
+func (p *Project) DisplayName() string {
+	if p.Title != "" {
+		return p.Title
+	}
+	return p.Name
 }
 
 // ContainerName returns the deterministic container name for this project.

@@ -5,7 +5,10 @@ import "time"
 // IslandInfo is the public view of an island returned by the API.
 type IslandInfo struct {
 	Name string `json:"name"`
-	Repo string `json:"repo"`
+	// Title is the cosmetic display name; empty means show Name. Name remains the
+	// durable handle the CLI addresses by.
+	Title string `json:"title,omitempty"`
+	Repo  string `json:"repo"`
 	// Agent is the island's agent type (e.g. "claude-code", "codex", "headless").
 	Agent string `json:"agent"`
 	Image string `json:"image"`
@@ -122,6 +125,12 @@ type CreateIslandRequest struct {
 	// the scalar Agent/Cmd above describe a single agent (back-compat). Consumed
 	// from Phase 2 onward; accepted-but-unused before then.
 	Agents []AgentSpecRequest `json:"agents,omitempty"`
+}
+
+// UpdateIslandRequest is the body of PATCH /v1/islands/{name}. Only cosmetic,
+// in-place-editable fields live here (Name and infra identity are immutable).
+type UpdateIslandRequest struct {
+	Title string `json:"title"`
 }
 
 // AgentSpecRequest describes one agent to create — either as an element of
