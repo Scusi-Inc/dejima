@@ -101,12 +101,14 @@
   .topnav a + a::before { content: "·"; color: var(--border); margin-right: 1.1rem; }
   /* Sticky platform selector ----------------------------------------- */
   .platbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
-    display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.65rem;
     padding: 0.55rem 1rem; background: rgba(10,23,45,0.94);
     border-top: 1px solid var(--border); backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px); }
-  .platbar-label { color: var(--muted); text-transform: uppercase;
-    letter-spacing: 0.06em; font-size: 0.72rem; }
+  .platbar-brand { display: inline-flex; align-items: center; gap: 0.4rem;
+    font-weight: 700; color: var(--hover); font-size: 0.95rem; }
+  .platbar-logo { width: 22px; height: 22px; flex-shrink: 0; }
+  .platbar-word { color: var(--muted); font-size: 0.85rem; }
   .platbar-link { margin-left: auto; color: var(--accent); font-size: 0.82rem;
     text-decoration: none; }
   .platbar-link:hover { color: var(--hover); }
@@ -502,11 +504,13 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
 </main>
 
 <div class="platbar" role="group" aria-label="Platform selector">
-  <span class="platbar-label">Platform</span>
+  <span class="platbar-brand"><img class="platbar-logo" src="assets/logo-transparent.png" alt=""> Dejima</span>
+  <span class="platbar-word">for</span>
   <div class="seg" role="radiogroup" aria-label="Role">
     <button type="button" data-role="server" class="seg-btn" aria-pressed="true">Server</button>
     <button type="button" data-role="client" class="seg-btn" aria-pressed="false">Client</button>
   </div>
+  <span class="platbar-word">using</span>
   <div class="seg" role="radiogroup" aria-label="OS">
     <button type="button" data-os="macos"   class="seg-btn" aria-pressed="true">macOS</button>
     <button type="button" data-os="linux"   class="seg-btn" aria-pressed="false">Linux</button>
