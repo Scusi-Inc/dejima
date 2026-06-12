@@ -23,7 +23,7 @@ const (
 	stepRoot   creatorStep = iota // first-load: choose a directory to scan
 	stepPick                      // pick a discovered repo (or switch to manual)
 	stepManual                    // type a URL or path
-	stepGitHub                    // browse the user's GitHub repos via gh
+	stepGitHub                    // browse a daemon GitHub identity's repos
 	stepSource                    // diverged local repo: clone origin vs local copy
 	stepAgent                     // choose the agent
 	stepName                      // confirm/edit the island name
