@@ -206,20 +206,34 @@ token**, which the brain holds to drive the child. That keeps every island indiv
 god-token) while enabling the spawn-and-drive workflow. Flag this for a decision before building —
 it's the difference between "autonomy" and "a token that can do anything."
 
-### Footprint summary (files touched)
+### Footprint summary (files touched) — ✅ BUILT (#8)
 
-| Concern | File |
-|---|---|
-| Token mint + store | `internal/project` (or a `~/.dejima/projects/<n>/token` helper) + `provision` |
-| Env injection (`DEJIMA_HOST`, `DEJIMA_TOKEN`) | `internal/api/server.go` `createContainerForProject` |
-| Token listener (host-internal bind) | `cmd/dejimad/main.go` (alongside `tailscaleListener`) |
-| Bearer-token auth + island-scoping middleware | `internal/api/server.go` `Handler()` |
-| In-island TCP client w/ token | `internal/api/client.go`, `cmd/dejima` `client()` |
-| Spawn-returns-child-token | `internal/api/server.go` `createIsland` |
+| Concern | File | Status |
+|---|---|---|
+| Token mint + store (constant-time resolve) | `internal/porttoken/porttoken.go` + `internal/paths.TokenPath` | ✅ |
+| Env injection (`DEJIMA_HOST`, `DEJIMA_TOKEN`) | `internal/api/server.go` `createContainerForProject` (gated on `EnableAutonomy`) | ✅ |
+| Token listener (host-internal bind) | `cmd/dejimad/main.go` `--token-tcp` + `assertHostInternalBind` (separate `http.Server`) | ✅ |
+| Bearer-token auth + island-scoping middleware | `internal/api/tokenauth.go` `TokenAuthHandler` (default-deny, own-island only) | ✅ |
+| In-island TCP client w/ token | `internal/api/client.go` `NewTCPClientWithToken`, `cmd/dejima` `clientForHost` | ✅ |
+| Spawn-returns-child-token | `internal/api/server.go` `createIsland` → `CreateIslandResponse.Token` | ✅ |
 
-This is a **bounded, ~1–2 day** change — small enough that "autonomy on Minion" should be the next
-build after this smoke test, not a someday item. It graduates `port-island-spec.md` §11.3 from
-open question to spec.
+**Enabling it (macOS daemon host):** run `dejimad --token-tcp 127.0.0.1:7274`
+(or env `DEJIMAD_TOKEN_TCP`). The daemon then injects `DEJIMA_HOST=host.docker.internal:7274`
++ a per-island `DEJIMA_TOKEN` into every container, and the in-island `dejima` CLI
+authenticates automatically — the brain just shells out to `dejima port intake …`.
+Override the container-dialed address with `--autonomy-dial` if `host.docker.internal`
+isn't the right route on your runtime (step §5.2 reachability probe decides this).
+
+**⚠️ Security-review finding (fixed, commit `c2f7db3`).** The first cut of the
+middleware authorized on the *decoded* request path while the handler targeted
+`r.PathValue("name")` — an encoded slash (`/v1/islands/a%2F..%2Fb/exec`) let an
+island-a token reach island b (ServeMux binds `{name}="a/../b"`, which
+`project.Load`→`filepath.Join` cleans to `b`). Fixed by authorizing on
+`EscapedPath()` + `project.ValidateName`, and by validating the name in
+`project.Load` (defense in depth). **Lesson for future routes: never parse an
+identity for authorization differently than the handler resolves it.**
+
+This graduated `port-island-spec.md` §11.3 from open question to spec.
 
 ---
 
