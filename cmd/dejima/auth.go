@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/agentcreds"
+	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/reposrc"
 )
 
 // newAuthCmd groups agent-credential plumbing between client and daemon.
@@ -24,15 +26,39 @@ func newAuthCmd() *cobra.Command {
 }
 
 func newAuthPushCmd() *cobra.Command {
-	return &cobra.Command{
+	var github bool
+	var name string
+	var makeDefault bool
+	cmd := &cobra.Command{
 		Use:   "push",
-		Short: "Send this machine's Claude credentials to the daemon.",
+		Short: "Send this machine's credentials to the daemon.",
+		Long: "Without flags, pushes this machine's Claude login. With --github, pushes the " +
+			"active gh account as a named daemon GitHub identity that islands can clone and push " +
+			"as — switch accounts with `gh auth switch` first to seed the other one.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			blob, source, err := agentcreds.LoadClaude()
+			c, err := client()
 			if err != nil {
 				return err
 			}
-			c, err := client()
+			if github {
+				login, token, err := reposrc.LocalGitHubLogin()
+				if err != nil {
+					return err
+				}
+				id := name
+				if id == "" {
+					id = login
+				}
+				if _, err := c.PutGitHubIdentity(cmd.Context(), id, api.PutGitHubIdentityRequest{
+					Login: login, Token: token, Default: makeDefault,
+				}); err != nil {
+					return err
+				}
+				fmt.Printf("pushed GitHub identity %q (login %s) to the daemon\n", id, login)
+				fmt.Println("new islands can select it; see `dejima auth status`")
+				return nil
+			}
+			blob, source, err := agentcreds.LoadClaude()
 			if err != nil {
 				return err
 			}
@@ -44,6 +70,10 @@ func newAuthPushCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&github, "github", false, "push the active gh account as a daemon GitHub identity")
+	cmd.Flags().StringVar(&name, "name", "", "identity name (default: the GitHub login)")
+	cmd.Flags().BoolVar(&makeDefault, "default", false, "make this the daemon's default GitHub identity")
+	return cmd
 }
 
 func newAuthStatusCmd() *cobra.Command {
@@ -73,6 +103,27 @@ func newAuthStatusCmd() *cobra.Command {
 			if !st.SeedPresent && st.HostSource == "" {
 				fmt.Println("\nnew islands will start WITHOUT Claude credentials.")
 				fmt.Println("fix: run `dejima auth push` from a machine where `claude` is logged in.")
+			}
+
+			ids, err := c.ListGitHubIdentities(cmd.Context())
+			if err != nil {
+				return err
+			}
+			fmt.Println()
+			if len(ids) == 0 {
+				fmt.Println("github identities: none")
+				fmt.Println("  add one with `dejima auth push --github` (from a machine with gh),")
+				fmt.Println("  or `gh auth login` on the daemon host. Islands fall back to the host's ~/.config/gh.")
+			} else {
+				fmt.Println("github identities:")
+				for _, id := range ids {
+					marker := " "
+					if id.Default {
+						marker = "*"
+					}
+					fmt.Printf("  %s %-12s %s@%s\n", marker, id.Name, id.Login, id.Host)
+				}
+				fmt.Println("  (* = default; new islands use it unless they pick another)")
 			}
 			return nil
 		},

@@ -259,6 +259,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ghIdentitiesMsg:
+		if m.creator != nil {
+			return m.onGhIdentities(msg)
+		}
+		return m, nil
+
 	case ghReposMsg:
 		if m.creator != nil {
 			m.creator.onGhRepos(msg)
