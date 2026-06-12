@@ -95,7 +95,7 @@
   </div>
 </header>
 
-<p>The contract for any Dejima client — <em>Dispatch</em>, mobile/PWA apps, chat bridges, your own tools. The CLI targets this same API; nothing it does is off-limits to third-party apps.</p>
+<p>The contract for any Dejima client — <em>Scusi</em>, mobile/PWA apps, chat bridges, your own tools. The CLI targets this same API; nothing it does is off-limits to third-party apps.</p>
 
 <p><a href="index.html">← Back to landing</a></p>
 
@@ -357,7 +357,7 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
   "island_image_present": true,
   "island_image": "dejima/island:latest"
 }</code></pre>
-<p>Used by the TUI's footer health strip and <code>dejima overview</code>. The two <code>*_reachable</code>/<code>*_present</code> booleans are a cheap "is the substrate healthy?" probe — Dispatch (and other clients) can poll this every few seconds and surface a red badge when either turns false.</p>
+<p>Used by the TUI's footer health strip and <code>dejima overview</code>. The two <code>*_reachable</code>/<code>*_present</code> booleans are a cheap "is the substrate healthy?" probe — Scusi (and other clients) can poll this every few seconds and surface a red badge when either turns false.</p>
 
 <div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/healthz</span><span class="desc">Liveness</span></div>
 <p><code>{ "status": "ok" }</code> when the daemon is reachable. Use to check whether <code>dejimad</code> is up before issuing real calls.</p>
