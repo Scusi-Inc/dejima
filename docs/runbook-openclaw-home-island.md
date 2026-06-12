@@ -98,10 +98,10 @@ handler today does **not** chmod/chown after the copy.
 **Observe (record the actual output):**
 
 ```bash
-dejima exec oc-home -- ls -ln /intake/vault/    # numeric owner UID + mode of each file
-dejima exec oc-home -- stat -c '%u %a %n' /intake/vault/open.md /intake/vault/locked.md
-dejima exec oc-home -- cat  /intake/vault/open.md     # expect: succeeds
-dejima exec oc-home -- cat  /intake/vault/locked.md   # expect: PERMISSION DENIED
+dejima exec oc-home -- ls -ln /home/dejima/intake/vault/    # numeric owner UID + mode of each file
+dejima exec oc-home -- stat -c '%u %a %n' /home/dejima/intake/vault/open.md /home/dejima/intake/vault/locked.md
+dejima exec oc-home -- cat  /home/dejima/intake/vault/open.md     # expect: succeeds
+dejima exec oc-home -- cat  /home/dejima/intake/vault/locked.md   # expect: PERMISSION DENIED
 ```
 
 **Expected anomaly / pass-fail:**

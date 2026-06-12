@@ -67,7 +67,10 @@ func (s *Server) handlePortIntake(w http.ResponseWriter, r *http.Request) {
 	}
 	dest := req.Dest
 	if dest == "" {
-		dest = "/intake/" + scope.Name + "/" + filepath.ToSlash(rel)
+		// Default into the agent's home — writable by the island's dejima user.
+		// The container root is root-owned, so a top-level /intake isn't creatable
+		// by the agent and docker cp would fail.
+		dest = "/home/dejima/intake/" + scope.Name + "/" + filepath.ToSlash(rel)
 	}
 
 	// Fail closed: record the crossing before any byte enters the island.

@@ -294,7 +294,8 @@ and logs every operation).
 | `dejima audit [--verify] [-n N]` | Show the Ledger; `--verify` checks the hash chain (non-zero on tamper) | — |
 
 API routes: `…/islands/{name}/port/scopes` (GET/POST/DELETE), `…/port/intake`, `…/port/export`
-(POST), and `GET /v1/audit`. Default intake dest is `/intake/<scope>/<rel>` inside the island.
+(POST), and `GET /v1/audit`. Default intake dest is `/home/dejima/intake/<scope>/<rel>` inside
+the island (the agent-owned home; the container root isn't agent-writable).
 
 ---
 

@@ -132,11 +132,11 @@ assert_has "$LIST" "ro"    "scope is read-only"
 
 step "Intake: host → island copy"
 expect_ok "intake note.md" dejima port intake "$ISLAND" "vault:note.md"
-GOT="$(dejima exec "$ISLAND" -- cat /intake/vault/note.md 2>/dev/null)"
+GOT="$(dejima exec "$ISLAND" -- cat /home/dejima/intake/vault/note.md 2>/dev/null)"
 assert_eq "$GOT" "hello vault" "note.md content landed inside the island"
 
 expect_ok "intake nested daily/2026.md" dejima port intake "$ISLAND" "vault:daily/2026.md"
-GOT="$(dejima exec "$ISLAND" -- cat /intake/vault/daily/2026.md 2>/dev/null)"
+GOT="$(dejima exec "$ISLAND" -- cat /home/dejima/intake/vault/daily/2026.md 2>/dev/null)"
 assert_eq "$GOT" "deep content" "nested file landed at the mirrored path"
 
 expect_ok "intake to a custom dest" dejima port intake "$ISLAND" "vault:note.md" "/tmp/custom.md"
@@ -145,7 +145,7 @@ assert_eq "$GOT" "hello vault" "custom dest honored"
 
 step "Traversal guards: escapes must be REFUSED (with the right error)"
 expect_err_match "../ parent traversal refused as scope-escape" "escapes the scope" \
-  dejima port intake "$ISLAND" "vault:../../etc/hostname"
+  dejima port intake "$ISLAND" "vault:../secret.txt"
 expect_err_match "symlink-escape refused as scope-escape" "escapes the scope" \
   dejima port intake "$ISLAND" "vault:escape"
 # And prove the secret never crossed:
@@ -197,9 +197,13 @@ dejima init --name "$ISLAND_MULTI" --repo "$REPO" --local-copy --agent claude-co
 AGENTS="$(dejima agent ls "$ISLAND_MULTI" 2>&1)"
 assert_has "$AGENTS" "claude-code" "primary agent a1 = claude-code"
 assert_has "$AGENTS" "codex"       "seeded agent a2 = codex"
-# a2's worktree should have been reconciled inside the container.
-expect_ok "a2 worktree exists in-container" \
-  dejima exec "$ISLAND_MULTI" -- test -d /workspace/.agents/a2
+# a2's worktree is reconciled asynchronously after create returns — poll for it.
+wt_ok=""
+for _ in $(seq 1 20); do
+  if dejima exec "$ISLAND_MULTI" -- test -d /workspace/.agents/a2 >/dev/null 2>&1; then wt_ok=1; break; fi
+  sleep 1
+done
+[ -n "$wt_ok" ] && pass "a2 worktree exists in-container" || fail "a2 worktree never appeared in-container (waited 20s)"
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1m──────── results ────────\033[0m\n'
