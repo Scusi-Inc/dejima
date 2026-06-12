@@ -203,7 +203,7 @@ A single screenshot or 90-second video of *"Mac mini boot → run command → 20
 
 ### What this doesn't change
 
-- Dejima is still substrate, not product. The provisioning wizard configures a *host*; it doesn't replace Dispatch / Dejima-Slack / other consumers.
+- Dejima is still substrate, not product. The provisioning wizard configures a *host*; it doesn't replace Scusi / Dejima-Slack / other consumers.
 - The CLI / API surface stays unchanged.
 - Existing users on already-configured hosts use `dejima onboard` (no `--provision-host`) and skip all this.
 

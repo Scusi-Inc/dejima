@@ -242,6 +242,12 @@ local, Docker, SSH, Singularity, Modal, Daytona; Goose has extension points). We
   have to either honor it (lose containment) or silently rewrite it (lie about its semantics).
   **Not built, and not to be built** without revisiting this section (§10.6).
 
+> **Forward note (figure out later).** The same island-as-SSH-endpoint is also the on-ramp for
+> **agent-IDEs** — VS Code / Cursor / Zed / VSCodium opening an island as a remote-dev target
+> (today via "Attach to Running Container" over a remote Docker context; via Remote-SSH once the
+> façade ships). A later **native Dejima editor extension** could surface islands, agents, and
+> `port` trades directly in the IDE. Tracked in `roadmap.md` (Port section).
+
 ---
 
 ## 6. V1 constraints — prove the security model before touching read-write

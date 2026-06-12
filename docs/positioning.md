@@ -17,7 +17,7 @@ persistent layer where agents live, below a control plane / UI and above
 compute.** It is plumbing, not a product, and not a brain.
 
 ```text
-Control plane / UI        e.g. Dispatch, a Slack bot, a web client, the CLI/TUI
+Control plane / UI        e.g. Scusi, a Slack bot, a web client, the CLI/TUI
         │
         ▼
 Dejima runtime            persistence · isolation · sessions · access · events
@@ -53,7 +53,7 @@ first-class infrastructure, separate from both the model and the UI.**
 
 - **Not a memory / intelligence layer.** It does not accumulate understanding of
   you, synthesize your notes, or act as a chief-of-staff. That's where durable,
-  compounding value lives — and it belongs **above** Dejima (in Dispatch or a
+  compounding value lives — and it belongs **above** Dejima (in Scusi or a
   dedicated memory service), because it wants the *opposite* of containment
   (ambient access to everything). See "the core tension" below.
 - **Not a UI or an end-user product.** The TUI/CLI is a reference client, not the
@@ -86,7 +86,7 @@ We resolve this deliberately, not by accident:
   primitives** — durable volumes, agent state, an event stream, and the
   **Intake / Trade / Ledger** concepts (brokered in, brokered out, audited).
 - A memory/context layer, if built, **composes those primitives from above
-  without collapsing the silo.** It is a separate component (Dispatch or a
+  without collapsing the silo.** It is a separate component (Scusi or a
   sibling service), never a god-agent reaching through isolation.
 
 The bridge between "neutral runtime" and "personal intelligence" is the brokered
@@ -105,12 +105,12 @@ value). **Ubiquitous infrastructure tends to be monetized one layer up.**
 So the conscious stance:
 
 - Treat the Dejima runtime as **strategic OSS infrastructure** that commoditizes
-  the complement and makes the control plane (Dispatch) better.
+  the complement and makes the control plane (Scusi) better.
 - Expect **value capture to happen at the control-plane / memory layer**, not in
   the runtime.
 - "Neutral standard everyone builds on" is a *different, harder* bet than
-  "Dispatch's strategic backend." It requires external adopters and probably a
-  spec — not just good code. Today the primary consumer is Dispatch. Don't
+  "Scusi's strategic backend." It requires external adopters and probably a
+  spec — not just good code. Today the primary consumer is Scusi. Don't
   confuse the two positions.
 
 ---
