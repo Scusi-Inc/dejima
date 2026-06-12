@@ -364,7 +364,7 @@ func (m tuiModel) creatorSourceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorEnterAgent(baseName string) (tea.Model, tea.Cmd) {
 	c := m.creator
 	c.step = stepAgent
-	c.picker = newAgentPicker()
+	c.picker = newAgentPickerDefault("claude-code") // new islands default to claude-code, not the terminal
 	c.nameInput = c.uniqueName(baseName)
 	return m, nil
 }

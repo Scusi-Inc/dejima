@@ -24,9 +24,9 @@ type agentTypeOption struct {
 }
 
 var agentTypeOptions = []agentTypeOption{
+	{typ: "shell", desc: "plain terminal — a bash shell on the island workspace; attach and type"},
 	{typ: "claude-code", desc: "interactive AI agent — attach and drive it"},
 	{typ: "codex", desc: "interactive AI agent — attach and drive it"},
-	{typ: "shell", desc: "plain terminal — a bash shell on the island workspace; attach and type"},
 	{typ: api.AgentHeadless, desc: "background command — supervised, restarts on crash, logs only", headless: true},
 }
 
@@ -49,6 +49,21 @@ type agentPicker struct {
 }
 
 func newAgentPicker() agentPicker { return agentPicker{} }
+
+// newAgentPickerDefault is newAgentPicker with the cursor pre-positioned on the
+// given type. The list leads with the terminal (so add-agent defaults to a quick
+// shell), but the new-island flow uses this to default a fresh island's primary
+// agent to claude-code.
+func newAgentPickerDefault(typ string) agentPicker {
+	p := newAgentPicker()
+	for i, o := range agentTypeOptions {
+		if o.typ == typ {
+			p.cursor = i
+			break
+		}
+	}
+	return p
+}
 
 func (p agentPicker) selected() agentTypeOption { return agentTypeOptions[p.cursor] }
 func (p agentPicker) typ() string               { return p.selected().typ }

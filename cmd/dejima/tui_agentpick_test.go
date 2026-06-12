@@ -35,10 +35,11 @@ func feed(p *agentPicker, keys ...string) pickerResult {
 	return r
 }
 
-// An interactive type resolves on Enter with no command.
+// An interactive AI type resolves on Enter with no command (claude-code is the
+// second option now that the terminal leads the list).
 func TestAgentPickerInteractive(t *testing.T) {
 	p := newAgentPicker()
-	if r := feed(&p, "enter"); r != pickerDone {
+	if r := feed(&p, "down", "enter"); r != pickerDone {
 		t.Fatalf("interactive enter = %v, want pickerDone", r)
 	}
 	if p.typ() != "claude-code" {
@@ -52,7 +53,7 @@ func TestAgentPickerInteractive(t *testing.T) {
 // The shell (terminal) type is interactive — resolves on Enter with no command.
 func TestAgentPickerShell(t *testing.T) {
 	p := newAgentPicker()
-	if r := feed(&p, "down", "down", "enter"); r != pickerDone { // → shell (index 2)
+	if r := feed(&p, "enter"); r != pickerDone { // shell leads the list (index 0)
 		t.Fatalf("shell enter = %v, want pickerDone", r)
 	}
 	if p.typ() != "shell" {
@@ -97,7 +98,7 @@ func TestAgentAdderLabelStep(t *testing.T) {
 	a := &agentAdder{island: "myrepo", picker: newAgentPicker()}
 	m.agentAdder = a
 
-	m.agentAdderKey(key("enter")) // pick claude-code → label step
+	m.agentAdderKey(key("enter")) // pick the first option (shell) → label step
 	if a.phase != adderLabel {
 		t.Fatalf("after type pick: phase = %v, want adderLabel", a.phase)
 	}
