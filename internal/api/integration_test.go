@@ -327,6 +327,19 @@ func TestHeadlessAgentNotAttachable(t *testing.T) {
 	}
 }
 
+// TestCreateAcceptsSeedWithoutRepo covers the no-remote local-copy case: an
+// empty repo plus a seed path is a valid clone source (origin stays unset).
+func TestCreateAcceptsSeedWithoutRepo(t *testing.T) {
+	h, _ := newTestServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"name":"seedonly","seed_path":"/tmp/seed-src"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("seed-only create: got %d, want 201 (%s)", rr.Code, rr.Body.String())
+	}
+	// But neither repo nor seed is still rejected.
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"name":"norepo"}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("no repo + no seed: got %d, want 400 (%s)", rr.Code, rr.Body.String())
+	}
+}
+
 // TestCreateSeedsMultipleAgents covers seeding >1 agent at create time via the
 // Agents field: element 0 is the primary, the rest are co-located agents.
 func TestCreateSeedsMultipleAgents(t *testing.T) {

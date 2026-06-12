@@ -89,7 +89,7 @@ type tuiModel struct {
 	creator      *creatorModel   // non-nil while the new-island flow is active
 	switcher     *switcherModel  // non-nil while the connection switcher is open
 	agentAdder   *agentAdder     // non-nil while the add-agent flow is active
-	expanded     map[string]bool // island name → agents-revealed (default: multi-agent islands)
+	expanded     map[string]bool // island name → agents-revealed (default: all expanded)
 
 	activeHost  string // current target: "" = local socket, else host:port
 	activeLabel string // profile name for the active target, if known
@@ -377,6 +377,14 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case "E":
+		// Expand/collapse all islands at once. Flips on the current state: if
+		// every island is already expanded, collapse them all; otherwise expand.
+		expand := !m.allIslandsExpanded()
+		for _, isl := range m.islands {
+			m.expanded[isl.Name] = expand
+		}
+		return m, nil
 	case "a":
 		// Explicit "attach in this terminal" — replaces the dashboard. Useful
 		// when the user actually wants the old behavior even though a
@@ -577,13 +585,24 @@ type treeRow struct {
 }
 
 // islandExpanded reports whether an island's agents are revealed. Multi-agent
-// islands default to expanded; single-agent ones default collapsed. Either can
-// be toggled (space / ←/→), which is remembered in m.expanded.
+// islands default to expanded. Either can be toggled (space / ←/→), or all at
+// once (E), which is remembered in m.expanded.
 func (m tuiModel) islandExpanded(isl api.IslandInfo) bool {
 	if v, ok := m.expanded[isl.Name]; ok {
 		return v
 	}
-	return len(isl.Agents) > 1
+	return true
+}
+
+// allIslandsExpanded reports whether every island is currently expanded — used
+// to flip the expand/collapse-all action and its footer label.
+func (m tuiModel) allIslandsExpanded() bool {
+	for _, isl := range m.islands {
+		if !m.islandExpanded(isl) {
+			return false
+		}
+	}
+	return true
 }
 
 func (m tuiModel) islandExpandedByName(name string) bool {
@@ -1142,7 +1161,11 @@ func (m tuiModel) renderFooter() string {
 	// (global commands, then island lifecycle), right-aligned to a shared edge.
 	// The strip used to share line one with the global commands, which collided
 	// on narrow terminals — giving it its own row keeps both readable.
-	keys1 := "[n] new   [⏎] open   [space] expand   [+] add agent   [s] server   [?] help   [q] quit"
+	expandAll := "[E] expand all"
+	if m.allIslandsExpanded() {
+		expandAll = "[E] collapse all"
+	}
+	keys1 := "[n] new   [⏎] open   [space] expand   " + expandAll + "   [+] add agent   [s] server   [?] help   [q] quit"
 	keys2 := "[a] attach here   [e] rename   [X] rm agent   [h] hibernate   [w] wake   [r] reset   [d] purge"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
@@ -1207,6 +1230,7 @@ func (m tuiModel) renderHelp() string {
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
 		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
+		{"E", "expand / collapse all islands at once (flips on the current state)"},
 		{"+", "add an agent — Claude Code, Codex, or a headless background command"},
 		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},

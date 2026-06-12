@@ -703,13 +703,19 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
-	if strings.TrimSpace(req.Repo) == "" {
-		writeError(w, http.StatusBadRequest, errors.New("repo is required"))
+	// A seed path is a valid clone source on its own — a local-copy of a repo
+	// with no remote resolves to Repo="" + SeedPath set (origin stays unset).
+	if strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed)"))
 		return
 	}
 	name := req.Name
 	if name == "" {
-		name = project.DeriveNameFromRepo(req.Repo)
+		src := req.Repo
+		if src == "" {
+			src = req.SeedPath // no-remote local copy: derive the name from the seed dir
+		}
+		name = project.DeriveNameFromRepo(src)
 	}
 	if err := project.ValidateName(name); err != nil {
 		writeError(w, http.StatusBadRequest, err)
