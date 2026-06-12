@@ -8,6 +8,28 @@ This is the living roadmap for Dejima. Items are grouped by phase and sized roug
 
 ---
 
+## 🧑 Operator verification queue (built, needs a live run)
+
+These shipped to `master` with unit/security review but can't be exercised from the
+build island (no live Docker/macOS host here). Run them on Minion and feed findings back.
+
+- [ ] **OpenClaw `--allow-unconfigured` idles, not crash-loops.** Create a Home Island
+  (`--agent openclaw`) with an empty `/workspace` config; confirm the gateway waits
+  instead of exiting nonzero / restart-looping in `dejima logs`. If OpenClaw rejects the
+  flag, report the correct one. (commit `30d898c`, `internal/handlers/handlers.go`)
+- [ ] **#8 macOS TCP autonomy reachability probe** (`runbook-openclaw-home-island.md §5.2`).
+  `dejimad --token-tcp 127.0.0.1:7274`; from inside an island confirm
+  `host.docker.internal:7274/v1/healthz` reaches the loopback-bound daemon and that an
+  in-island `dejima port intake …` authenticates (200, not 401/403). Decides whether
+  `host.docker.internal` is the right `--autonomy-dial` on Minion's Docker runtime.
+- [ ] **#9 SSH-façade live + VS Code Remote-SSH.** `dejimad --ssh :2222` (prefer a tailnet
+  bind), `dejima ssh authorize <island> --key …`, then `ssh <island>@host -p 2222` (lands
+  in the container, PTY/resize/exit-codes work) and point VS Code/Cursor Remote-SSH at it
+  (server bootstraps over the exec channel; can edit `/workspace`). Note whether sftp is
+  needed for your editor flow.
+
+---
+
 ## v1 (current — dogfood phase)
 
 The v1 vertical slice. Buildable, testable. Real-world dogfood pending.
