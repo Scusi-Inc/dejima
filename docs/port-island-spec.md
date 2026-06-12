@@ -361,7 +361,9 @@ opt-in and conservative. (Strategy framing lives in the private strategy repo, n
 3. **Brain-driven trades on macOS.** Wire the authenticated in-island → `dejimad` TCP path (the
    unix socket is Linux-only). Couples to multi-agent; sequence accordingly (§3.2).
 4. **Capability brokering — go / no-go.** Do we ever broker a curated allowlist of host commands
-   (Shortcuts, CLIs), or hold the files-only line permanently? (§3.4)
+   (Shortcuts, CLIs), or hold the files-only line permanently? (§3.4) → analysis +
+   recommendation in [`capability-brokering.md`](capability-brokering.md) ("A-now / typed-adapters-later
+   / never-a-general-command-broker"); **awaiting ratification** — code stays files-only until then.
 5. **Where the Port runs when the host is not the compute.** On a cloud-VM deployment, what is
    "the host" whose files are brokered? Likely: a no-op unless a host-FS scope is explicitly
    configured.
