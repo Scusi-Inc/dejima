@@ -8,10 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/runtime"
 )
 
@@ -352,6 +355,54 @@ func TestCreateAcceptsSeedWithoutRepo(t *testing.T) {
 	// But neither repo nor seed is still rejected.
 	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"name":"norepo"}`); rr.Code != http.StatusBadRequest {
 		t.Errorf("no repo + no seed: got %d, want 400 (%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGitHubIdentityPlumbedIntoIsland verifies that a named daemon GitHub
+// identity is validated at create time and materialized into the island as a
+// per-island gh config mount (overriding the shared host gh), tokens and all.
+func TestGitHubIdentityPlumbedIntoIsland(t *testing.T) {
+	h, f := newTestServer(t) // HOME is a temp dir, so the store is isolated
+
+	store := &githubid.Store{}
+	store.Put(githubid.Identity{Name: "work", Login: "alockwood", Token: "ghp_work"})
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// An unknown identity is a clean 400, not a provisioning 500.
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"bad","github_identity":"nope"}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("unknown identity: got %d, want 400 (%s)", rr.Code, rr.Body.String())
+	}
+
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"proj","github_identity":"work"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create with identity: %d %s", rr.Code, rr.Body.String())
+	}
+
+	f.mu.Lock()
+	cr := f.lastCreate
+	f.mu.Unlock()
+	var ghMount *runtime.BindMount
+	for i := range cr.BindMounts {
+		if cr.BindMounts[i].ContainerPath == "/opt/host/gh-config" {
+			ghMount = &cr.BindMounts[i]
+		}
+	}
+	if ghMount == nil {
+		t.Fatalf("no /opt/host/gh-config mount; binds=%+v", cr.BindMounts)
+	}
+	if !strings.Contains(ghMount.HostPath, filepath.Join("secrets", "github", "islands", "proj")) {
+		t.Errorf("gh mount should be the per-island config dir, got %q", ghMount.HostPath)
+	}
+	if !ghMount.ReadOnly {
+		t.Error("per-island gh config mount must be read-only")
+	}
+	data, err := os.ReadFile(filepath.Join(ghMount.HostPath, "hosts.yml"))
+	if err != nil {
+		t.Fatalf("read materialized hosts.yml: %v", err)
+	}
+	if !strings.Contains(string(data), "oauth_token: ghp_work") || !strings.Contains(string(data), "user: alockwood") {
+		t.Errorf("materialized hosts.yml missing the identity's creds:\n%s", data)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/aoos/dejima/internal/agentcreds"
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/islandimage"
 	"github.com/aoos/dejima/internal/paths"
@@ -808,6 +809,19 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("a home island runs an assistant brain — it must be headless (agent=%q with a cmd)", AgentHeadless))
 		return
 	}
+	// A named GitHub identity must already exist on the daemon (an empty value
+	// is fine — it resolves to the default, or the host gh).
+	if gid := strings.TrimSpace(req.GitHubIdentity); gid != "" {
+		store, err := githubid.Load()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("load github identities: %w", err))
+			return
+		}
+		if _, ok := store.Resolve(gid); !ok {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("unknown github identity %q (see `dejima auth status`)", gid))
+			return
+		}
+	}
 	// Validate extra seed agents up front so bad input is a clean 400, not a
 	// provisioning 500. Element 0 is the primary, already validated above.
 	for i, a := range req.Agents {
@@ -829,7 +843,7 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.Resources, req.SeedPath, req.Agents)
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents)
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -883,7 +897,7 @@ func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 // seedAgents, when non-empty, describes the island's agents (element 0 is the
 // primary, already synthesized from the scalar agent/cmd); the rest are added
 // as co-located agents before the container is reconciled.
-func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role string, res Resources, seedPath string, seedAgents []AgentSpecRequest) (*project.Project, error) {
+func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role, ghIdentity string, res Resources, seedPath string, seedAgents []AgentSpecRequest) (*project.Project, error) {
 	exists, err := s.rt.ImageExists(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("check image %s: %w", image, err)
@@ -894,12 +908,13 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 
 	now := time.Now().UTC()
 	p := &project.Project{
-		Name:    name,
-		RepoURL: repo,
-		Agent:   agent,
-		Image:   image,
-		Cmd:     cmd,
-		Role:    role,
+		Name:           name,
+		RepoURL:        repo,
+		Agent:          agent,
+		Image:          image,
+		Cmd:            cmd,
+		Role:           role,
+		GitHubIdentity: ghIdentity,
 		Resources: project.Resources{
 			Memory: res.Memory,
 			CPUs:   res.CPUs,
@@ -953,7 +968,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 // createContainerForProject creates the long-lived container for an existing
 // project. Used by provision() and reset().
 func (s *Server) createContainerForProject(ctx context.Context, p *project.Project, seedPath string) error {
-	binds, err := credentialBindMounts()
+	binds, err := credentialBindMounts(p)
 	if err != nil {
 		return err
 	}
@@ -1546,11 +1561,44 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 
 // credentialBindMounts assembles the host paths to mount read-only into the island.
 // Missing paths are silently skipped so users without `gh` configured can still init.
-func credentialBindMounts() ([]runtime.BindMount, error) {
+// islandGHConfigDir resolves the island's GitHub identity (its chosen name, or
+// the daemon default) and materializes a single-identity gh config dir for it,
+// returning the host dir to mount read-only at /opt/host/gh-config. Returns ""
+// (no error) when the store resolves no identity, so the caller falls back to
+// the host's own ~/.config/gh.
+func islandGHConfigDir(p *project.Project) (string, error) {
+	store, err := githubid.Load()
+	if err != nil {
+		return "", fmt.Errorf("load github identities: %w", err)
+	}
+	id, ok := store.Resolve(p.GitHubIdentity)
+	if !ok {
+		return "", nil
+	}
+	dir, err := paths.GitHubIslandConfigDir(p.Name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hosts.yml"), []byte(githubid.HostsYAML(id)), 0o600); err != nil {
+		return "", fmt.Errorf("write island gh config: %w", err)
+	}
+	return dir, nil
+}
+
+func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 	var binds []runtime.BindMount
 
-	ghDir, err := paths.HostGHConfigDir()
-	if err == nil {
+	// GitHub: a per-island identity (chosen at create time, or the daemon
+	// default) materializes its own single-identity gh config and overrides the
+	// shared host mount. Falls back to the host's ~/.config/gh when the store
+	// resolves no identity — so islands keep working before any are configured.
+	if dir, err := islandGHConfigDir(p); err != nil {
+		return nil, err
+	} else if dir != "" {
+		binds = append(binds, runtime.BindMount{
+			HostPath: dir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
+		})
+	} else if ghDir, err := paths.HostGHConfigDir(); err == nil {
 		if _, statErr := os.Stat(ghDir); statErr == nil {
 			binds = append(binds, runtime.BindMount{
 				HostPath: ghDir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,

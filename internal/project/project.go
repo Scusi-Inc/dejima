@@ -92,6 +92,10 @@ type Project struct {
 	// Role is the island's purpose: "" (a work island) or "home" (a Home Island
 	// hosting an assistant brain). Empty for islands created before roles existed.
 	Role string `toml:"role,omitempty"`
+	// GitHubIdentity names which of the daemon's GitHub identities this island
+	// clones and pushes as (see internal/githubid). Empty means the daemon's
+	// default identity, or — when the store is empty — the host's ~/.config/gh.
+	GitHubIdentity string `toml:"github_identity,omitempty"`
 	// Ports are brokered host-filesystem grants for this island (see ports.go).
 	// Empty means deny-all: the island reaches no host content outside its repo.
 	Ports []PortScope `toml:"ports,omitempty"`

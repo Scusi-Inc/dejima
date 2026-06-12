@@ -137,6 +137,10 @@ type CreateIslandRequest struct {
 	// Role is the island's purpose: "" (work island, default) or "home" (a Home
 	// Island hosting an assistant brain). A home island must be headless (+cmd).
 	Role string `json:"role,omitempty"`
+	// GitHubIdentity names which daemon GitHub identity this island clones and
+	// pushes as (see GET /v1/credentials/github). Empty uses the daemon default,
+	// or the host's ~/.config/gh when no identities are configured.
+	GitHubIdentity string `json:"github_identity,omitempty"`
 }
 
 // CreateIslandResponse is the result of POST /v1/islands: an IslandInfo
