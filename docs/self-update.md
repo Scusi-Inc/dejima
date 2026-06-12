@@ -24,15 +24,18 @@ carries, so `DetectMode` also rejects any suffix.)
   update is available, and (without `--check`) prints the manual steps for the
   detected mode. **No mutation.** This is the honest, safe surface today.
 
-## Deferred (the mutating slices — each wants its own review)
+## Shipped (source-mode apply)
 
-These replace running software, so they ship behind explicit review, not
-auto-applied:
+`dejima update --apply` on a **source** install (dry run unless `--yes`):
+`git pull --ff-only` in the checkout → `make install` → `dejima service restart`
+(`internal/selfupdate.ApplySource`). The checkout is found from the cwd (walk up
+for the dejima `go.mod`) or `--source <dir>`. Safety: a dirty tree is refused
+(no clobbering local work) and `--ff-only` refuses a diverged history (no
+auto-merge). Tested with real temp git repos + a fake runner.
 
-1. **Source-mode apply.** `git pull --ff-only` in the checkout → `make install`
-   → `dejima service restart`. Decisions: locate the checkout (record it at
-   install time, or require running from it?); refuse if the tree is dirty / not
-   fast-forwardable; daemon-restart UX (in-flight sessions).
+## Deferred (still to build — review-gated)
+
+These replace running software, so they ship behind explicit review:
 2. **Release-mode apply.** Resolve the right asset for `GOOS/GOARCH` from the
    latest release, download, **verify** (checksum/signature — a self-replacing
    binary MUST verify provenance), atomically replace the on-disk binary
