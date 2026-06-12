@@ -259,6 +259,14 @@ func (p *Project) Save() error {
 
 // Load reads an existing project by name.
 func Load(name string) (*Project, error) {
+	// Validate before building any path: an unvalidated name (e.g. one carrying
+	// a path separator or traversal, as a decoded "%2F" in a request can) would
+	// be Clean-ed by filepath.Join into a different project's directory, letting
+	// a caller scoped to one island read another's config. Names are validated
+	// at create, so every legitimate on-disk project passes this.
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
 	path, err := paths.ProjectConfigPath(name)
 	if err != nil {
 		return nil, err

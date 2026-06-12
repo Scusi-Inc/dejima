@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/aoos/dejima/internal/porttoken"
@@ -106,9 +107,11 @@ func (s *Server) tokenAuth(mux *http.ServeMux) http.Handler {
 		}
 
 		// Classify on the pattern the router will actually dispatch to, so the
-		// authorization decision can never diverge from routing.
+		// authorization decision can never diverge from routing. Authorize on
+		// the *escaped* path so an encoded slash in {name} can't be parsed as a
+		// different island than the router binds (see islandFromPath).
 		_, pattern := mux.Handler(r)
-		if err := authorizeToken(island, pattern, r.URL.Path); err != nil {
+		if err := authorizeToken(island, pattern, r.URL.EscapedPath()); err != nil {
 			s.log.Warn("token request denied",
 				"island", island, "method", r.Method, "path", r.URL.Path, "reason", err)
 			writeError(w, http.StatusForbidden, err)
@@ -121,16 +124,16 @@ func (s *Server) tokenAuth(mux *http.ServeMux) http.Handler {
 }
 
 // authorizeToken decides whether the token for `island` may take the request
-// matched to `pattern` (with canonical request path `path`). Default-deny.
-func authorizeToken(island, pattern, path string) error {
+// matched to `pattern` (escapedPath is r.URL.EscapedPath()). Default-deny.
+func authorizeToken(island, pattern, escapedPath string) error {
 	switch tokenRouteAccess[pattern] {
 	case accessAny:
 		return nil
 
 	case accessOwnIsland:
-		target := islandFromPath(path)
-		if target == "" {
-			return errors.New("could not determine target island")
+		target, ok := islandFromPath(escapedPath)
+		if !ok {
+			return errors.New("invalid or missing target island")
 		}
 		if target != island {
 			// The crux: an island token may never act on another island.
@@ -165,14 +168,29 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(h[len(scheme):])
 }
 
-// islandFromPath pulls the {name} segment out of a canonical island-scoped
-// path (/v1/islands/{name}[/...]). Only called after the router has matched an
-// accessOwnIsland pattern, so the path is already canonical and well-formed.
-func islandFromPath(path string) string {
-	parts := strings.Split(path, "/")
+// islandFromPath pulls the {name} segment out of an island-scoped request path
+// and validates it. It parses the *escaped* path on purpose: ServeMux binds the
+// {name} wildcard to a single segment that may contain a percent-encoded slash
+// (e.g. "a%2F..%2Fb"), which it then hands to handlers decoded as "a/../b" —
+// and project.Load runs that through filepath.Join/Clean, resolving it to a
+// DIFFERENT island ("b"). Splitting the *decoded* URL.Path would make this auth
+// parse see only "a" and pass, while the handler acts on "b". Parsing the
+// escaped segment and requiring it to be one valid island name (no separator,
+// no traversal — project.ValidateName enforces exactly the charset Load
+// accepts) keeps the authorization identity in lockstep with what the router
+// binds. ok=false ⇒ deny.
+func islandFromPath(escapedPath string) (name string, ok bool) {
+	parts := strings.Split(escapedPath, "/")
 	// ["", "v1", "islands", "{name}", ...]
-	if len(parts) >= 4 && parts[1] == "v1" && parts[2] == "islands" {
-		return parts[3]
+	if len(parts) < 4 || parts[1] != "v1" || parts[2] != "islands" {
+		return "", false
 	}
-	return ""
+	seg, err := url.PathUnescape(parts[3])
+	if err != nil {
+		return "", false
+	}
+	if project.ValidateName(seg) != nil {
+		return "", false
+	}
+	return seg, true
 }

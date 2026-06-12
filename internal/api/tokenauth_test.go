@@ -53,17 +53,28 @@ func TestBearerToken(t *testing.T) {
 }
 
 func TestIslandFromPath(t *testing.T) {
-	cases := map[string]string{
-		"/v1/islands/foo":              "foo",
-		"/v1/islands/foo/port/intake":  "foo",
-		"/v1/islands/foo/files/a/b.md": "foo",
-		"/v1/healthz":                  "",
-		"/v1/islands":                  "",
-		"/":                            "",
+	cases := []struct {
+		path   string
+		want   string
+		wantOK bool
+	}{
+		{"/v1/islands/foo", "foo", true},
+		{"/v1/islands/foo/port/intake", "foo", true},
+		{"/v1/islands/foo/files/a/b.md", "foo", true},
+		{"/v1/healthz", "", false},
+		{"/v1/islands", "", false},
+		{"/", "", false},
+		// Encoded-slash traversal: the segment unescapes to a non-name and must
+		// be rejected, not parsed as "a" (the cross-island bypass).
+		{"/v1/islands/a%2F..%2Fb/exec", "", false},
+		{"/v1/islands/a%2Fb/exec", "", false},
+		{"/v1/islands/%2e%2e/exec", "", false}, // ".." → invalid name
+		{"/v1/islands/A/exec", "", false},      // uppercase fails nameRe
 	}
-	for path, want := range cases {
-		if got := islandFromPath(path); got != want {
-			t.Errorf("islandFromPath(%q) = %q, want %q", path, got, want)
+	for _, c := range cases {
+		got, ok := islandFromPath(c.path)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("islandFromPath(%q) = (%q,%v), want (%q,%v)", c.path, got, ok, c.want, c.wantOK)
 		}
 	}
 }
@@ -98,6 +109,10 @@ func TestAuthorizeTokenMatrix(t *testing.T) {
 		// Cross-island: the crux. Same route, another island → denied.
 		{"intake other", "proj", "POST /v1/islands/{name}/port/intake", "/v1/islands/home/port/intake", true},
 		{"exec other", "proj", "POST /v1/islands/{name}/exec", "/v1/islands/home/exec", true},
+		// Encoded-slash traversal: pattern matches as own-island, but the name
+		// segment unescapes to "proj/../home" — must be denied, not read as "proj".
+		{"exec encoded traversal", "proj", "POST /v1/islands/{name}/exec", "/v1/islands/proj%2F..%2Fhome/exec", true},
+		{"intake encoded traversal", "proj", "POST /v1/islands/{name}/port/intake", "/v1/islands/proj%2F..%2Fhome/port/intake", true},
 
 		// island.create gated on Home role.
 		{"create as home", "home", "POST /v1/islands", "/v1/islands", false},
@@ -186,6 +201,14 @@ func TestTokenAuthMiddleware(t *testing.T) {
 		w := do("POST", "/v1/islands/home/port/intake", projTok)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("code=%d want 403", w.Code)
+		}
+	})
+	t.Run("encoded-slash traversal to other island 403", func(t *testing.T) {
+		// proj's token, route binds {name}="proj/../home" which would Clean to
+		// home; the escaped-path parse must reject it before the handler runs.
+		w := do("POST", "/v1/islands/proj%2F..%2Fhome/port/intake", projTok)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("code=%d want 403 (got %d — cross-island bypass!)", w.Code, w.Code)
 		}
 	})
 	t.Run("project token cannot create 403", func(t *testing.T) {
