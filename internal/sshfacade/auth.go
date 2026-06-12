@@ -56,6 +56,12 @@ func HostSigner() (ssh.Signer, error) {
 	return ssh.NewSignerFromSigner(priv)
 }
 
+// Fingerprint returns the SHA256 fingerprint of a signer's public key, for the
+// CLI to display so clients can pin the daemon's host key.
+func Fingerprint(signer ssh.Signer) string {
+	return ssh.FingerprintSHA256(signer.PublicKey())
+}
+
 // Authorize reports whether offered is among the target island's authorized
 // public keys. A missing authorized_keys file means "no keys authorized" → deny.
 func Authorize(island string, offered ssh.PublicKey) (bool, error) {
