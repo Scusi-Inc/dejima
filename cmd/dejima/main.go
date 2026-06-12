@@ -97,6 +97,7 @@ func newRootCmd() *cobra.Command {
 		newOverviewCmd(),
 		newDoctorCmd(),
 		newOnboardCmd(),
+		newUpdateCmd(),
 		newTUICmd(),
 	)
 	return cmd
