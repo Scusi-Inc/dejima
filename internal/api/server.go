@@ -909,7 +909,8 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		CreatedAt:    now,
 		LastUsedAt:   now,
 	}
-	p.EnsureAgents() // mirror the scalar agent into Agents[0] for new islands
+	p.EnsureAgents()                             // mirror the scalar agent into Agents[0] for new islands
+	p.SetPrimaryID(project.PrimaryAgentID(name)) // fresh island: island-letter primary id (p1), not the legacy a1 back-fill
 	// Seed any additional agents requested at create time. Agents[0] is the
 	// primary (just synthesized); apply its label and add the rest as co-located
 	// agents — reconcileAgents brings up their worktrees + sessions below.

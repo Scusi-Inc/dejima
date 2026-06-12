@@ -147,8 +147,8 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &island); err != nil {
 		t.Fatal(err)
 	}
-	if len(island.Agents) != 1 || island.Agents[0].ID != "a1" || island.Agents[0].Tmux != "agent-a1" {
-		t.Fatalf("primary agent = %+v, want one {a1 agent-a1}", island.Agents)
+	if len(island.Agents) != 1 || island.Agents[0].ID != "p1" || island.Agents[0].Tmux != "agent-p1" {
+		t.Fatalf("primary agent = %+v, want one {p1 agent-p1}", island.Agents)
 	}
 
 	// The container was created with the home volume + registry-sourced launch env.
@@ -158,8 +158,8 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	if cr.Env["DEJIMA_LAUNCH"] != "claude" {
 		t.Errorf("DEJIMA_LAUNCH = %q, want claude", cr.Env["DEJIMA_LAUNCH"])
 	}
-	if cr.Env["DEJIMA_TMUX"] != "agent-a1" {
-		t.Errorf("DEJIMA_TMUX = %q, want agent-a1", cr.Env["DEJIMA_TMUX"])
+	if cr.Env["DEJIMA_TMUX"] != "agent-p1" {
+		t.Errorf("DEJIMA_TMUX = %q, want agent-p1", cr.Env["DEJIMA_TMUX"])
 	}
 	if cr.Env["DEJIMA_AGENT"] != "claude-code" {
 		t.Errorf("DEJIMA_AGENT = %q, want claude-code", cr.Env["DEJIMA_AGENT"])
@@ -181,16 +181,16 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	}
 	var a2 AgentInfo
 	_ = json.Unmarshal(rr.Body.Bytes(), &a2)
-	if a2.ID != "a2" || a2.Tmux != "agent-a2" || a2.Branch != "agent/a2" || a2.Worktree != "/workspace/.agents/a2" {
-		t.Fatalf("added agent = %+v, want a2/agent-a2/agent/a2/...a2", a2)
+	if a2.ID != "p2" || a2.Tmux != "agent-p2" || a2.Branch != "agent/p2" || a2.Worktree != "/workspace/.agents/p2" {
+		t.Fatalf("added agent = %+v, want p2/agent-p2/agent/p2/...p2", a2)
 	}
 
 	calls := f.calls()
-	if !execContains(calls, "git", "-C", "/workspace", "worktree", "add", "/workspace/.agents/a2", "agent/a2") {
-		t.Errorf("expected a git worktree add for a2; execs=%v", calls)
+	if !execContains(calls, "git", "-C", "/workspace", "worktree", "add", "/workspace/.agents/p2", "agent/p2") {
+		t.Errorf("expected a git worktree add for p2; execs=%v", calls)
 	}
-	if !execContains(calls, "tmux", "new-session", "agent-a2", "DEJIMA_AGENT_ID=a2", "claude") {
-		t.Errorf("expected a tmux new-session running claude for a2; execs=%v", calls)
+	if !execContains(calls, "tmux", "new-session", "agent-p2", "DEJIMA_AGENT_ID=p2", "claude") {
+		t.Errorf("expected a tmux new-session running claude for p2; execs=%v", calls)
 	}
 
 	// List shows both agents.
@@ -214,12 +214,12 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	}
 	var a3 AgentInfo
 	_ = json.Unmarshal(rr.Body.Bytes(), &a3)
-	if a3.ID != "a3" || a3.Attachable {
-		t.Fatalf("headless agent = %+v, want a3 non-attachable", a3)
+	if a3.ID != "p3" || a3.Attachable {
+		t.Fatalf("headless agent = %+v, want p3 non-attachable", a3)
 	}
 	calls = f.calls()
-	if !execContains(calls, "new-session", "agent-a3", headlessLogPath("a3"), "python loop.py", "while true") {
-		t.Errorf("expected headless supervised tmux session for a3; execs=%v", calls)
+	if !execContains(calls, "new-session", "agent-p3", headlessLogPath("p3"), "python loop.py", "while true") {
+		t.Errorf("expected headless supervised tmux session for p3; execs=%v", calls)
 	}
 
 	// A baked-launch headless handler (openclaw) needs no cmd; its launch comes
@@ -238,34 +238,34 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	}
 
 	// Per-agent logs for the headless agent stream its log file.
-	rr = do(t, h, http.MethodGet, "/v1/islands/proj/logs?agent=a3", "")
+	rr = do(t, h, http.MethodGet, "/v1/islands/proj/logs?agent=p3", "")
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "agent log output") {
 		t.Errorf("headless logs: got %d body %q", rr.Code, rr.Body.String())
 	}
-	if !execContains(f.calls(), "tail", headlessLogPath("a3")) {
-		t.Errorf("expected a tail of the a3 log file")
+	if !execContains(f.calls(), "tail", headlessLogPath("p3")) {
+		t.Errorf("expected a tail of the p3 log file")
 	}
 
 	// Logs for an interactive agent are refused (attach instead).
-	rr = do(t, h, http.MethodGet, "/v1/islands/proj/logs?agent=a2", "")
+	rr = do(t, h, http.MethodGet, "/v1/islands/proj/logs?agent=p2", "")
 	if rr.Code != http.StatusConflict {
 		t.Errorf("interactive agent logs: got %d, want 409", rr.Code)
 	}
 
 	// Relabel an agent (cosmetic rename); the id and type are untouched.
-	rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/a2", `{"label":"frontend"}`)
+	rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/p2", `{"label":"frontend"}`)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("relabel a2: got %d, body %s", rr.Code, rr.Body.String())
+		t.Fatalf("relabel p2: got %d, body %s", rr.Code, rr.Body.String())
 	}
 	var relabeled AgentInfo
 	_ = json.Unmarshal(rr.Body.Bytes(), &relabeled)
-	if relabeled.ID != "a2" || relabeled.Label != "frontend" {
-		t.Fatalf("relabeled = %+v, want a2 labeled frontend", relabeled)
+	if relabeled.ID != "p2" || relabeled.Label != "frontend" {
+		t.Fatalf("relabeled = %+v, want p2 labeled frontend", relabeled)
 	}
 	// An empty label clears it.
-	rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/a2", `{"label":""}`)
+	rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/p2", `{"label":""}`)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("clear label a2: got %d", rr.Code)
+		t.Fatalf("clear label p2: got %d", rr.Code)
 	}
 	var cleared AgentInfo
 	_ = json.Unmarshal(rr.Body.Bytes(), &cleared)
@@ -273,25 +273,25 @@ func TestMultiAgentLifecycle(t *testing.T) {
 		t.Errorf("cleared label = %q, want empty", cleared.Label)
 	}
 	// Relabeling a missing agent is a 404.
-	if rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/a9", `{"label":"x"}`); rr.Code != http.StatusNotFound {
+	if rr = do(t, h, http.MethodPatch, "/v1/islands/proj/agents/p9", `{"label":"x"}`); rr.Code != http.StatusNotFound {
 		t.Errorf("relabel missing agent: got %d, want 404", rr.Code)
 	}
 
 	// Remove the second agent: kills its session, prunes its worktree.
-	rr = do(t, h, http.MethodDelete, "/v1/islands/proj/agents/a2", "")
+	rr = do(t, h, http.MethodDelete, "/v1/islands/proj/agents/p2", "")
 	if rr.Code != http.StatusNoContent {
-		t.Fatalf("remove a2: got %d", rr.Code)
+		t.Fatalf("remove p2: got %d", rr.Code)
 	}
 	calls = f.calls()
-	if !execContains(calls, "tmux", "kill-session", "agent-a2") {
-		t.Errorf("expected kill-session for a2; execs=%v", calls)
+	if !execContains(calls, "tmux", "kill-session", "agent-p2") {
+		t.Errorf("expected kill-session for p2; execs=%v", calls)
 	}
-	if !execContains(calls, "worktree", "remove", "/workspace/.agents/a2") {
-		t.Errorf("expected worktree remove for a2; execs=%v", calls)
+	if !execContains(calls, "worktree", "remove", "/workspace/.agents/p2") {
+		t.Errorf("expected worktree remove for p2; execs=%v", calls)
 	}
 
 	// The primary agent cannot be removed.
-	rr = do(t, h, http.MethodDelete, "/v1/islands/proj/agents/a1", "")
+	rr = do(t, h, http.MethodDelete, "/v1/islands/proj/agents/p1", "")
 	if rr.Code != http.StatusConflict {
 		t.Errorf("remove primary: got %d, want 409", rr.Code)
 	}
@@ -316,12 +316,12 @@ func TestAgentOrchestrationErrorSurfaced(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &agents)
 	var a2 *AgentInfo
 	for i := range agents {
-		if agents[i].ID == "a2" {
+		if agents[i].ID == "p2" {
 			a2 = &agents[i]
 		}
 	}
 	if a2 == nil {
-		t.Fatal("a2 not found")
+		t.Fatal("p2 not found")
 	}
 	if a2.Error == "" || !strings.Contains(a2.Error, "tmux new-session") {
 		t.Errorf("a2.Error = %q, want it to mention the tmux new-session failure", a2.Error)
@@ -336,7 +336,7 @@ func TestHeadlessAgentNotAttachable(t *testing.T) {
 		t.Fatalf("create headless island: %d %s", rr.Code, rr.Body.String())
 	}
 	// The headless primary is not attachable; the session route reports 409.
-	rr := do(t, h, http.MethodGet, "/v1/islands/hl/agents/a1/session", "")
+	rr := do(t, h, http.MethodGet, "/v1/islands/hl/agents/h1/session", "")
 	if rr.Code != http.StatusConflict {
 		t.Errorf("headless session: got %d, want 409 (body %q)", rr.Code, rr.Body.String())
 	}
@@ -371,11 +371,11 @@ func TestCreateSeedsMultipleAgents(t *testing.T) {
 	if len(info.Agents) != 2 {
 		t.Fatalf("want 2 agents, got %d (%+v)", len(info.Agents), info.Agents)
 	}
-	if info.Agents[0].ID != "a1" || info.Agents[0].Type != "claude-code" {
-		t.Errorf("primary = %+v, want a1/claude-code", info.Agents[0])
+	if info.Agents[0].ID != "m1" || info.Agents[0].Type != "claude-code" {
+		t.Errorf("primary = %+v, want m1/claude-code", info.Agents[0])
 	}
-	if info.Agents[1].ID != "a2" || info.Agents[1].Type != "codex" || info.Agents[1].Label != "backend" {
-		t.Errorf("second = %+v, want a2/codex/backend", info.Agents[1])
+	if info.Agents[1].ID != "m2" || info.Agents[1].Type != "codex" || info.Agents[1].Label != "backend" {
+		t.Errorf("second = %+v, want m2/codex/backend", info.Agents[1])
 	}
 	if info.Agent != "claude-code" {
 		t.Errorf("scalar back-compat agent = %q, want claude-code", info.Agent)

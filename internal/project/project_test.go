@@ -94,21 +94,28 @@ func TestEnsureAgentsIdempotentAndNonClobbering(t *testing.T) {
 
 func TestNextAgentID(t *testing.T) {
 	cases := []struct {
+		name string
 		ids  []string
 		want string
 	}{
-		{nil, "a1"},
-		{[]string{"a1"}, "a2"},
-		{[]string{"a1", "a3"}, "a4"},        // monotonic: max+1, never reuse the gap
-		{[]string{"a2", "bogus", ""}, "a3"}, // ignore unparseable ids
+		{"", nil, "a1"}, // no name → "a" fallback prefix
+		{"", []string{"a1"}, "a2"},
+		{"", []string{"a1", "a3"}, "a4"},         // monotonic: max+1, never reuse the gap
+		{"", []string{"a2", "bogus", ""}, "a3"},  // ignore unparseable ids
+		{"Port", nil, "p1"},                      // island letter leads the id
+		{"port", []string{"p1"}, "p2"},           // case-insensitive prefix
+		{"Gizmo", []string{"g2"}, "g3"},          // continue from existing
+		{"Payments", []string{"a1", "a2"}, "p3"}, // legacy a-ids → continue monotonic at new prefix
+		{"123box", nil, "b1"},                    // skip leading non-letters
+		{"42", nil, "a1"},                        // no letter at all → "a"
 	}
 	for _, c := range cases {
-		p := &Project{}
+		p := &Project{Name: c.name}
 		for _, id := range c.ids {
 			p.Agents = append(p.Agents, AgentSpec{ID: id})
 		}
 		if got := p.NextAgentID(); got != c.want {
-			t.Errorf("NextAgentID(%v) = %q, want %q", c.ids, got, c.want)
+			t.Errorf("NextAgentID(name=%q, %v) = %q, want %q", c.name, c.ids, got, c.want)
 		}
 	}
 }
