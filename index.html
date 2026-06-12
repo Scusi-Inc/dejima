@@ -167,6 +167,8 @@
   <a href="#install">Install</a>
   <a href="#home-server">Run on local server</a>
   <a href="#api-builder">Build on Dejima</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#features">Features</a>
   <a href="api.html">API</a>
   <a href="#cli">CLI</a>
 </nav>
@@ -401,7 +403,7 @@ POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 </code></pre>
 <p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and OSS. Full surface at <a href="api.html">the API reference</a>.</p>
 
-<h2>Architecture</h2>
+<h2 id="architecture">Architecture</h2>
 <pre><code>        CLI · TUI · Dispatch · your app        (control plane)
                     │
                     │  websocket + HTTP API · over Tailscale
@@ -421,6 +423,22 @@ POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 <p class="bundled-note"><strong>Two kinds of agents.</strong> <strong>Terminal</strong> agents are CLIs you attach to (Claude Code, Codex) — a host-side PTY bridges your websocket to the agent's tmux session, so it survives detach and multiple devices share one screen. <strong>Headless</strong> agents run on their own (a Python SDK loop, a worker) — output captured to <code>dejima logs</code>. Both get the same isolation, lifecycle, events, and one-API management.</p>
 
 <p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your CLI, dashboard, or phone client targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
+
+<h2 id="features">Features</h2>
+<ul class="features">
+  <li><strong>Isolated islands</strong> — one container per project; own <code>$HOME</code>, credentials, network. Islands can't see each other.</li>
+  <li><strong>Multiple agents per island</strong> — N agents share workspace + tool-auth, each on its own git worktree.</li>
+  <li><strong>Terminal &amp; headless agents</strong> — attach to CLIs (Claude Code, Codex) or run background loops/workers.</li>
+  <li><strong>Persistent sessions</strong> — survive disconnect, sleep, device switch; multiple devices share one screen.</li>
+  <li><strong>Lifecycle verbs</strong> — <code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>.</li>
+  <li><strong>Brokered host-file access (Port)</strong> — grant an island scoped, read-only host folders; deny-all by default.</li>
+  <li><strong>Tamper-evident ledger</strong> — every brokered file crossing is hash-chained; verify with <code>dejima audit --verify</code>.</li>
+  <li><strong>Home Islands</strong> — run a 24/7 assistant daemon contained, not naked on the host.</li>
+  <li><strong>HTTP/WebSocket API</strong> — one control surface for CLI, TUI, dashboards, bots.</li>
+  <li><strong>Webhook events</strong> — island/agent lifecycle + agent-state pushed to your tooling.</li>
+  <li><strong>Self-hosted</strong> — Mac mini / VPS / cloud VM; identical behavior, over Tailscale.</li>
+  <li><strong>Bundled agents</strong> — Claude Code + Codex; others via custom image / handler registry.</li>
+</ul>
 
 <h2>How it compares</h2>
 <table>
