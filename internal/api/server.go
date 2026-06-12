@@ -1024,15 +1024,20 @@ func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error 
 	return nil
 }
 
-// waitForWorkspace blocks until the island's repo is cloned (or there is no
-// repo). Returns false if ctx expires first.
+// waitForWorkspace blocks until the island's repo clone lands /workspace/.git,
+// or a bounded deadline passes. RepoURL is empty for a no-remote local-copy
+// (which still clones a real repo from the seed), so we cannot gate on it — we
+// poll for .git, then proceed once it appears or the deadline passes (a
+// genuinely repo-less island never grows a .git and ensureWorktree falls back to
+// /workspace). Returns false only if ctx is cancelled.
 func (s *Server) waitForWorkspace(ctx context.Context, p *project.Project) bool {
-	if p.RepoURL == "" {
-		return true
-	}
+	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		if _, _, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); err == nil && code == 0 {
 			return true
+		}
+		if time.Now().After(deadline) {
+			return true // no repo materialized; proceed and let ensureWorktree cope
 		}
 		select {
 		case <-ctx.Done():
