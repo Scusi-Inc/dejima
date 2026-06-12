@@ -1,0 +1,244 @@
+package sshfacade
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"os/exec"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/aoos/dejima/internal/bridge"
+	"github.com/aoos/dejima/internal/project"
+)
+
+// Server is the daemon-side SSH front door. It authenticates each connection's
+// public key against the target island (the SSH *username* names the island),
+// then bridges the session channel into the container with `docker exec` —
+// reusing the same brokered-access model as the websocket/PTY path. Islands run
+// no sshd; the daemon is the single audited endpoint.
+type Server struct {
+	signer    ssh.Signer
+	dockerBin string
+	log       *slog.Logger
+}
+
+// NewServer loads (or generates) the daemon host key and returns a ready Server.
+func NewServer(log *slog.Logger) (*Server, error) {
+	signer, err := HostSigner()
+	if err != nil {
+		return nil, fmt.Errorf("ssh host key: %w", err)
+	}
+	return &Server{signer: signer, dockerBin: "docker", log: log}, nil
+}
+
+// HostKeyFingerprint returns the SHA256 fingerprint of the daemon's host key, so
+// the CLI can print it for clients to pin (known_hosts).
+func (s *Server) HostKeyFingerprint() string {
+	return ssh.FingerprintSHA256(s.signer.PublicKey())
+}
+
+// Serve accepts connections until ln errors or is closed. Each connection is
+// handled in its own goroutine.
+func (s *Server) Serve(ln net.Listener) error {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return err
+		}
+		go s.handleConn(conn)
+	}
+}
+
+func (s *Server) serverConfig() *ssh.ServerConfig {
+	cfg := &ssh.ServerConfig{
+		// The username selects the island; the public key authorizes it against
+		// that island's authorized_keys. A bad name, an unknown key, or an island
+		// with no registered keys all fail identically (no oracle).
+		PublicKeyCallback: func(c ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			island := c.User()
+			if err := project.ValidateName(island); err != nil {
+				return nil, errAuth
+			}
+			ok, err := Authorize(island, key)
+			if err != nil || !ok {
+				return nil, errAuth
+			}
+			// Carry the authenticated island forward; channel handling reads it
+			// from Permissions, never from the (re-suppliable) username again.
+			return &ssh.Permissions{Extensions: map[string]string{"island": island}}, nil
+		},
+	}
+	cfg.AddHostKey(s.signer)
+	return cfg
+}
+
+var errAuth = errors.New("ssh: not authorized for this island")
+
+func (s *Server) handleConn(nConn net.Conn) {
+	defer nConn.Close()
+	conn, chans, reqs, err := ssh.NewServerConn(nConn, s.serverConfig())
+	if err != nil {
+		// Failed handshakes (scans, wrong key) are routine; debug-level only.
+		s.log.Debug("ssh handshake failed", "remote", nConn.RemoteAddr().String(), "err", err)
+		return
+	}
+	defer conn.Close()
+	island := conn.Permissions.Extensions["island"]
+	s.log.Info("ssh session opened", "island", island, "remote", nConn.RemoteAddr().String())
+	go ssh.DiscardRequests(reqs) // global requests (keepalive etc.) — ignore
+	for newCh := range chans {
+		if newCh.ChannelType() != "session" {
+			_ = newCh.Reject(ssh.UnknownChannelType, "only session channels are supported")
+			continue
+		}
+		go s.handleSession(newCh, island)
+	}
+}
+
+// handleSession services one SSH "session" channel: it collects pty/env/window
+// requests, then on shell/exec bridges the channel to a `docker exec` in the
+// island and relays the exit status.
+func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
+	ch, reqs, err := newCh.Accept()
+	if err != nil {
+		return
+	}
+	p, err := project.Load(island)
+	if err != nil {
+		fmt.Fprintf(ch.Stderr(), "dejima: %v\r\n", err)
+		_ = ch.Close()
+		return
+	}
+	container := p.ContainerName()
+
+	var (
+		wantPTY bool
+		rows    uint16
+		cols    uint16
+		sess    *bridge.PTYSession // set once an interactive command starts
+		started bool
+	)
+	for req := range reqs {
+		switch req.Type {
+		case "pty-req":
+			var p struct {
+				Term                 string
+				Cols, Rows, Wpx, Hpx uint32
+				Modes                string
+			}
+			if ssh.Unmarshal(req.Payload, &p) == nil {
+				wantPTY, cols, rows = true, uint16(p.Cols), uint16(p.Rows)
+			}
+			_ = req.Reply(true, nil)
+		case "env":
+			// Accept but don't forward: the in-container login shell sets its own
+			// environment, and forwarding client env into the island is a footgun
+			// we don't want by default.
+			_ = req.Reply(true, nil)
+		case "window-change":
+			var p struct{ Cols, Rows, Wpx, Hpx uint32 }
+			if ssh.Unmarshal(req.Payload, &p) == nil {
+				cols, rows = uint16(p.Cols), uint16(p.Rows)
+				if sess != nil {
+					_ = sess.Resize(rows, cols)
+				}
+			}
+		case "shell":
+			if started {
+				_ = req.Reply(false, nil)
+				continue
+			}
+			started = true
+			_ = req.Reply(true, nil)
+			sess = s.run(ch, container, loginShell(), wantPTY, rows, cols)
+		case "exec":
+			if started {
+				_ = req.Reply(false, nil)
+				continue
+			}
+			started = true
+			var p struct{ Command string }
+			_ = ssh.Unmarshal(req.Payload, &p)
+			_ = req.Reply(true, nil)
+			sess = s.run(ch, container, loginShellCmd(p.Command), wantPTY, rows, cols)
+		case "subsystem":
+			// sftp/scp are a follow-up; reject so clients fall back gracefully.
+			_ = req.Reply(false, nil)
+		default:
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		}
+	}
+	if sess != nil {
+		_ = sess.Close()
+	}
+}
+
+// run bridges the channel to `docker exec` in the container. With a PTY it
+// returns the live session (so window-change can resize it); without one it runs
+// the command on plain pipes. Either way it relays exit status and closes ch
+// when the command finishes.
+func (s *Server) run(ch ssh.Channel, container string, cmd []string, wantPTY bool, rows, cols uint16) *bridge.PTYSession {
+	ctx := context.Background()
+	if wantPTY {
+		sess, err := bridge.ExecPTY(ctx, s.dockerBin, container, cmd, rows, cols)
+		if err != nil {
+			fmt.Fprintf(ch.Stderr(), "dejima: %v\r\n", err)
+			sendExit(ch, 1)
+			_ = ch.Close()
+			return nil
+		}
+		go func() { _, _ = io.Copy(sess, ch) }() // client → container
+		go func() {
+			_, _ = io.Copy(ch, sess) // container → client, until the process exits
+			sendExit(ch, sess.Wait())
+			_ = sess.Close()
+			_ = ch.Close()
+		}()
+		return sess
+	}
+
+	// No PTY: a one-shot command (framework backend / VS Code probe). Wire the
+	// three standard streams and relay the real exit code.
+	args := append([]string{"exec", "-i", container}, cmd...)
+	c := exec.CommandContext(ctx, s.dockerBin, args...)
+	c.Stdin = ch
+	c.Stdout = ch
+	c.Stderr = ch.Stderr()
+	go func() {
+		sendExit(ch, exitCode(c.Run()))
+		_ = ch.Close()
+	}()
+	return nil
+}
+
+// loginShell is the command for an interactive `shell` request.
+func loginShell() []string { return []string{"bash", "-l"} }
+
+// loginShellCmd wraps an `exec` request's command in a login shell so PATH and
+// profile match an interactive session (frameworks expect `ssh host -- cmd` to
+// behave like a normal login).
+func loginShellCmd(command string) []string { return []string{"bash", "-lc", command} }
+
+// sendExit relays the command's exit status to the client per RFC 4254 §6.10.
+func sendExit(ch ssh.Channel, code int) {
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(code)}))
+}
+
+// exitCode extracts a process exit code, defaulting to 0 on success and 1 on a
+// non-ExitError failure.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return 1
+}

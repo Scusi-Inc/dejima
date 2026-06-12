@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,24 +32,56 @@ type PTYSession struct {
 // and the SIGWINCH that arrives from the client's first resize envelope races
 // the agent's initial render. Sizing up-front eliminates the race.
 func AttachToTmux(ctx context.Context, dockerBin, container, tmuxSession string, rows, cols uint16) (*PTYSession, error) {
+	return ExecPTY(ctx, dockerBin, container,
+		[]string{"tmux", "new-session", "-A", "-s", tmuxSession}, rows, cols)
+}
+
+// ExecPTY starts `docker exec -it <container> <cmd...>` against a host PTY and
+// returns the session, sized to rows/cols when both are non-zero. It generalizes
+// AttachToTmux for the SSH façade, which bridges an SSH session channel to an
+// arbitrary in-container command (a login shell, or `bash -lc <exec>`).
+func ExecPTY(ctx context.Context, dockerBin, container string, cmd []string, rows, cols uint16) (*PTYSession, error) {
 	if dockerBin == "" {
 		dockerBin = "docker"
 	}
-	cmd := exec.CommandContext(ctx, dockerBin, "exec", "-it", container,
-		"tmux", "new-session", "-A", "-s", tmuxSession)
+	args := append([]string{"exec", "-it", container}, cmd...)
+	c := exec.CommandContext(ctx, dockerBin, args...)
 	var (
 		ptyFile *os.File
 		err     error
 	)
 	if rows > 0 && cols > 0 {
-		ptyFile, err = pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
+		ptyFile, err = pty.StartWithSize(c, &pty.Winsize{Rows: rows, Cols: cols})
 	} else {
-		ptyFile, err = pty.Start(cmd)
+		ptyFile, err = pty.Start(c)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("pty start: %w", err)
 	}
-	return &PTYSession{cmd: cmd, pty: ptyFile}, nil
+	return &PTYSession{cmd: c, pty: ptyFile}, nil
+}
+
+// Wait reaps the underlying `docker exec` and returns its exit code. Call it
+// after the PTY hits EOF (the in-container process exited). A signal/abnormal
+// exit reports 1. Safe on a nil session.
+func (s *PTYSession) Wait() int {
+	if s == nil || s.cmd == nil {
+		return 0
+	}
+	return exitCode(s.cmd.Wait())
+}
+
+// exitCode extracts a process exit code from an *exec.ExitError, defaulting to 0
+// on success and 1 on any non-ExitError failure.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return 1
 }
 
 // MaxClientSize returns the largest size (per axis) among the tmux clients
