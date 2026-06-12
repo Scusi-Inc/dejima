@@ -44,6 +44,9 @@ type AgentInfo struct {
 	Branch     string `json:"branch,omitempty"`
 	Worktree   string `json:"worktree,omitempty"`
 	Attachable bool   `json:"attachable"`
+	// CreatedAt is when the agent was added to the island — the basis for its
+	// displayed uptime/age. Zero for legacy agents persisted before this field.
+	CreatedAt time.Time `json:"created_at,omitempty"`
 	// State is the agent's session liveness ("running"/"stopped"/"").
 	State      string          `json:"state,omitempty"`
 	AgentState *AgentStateInfo `json:"agent_state,omitempty"`

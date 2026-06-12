@@ -1090,19 +1090,7 @@ func (m tuiModel) renderDetail(_ int) string {
 		b.WriteString(styleMuted.Render("  [+] add   [X] remove (on an agent)") + "\n")
 	}
 
-	if len(m.events_) > 0 {
-		b.WriteString("\n")
-		b.WriteString(styleHeader.Render("Recent"))
-		b.WriteString("\n")
-		max := 6
-		if len(m.events_) < max {
-			max = len(m.events_)
-		}
-		for _, e := range m.events_[:max] {
-			b.WriteString(fmt.Sprintf("  %s  %s\n",
-				styleMuted.Render(timeAgo(e.Timestamp)), string(e.Type)))
-		}
-	}
+	renderRecent(&b, m.events_)
 	return b.String()
 }
 
@@ -1127,6 +1115,9 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		state = "—"
 	}
 	b.WriteString(fmt.Sprintf("session:   %s\n", state))
+	if !a.CreatedAt.IsZero() {
+		b.WriteString(fmt.Sprintf("uptime:    %s\n", humanDuration(time.Since(a.CreatedAt))))
+	}
 	if a.Branch != "" {
 		b.WriteString(fmt.Sprintf("branch:    %s\n", a.Branch))
 	}
@@ -1134,19 +1125,23 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		b.WriteString(fmt.Sprintf("worktree:  %s\n", truncate(a.Worktree, 50)))
 	}
 	if a.AgentState != nil && a.AgentState.Latest != "" {
-		b.WriteString(fmt.Sprintf("signal:    %s (%s ago)\n",
+		b.WriteString(fmt.Sprintf("activity:  %s (%s ago)\n",
 			a.AgentState.Latest, time.Since(a.AgentState.UpdatedAt).Round(time.Second)))
 	}
 	if a.Error != "" {
 		b.WriteString("error:     " + styleErrored.Render(truncate(a.Error, 50)) + "\n")
 	}
 	if len(a.Attached) > 0 {
-		labels := make([]string, 0, len(a.Attached))
+		// Per agent we show who's attached and for how long (island view omits the
+		// duration); JoinedAt comes from the presence snapshot.
+		parts := make([]string, 0, len(a.Attached))
 		for _, c := range a.Attached {
-			labels = append(labels, c.Label)
+			parts = append(parts, fmt.Sprintf("%s (%s)", c.Label, timeAgo(c.JoinedAt)))
 		}
-		b.WriteString("attached:  " + strings.Join(labels, ", ") + "\n")
+		b.WriteString("attached:  " + strings.Join(parts, ", ") + "\n")
 	}
+	// Recent timeline for just this agent, filtered from the island event log.
+	renderRecent(&b, eventsForAgent(m.events_, a.ID))
 	b.WriteString("\n")
 	open := "[⏎] attach"
 	if !a.Attachable {
@@ -1403,6 +1398,54 @@ func timeAgo(t time.Time) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// humanDuration formats an elapsed span as up to two units ("1h 14m", "3m 02s",
+// "2d 4h") — coarser than timeAgo but more legible for an uptime field.
+func humanDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm %02ds", int(d.Minutes()), int(d.Seconds())%60)
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh %02dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dd %dh", int(d.Hours()/24), int(d.Hours())%24)
+	}
+}
+
+// eventsForAgent narrows the island event log to one agent's events, preserving
+// order. Island-scoped events (empty Agent) are excluded.
+func eventsForAgent(evs []events.Event, agentID string) []events.Event {
+	out := make([]events.Event, 0, len(evs))
+	for _, e := range evs {
+		if e.Agent == agentID {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// renderRecent appends a "Recent" section listing up to six of the given events
+// (assumed newest-first, as the API returns them). No-op when evs is empty.
+// Shared by the island and per-agent detail panels.
+func renderRecent(b *strings.Builder, evs []events.Event) {
+	if len(evs) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHeader.Render("Recent"))
+	b.WriteString("\n")
+	n := 6
+	if len(evs) < n {
+		n = len(evs)
+	}
+	for _, e := range evs[:n] {
+		b.WriteString(fmt.Sprintf("  %s  %s\n",
+			styleMuted.Render(timeAgo(e.Timestamp)), string(e.Type)))
+	}
 }
 
 // _ = exec to avoid an unused-import error if we change the connect path later.

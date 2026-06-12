@@ -1440,6 +1440,7 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 			Branch:     a.Branch,
 			Worktree:   a.Worktree,
 			Attachable: handlers.Attachable(a.Type),
+			CreatedAt:  a.CreatedAt,
 		}
 		if live && a.Tmux != "" {
 			if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
