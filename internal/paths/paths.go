@@ -74,6 +74,16 @@ func ProjectConfigPath(name string) (string, error) {
 	return filepath.Join(dir, "config.toml"), nil
 }
 
+// TokenPath returns ~/.dejima/projects/<name>/token — the per-island bearer
+// token for the authenticated in-island → dejimad path (macOS autonomy route).
+func TokenPath(name string) (string, error) {
+	dir, err := ProjectDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "token"), nil
+}
+
 // ClaudeSeedDir returns ~/.dejima/secrets/claude — where the daemon
 // materializes Claude credentials (from the host Keychain/file or a
 // `dejima auth push`) for read-only mounting into islands. Created 0700.
