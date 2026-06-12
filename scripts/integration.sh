@@ -92,7 +92,7 @@ pass "daemon up (pid $DAEMON_PID)"
 step "Ensure island image"
 if ! docker image inspect dejima/island:latest >/dev/null 2>&1; then
   echo "  building dejima/island:latest (first run, slow)…"
-  dejima image build >/dev/null 2>&1 || die "image build failed"
+  dejima image build || die "image build failed (real error shown above)"
 fi
 pass "island image present"
 

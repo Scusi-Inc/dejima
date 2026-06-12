@@ -1,6 +1,8 @@
 # Build artifacts
 /bin/
 /dist/
+/dejima
+/dejimad
 
 # Multi-agent worktrees (runtime state created under an island's /workspace)
 /.agents/
