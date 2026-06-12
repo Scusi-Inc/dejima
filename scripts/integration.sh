@@ -68,6 +68,9 @@ cleanup(){
   [ -n "$DAEMON_PID" ] && dejima purge "$ISLAND"       -f >/dev/null 2>&1
   [ -n "$DAEMON_PID" ] && dejima purge "$ISLAND_MULTI"  -f >/dev/null 2>&1
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
+  # The isolated HOME holds a read-only Go module cache ($HOME/go/pkg/mod);
+  # make the tree writable before removing it so cleanup exits silently.
+  chmod -R u+w "$TMP" 2>/dev/null
   rm -rf "$TMP"
 }
 trap cleanup EXIT
