@@ -89,7 +89,7 @@ func AddAuthorizedKey(island, line string) (string, error) {
 	if err := project.ValidateName(island); err != nil {
 		return "", err
 	}
-	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
+	pub, comment, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
 	if err != nil {
 		return "", fmt.Errorf("not a valid authorized_keys line: %w", err)
 	}
@@ -111,10 +111,114 @@ func AddAuthorizedKey(island, line string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	if _, err := f.Write(ssh.MarshalAuthorizedKey(pub)); err != nil {
+	if _, err := f.Write(marshalKeyLine(pub, comment)); err != nil {
 		return "", err
 	}
 	return ssh.FingerprintSHA256(pub), nil
+}
+
+// marshalKeyLine renders an authorized_keys line, keeping the comment so keys
+// stay identifiable in `dejima ssh list`.
+func marshalKeyLine(pub ssh.PublicKey, comment string) []byte {
+	line := bytes.TrimRight(ssh.MarshalAuthorizedKey(pub), "\n")
+	if comment != "" {
+		line = append(line, ' ')
+		line = append(line, comment...)
+	}
+	return append(line, '\n')
+}
+
+// KeyInfo is one authorized public key, for display.
+type KeyInfo struct {
+	Fingerprint string // SHA256:…
+	Type        string // e.g. ssh-ed25519
+	Comment     string
+}
+
+// ListAuthorizedKeys returns the island's authorized keys in file order. A
+// missing file yields an empty slice (no error).
+func ListAuthorizedKeys(island string) ([]KeyInfo, error) {
+	if err := project.ValidateName(island); err != nil {
+		return nil, err
+	}
+	path, err := paths.AuthorizedKeysPath(island)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var infos []KeyInfo
+	rest := data
+	for len(bytes.TrimSpace(rest)) > 0 {
+		pub, comment, _, remainder, perr := ssh.ParseAuthorizedKey(rest)
+		if perr != nil {
+			return infos, fmt.Errorf("parse %s: %w", path, perr)
+		}
+		infos = append(infos, KeyInfo{Fingerprint: ssh.FingerprintSHA256(pub), Type: pub.Type(), Comment: comment})
+		rest = remainder
+	}
+	return infos, nil
+}
+
+// RemoveAuthorizedKey deletes the key whose SHA256 fingerprint matches (e.g.
+// "SHA256:…"). Returns how many were removed (0 if no match).
+func RemoveAuthorizedKey(island, fingerprint string) (int, error) {
+	return rewriteAuthorizedKeys(island, func(pub ssh.PublicKey) bool {
+		return ssh.FingerprintSHA256(pub) == fingerprint
+	})
+}
+
+// RemoveAllAuthorizedKeys clears every authorized key for the island, locking
+// out SSH until a new key is authorized. Returns how many were removed.
+func RemoveAllAuthorizedKeys(island string) (int, error) {
+	return rewriteAuthorizedKeys(island, func(ssh.PublicKey) bool { return true })
+}
+
+// rewriteAuthorizedKeys rewrites authorized_keys keeping only the keys for which
+// drop returns false (comments preserved). No-op (and no write) when nothing
+// matches, so a typo'd fingerprint can't silently truncate the file.
+func rewriteAuthorizedKeys(island string, drop func(ssh.PublicKey) bool) (int, error) {
+	if err := project.ValidateName(island); err != nil {
+		return 0, err
+	}
+	path, err := paths.AuthorizedKeysPath(island)
+	if err != nil {
+		return 0, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	var kept bytes.Buffer
+	removed := 0
+	rest := data
+	for len(bytes.TrimSpace(rest)) > 0 {
+		pub, comment, _, remainder, perr := ssh.ParseAuthorizedKey(rest)
+		if perr != nil {
+			return 0, fmt.Errorf("parse %s: %w", path, perr)
+		}
+		if drop(pub) {
+			removed++
+		} else {
+			kept.Write(marshalKeyLine(pub, comment))
+		}
+		rest = remainder
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	if err := os.WriteFile(path, kept.Bytes(), 0o600); err != nil {
+		return 0, err
+	}
+	return removed, nil
 }
 
 // authorizedKeys parses the island's authorized_keys file into public keys. A

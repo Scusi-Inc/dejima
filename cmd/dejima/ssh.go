@@ -24,7 +24,7 @@ func newSSHCmd() *cobra.Command {
 			"Remote-SSH and framework SSH backends work the same way). Start the listener with\n" +
 			"`dejimad --ssh <addr>`. These subcommands manage the authorized keys host-side.",
 	}
-	cmd.AddCommand(newSSHAuthorizeCmd(), newSSHInfoCmd())
+	cmd.AddCommand(newSSHAuthorizeCmd(), newSSHListCmd(), newSSHRevokeCmd(), newSSHInfoCmd())
 	return cmd
 }
 
@@ -58,6 +58,71 @@ func newSSHAuthorizeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&keyFile, "key", "", "read the public key from this file")
+	return cmd
+}
+
+func newSSHListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list <island>",
+		Short: "List the public keys authorized to ssh into an island",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			island := args[0]
+			if _, err := project.Load(island); err != nil {
+				return err
+			}
+			keys, err := sshfacade.ListAuthorizedKeys(island)
+			if err != nil {
+				return err
+			}
+			if len(keys) == 0 {
+				fmt.Printf("no keys authorized for %q (ssh is closed until you add one)\n", island)
+				return nil
+			}
+			for _, k := range keys {
+				fmt.Printf("%s  %-12s %s\n", k.Fingerprint, k.Type, k.Comment)
+			}
+			return nil
+		},
+	}
+}
+
+func newSSHRevokeCmd() *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "revoke <island> [fingerprint]",
+		Short: "Revoke a public key's SSH access to an island",
+		Long: "Removes an authorized key by its SHA256 fingerprint (see `dejima ssh list`), or\n" +
+			"--all to revoke every key (closes SSH to the island until you authorize a new one).",
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			island := args[0]
+			if _, err := project.Load(island); err != nil {
+				return err
+			}
+			var (
+				n   int
+				err error
+			)
+			switch {
+			case all:
+				n, err = sshfacade.RemoveAllAuthorizedKeys(island)
+			case len(args) == 2:
+				n, err = sshfacade.RemoveAuthorizedKey(island, args[1])
+			default:
+				return fmt.Errorf("give a fingerprint to revoke (from `dejima ssh list`), or --all")
+			}
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return fmt.Errorf("no matching key found for %q (nothing revoked)", island)
+			}
+			fmt.Printf("revoked %d key(s) from %q\n", n, island)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "revoke every authorized key for the island")
 	return cmd
 }
 
