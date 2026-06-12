@@ -33,13 +33,17 @@ func sampleModel() tuiModel {
 	return m
 }
 
-// TestAgentGlyphKind locks in shape = identity: terminal agents get the prompt
-// glyph, headless agents get the box — independent of state.
+// TestAgentGlyphKind locks in shape = identity: AI agents get the diamond, a
+// plain shell gets the prompt, headless gets the box — independent of state.
 func TestAgentGlyphKind(t *testing.T) {
-	term := api.AgentInfo{Type: "claude-code", Attachable: true, State: "running"}
+	agent := api.AgentInfo{Type: "claude-code", Attachable: true, State: "running"}
+	shell := api.AgentInfo{Type: "shell", Attachable: true, State: "running"}
 	head := api.AgentInfo{Type: "headless", Attachable: false, State: "running"}
-	if g := plain(agentGlyph(term)); g != glyphTerminal {
-		t.Errorf("terminal glyph = %q, want %q", g, glyphTerminal)
+	if g := plain(agentGlyph(agent)); g != glyphAgent {
+		t.Errorf("AI agent glyph = %q, want %q", g, glyphAgent)
+	}
+	if g := plain(agentGlyph(shell)); g != glyphTerminal {
+		t.Errorf("shell glyph = %q, want %q", g, glyphTerminal)
 	}
 	if g := plain(agentGlyph(head)); g != glyphHeadless {
 		t.Errorf("headless glyph = %q, want %q", g, glyphHeadless)
@@ -60,10 +64,10 @@ func TestRenderListGlyphs(t *testing.T) {
 
 	bare := plain(out)
 	for _, want := range []string{
-		glyphTerminal + " claude-code", // unlabeled terminal → leads with type
-		glyphTerminal + " Backend",     // labeled terminal → leads with the label, not "codex"
-		glyphHeadless + " headless",    // headless box, unlabeled
-		"·a1", "·a2", "·a3",            // id rides along as a muted handle
+		glyphAgent + " claude-code", // unlabeled AI agent → leads with type
+		glyphAgent + " Backend",     // labeled AI agent → leads with the label, not "codex"
+		glyphHeadless + " headless", // headless box, unlabeled
+		"·a1", "·a2", "·a3",         // id rides along as a muted handle
 		"+ add agent",
 		"+ new island",
 	} {

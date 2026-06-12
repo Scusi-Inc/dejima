@@ -24,6 +24,10 @@ const (
 // (AgentSpec.Cmd) rather than baked into the image.
 const Headless = "headless"
 
+// Shell is a plain interactive terminal (a bash login shell) in the island — a
+// scratch shell you type into, not an AI agent. Attachable; runs on /workspace.
+const Shell = "shell"
+
 // Handler is the declarative descriptor for one agent type.
 type Handler struct {
 	// ID matches Project/AgentSpec.Type and the image/agents/<id> shim dir.
@@ -47,6 +51,7 @@ func (h Handler) Attachable() bool { return h.Kind == KindInteractive }
 var registry = map[string]Handler{
 	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", StateDir: "/home/dejima/.claude"},
 	"codex":       {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox-policy=no-sandbox", StateDir: "/home/dejima/.codex"},
+	Shell:         {ID: Shell, Kind: KindInteractive, Launch: "bash -l", StateDir: "/home/dejima"},
 	Headless:      {ID: Headless, Kind: KindHeadless, Launch: "", StateDir: "/home/dejima/.agent-state"},
 }
 

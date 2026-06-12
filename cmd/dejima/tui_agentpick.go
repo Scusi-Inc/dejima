@@ -24,8 +24,9 @@ type agentTypeOption struct {
 }
 
 var agentTypeOptions = []agentTypeOption{
-	{typ: "claude-code", desc: "interactive terminal agent — attach and drive it"},
-	{typ: "codex", desc: "interactive terminal agent — attach and drive it"},
+	{typ: "claude-code", desc: "interactive AI agent — attach and drive it"},
+	{typ: "codex", desc: "interactive AI agent — attach and drive it"},
+	{typ: "shell", desc: "plain terminal — a bash shell on the island workspace; attach and type"},
 	{typ: api.AgentHeadless, desc: "background command — supervised, restarts on crash, logs only", headless: true},
 }
 

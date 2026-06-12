@@ -521,6 +521,12 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 		Worktree:  agentsWorktreeRoot + "/" + id,
 		CreatedAt: time.Now().UTC(),
 	}
+	// A plain terminal pokes at the island's workspace directly — no isolated
+	// worktree/branch, just a shell on /workspace.
+	if typ == handlers.Shell {
+		spec.Branch = ""
+		spec.Worktree = "/workspace"
+	}
 	// Co-located headless agents self-restart by default so a crash doesn't end
 	// the agent silently.
 	if !handlers.Attachable(typ) {

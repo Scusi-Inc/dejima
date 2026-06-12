@@ -959,16 +959,24 @@ func agentByID(isl api.IslandInfo, id string) api.AgentInfo {
 // color (see agentGlyph) encodes how it's *doing* (state). Islands keep their
 // own lifecycle glyphs (glyphFor) — these are for the indented agent rows.
 const (
-	glyphTerminal = "❯" // interactive agent — owns a tmux session, attachable
+	glyphTerminal = "❯" // a plain shell/terminal you type into
+	glyphAgent    = "◆" // an AI agent you attach to (claude-code, codex, …)
 	glyphHeadless = "■" // headless agent — supervised background process, logs only
 )
 
+// agentTypeShell mirrors handlers.Shell — the plain-terminal agent type. Kept as
+// a local const so the TUI doesn't import internal/handlers for one string.
+const agentTypeShell = "shell"
+
 // agentGlyph renders an agent's kind glyph colored by its state: the shape says
-// terminal vs headless, the color says running / idle / needs-you / error.
+// terminal vs AI-agent vs headless, the color says running / idle / needs-you / error.
 func agentGlyph(a api.AgentInfo) string {
-	g := glyphTerminal
-	if !a.Attachable {
-		g = glyphHeadless
+	g := glyphAgent // attachable AI agents (claude-code, codex, custom interactive)
+	switch {
+	case a.Type == agentTypeShell:
+		g = glyphTerminal // a plain shell you type into
+	case !a.Attachable:
+		g = glyphHeadless // background process
 	}
 	style := styleHibernate // gray: idle / stopped (also the default)
 	switch {
@@ -1014,7 +1022,7 @@ func (m tuiModel) renderDetail(_ int) string {
 	}
 	if m.currentRow().kind == rowAddAgent {
 		return styleTitle.Render("+ Add agent") + "\n\n" +
-			styleMuted.Render("Press ⏎ to add an agent to "+styleAccent.Render(m.selectedName())+styleMuted.Render(".\nClaude Code, Codex, or a headless background command."))
+			styleMuted.Render("Press ⏎ to add an agent to "+styleAccent.Render(m.selectedName())+styleMuted.Render(".\nClaude Code, Codex, a terminal, or a headless command."))
 	}
 	if m.detail == nil {
 		if name := m.selectedName(); name != "" {
@@ -1234,7 +1242,7 @@ func (m tuiModel) renderHelp() string {
 		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
-		{"+", "add an agent — Claude Code, Codex, or a headless background command"},
+		{"+", "add an agent — Claude Code, Codex, a terminal, or a headless command"},
 		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
