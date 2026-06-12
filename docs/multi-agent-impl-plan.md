@@ -1,7 +1,7 @@
 # Multi-agent islands — implementation plan
 
-**Status:** Draft — engineering breakdown for `multi-agent-spec.md`
-**Last updated:** 2026-06-11
+**Status:** Implemented — all phases (0–7) shipped, plus create-time multi-seed. Historical engineering breakdown.
+**Last updated:** 2026-06-12
 **Companion to:** [`docs/multi-agent-spec.md`](multi-agent-spec.md)
 
 File/function-level plan to take Dejima from one-agent-per-island to N. Grounded in the

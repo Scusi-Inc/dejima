@@ -1,11 +1,12 @@
 # Dejima — Multiple agents per island (design & decision record)
 
-**Status:** Draft — approved direction, pre-implementation
-**Last updated:** 2026-06-11
+**Status:** Shipped — implemented & pushed (phases 0–7), including create-time multi-agent seeding. Living record.
+**Last updated:** 2026-06-12
 **Supersedes:** the v1 deferral "Concurrent agents inside a single island" (`v1-spec.md` §5 Out), and the v1.x open question "Shared workspace volume across islands" (`roadmap.md`).
 
-This document captures the decisions made while planning multi-agent islands. It is the
-reviewable record before code lands. It is a living document; phases update it as they ship.
+This document captures the decisions behind multi-agent islands. It was the reviewable record
+before code landed; it now records the shipped design. It is a living document; phases update it
+as they ship.
 
 ---
 

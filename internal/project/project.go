@@ -62,7 +62,7 @@ type AgentSpec struct {
 	// Worktree is the container path the agent works in: "/workspace" for the
 	// primary, "/workspace/.agents/<id>" for the rest.
 	Worktree string `toml:"worktree,omitempty"`
-	// Restart enables supervise-and-restart-on-crash (headless; wired in Phase 7).
+	// Restart enables supervise-and-restart-on-crash for co-located headless agents.
 	Restart   bool      `toml:"restart,omitempty"`
 	CreatedAt time.Time `toml:"created_at,omitempty"`
 }

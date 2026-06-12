@@ -127,9 +127,9 @@ type CreateIslandRequest struct {
 	// otherwise. The container runs the command via /bin/sh -c, so shell
 	// quoting applies.
 	Cmd string `json:"cmd,omitempty"`
-	// Agents, when non-empty, seeds the island with multiple agents. When empty,
-	// the scalar Agent/Cmd above describe a single agent (back-compat). Consumed
-	// from Phase 2 onward; accepted-but-unused before then.
+	// Agents, when non-empty, seeds the island with multiple agents: element 0
+	// is the primary, the rest are added as co-located agents at provision time.
+	// When empty, the scalar Agent/Cmd above describe a single agent (back-compat).
 	Agents []AgentSpecRequest `json:"agents,omitempty"`
 	// Role is the island's purpose: "" (work island, default) or "home" (a Home
 	// Island hosting an assistant brain). A home island must be headless (+cmd).

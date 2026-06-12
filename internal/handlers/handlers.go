@@ -34,7 +34,7 @@ type Handler struct {
 	// command comes from the user (AgentSpec.Cmd).
 	Launch string
 	// StateDir is the home-dir state path persisted across restarts (e.g.
-	// ~/.claude). Informational once the whole home is persisted (Phase 1).
+	// ~/.claude). Informational now that the whole /home/dejima is persisted.
 	StateDir string
 }
 
