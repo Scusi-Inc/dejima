@@ -277,7 +277,19 @@ func (s *Server) islandAgentState(island string) *AgentStateInfo {
 }
 
 // Handler returns an http.Handler suitable for the daemon's listener.
+// Handler returns the API handler for the fully-trusted listeners: the unix
+// socket (filesystem-permission trust) and the tailnet-pinned TCP listener.
+// Neither carries a per-request token; see TokenAuthHandler for the
+// host-internal, token-authenticated autonomy path.
 func (s *Server) Handler() http.Handler {
+	return logMiddleware(s.log, s.routes())
+}
+
+// routes builds the route table shared by every listener. The differences
+// between listeners live in the middleware that wraps this mux, never in the
+// routes themselves, so there is exactly one source of truth for the API
+// surface.
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/islands", s.listIslands)
 	mux.HandleFunc("POST /v1/islands", s.createIsland)
@@ -318,7 +330,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/islands/{name}/port/export", s.handlePortExport)
 	mux.HandleFunc("POST /v1/islands/{name}/port/write", s.handlePortWrite)
 	mux.HandleFunc("GET /v1/audit", s.handleAudit)
-	return logMiddleware(s.log, mux)
+	return mux
 }
 
 // AdoptExisting brings the runtime state into alignment with persisted project
