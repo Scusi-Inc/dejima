@@ -982,19 +982,28 @@ func agentGlyph(a api.AgentInfo) string {
 	return style.Render(g)
 }
 
-// agentRowText renders one agent's list line: kind glyph, id, label/type, signal.
-func agentRowText(a api.AgentInfo) string {
-	name := a.Type
+// agentDisplayName is the human-facing name for an agent: its user-given label
+// if set, else its type ("Claude Code", "headless", …). The id (a1/a2/…) is a
+// separate addressing handle — meaningful but terse — so it rides along muted
+// rather than leading the display. See [agentRowText] / renderAgentDetail.
+func agentDisplayName(a api.AgentInfo) string {
 	if a.Label != "" {
-		name = a.Label
+		return a.Label
 	}
+	return a.Type
+}
+
+// agentRowText renders one agent's list line: kind glyph, name (label/type),
+// the muted id handle, then the latest signal.
+func agentRowText(a api.AgentInfo) string {
 	sig := ""
 	if a.Error != "" {
 		sig = "  " + styleErrored.Render("error")
 	} else if a.AgentState != nil && a.AgentState.Latest != "" {
 		sig = "  " + a.AgentState.Latest
 	}
-	return fmt.Sprintf("%s %s  %s%s", agentGlyph(a), a.ID, truncate(name, 18), sig)
+	return fmt.Sprintf("%s %s  %s%s",
+		agentGlyph(a), truncate(agentDisplayName(a), 18), styleMuted.Render("·"+a.ID), sig)
 }
 
 func (m tuiModel) renderDetail(_ int) string {
@@ -1098,13 +1107,12 @@ func (m tuiModel) renderDetail(_ int) string {
 func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 	a := agentByID(*d, agentID)
 	var b strings.Builder
-	b.WriteString(styleTitle.Render(d.Name + " / " + a.ID))
+	b.WriteString(styleTitle.Render(d.Name + " / " + agentDisplayName(a)))
 	b.WriteString("\n\n")
-	typ := a.Type
-	if a.Label != "" {
-		typ = fmt.Sprintf("%s (%s)", a.Label, a.Type)
-	}
-	b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(typ)))
+	// id is the addressing handle (connect island/a2, branch agent/a2, worktree
+	// .agents/a2); the label/type leads in the title above.
+	b.WriteString(fmt.Sprintf("id:        %s\n", styleMuted.Render(a.ID)))
+	b.WriteString(fmt.Sprintf("type:      %s\n", styleAccent.Render(a.Type)))
 	kind := "terminal — attachable"
 	if !a.Attachable {
 		kind = "headless — background process, logs only"

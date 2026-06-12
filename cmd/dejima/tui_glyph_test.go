@@ -26,7 +26,7 @@ func sampleModel() tuiModel {
 		Agents: []api.AgentInfo{
 			{ID: "a1", Type: "claude-code", Attachable: true, State: "running",
 				AgentState: &api.AgentStateInfo{Latest: "waiting-for-input", UpdatedAt: time.Unix(0, 0)}},
-			{ID: "a2", Type: "codex", Attachable: true, State: "stopped"},
+			{ID: "a2", Type: "codex", Label: "Backend", Attachable: true, State: "stopped"},
 			{ID: "a3", Type: "headless", Attachable: false, State: "running", Error: "worktree add failed"},
 		},
 	}}
@@ -60,14 +60,19 @@ func TestRenderListGlyphs(t *testing.T) {
 
 	bare := plain(out)
 	for _, want := range []string{
-		glyphTerminal + " a1", // claude-code terminal
-		glyphTerminal + " a2", // codex terminal
-		glyphHeadless + " a3", // headless box
+		glyphTerminal + " claude-code", // unlabeled terminal → leads with type
+		glyphTerminal + " Backend",     // labeled terminal → leads with the label, not "codex"
+		glyphHeadless + " headless",    // headless box, unlabeled
+		"·a1", "·a2", "·a3",            // id rides along as a muted handle
 		"+ add agent",
 		"+ new island",
 	} {
 		if !strings.Contains(bare, want) {
 			t.Errorf("rendered list missing %q\n%s", want, bare)
 		}
+	}
+	// The label supersedes the type in the row; the bare type shouldn't appear.
+	if strings.Contains(bare, "codex") {
+		t.Errorf("labeled agent should show its label, not type %q\n%s", "codex", bare)
 	}
 }
