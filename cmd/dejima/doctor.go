@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"text/tabwriter"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/sshfacade"
 	"github.com/aoos/dejima/internal/version"
 )
 
@@ -90,6 +93,29 @@ func (r *doctorReport) write(w io.Writer) {
 	_ = tw.Flush()
 }
 
+// checkSSHFacade reports the host-side state of the SSH-façade: whether the
+// daemon host key exists (and its fingerprint, for clients to pin). It's INFO,
+// not FAIL — SSH is opt-in (`dejimad --ssh <addr>`), and the key materializes on
+// first start.
+func checkSSHFacade(r *doctorReport) {
+	p, err := paths.HostKeyPath()
+	if err != nil {
+		return
+	}
+	if _, err := os.Stat(p); err != nil {
+		r.add("System", "ssh façade", "INFO",
+			"no host key yet — enable with `dejimad --ssh <addr>`, then `dejima ssh authorize <island>`", "")
+		return
+	}
+	signer, err := sshfacade.HostSigner()
+	if err != nil {
+		r.add("System", "ssh façade", "WARN", "host key present but unreadable: "+err.Error(),
+			"remove "+p+" to regenerate (clients must re-pin)")
+		return
+	}
+	r.add("System", "ssh façade", "OK", "host key "+sshfacade.Fingerprint(signer), "")
+}
+
 func runDoctor(ctx context.Context) *doctorReport {
 	r := &doctorReport{}
 
@@ -99,6 +125,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkIslandImage(ctx, r)
 	checkTailscale(ctx, r)
 	checkClaudeCreds(ctx, r)
+	checkSSHFacade(r)
 
 	// --- Projects -------------------------------------------------------
 	c, err := client()
