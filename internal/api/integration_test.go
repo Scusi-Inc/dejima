@@ -358,6 +358,44 @@ func TestCreateAcceptsSeedWithoutRepo(t *testing.T) {
 	}
 }
 
+// TestGitHubIdentityAPI drives the identity store endpoints: list, seed (put),
+// the no-token-leak invariant on read, and delete.
+func TestGitHubIdentityAPI(t *testing.T) {
+	h, _ := newTestServer(t)
+
+	rr := do(t, h, http.MethodGet, "/v1/credentials/github", "")
+	var resp GitHubIdentitiesResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Identities) != 0 {
+		t.Fatalf("fresh daemon should have no identities, got %+v", resp.Identities)
+	}
+
+	// login + token are required.
+	if rr := do(t, h, http.MethodPut, "/v1/credentials/github/bad", `{"login":""}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("missing login/token: got %d, want 400", rr.Code)
+	}
+
+	if rr := do(t, h, http.MethodPut, "/v1/credentials/github/work", `{"login":"alockwood","token":"ghp_secret","default":true}`); rr.Code != http.StatusOK {
+		t.Fatalf("put identity: %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = do(t, h, http.MethodGet, "/v1/credentials/github", "")
+	if strings.Contains(rr.Body.String(), "ghp_secret") {
+		t.Errorf("list must not leak the token: %s", rr.Body.String())
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Identities) != 1 || resp.Identities[0].Name != "work" || resp.Identities[0].Login != "alockwood" || !resp.Identities[0].Default {
+		t.Fatalf("list = %+v, want one default 'work'/'alockwood'", resp.Identities)
+	}
+
+	if rr := do(t, h, http.MethodDelete, "/v1/credentials/github/work", ""); rr.Code != http.StatusNoContent {
+		t.Errorf("delete: got %d, want 204", rr.Code)
+	}
+	if rr := do(t, h, http.MethodDelete, "/v1/credentials/github/work", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("delete missing: got %d, want 404", rr.Code)
+	}
+}
+
 // TestGitHubIdentityPlumbedIntoIsland verifies that a named daemon GitHub
 // identity is validated at create time and materialized into the island as a
 // per-island gh config mount (overriding the shared host gh), tokens and all.

@@ -329,6 +329,10 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
+	mux.HandleFunc("GET /v1/credentials/github", s.handleGitHubIdentities)
+	mux.HandleFunc("PUT /v1/credentials/github/{name}", s.handlePutGitHubIdentity)
+	mux.HandleFunc("DELETE /v1/credentials/github/{name}", s.handleDeleteGitHubIdentity)
+	mux.HandleFunc("GET /v1/credentials/github/{name}/repos", s.handleGitHubRepos)
 	mux.HandleFunc("GET /v1/events/subscriptions", s.listSubscriptions)
 	mux.HandleFunc("POST /v1/events/subscribe", s.subscribeWebhook)
 	mux.HandleFunc("DELETE /v1/events/subscriptions/{id}", s.unsubscribeWebhook)
@@ -445,6 +449,90 @@ func (s *Server) handleClaudeCredsStatus(w http.ResponseWriter, _ *http.Request)
 		}
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// handleGitHubIdentities lists the daemon's GitHub identities (no tokens).
+func (s *Server) handleGitHubIdentities(w http.ResponseWriter, _ *http.Request) {
+	store, err := githubid.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.List()})
+}
+
+// handlePutGitHubIdentity adds or updates a named GitHub identity. This is how
+// a credentialed client seeds the daemon (`dejima auth push --github`).
+func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, errors.New("identity name is required"))
+		return
+	}
+	var req PutGitHubIdentityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	if strings.TrimSpace(req.Login) == "" || strings.TrimSpace(req.Token) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("login and token are required"))
+		return
+	}
+	store, err := githubid.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	store.Put(githubid.Identity{Name: name, Login: req.Login, Host: req.Host, Token: req.Token})
+	if req.Default {
+		_ = store.SetDefault(name)
+	}
+	if err := store.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.log.Info("github identity stored", "name", name, "login", req.Login)
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.List()})
+}
+
+// handleDeleteGitHubIdentity removes a GitHub identity.
+func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	store, err := githubid.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !store.Remove(name) {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", name))
+		return
+	}
+	if err := store.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGitHubRepos lists the repositories an identity can access, fetched
+// daemon-side so any client device can browse without its own gh.
+func (s *Server) handleGitHubRepos(w http.ResponseWriter, r *http.Request) {
+	store, err := githubid.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	id, ok := store.Resolve(r.PathValue("name"))
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", r.PathValue("name")))
+		return
+	}
+	repos, err := githubid.ListRepos(r.Context(), id, 100)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Errorf("list github repos: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, GitHubReposResponse{Repos: repos})
 }
 
 func (s *Server) listIslands(w http.ResponseWriter, r *http.Request) {

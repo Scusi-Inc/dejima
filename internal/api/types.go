@@ -3,6 +3,7 @@ package api
 import (
 	"time"
 
+	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/ledger"
 )
 
@@ -206,6 +207,26 @@ type ClaudeCredentialsStatus struct {
 	// "keychain", "file", or "" when the host has no Claude login (the seed
 	// then only refreshes via `dejima auth push`).
 	HostSource string `json:"host_source,omitempty"`
+}
+
+// GitHubIdentitiesResponse is the body of GET /v1/credentials/github: the
+// daemon's GitHub identities without their tokens.
+type GitHubIdentitiesResponse struct {
+	Identities []githubid.Meta `json:"identities"`
+}
+
+// PutGitHubIdentityRequest is the body of PUT /v1/credentials/github/:name —
+// how a client (e.g. `dejima auth push --github`) seeds or updates an identity.
+type PutGitHubIdentityRequest struct {
+	Login   string `json:"login"`
+	Host    string `json:"host,omitempty"` // defaults to github.com
+	Token   string `json:"token"`
+	Default bool   `json:"default,omitempty"` // make this the default identity
+}
+
+// GitHubReposResponse is the body of GET /v1/credentials/github/:name/repos.
+type GitHubReposResponse struct {
+	Repos []githubid.Repo `json:"repos"`
 }
 
 // PortScopeRequest is the body of POST /v1/islands/:name/port/scopes.
