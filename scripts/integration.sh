@@ -56,8 +56,14 @@ docker info >/dev/null 2>&1   || die "docker daemon not reachable"
 # Isolated environment + cleanup
 # ---------------------------------------------------------------------------
 TMP="$(mktemp -d)"
+REAL_HOME="$HOME"
 export HOME="$TMP/home"
 mkdir -p "$HOME"
+# Docker's CLI config + contexts live in the real ~/.docker. The isolated HOME
+# above would hide them — so on OrbStack/colima/Docker-Desktop the daemon can't
+# resolve the Docker endpoint and image build fails. Point Docker back at the
+# real config (DOCKER_HOST, if set, is already inherited from the environment).
+export DOCKER_CONFIG="${DOCKER_CONFIG:-$REAL_HOME/.docker}"
 BIN="$TMP/bin"; mkdir -p "$BIN"; export PATH="$BIN:$PATH"
 ISLAND="itest-port"
 ISLAND_MULTI="itest-multi"
