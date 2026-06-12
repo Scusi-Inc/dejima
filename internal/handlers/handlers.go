@@ -52,7 +52,14 @@ var registry = map[string]Handler{
 	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", StateDir: "/home/dejima/.claude"},
 	"codex":       {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox-policy=no-sandbox", StateDir: "/home/dejima/.codex"},
 	Shell:         {ID: Shell, Kind: KindInteractive, Launch: "bash -l", StateDir: "/home/dejima"},
-	Headless:      {ID: Headless, Kind: KindHeadless, Launch: "", StateDir: "/home/dejima/.agent-state"},
+	// OpenClaw: a first-class headless assistant. Self-installs on first launch
+	// (kept out of the base image to avoid bloating every island) and runs its
+	// gateway from /workspace — which should hold the brain's config (the Home
+	// Island model). Misconfigured, it will restart-loop visibly in the logs.
+	"openclaw": {ID: "openclaw", Kind: KindHeadless,
+		Launch:   "bash -lc 'command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; openclaw gateway'",
+		StateDir: "/home/dejima/.openclaw"},
+	Headless: {ID: Headless, Kind: KindHeadless, Launch: "", StateDir: "/home/dejima/.agent-state"},
 }
 
 // Lookup returns the registered handler for an agent type. ok is false for

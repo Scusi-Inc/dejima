@@ -64,12 +64,24 @@ func TestAgentPickerShell(t *testing.T) {
 	}
 }
 
+// OpenClaw is a baked-launch headless type — picked like an interactive option
+// (no command step), resolving on Enter.
+func TestAgentPickerOpenclaw(t *testing.T) {
+	p := newAgentPicker()
+	if r := feed(&p, "down", "down", "down", "enter"); r != pickerDone { // → openclaw (index 3)
+		t.Fatalf("openclaw enter = %v, want pickerDone", r)
+	}
+	if p.typ() != "openclaw" {
+		t.Errorf("typ = %q, want openclaw", p.typ())
+	}
+}
+
 // Selecting headless requires a command before the picker resolves.
 func TestAgentPickerHeadlessNeedsCmd(t *testing.T) {
 	p := newAgentPicker()
-	// Move to the headless option (fourth: claude-code, codex, shell, headless),
-	// then Enter → command step.
-	if r := feed(&p, "down", "down", "down", "enter"); r != pickerOngoing {
+	// Move to the headless option (5th: shell, claude-code, codex, openclaw,
+	// headless), then Enter → command step.
+	if r := feed(&p, "down", "down", "down", "down", "enter"); r != pickerOngoing {
 		t.Fatalf("headless enter = %v, want pickerOngoing (awaiting cmd)", r)
 	}
 	if p.typ() != api.AgentHeadless {
@@ -118,7 +130,7 @@ func TestAgentAdderLabelStep(t *testing.T) {
 // type step backs out.
 func TestAgentPickerEscape(t *testing.T) {
 	p := newAgentPicker()
-	feed(&p, "down", "down", "down", "enter") // into the headless command step
+	feed(&p, "down", "down", "down", "down", "enter") // into the headless command step
 	if r := p.handleKey(key("esc")); r != pickerOngoing || p.phase != pickType {
 		t.Fatalf("esc on cmd step: result=%v phase=%v, want ongoing/pickType", r, p.phase)
 	}

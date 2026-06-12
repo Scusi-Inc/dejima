@@ -27,6 +27,7 @@ var agentTypeOptions = []agentTypeOption{
 	{typ: "shell", desc: "plain terminal — a bash shell on the island workspace; attach and type"},
 	{typ: "claude-code", desc: "interactive AI agent — attach and drive it"},
 	{typ: "codex", desc: "interactive AI agent — attach and drive it"},
+	{typ: "openclaw", desc: "OpenClaw assistant — a contained 24/7 brain (configure it in the workspace)"},
 	{typ: api.AgentHeadless, desc: "background command — supervised, restarts on crash, logs only", headless: true},
 }
 

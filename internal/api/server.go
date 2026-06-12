@@ -506,7 +506,11 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 	}
 	cmd := strings.TrimSpace(req.Cmd)
 	if !handlers.Attachable(typ) && cmd == "" {
-		return project.AgentSpec{}, fmt.Errorf("agent type %q is headless; it requires a command (cmd)", typ)
+		// A headless handler with a baked Launch (e.g. openclaw) needs no cmd;
+		// only a generic/custom headless type does.
+		if h, ok := handlers.Lookup(typ); !ok || h.Launch == "" {
+			return project.AgentSpec{}, fmt.Errorf("agent type %q is headless; it requires a command (cmd)", typ)
+		}
 	}
 	if handlers.Attachable(typ) && cmd != "" {
 		return project.AgentSpec{}, fmt.Errorf("cmd is only meaningful for headless agents, not %q", typ)
@@ -1111,7 +1115,13 @@ func agentLaunchScript(a *project.AgentSpec) string {
 	// Headless: capture output to the per-agent log, optionally with a restart loop.
 	cmd := a.Cmd
 	if cmd == "" {
-		cmd = a.Type
+		// A headless handler may bake its launch (e.g. openclaw); otherwise run
+		// the type string as a command (generic/custom headless agents).
+		if h, ok := handlers.Lookup(a.Type); ok && h.Launch != "" {
+			cmd = h.Launch
+		} else {
+			cmd = a.Type
+		}
 	}
 	log := headlessLogPath(a.ID)
 	if a.Restart {

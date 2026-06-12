@@ -222,6 +222,21 @@ func TestMultiAgentLifecycle(t *testing.T) {
 		t.Errorf("expected headless supervised tmux session for a3; execs=%v", calls)
 	}
 
+	// A baked-launch headless handler (openclaw) needs no cmd; its launch comes
+	// from the registry.
+	rr = do(t, h, http.MethodPost, "/v1/islands/proj/agents", `{"type":"openclaw"}`)
+	if rr.Code != http.StatusCreated {
+		t.Errorf("openclaw without cmd: got %d, want 201 (%s)", rr.Code, rr.Body.String())
+	}
+	var oc AgentInfo
+	_ = json.Unmarshal(rr.Body.Bytes(), &oc)
+	if oc.Type != "openclaw" || oc.Attachable {
+		t.Errorf("openclaw agent = %+v, want type openclaw, non-attachable", oc)
+	}
+	if !execContains(f.calls(), "new-session", "openclaw gateway") {
+		t.Errorf("expected openclaw baked launch in tmux session; execs=%v", f.calls())
+	}
+
 	// Per-agent logs for the headless agent stream its log file.
 	rr = do(t, h, http.MethodGet, "/v1/islands/proj/logs?agent=a3", "")
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "agent log output") {
