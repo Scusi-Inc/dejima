@@ -16,6 +16,10 @@ Both paths get the same substrate: per-project workspace volume, GitHub
 credentials, lifecycle events, the `agent.*` event endpoint, multi-device API
 control. The only difference is whether you ship a shim with the image.
 
+> **Driving an island from an *external* framework instead?** That's the inverse
+> of this doc — see [`framework-backends.md`](framework-backends.md): point
+> Hermes/Goose/VS Code Remote-SSH at an island over the daemon's SSH-façade.
+
 > **Multi-agent note.** An island now hosts N agents (see
 > [`multi-agent-spec.md`](multi-agent-spec.md)). Each interactive agent gets its
 > own tmux session and git worktree; all agents share the island's home volume,
