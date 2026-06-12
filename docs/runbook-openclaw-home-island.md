@@ -111,17 +111,17 @@ dejima exec oc-home -- cat  /home/dejima/intake/vault/locked.md   # expect: PERM
 | `open.md` (0644) | owner UID ~501, mode 0644 | ✅ yes — the `others` read bit saves it |
 | `locked.md` (0600) | owner UID ~501, mode 0600 | ❌ **EACCES** — only UID 501 may read, dejima is 1000 |
 
-If you see exactly that split, the anomaly is confirmed: **brokered readability depends on the
-host file's mode, not on the broker's intent.** A vault of 0644 markdown "just works"; anything
-0600 (private notes, keys, many exported files) is silently unreadable by the agent.
-
-**Recommended fix (to implement after this confirms — small, in `handlePortIntake`):** after
-`CopyToContainer`, normalize the copy so the agent user can always read what the broker chose to
-share — `docker exec <c> chmod a+r <dest>` for files (and `a+rX` for the intake dirs). Rationale:
-the file is already *inside* the containment boundary; in-island POSIX perms add no security, they
-only cause false EACCES. The broker, not the host's mode bits, decides what crosses. (Do **not**
-chown to root; keep it least-privilege — a read bit is enough.) Capture this as a follow-up issue
-with the `ls -ln` output attached.
+> **CONFIRMED on Minion (2026-06-12) and FIXED.** The split above was exactly what happened —
+> `open.md` read, `locked.md` EACCES (both owned by host uid 501). The anomaly: brokered
+> readability depended on the host file's *mode*, not the broker's intent; 0600 files (private
+> notes, keys, exported files) were silently unreadable.
+>
+> **Read-normalization is now implemented.** `handlePortIntake` copies through a daemon-owned temp
+> set 0644 before `docker cp`, so the agent can always read what the broker chose to share —
+> regardless of the host file's owner/mode. (Done host-side on a temp we own, because the agent
+> isn't the file's owner and couldn't `chmod` it itself.) Rationale: the file is already *inside*
+> the containment boundary, so in-island read bits add no exposure. Covered by a 0600-file
+> assertion in `scripts/integration.sh`. After this fix, **both files read.**
 
 **Also note (cosmetic):** macOS files may carry xattrs/resource forks; `docker cp` may emit a
 benign warning. Record it if seen, but it does not block reads.

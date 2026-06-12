@@ -82,8 +82,21 @@ func (s *Server) handlePortIntake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Copy through a daemon-owned temp set 0644 so the in-island agent can read
+	// the file regardless of the host file's owner/mode. docker cp preserves the
+	// source uid+mode, and the agent isn't the file's owner (so it couldn't
+	// chmod it itself) — a host 0600 file would otherwise land unreadable. The
+	// file is already inside the containment boundary, so in-island read bits add
+	// no exposure; the broker decided what crosses.
+	staged, err := copyToTempReadable(real)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer os.Remove(staged)
+
 	_, _, _, _ = s.rt.Exec(r.Context(), p.ContainerName(), []string{"mkdir", "-p", pathpkg.Dir(dest)})
-	if err := s.rt.CopyToContainer(r.Context(), p.ContainerName(), real, dest); err != nil {
+	if err := s.rt.CopyToContainer(r.Context(), p.ContainerName(), staged, dest); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -164,6 +177,37 @@ func resolveWithinScope(root, rel string) (realPath, relClean string, err error)
 		return "", "", fmt.Errorf("path %q escapes the scope", rel)
 	}
 	return real, rc, nil
+}
+
+// copyToTempReadable copies a host file to a fresh daemon-owned temp set 0644,
+// returning its path (caller removes it). Used so a brokered file lands readable
+// by the in-island agent even when the host file is 0600 — docker cp preserves
+// the source uid+mode and the agent isn't the owner, so it couldn't relax the
+// mode itself.
+func copyToTempReadable(real string) (string, error) {
+	src, err := os.Open(real)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	tmp, err := os.CreateTemp("", "dejima-intake-*")
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(tmp, src); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	return tmp.Name(), nil
 }
 
 // hashFile returns the size and hex SHA-256 of a host file.

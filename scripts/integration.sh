@@ -125,6 +125,7 @@ SCOPE="$TMP/vault"
 mkdir -p "$SCOPE/daily"
 printf 'hello vault\n'   > "$SCOPE/note.md"
 printf 'deep content\n'  > "$SCOPE/daily/2026.md"
+printf 'locked content\n' > "$SCOPE/locked.md" && chmod 600 "$SCOPE/locked.md"  # 0600 → read-normalization test
 printf 'TOP SECRET\n'    > "$TMP/secret.txt"          # OUTSIDE the scope
 ln -s "$TMP/secret.txt"    "$SCOPE/escape"            # symlink that escapes the scope
 pass "scope tree created at $SCOPE (basename → scope 'vault')"
@@ -147,6 +148,12 @@ assert_eq "$GOT" "deep content" "nested file landed at the mirrored path"
 expect_ok "intake to a custom dest" dejima port intake "$ISLAND" "vault:note.md" "/tmp/custom.md"
 GOT="$(dejima exec "$ISLAND" -- cat /tmp/custom.md 2>/dev/null)"
 assert_eq "$GOT" "hello vault" "custom dest honored"
+
+# A 0600 host file must still be readable by the agent (uid 1000 ≠ host owner) —
+# intake normalizes the in-island copy to 0644 (read-normalization).
+expect_ok "intake 0600 host file" dejima port intake "$ISLAND" "vault:locked.md"
+GOT="$(dejima exec "$ISLAND" -- cat /home/dejima/intake/vault/locked.md 2>/dev/null)"
+assert_eq "$GOT" "locked content" "0600 host file is agent-readable after read-normalization"
 
 step "Traversal guards: escapes must be REFUSED (with the right error)"
 expect_err_match "../ parent traversal refused as scope-escape" "escapes the scope" \
