@@ -450,6 +450,8 @@ POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
   <tr><td>Claude Code + Codex bundled (others via custom image)</td><td>n/a</td><td>n/a</td><td>✗</td><td><strong>✓</strong></td></tr>
   <tr><td>Also runs headless / non-CLI agents (Python SDK loops, workers)</td><td>n/a</td><td>n/a</td><td>vendor-locked</td><td><strong>✓</strong> (<code>--agent headless --cmd</code>)</td></tr>
   <tr><td>API for third-party integrations</td><td>✗</td><td>✗</td><td>vendor-only</td><td><strong>✓</strong></td></tr>
+  <tr><td>Brokered, audited host-file access (Port + ledger)</td><td>✗</td><td>✗</td><td>✗</td><td><strong>✓</strong></td></tr>
+  <tr><td>Contained 24/7 assistant daemon (Home Island)</td><td>✗</td><td>✗</td><td>vendor-locked</td><td><strong>✓</strong></td></tr>
 </table>
 <p class="small">Dejima isn't a replacement for tmux — it uses tmux inside each island. It's the layer above that adds isolation, lifecycle verbs (<code>hibernate</code> / <code>reset</code>), webhook events, and the cross-device API.</p>
 
