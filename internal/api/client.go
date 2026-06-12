@@ -225,9 +225,11 @@ func (c *Client) GetIsland(ctx context.Context, name string) (*IslandInfo, error
 	return &out, nil
 }
 
-// CreateIsland provisions a new island.
-func (c *Client) CreateIsland(ctx context.Context, req CreateIslandRequest) (*IslandInfo, error) {
-	var out IslandInfo
+// CreateIsland provisions a new island. The returned CreateIslandResponse
+// embeds the IslandInfo; on a token-authenticated create by a Home Island it
+// also carries the child's bearer Token (the parent-child spawn model).
+func (c *Client) CreateIsland(ctx context.Context, req CreateIslandRequest) (*CreateIslandResponse, error) {
+	var out CreateIslandResponse
 	if err := c.do(ctx, http.MethodPost, "/v1/islands", req, &out); err != nil {
 		return nil, err
 	}

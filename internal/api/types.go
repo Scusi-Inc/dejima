@@ -139,6 +139,18 @@ type CreateIslandRequest struct {
 	Role string `json:"role,omitempty"`
 }
 
+// CreateIslandResponse is the result of POST /v1/islands: an IslandInfo
+// (JSON-flattened via embedding) plus, only on a token-authenticated create by
+// a Home Island, the new island's bearer Token. This is the parent-child spawn
+// model — the parent brain receives the child's token and drives it over the
+// same autonomy path, so there is no god-token. Operator-driven creates (unix
+// socket / tailnet) leave Token empty, making the JSON byte-identical to a bare
+// IslandInfo for existing clients.
+type CreateIslandResponse struct {
+	IslandInfo
+	Token string `json:"token,omitempty"`
+}
+
 // UpdateIslandRequest is the body of PATCH /v1/islands/{name}. Only cosmetic,
 // in-place-editable fields live here (Name and infra identity are immutable).
 type UpdateIslandRequest struct {

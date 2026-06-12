@@ -840,7 +840,24 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: p.Name})
 	s.emit(events.Event{Type: events.TypeIslandRunning, Island: p.Name})
-	writeJSON(w, http.StatusCreated, s.toInfo(r.Context(), p))
+
+	resp := CreateIslandResponse{IslandInfo: s.toInfo(r.Context(), p)}
+	// Parent-child spawn: when a Home Island created this island over the
+	// token-authenticated path, hand back the child's token so the parent brain
+	// can drive it. authorizeToken already restricts create to Home tokens, so a
+	// non-empty token-island here is necessarily a Home parent. Operator creates
+	// have no token-island and get no token in the response.
+	if parent := TokenIslandFromContext(r.Context()); parent != "" {
+		tok, err := porttoken.Ensure(p.Name)
+		if err != nil {
+			s.log.Error("mint child token", "child", p.Name, "parent", parent, "err", err)
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("island created but child token unavailable: %w", err))
+			return
+		}
+		resp.Token = tok
+		s.log.Info("home spawned child island", "child", p.Name, "parent", parent)
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {

@@ -826,6 +826,12 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("created island %q (container: %s)\n", info.Name, info.Container)
+			// Token-authenticated spawn (a Home brain creating a child): surface
+			// the child's token so the brain can drive it. Empty — and unprinted —
+			// for operator-driven creates, so no secret hits an operator terminal.
+			if info.Token != "" {
+				fmt.Printf("child token: %s\n", info.Token)
+			}
 			if multi {
 				fmt.Printf("agents:  dejima agent ls %s\n", info.Name)
 			}
