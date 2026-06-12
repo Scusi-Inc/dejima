@@ -24,6 +24,11 @@ import (
 type Client struct {
 	httpc *http.Client
 	base  string
+	// token, when set, is sent as an Authorization: Bearer header on every
+	// request — the in-island autonomy path, where DEJIMA_TOKEN authenticates
+	// the brain to the host-internal dejimad listener. Empty for the unix
+	// socket and tailnet paths, which are trusted by other means.
+	token string
 }
 
 // NewUnixClient returns a Client that talks to dejimad over its Unix socket.
@@ -60,6 +65,19 @@ func NewTCPClient(host string) (*Client, error) {
 	}, nil
 }
 
+// NewTCPClientWithToken is NewTCPClient with a bearer token attached to every
+// request: the in-island → dejimad autonomy path. host is typically
+// DEJIMA_HOST (host.docker.internal:<port>) and token is DEJIMA_TOKEN, both
+// injected into the container by the daemon when autonomy is enabled.
+func NewTCPClientWithToken(host, token string) (*Client, error) {
+	c, err := NewTCPClient(host)
+	if err != nil {
+		return nil, err
+	}
+	c.token = token
+	return c, nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
@@ -75,6 +93,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	resp, err := c.httpc.Do(req)
 	if err != nil {

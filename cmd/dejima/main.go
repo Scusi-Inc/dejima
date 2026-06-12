@@ -622,10 +622,16 @@ func client() (*api.Client, error) {
 
 // clientForHost builds an API client for a connection target: the local Unix
 // socket when host is empty, otherwise a TCP client to host:port. Shared by the
-// env-driven default and the TUI's connection switcher.
+// env-driven default and the TUI's connection switcher. When DEJIMA_TOKEN is
+// set (the in-island autonomy path — the daemon injects it alongside
+// DEJIMA_HOST), the TCP client authenticates with it; remote-device (tailnet)
+// access leaves it unset and relies on the tailnet-pinned listener.
 func clientForHost(host string) (*api.Client, error) {
 	if strings.TrimSpace(host) == "" {
 		return api.NewUnixClient()
+	}
+	if token := strings.TrimSpace(os.Getenv("DEJIMA_TOKEN")); token != "" {
+		return api.NewTCPClientWithToken(host, token)
 	}
 	return api.NewTCPClient(host)
 }
