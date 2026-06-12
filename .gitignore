@@ -1,6 +1,9 @@
 # Build artifacts
 /bin/
 /dist/
+
+# Multi-agent worktrees (runtime state created under an island's /workspace)
+/.agents/
 *.exe
 *.test
 *.out
