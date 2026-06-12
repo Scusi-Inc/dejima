@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -155,6 +156,148 @@ func (s *Server) handlePortExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, PortExportResponse{Src: src, Dest: dest, Bytes: size, SHA256: sum})
+}
+
+// handlePortWrite brokers a file OUT of the island INTO a read-write scope on
+// the host — the inverse of intake. Write-through-symlink and ../ escapes are
+// refused; the crossing is ledgered fail-closed (no byte is written to the host
+// if the audit record can't be written).
+func (s *Server) handlePortWrite(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	var req PortWriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	scope, ok := p.PortScopeByName(req.Scope)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no Port scope %q", name, req.Scope))
+		return
+	}
+	if scope.Mode != project.PortModeRW {
+		writeError(w, http.StatusForbidden, fmt.Errorf("scope %q is read-only; re-grant it :rw to write", scope.Name))
+		return
+	}
+	target, rel, err := resolveWriteTarget(scope.HostPath, req.DestRel)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	src := "/" + strings.TrimPrefix(req.Src, "/")
+	if status, _ := s.rt.Status(r.Context(), p.ContainerName()); status != runtime.StatusRunning {
+		writeError(w, http.StatusConflict, errIslandNotRunning(name))
+		return
+	}
+
+	// Stage the island file on the host, then validate + hash before it touches
+	// the user's scope.
+	staged, cleanup, err := s.stageFromContainer(r.Context(), p.ContainerName(), src)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer cleanup()
+	size, sum, err := hashFile(staged)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Fail closed: record the write before any byte lands in the user's scope.
+	if err := s.ledgerAppend(ledger.Entry{
+		Type: "trade.write", Island: name, Scope: scope.Name, Path: rel,
+		Mode: scope.Mode, Bytes: size, SHA256: sum, Decision: "allowed",
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("refusing to write: ledger write failed: %w", err))
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := copyFileTo(staged, target); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, PortWriteResponse{Scope: scope.Name, Src: src, Dest: target, Bytes: size, SHA256: sum})
+}
+
+// resolveWriteTarget validates a write destination within a scope. The target
+// file need not exist; ../ escapes are refused lexically, the deepest existing
+// ancestor is symlink-resolved and confirmed inside the scope, and an existing
+// symlink at the target is refused (no writing *through* a symlink out of scope).
+func resolveWriteTarget(root, rel string) (target, relClean string, err error) {
+	if rel == "" || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("destination must be a relative path within the scope, got %q", rel)
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("destination %q escapes the scope", rel)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", "", fmt.Errorf("scope root unreadable: %w", err)
+	}
+	target = filepath.Join(realRoot, clean)
+	// Walk up to the deepest ancestor that exists, resolve its symlinks, and
+	// confirm it is still inside the scope (catches a symlinked subdir).
+	for anc := filepath.Dir(target); ; anc = filepath.Dir(anc) {
+		real, err := filepath.EvalSymlinks(anc)
+		if err == nil {
+			rc, rerr := filepath.Rel(realRoot, real)
+			if rerr != nil || rc == ".." || strings.HasPrefix(rc, ".."+string(filepath.Separator)) {
+				return "", "", fmt.Errorf("destination %q escapes the scope", rel)
+			}
+			break
+		}
+		if anc == realRoot || anc == "/" || anc == "." || filepath.Dir(anc) == anc {
+			break
+		}
+	}
+	if fi, err := os.Lstat(target); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return "", "", fmt.Errorf("destination %q is a symlink; refusing to write through it", rel)
+	}
+	return target, clean, nil
+}
+
+// stageFromContainer copies a container file to a fresh host temp dir, returning
+// the staged path and a cleanup func.
+func (s *Server) stageFromContainer(ctx context.Context, container, src string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "dejima-write-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+	staged := filepath.Join(dir, "staged")
+	if err := s.rt.CopyFromContainer(ctx, container, src, staged); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return staged, cleanup, nil
+}
+
+// copyFileTo writes src's contents to dst (truncating), mode 0644.
+func copyFileTo(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // resolveWithinScope joins rel onto the scope root and verifies, after symlink

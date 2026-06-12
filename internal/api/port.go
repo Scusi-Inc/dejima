@@ -71,13 +71,10 @@ func (s *Server) handleGrantPortScope(w http.ResponseWriter, r *http.Request) {
 		mode = project.PortModeRO
 	}
 	switch mode {
-	case project.PortModeRO:
+	case project.PortModeRO, project.PortModeRW:
 		// ok
-	case project.PortModeRW:
-		writeError(w, http.StatusBadRequest, errPortRWUnsupported)
-		return
 	default:
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid mode %q (want %q)", mode, project.PortModeRO))
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid mode %q (want %q or %q)", mode, project.PortModeRO, project.PortModeRW))
 		return
 	}
 	if !filepath.IsAbs(req.HostPath) {
@@ -162,5 +159,3 @@ func scopeViews(ss []project.PortScope) []PortScopeView {
 	}
 	return out
 }
-
-var errPortRWUnsupported = staticErr("read-write Port scopes are not supported yet; V1 is read-only (docs/port-island-spec.md §6). Use :ro")

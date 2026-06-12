@@ -27,7 +27,7 @@ assistant-class agents. It is a living document; phases update it as they ship.
 | Live-Docker end-to-end validation (`scripts/integration.sh`) | **Green** — 31/31 on Minion, 2026-06-12 |
 | Brain-driven autonomous Port/spawn (macOS TCP path) | Deferred — §3.2 |
 | SSH-façade adoption wedge + framework adapters | Phase 3 — §5 |
-| Read-write trading | Phase 4 — §6 |
+| Read-write trading (`:rw` grants + `dejima port write` into a scope) | **Built** — symlink-safe, fail-closed `trade.write` |
 | Live brokered mount (FUSE/9p) | Phase 5 — §6 |
 
 ---

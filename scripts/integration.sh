@@ -178,6 +178,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+step "Read-write: write island → :rw host scope"
+# A :ro scope refuses writes; a :rw scope accepts them.
+expect_err_match "write refused to a read-only scope" "read-only" \
+  dejima port write "$ISLAND" /tmp/out.txt "vault:back.md"
+RWDIR="$REPO_DIR/rwscope"; mkdir -p "$RWDIR"
+expect_ok "grant rwscope:rw" dejima port grant "$ISLAND" "$RWDIR:rw"
+dejima exec "$ISLAND" -- sh -c 'echo written-from-island > /tmp/w.txt' >/dev/null 2>&1 || die "could not write file in island"
+expect_ok "write into :rw scope" dejima port write "$ISLAND" /tmp/w.txt "rwscope:notes/w.md"
+if [ -f "$RWDIR/notes/w.md" ]; then
+  assert_eq "$(cat "$RWDIR/notes/w.md")" "written-from-island" "written file landed on the host"
+else
+  fail "write did not land at $RWDIR/notes/w.md"
+fi
+expect_err_match "write ../ escape refused" "escapes the scope" \
+  dejima port write "$ISLAND" /tmp/w.txt "rwscope:../escape.md"
+
+# ---------------------------------------------------------------------------
 step "Ledger: every crossing recorded + hash chain verifies"
 LEDGER="$HOME/.dejima/ledger.jsonl"
 [ -f "$LEDGER" ] || die "ledger file missing"

@@ -254,6 +254,23 @@ type AuditResponse struct {
 	Error    string         `json:"error,omitempty"` // chain-verification failure detail
 }
 
+// PortWriteRequest is the body of POST /v1/islands/:name/port/write — copy a
+// file out of the island INTO a read-write scope on the host.
+type PortWriteRequest struct {
+	Scope   string `json:"scope"`
+	Src     string `json:"src"`      // container path
+	DestRel string `json:"dest_rel"` // path within the scope
+}
+
+// PortWriteResponse reports a completed write into a scope.
+type PortWriteResponse struct {
+	Scope  string `json:"scope"`
+	Src    string `json:"src"`  // container path
+	Dest   string `json:"dest"` // host path written
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
 // ErrorResponse is the body of any non-2xx response.
 type ErrorResponse struct {
 	Error string `json:"error"`

@@ -7,6 +7,57 @@ import (
 	"testing"
 )
 
+func TestResolveWriteTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+
+	t.Run("new file in existing dir", func(t *testing.T) {
+		if _, _, err := resolveWriteTarget(root, "sub/new.md"); err != nil {
+			t.Errorf("unexpected: %v", err)
+		}
+	})
+	t.Run("new file in a new subdir", func(t *testing.T) {
+		if _, _, err := resolveWriteTarget(root, "fresh/deep/x.md"); err != nil {
+			t.Errorf("unexpected: %v", err)
+		}
+	})
+	t.Run("parent traversal refused", func(t *testing.T) {
+		if _, _, err := resolveWriteTarget(root, "../escape.md"); err == nil {
+			t.Error("expected traversal refusal")
+		}
+	})
+	t.Run("absolute refused", func(t *testing.T) {
+		if _, _, err := resolveWriteTarget(root, "/etc/x"); err == nil {
+			t.Error("expected absolute refusal")
+		}
+	})
+	t.Run("write through a symlink refused", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip()
+		}
+		if err := os.Symlink(filepath.Join(outside, "target.md"), filepath.Join(root, "link.md")); err != nil {
+			t.Skipf("symlink unsupported: %v", err)
+		}
+		if _, _, err := resolveWriteTarget(root, "link.md"); err == nil {
+			t.Error("expected symlink-target refusal")
+		}
+	})
+	t.Run("symlinked parent dir escaping refused", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip()
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "evil")); err != nil {
+			t.Skipf("symlink unsupported: %v", err)
+		}
+		if _, _, err := resolveWriteTarget(root, "evil/x.md"); err == nil {
+			t.Error("expected symlinked-parent escape refusal")
+		}
+	})
+}
+
 func TestResolveWithinScope(t *testing.T) {
 	root := t.TempDir()
 	// scope/note.md and scope/sub/deep.md

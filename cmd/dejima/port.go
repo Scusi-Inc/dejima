@@ -22,17 +22,18 @@ func newPortCmd() *cobra.Command {
 			"read-only and copy-based (see docs/port-island-spec.md).",
 	}
 	cmd.AddCommand(newPortGrantCmd(), newPortListCmd(), newPortRevokeCmd(),
-		newPortIntakeCmd(), newPortExportCmd())
+		newPortIntakeCmd(), newPortExportCmd(), newPortWriteCmd())
 	return cmd
 }
 
 func newPortGrantCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "grant <island> <host-path>[:ro]",
-		Short: "Grant an island brokered read-only access to a host directory.",
+		Use:   "grant <island> <host-path>[:ro|:rw]",
+		Short: "Grant an island brokered access to a host directory (ro default, rw opt-in).",
 		Long: "Grants <island> brokered access to an absolute host directory. The path is " +
-			"resolved on the daemon host. Append :ro to be explicit (read-only is the only " +
-			"mode in V1).\n\n  dejima port grant myrepo ~/Obsidian/Vault:ro",
+			"resolved on the daemon host. Default is read-only; append :rw to also allow " +
+			"`dejima port write` back into the scope.\n\n  dejima port grant myrepo ~/Obsidian/Vault:ro\n" +
+			"  dejima port grant myrepo ~/Obsidian/Vault:rw",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			island := args[0]
@@ -170,6 +171,34 @@ func newPortExportCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("export %s → %s (%d bytes, sha256:%s)\n", res.Src, res.Dest, res.Bytes, res.SHA256[:12])
+			return nil
+		},
+	}
+}
+
+func newPortWriteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "write <island> <container-path> <scope>:<path>",
+		Short: "Write a file from an island OUT into a read-write host scope.",
+		Long: "Copies a file out of the island into a `:rw`-granted host scope. <path> is " +
+			"relative to the scope's host root. Symlink/`..` escapes are refused; the crossing " +
+			"is recorded in the Ledger (fail-closed).\n\n  dejima port write myrepo /workspace/out.md vault:notes/out.md",
+		Args: cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			island, src := args[0], args[1]
+			scope, rel, ok := strings.Cut(args[2], ":")
+			if !ok || scope == "" || rel == "" {
+				return fmt.Errorf("expected <scope>:<path>, got %q", args[2])
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			res, err := c.PortWrite(cmd.Context(), island, scope, src, rel)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("write %s → %s (%d bytes, sha256:%s)\n", res.Src, res.Dest, res.Bytes, res.SHA256[:12])
 			return nil
 		},
 	}

@@ -176,6 +176,16 @@ func (c *Client) PortExport(ctx context.Context, name, src string) (*PortExportR
 	return &out, nil
 }
 
+// PortWrite copies a file out of the island into a read-write host scope.
+func (c *Client) PortWrite(ctx context.Context, name, scope, src, destRel string) (*PortWriteResponse, error) {
+	var out PortWriteResponse
+	req := PortWriteRequest{Scope: scope, Src: src, DestRel: destRel}
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/port/write", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ListIslands returns every island known to the daemon.
 func (c *Client) ListIslands(ctx context.Context) ([]IslandInfo, error) {
 	var out []IslandInfo
