@@ -93,6 +93,30 @@ func TestSSHAuthAndExec(t *testing.T) {
 		}
 	})
 
+	t.Run("sftp subsystem accepted, unknown rejected", func(t *testing.T) {
+		cl, err := dial(t, addr, "isle", good)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cl.Close()
+		s1, err := cl.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s1.RequestSubsystem("sftp"); err != nil {
+			t.Fatalf("sftp subsystem rejected: %v", err)
+		}
+		_ = s1.Close()
+		s2, err := cl.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s2.RequestSubsystem("bogus"); err == nil {
+			t.Fatal("expected unknown subsystem to be rejected")
+		}
+		_ = s2.Close()
+	})
+
 	t.Run("unauthorized key is rejected", func(t *testing.T) {
 		bad, _ := clientSigner(t)
 		if cl, err := dial(t, addr, "isle", bad); err == nil {

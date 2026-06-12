@@ -166,8 +166,23 @@ func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
 			_ = req.Reply(true, nil)
 			sess = s.run(ch, container, loginShellCmd(p.Command), wantPTY, rows, cols)
 		case "subsystem":
-			// sftp/scp are a follow-up; reject so clients fall back gracefully.
-			_ = req.Reply(false, nil)
+			if started {
+				_ = req.Reply(false, nil)
+				continue
+			}
+			var p struct{ Name string }
+			if ssh.Unmarshal(req.Payload, &p) == nil && p.Name == "sftp" {
+				// Bridge sftp to the real sftp-server *inside* the container, so
+				// file ops run on the island's filesystem as `dejima` — same
+				// containment as the shell path. No PTY (sftp is a binary
+				// protocol over the channel).
+				started = true
+				_ = req.Reply(true, nil)
+				sess = s.run(ch, container, sftpServerCmd(), false, 0, 0)
+			} else {
+				// Unknown subsystem — reject so clients fall back gracefully.
+				_ = req.Reply(false, nil)
+			}
 		default:
 			if req.WantReply {
 				_ = req.Reply(false, nil)
@@ -224,6 +239,11 @@ func loginShell() []string { return []string{"bash", "-l"} }
 // profile match an interactive session (frameworks expect `ssh host -- cmd` to
 // behave like a normal login).
 func loginShellCmd(command string) []string { return []string{"bash", "-lc", command} }
+
+// sftpServerCmd is the in-container sftp-server (Debian/Ubuntu path, provided by
+// the openssh-sftp-server package baked into the island image). Run directly —
+// not via a shell — so the binary protocol on the channel isn't disturbed.
+func sftpServerCmd() []string { return []string{"/usr/lib/openssh/sftp-server"} }
 
 // sendExit relays the command's exit status to the client per RFC 4254 §6.10.
 func sendExit(ch ssh.Channel, code int) {

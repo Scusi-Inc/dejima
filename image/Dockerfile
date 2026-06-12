@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         less \
         openssh-client \
+        openssh-sftp-server \
         sudo \
         tmux \
         unzip \
