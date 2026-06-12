@@ -23,7 +23,8 @@ const (
 	stepPick                      // pick a discovered repo (or switch to manual)
 	stepManual                    // type a URL or path
 	stepSource                    // diverged local repo: clone origin vs local copy
-	stepAgent                     // choose the agent
+	stepAgent                     // choose an agent (primary, then any extras)
+	stepAgents                    // roster: review seeded agents, add more, or continue
 	stepName                      // confirm/edit the island name
 	stepCreate                    // provisioning in flight
 )
@@ -61,10 +62,12 @@ type creatorModel struct {
 	sourceCursor  int
 
 	// resolved selection
-	resolution reposrc.Resolution
-	picker     agentPicker // agent type (and headless command) chooser
-	nameInput  string
-	creating   bool
+	resolution   reposrc.Resolution
+	picker       agentPicker            // agent type (and headless command) chooser
+	agents       []api.AgentSpecRequest // seeded agents; element 0 is the primary
+	pickingExtra bool                   // true while the picker is adding a non-primary agent
+	nameInput    string
+	creating     bool
 }
 
 // --- messages -------------------------------------------------------------
@@ -125,15 +128,27 @@ func repoStatusCmd(path string) tea.Cmd {
 	}
 }
 
-func (c *creatorModel) createCmd() tea.Cmd {
-	client := c.client
+// buildRequest assembles the create request from the resolved selection and the
+// seeded agent roster. A single agent uses the scalar Agent/Cmd fields (request
+// identical to the pre-multi-seed flow); extras populate Agents (element 0 is
+// the primary, mirrored into the scalar fields too).
+func (c *creatorModel) buildRequest() api.CreateIslandRequest {
 	req := api.CreateIslandRequest{
 		Name:     c.nameInput,
 		Repo:     c.resolution.Repo,
 		SeedPath: c.resolution.SeedPath,
-		Agent:    c.picker.typ(),
-		Cmd:      c.picker.cmd(), // headless only; empty for interactive agents
+		Agent:    c.agents[0].Type, // primary (scalar back-compat path)
+		Cmd:      c.agents[0].Cmd,  // headless only; empty for interactive agents
 	}
+	if len(c.agents) > 1 {
+		req.Agents = c.agents
+	}
+	return req
+}
+
+func (c *creatorModel) createCmd() tea.Cmd {
+	client := c.client
+	req := c.buildRequest()
 	return func() tea.Msg {
 		// Auto-build the island image when the daemon doesn't have it yet
 		// (fresh host) — first island creation Just Works, it just takes the
@@ -194,6 +209,8 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.creatorSourceKey(msg)
 	case stepAgent:
 		return m.creatorAgentKey(msg)
+	case stepAgents:
+		return m.creatorAgentsKey(msg)
 	case stepName:
 		return m.creatorNameKey(msg)
 	}
@@ -365,6 +382,8 @@ func (m tuiModel) creatorEnterAgent(baseName string) (tea.Model, tea.Cmd) {
 	c := m.creator
 	c.step = stepAgent
 	c.picker = newAgentPicker() // defaults to the first option (terminal) — always useful, swap to claude-code/codex as needed
+	c.agents = nil
+	c.pickingExtra = false
 	c.nameInput = c.uniqueName(baseName)
 	return m, nil
 }
@@ -373,9 +392,43 @@ func (m tuiModel) creatorAgentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch c.picker.handleKey(msg) {
 	case pickerBack:
-		c.step = stepPick
+		// Backing out of an extra-agent pick returns to the roster (discarding
+		// it); backing out of the primary pick returns to repo selection.
+		if c.pickingExtra {
+			c.pickingExtra = false
+			c.step = stepAgents
+		} else {
+			c.step = stepPick
+		}
 	case pickerDone:
+		c.agents = append(c.agents, api.AgentSpecRequest{Type: c.picker.typ(), Cmd: c.picker.cmd()})
+		c.pickingExtra = false
+		c.step = stepAgents
+	}
+	return m, nil
+}
+
+// creatorAgentsKey drives the roster: review the seeded agents, add another, drop
+// the last extra, or continue to naming.
+func (m tuiModel) creatorAgentsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	c := m.creator
+	switch msg.String() {
+	case "a":
+		c.pickingExtra = true
+		c.picker = newAgentPicker()
+		c.step = stepAgent
+	case "d", "backspace":
+		if len(c.agents) > 1 { // never drop the primary
+			c.agents = c.agents[:len(c.agents)-1]
+		}
+	case "enter":
 		c.step = stepName
+	case "esc":
+		// Re-pick from scratch: clear the roster and choose the primary again.
+		c.agents = nil
+		c.pickingExtra = false
+		c.picker = newAgentPicker()
+		c.step = stepAgent
 	}
 	return m, nil
 }
@@ -384,7 +437,7 @@ func (m tuiModel) creatorNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
 	case "esc":
-		c.step = stepAgent
+		c.step = stepAgents
 	case "enter":
 		if strings.TrimSpace(c.nameInput) == "" {
 			return m, nil
@@ -457,6 +510,8 @@ func (c *creatorModel) view(width int) string {
 		c.viewSource(&b)
 	case stepAgent:
 		c.viewAgent(&b)
+	case stepAgents:
+		c.viewAgents(&b)
 	case stepName:
 		c.viewName(&b)
 	case stepCreate:
@@ -553,8 +608,36 @@ func (c *creatorModel) viewAgent(b *strings.Builder) {
 	c.picker.view(b, "Agent")
 }
 
+// viewAgents renders the seeded-agent roster: the primary plus any extras, with
+// keys to add another, drop the last, or continue.
+func (c *creatorModel) viewAgents(b *strings.Builder) {
+	b.WriteString(styleMuted.Render(c.resolution.Note))
+	b.WriteString("\n\n")
+	b.WriteString(styleMuted.Render("Agents to seed (the first is primary — it backs `dejima connect`):"))
+	b.WriteString("\n\n")
+	for i, a := range c.agents {
+		role := "primary"
+		if i > 0 {
+			role = fmt.Sprintf("agent %d", i+1)
+		}
+		line := fmt.Sprintf("%-9s %s", role, a.Type)
+		if a.Cmd != "" {
+			line += "  — " + a.Cmd
+		}
+		c.writeChoice(b, false, line)
+	}
+	b.WriteString("\n" + styleMuted.Render("[a] add another   [d] remove last   [⏎] continue   [esc] start over"))
+}
+
 func (c *creatorModel) viewName(b *strings.Builder) {
-	b.WriteString(styleMuted.Render(fmt.Sprintf("Agent %s · %s", c.picker.typ(), c.resolution.Note)))
+	summary := "no agent"
+	if len(c.agents) > 0 {
+		summary = c.agents[0].Type
+		if len(c.agents) > 1 {
+			summary = fmt.Sprintf("%d agents (%s + %d more)", len(c.agents), c.agents[0].Type, len(c.agents)-1)
+		}
+	}
+	b.WriteString(styleMuted.Render(fmt.Sprintf("%s · %s", summary, c.resolution.Note)))
 	b.WriteString("\n\n")
 	b.WriteString("island name: " + styleAccent.Render(c.nameInput+"_"))
 	b.WriteString("\n\n" + styleMuted.Render("[⏎] create & connect   [esc] back"))
