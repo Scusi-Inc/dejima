@@ -84,6 +84,41 @@ func TokenPath(name string) (string, error) {
 	return filepath.Join(dir, "token"), nil
 }
 
+// HostKeyPath returns ~/.dejima/ssh_host_ed25519 — the daemon's SSH host key
+// for the SSH-façade listener. One key for the daemon (it is the single SSH
+// front door for every island), generated on first use, 0600.
+func HostKeyPath() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "ssh_host_ed25519"), nil
+}
+
+// SSHDir returns ~/.dejima/projects/<name>/ssh — the per-island SSH dir holding
+// authorized_keys (the public keys allowed to ssh into this island). Created 0700.
+func SSHDir(name string) (string, error) {
+	dir, err := ProjectDir(name)
+	if err != nil {
+		return "", err
+	}
+	sshDir := filepath.Join(dir, "ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		return "", err
+	}
+	return sshDir, nil
+}
+
+// AuthorizedKeysPath returns ~/.dejima/projects/<name>/ssh/authorized_keys —
+// the public keys permitted to ssh into this island via the daemon's façade.
+func AuthorizedKeysPath(name string) (string, error) {
+	dir, err := SSHDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "authorized_keys"), nil
+}
+
 // ClaudeSeedDir returns ~/.dejima/secrets/claude — where the daemon
 // materializes Claude credentials (from the host Keychain/file or a
 // `dejima auth push`) for read-only mounting into islands. Created 0700.
