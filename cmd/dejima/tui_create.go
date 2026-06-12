@@ -22,6 +22,7 @@ const (
 	stepRoot   creatorStep = iota // first-load: choose a directory to scan
 	stepPick                      // pick a discovered repo (or switch to manual)
 	stepManual                    // type a URL or path
+	stepGitHub                    // browse the user's GitHub repos via gh
 	stepSource                    // diverged local repo: clone origin vs local copy
 	stepAgent                     // choose the agent
 	stepName                      // confirm/edit the island name
@@ -54,6 +55,11 @@ type creatorModel struct {
 	// manual entry
 	manualInput string
 
+	// GitHub browse (via gh repo list)
+	ghRepos   []reposrc.GHRepo
+	ghCursor  int
+	ghLoading bool
+
 	// source-divergence prompt
 	pendingPath   string
 	pendingOrigin string
@@ -81,6 +87,10 @@ type repoStatusMsg struct {
 type islandCreatedMsg struct {
 	name string
 	err  error
+}
+type ghReposMsg struct {
+	repos []reposrc.GHRepo
+	err   error
 }
 
 // --- entry / commands -----------------------------------------------------
@@ -190,6 +200,8 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.creatorPickKey(msg)
 	case stepManual:
 		return m.creatorManualKey(msg)
+	case stepGitHub:
+		return m.creatorGitHubKey(msg)
 	case stepSource:
 		return m.creatorSourceKey(msg)
 	case stepAgent:
@@ -252,6 +264,8 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) creatorPickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
+	// Two action rows sit below the discovered repos: enter-a-URL and browse-GitHub.
+	lastRow := len(c.repos) + 1
 	switch msg.String() {
 	case "esc", "q":
 		m.creator = nil
@@ -263,22 +277,38 @@ func (m tuiModel) creatorPickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, c.ensureStatus()
 	case "down", "j":
-		if c.repoCursor < len(c.repos)-1 {
+		if c.repoCursor < lastRow {
 			c.repoCursor++
 		}
 		return m, c.ensureStatus()
 	case "enter":
+		return m.creatorPickEnter()
+	}
+	return m, nil
+}
+
+// creatorPickEnter acts on the highlighted picker row: a discovered repo, the
+// "enter a URL" action, or the "browse GitHub" action.
+func (m tuiModel) creatorPickEnter() (tea.Model, tea.Cmd) {
+	c := m.creator
+	switch c.repoCursor {
+	case len(c.repos): // ✎ enter a URL or path
+		c.step, c.manualInput, c.err = stepManual, "", ""
+		return m, nil
+	case len(c.repos) + 1: // ⬇ browse GitHub
+		return m.creatorEnterGitHub()
+	default:
 		if len(c.repos) == 0 {
 			return m, nil
 		}
 		return m.creatorSelectRepo(c.repos[c.repoCursor])
 	}
-	return m, nil
 }
 
-// ensureStatus lazily fetches working-tree status for the highlighted repo.
+// ensureStatus lazily fetches working-tree status for the highlighted repo. No-op
+// when the cursor is on one of the trailing action rows.
 func (c *creatorModel) ensureStatus() tea.Cmd {
-	if len(c.repos) == 0 {
+	if c.repoCursor >= len(c.repos) {
 		return nil
 	}
 	p := c.repos[c.repoCursor].Path
@@ -339,6 +369,68 @@ func (m tuiModel) creatorManualKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// creatorEnterGitHub switches to the GitHub browser and kicks off the gh query.
+func (m tuiModel) creatorEnterGitHub() (tea.Model, tea.Cmd) {
+	c := m.creator
+	c.step, c.ghLoading, c.err = stepGitHub, true, ""
+	c.ghRepos, c.ghCursor = nil, 0
+	return m, ghListCmd()
+}
+
+func ghListCmd() tea.Cmd {
+	return func() tea.Msg {
+		repos, err := reposrc.ListGitHub(100)
+		return ghReposMsg{repos: repos, err: err}
+	}
+}
+
+func (c *creatorModel) onGhRepos(msg ghReposMsg) {
+	c.ghLoading = false
+	if msg.err != nil {
+		c.err = msg.err.Error()
+		return
+	}
+	c.ghRepos = msg.repos
+	if c.ghCursor >= len(c.ghRepos) {
+		c.ghCursor = 0
+	}
+}
+
+func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	c := m.creator
+	switch msg.String() {
+	case "esc":
+		c.step, c.err = stepPick, "" // back to the repo picker
+	case "up", "k":
+		if c.ghCursor > 0 {
+			c.ghCursor--
+		}
+	case "down", "j":
+		if c.ghCursor < len(c.ghRepos)-1 {
+			c.ghCursor++
+		}
+	case "enter":
+		if c.ghLoading || len(c.ghRepos) == 0 {
+			return m, nil
+		}
+		return m.creatorSelectGitHub(c.ghRepos[c.ghCursor])
+	}
+	return m, nil
+}
+
+// creatorSelectGitHub resolves a chosen GitHub repo (always a remote clone) and
+// advances to agent selection.
+func (m tuiModel) creatorSelectGitHub(r reposrc.GHRepo) (tea.Model, tea.Cmd) {
+	c := m.creator
+	res, err := reposrc.Resolve(r.URL, c.daemonLocal, false)
+	if err != nil {
+		c.err = err.Error()
+		return m, nil
+	}
+	c.resolution, c.err = res, ""
+	return m.creatorEnterAgent(project.DeriveNameFromRepo(r.URL))
 }
 
 func (m tuiModel) creatorSourceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -453,6 +545,8 @@ func (c *creatorModel) view(width int) string {
 		c.viewPick(&b)
 	case stepManual:
 		c.viewManual(&b)
+	case stepGitHub:
+		c.viewGitHub(&b)
 	case stepSource:
 		c.viewSource(&b)
 	case stepAgent:
@@ -496,14 +590,57 @@ func (c *creatorModel) viewPick(b *strings.Builder) {
 		return
 	}
 	if len(c.repos) == 0 {
-		b.WriteString(styleMuted.Render("no git repos found here.\n\nPress [/] to enter a repo URL or path manually, or [esc] to cancel."))
-		return
+		b.WriteString(styleMuted.Render("no git repos found here — pull from a URL or GitHub instead."))
+		b.WriteString("\n\n")
 	}
 	for i, repo := range c.repos {
 		line := fmt.Sprintf("%-22s %s", truncate(repo.Name, 22), c.repoMeta(repo))
 		c.writeChoice(b, i == c.repoCursor, line)
 	}
+	// Always-present sources below the discovered repos.
+	c.writeChoice(b, c.repoCursor == len(c.repos), "✎  Enter a repo URL or path…")
+	c.writeChoice(b, c.repoCursor == len(c.repos)+1, "⬇  Browse my GitHub repos…")
 	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [/] type a URL/path   [esc] cancel"))
+}
+
+func (c *creatorModel) viewGitHub(b *strings.Builder) {
+	b.WriteString(styleMuted.Render("Your GitHub repos (via gh)"))
+	b.WriteString("\n\n")
+	if c.ghLoading {
+		b.WriteString(styleMuted.Render("loading…"))
+		return
+	}
+	if len(c.ghRepos) == 0 {
+		b.WriteString(styleMuted.Render("no repositories found.\n\n[esc] back to the repo picker"))
+		return
+	}
+	// Window the list so a large account doesn't overflow the pane.
+	const window = 12
+	start := 0
+	if c.ghCursor >= window {
+		start = c.ghCursor - window + 1
+	}
+	end := start + window
+	if end > len(c.ghRepos) {
+		end = len(c.ghRepos)
+	}
+	for i := start; i < end; i++ {
+		r := c.ghRepos[i]
+		detail := []string{}
+		if r.IsPrivate {
+			detail = append(detail, "private")
+		}
+		if r.Description != "" {
+			detail = append(detail, r.Description)
+		}
+		line := fmt.Sprintf("%-30s %s", truncate(r.NameWithOwner, 30),
+			styleMuted.Render(truncate(strings.Join(detail, " · "), 44)))
+		c.writeChoice(b, i == c.ghCursor, line)
+	}
+	if end < len(c.ghRepos) || start > 0 {
+		b.WriteString(styleMuted.Render(fmt.Sprintf("  … %d–%d of %d\n", start+1, end, len(c.ghRepos))))
+	}
+	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [esc] back"))
 }
 
 // repoMeta renders the dimmed right-hand detail for a repo row: remote, working

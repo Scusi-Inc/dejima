@@ -64,10 +64,9 @@ func TestRenderListGlyphs(t *testing.T) {
 
 	bare := plain(out)
 	for _, want := range []string{
-		glyphAgent + " claude-code", // unlabeled AI agent → leads with type
-		glyphAgent + " Backend",     // labeled AI agent → leads with the label, not "codex"
-		glyphHeadless + " headless", // headless box, unlabeled
-		"·a1", "·a2", "·a3",         // id rides along as a muted handle
+		glyphAgent + " a1",      // unlabeled AI agent → leads with its id, not type
+		glyphAgent + " Backend", // labeled AI agent → leads with the label, not "codex"
+		glyphHeadless + " a3",   // unlabeled headless → leads with its id
 		"+ add agent",
 		"+ new island",
 	} {
@@ -78,5 +77,9 @@ func TestRenderListGlyphs(t *testing.T) {
 	// The label supersedes the type in the row; the bare type shouldn't appear.
 	if strings.Contains(bare, "codex") {
 		t.Errorf("labeled agent should show its label, not type %q\n%s", "codex", bare)
+	}
+	// Unlabeled agents lead with the id now, not the type name.
+	if strings.Contains(bare, glyphAgent+" claude-code") {
+		t.Errorf("unlabeled agent should lead with its id, not its type\n%s", bare)
 	}
 }

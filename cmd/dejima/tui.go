@@ -259,6 +259,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ghReposMsg:
+		if m.creator != nil {
+			m.creator.onGhRepos(msg)
+		}
+		return m, nil
+
 	case agentAddedMsg:
 		if m.agentAdder != nil {
 			if msg.err != nil {
@@ -991,18 +997,19 @@ func agentGlyph(a api.AgentInfo) string {
 }
 
 // agentDisplayName is the human-facing name for an agent: its user-given label
-// if set, else its type ("Claude Code", "headless", …). The id (a1/a2/…) is a
-// separate addressing handle — meaningful but terse — so it rides along muted
-// rather than leading the display. See [agentRowText] / renderAgentDetail.
+// if set, else its id (p1/p2/…). The id is also the addressing handle (it still
+// leads the detail view), so an unlabeled agent shows that handle rather than a
+// generic type name. See [agentRowText] / renderAgentDetail.
 func agentDisplayName(a api.AgentInfo) string {
 	if a.Label != "" {
 		return a.Label
 	}
-	return a.Type
+	return a.ID
 }
 
-// agentRowText renders one agent's list line: kind glyph, name (label/type),
-// the muted id handle, then the latest signal.
+// agentRowText renders one agent's list line: kind glyph, name (label, or id
+// when unlabeled), then the latest signal. The id isn't repeated when a label
+// is present — it stays available in the detail view.
 func agentRowText(a api.AgentInfo) string {
 	sig := ""
 	if a.Error != "" {
@@ -1010,8 +1017,8 @@ func agentRowText(a api.AgentInfo) string {
 	} else if a.AgentState != nil && a.AgentState.Latest != "" {
 		sig = "  " + a.AgentState.Latest
 	}
-	return fmt.Sprintf("%s %s  %s%s",
-		agentGlyph(a), truncate(agentDisplayName(a), 18), styleMuted.Render("·"+a.ID), sig)
+	return fmt.Sprintf("%s %s%s",
+		agentGlyph(a), truncate(agentDisplayName(a), 18), sig)
 }
 
 func (m tuiModel) renderDetail(_ int) string {
