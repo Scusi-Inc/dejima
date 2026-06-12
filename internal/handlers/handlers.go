@@ -55,9 +55,12 @@ var registry = map[string]Handler{
 	// OpenClaw: a first-class headless assistant. Self-installs on first launch
 	// (kept out of the base image to avoid bloating every island) and runs its
 	// gateway from /workspace — which should hold the brain's config (the Home
-	// Island model). Misconfigured, it will restart-loop visibly in the logs.
+	// Island model). --allow-unconfigured makes the gateway idle (wait for a
+	// config) instead of exiting nonzero when /workspace has none yet, so a
+	// freshly-created Home Island sits ready to be configured rather than
+	// restart-looping in the logs.
 	"openclaw": {ID: "openclaw", Kind: KindHeadless,
-		Launch:   "bash -lc 'command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; openclaw gateway'",
+		Launch:   "bash -lc 'command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; openclaw gateway --allow-unconfigured'",
 		StateDir: "/home/dejima/.openclaw"},
 	Headless: {ID: Headless, Kind: KindHeadless, Launch: "", StateDir: "/home/dejima/.agent-state"},
 }
