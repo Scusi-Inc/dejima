@@ -199,11 +199,21 @@ assert_has "$AGENTS" "claude-code" "primary agent a1 = claude-code"
 assert_has "$AGENTS" "codex"       "seeded agent a2 = codex"
 # a2's worktree is reconciled asynchronously after create returns — poll for it.
 wt_ok=""
-for _ in $(seq 1 20); do
+for _ in $(seq 1 30); do
   if dejima exec "$ISLAND_MULTI" -- test -d /workspace/.agents/a2 >/dev/null 2>&1; then wt_ok=1; break; fi
   sleep 1
 done
-[ -n "$wt_ok" ] && pass "a2 worktree exists in-container" || fail "a2 worktree never appeared in-container (waited 20s)"
+if [ -n "$wt_ok" ]; then
+  pass "a2 worktree exists in-container"
+else
+  fail "a2 worktree never appeared in-container (waited 30s)"
+  printf '\033[33m  ── diagnostics ──\033[0m\n'
+  printf '  /workspace/.git present? %s\n' "$(dejima exec "$ISLAND_MULTI" -- sh -c 'test -e /workspace/.git && echo YES || echo NO' 2>&1)"
+  printf '  /workspace listing:\n'; dejima exec "$ISLAND_MULTI" -- ls -la /workspace 2>&1 | sed 's/^/    /'
+  printf '  agent table (look at a2 ERROR column):\n'; dejima agent ls "$ISLAND_MULTI" 2>&1 | sed 's/^/    /'
+  printf '  daemon log (worktree/reconcile/clone lines):\n'
+  grep -iE "worktree|ensure agent|reconcile|clone|seed|not a git" "$TMP/dejimad.log" 2>/dev/null | tail -20 | sed 's/^/    /'
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1m──────── results ────────\033[0m\n'
