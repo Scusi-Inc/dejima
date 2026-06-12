@@ -50,21 +50,6 @@ type agentPicker struct {
 
 func newAgentPicker() agentPicker { return agentPicker{} }
 
-// newAgentPickerDefault is newAgentPicker with the cursor pre-positioned on the
-// given type. The list leads with the terminal (so add-agent defaults to a quick
-// shell), but the new-island flow uses this to default a fresh island's primary
-// agent to claude-code.
-func newAgentPickerDefault(typ string) agentPicker {
-	p := newAgentPicker()
-	for i, o := range agentTypeOptions {
-		if o.typ == typ {
-			p.cursor = i
-			break
-		}
-	}
-	return p
-}
-
 func (p agentPicker) selected() agentTypeOption { return agentTypeOptions[p.cursor] }
 func (p agentPicker) typ() string               { return p.selected().typ }
 func (p agentPicker) cmd() string               { return strings.TrimSpace(p.cmdInput) }
