@@ -20,6 +20,7 @@ import (
 	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/islandimage"
 	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/porttoken"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
 )
@@ -76,8 +77,24 @@ type Server struct {
 	statsData map[string]runtime.Stats
 	statsAt   time.Time
 
+	// autonomyDial, when non-empty, is the host:port an in-island brain dials
+	// to reach this daemon over the token-authenticated TCP path (the macOS
+	// route where the unix socket can't be bind-mounted; e.g.
+	// "host.docker.internal:7274"). Set via EnableAutonomy when dejimad's token
+	// listener is enabled. When set, every provisioned container receives
+	// DEJIMA_HOST plus its own per-island DEJIMA_TOKEN so the in-island CLI can
+	// authenticate. Empty on the Linux/unix-socket path.
+	autonomyDial string
+
 	startedAt time.Time
 }
+
+// EnableAutonomy turns on the in-island → dejimad autonomy path: containers are
+// provisioned with DEJIMA_HOST=dial and their per-island DEJIMA_TOKEN. dial is
+// the address the container dials to reach this daemon (host-internal, e.g.
+// host.docker.internal:<port>). Call only when the token listener is bound; an
+// empty dial is a no-op.
+func (s *Server) EnableAutonomy(dial string) { s.autonomyDial = dial }
 
 // statsAll returns per-container stats, serving from a short-TTL cache.
 // Holding statsMu across the engine query makes concurrent callers wait for
@@ -936,6 +953,18 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	// reachable over DEJIMA_SOCKET.
 	if p.IsHome() {
 		env["DEJIMA_HOME"] = "1"
+	}
+	// macOS autonomy path: where the unix socket can't be mounted, give the
+	// island a token-authenticated TCP route to the daemon. The token is
+	// per-island and island-scoped (see internal/api/tokenauth.go), so handing
+	// it to the container only grants the brain access to its own island.
+	if s.autonomyDial != "" {
+		tok, err := porttoken.Ensure(p.Name)
+		if err != nil {
+			return fmt.Errorf("mint island token for autonomy: %w", err)
+		}
+		env["DEJIMA_HOST"] = s.autonomyDial
+		env["DEJIMA_TOKEN"] = tok
 	}
 	// Everything the entrypoint needs about the primary agent flows via env, so
 	// the launch command lives in one place (the handler registry) rather than

@@ -30,15 +30,19 @@ import (
 
 func main() {
 	var (
-		showVersion bool
-		debug       bool
-		foreground  bool
-		tcpAddr     string
+		showVersion  bool
+		debug        bool
+		foreground   bool
+		tcpAddr      string
+		tokenAddr    string
+		autonomyDial string
 	)
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.BoolVar(&foreground, "foreground", false, "run in foreground (default; reserved for service-mode parity)")
 	flag.StringVar(&tcpAddr, "tcp", os.Getenv("DEJIMAD_TCP"), "TCP listen addr (e.g. \":7273\"); empty disables. Accepts only Tailscale IPs.")
+	flag.StringVar(&tokenAddr, "token-tcp", os.Getenv("DEJIMAD_TOKEN_TCP"), "host-internal TCP addr for the token-authenticated in-island autonomy path (e.g. \"127.0.0.1:7274\"); empty disables. Never bind a wildcard/LAN address.")
+	flag.StringVar(&autonomyDial, "autonomy-dial", os.Getenv("DEJIMAD_AUTONOMY_DIAL"), "host:port an in-island brain dials to reach this daemon over --token-tcp (default \"host.docker.internal:<token-tcp port>\")")
 	flag.Parse()
 	_ = foreground
 
@@ -53,13 +57,13 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(log, tcpAddr); err != nil {
+	if err := run(log, tcpAddr, tokenAddr, autonomyDial); err != nil {
 		log.Error("dejimad fatal", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, tcpAddr string) error {
+func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial string) error {
 	socketPath, err := paths.SocketPath()
 	if err != nil {
 		return err
@@ -88,11 +92,42 @@ func run(log *slog.Logger, tcpAddr string) error {
 	}
 	server := api.NewServer(rt, log, em)
 
-	handler := server.Handler()
-
 	httpServer := &http.Server{
-		Handler:           handler,
+		Handler:           server.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Optional host-internal, token-authenticated listener: the in-island →
+	// dejimad autonomy path (macOS, where the unix socket can't be mounted into
+	// a container). Set up before serving so provisioning injects
+	// DEJIMA_HOST/DEJIMA_TOKEN. The bind must be host-internal (loopback,
+	// reachable via host.docker.internal) — never a wildcard/LAN address: the
+	// token authorizes, the bind limits exposure.
+	var tokenSrv *http.Server
+	var tokenLn net.Listener
+	if tokenAddr != "" {
+		if err := assertHostInternalBind(log, tokenAddr); err != nil {
+			return err
+		}
+		dial := autonomyDial
+		if dial == "" {
+			_, port, splitErr := net.SplitHostPort(tokenAddr)
+			if splitErr != nil {
+				return fmt.Errorf("parse --token-tcp %q: %w", tokenAddr, splitErr)
+			}
+			dial = "host.docker.internal:" + port
+		}
+		tokenLn, err = net.Listen("tcp", tokenAddr)
+		if err != nil {
+			return fmt.Errorf("token-tcp listen %s: %w", tokenAddr, err)
+		}
+		defer tokenLn.Close()
+		tokenSrv = &http.Server{
+			Handler:           server.TokenAuthHandler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		server.EnableAutonomy(dial)
+		log.Info("autonomy enabled", "token_listener", tokenAddr, "container_dials", dial)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -111,7 +146,7 @@ func run(log *slog.Logger, tcpAddr string) error {
 	server.AdoptExisting(adoptCtx)
 	adoptCancel()
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 
 	// Unix socket listener — always on, no auth (filesystem permissions).
 	go func() {
@@ -137,12 +172,23 @@ func run(log *slog.Logger, tcpAddr string) error {
 		}()
 	}
 
+	// Optional host-internal, token-authenticated listener (autonomy path).
+	if tokenSrv != nil {
+		go func() {
+			log.Info("dejimad listening (token-tcp)", "addr", tokenLn.Addr().String())
+			errCh <- tokenSrv.Serve(tokenLn)
+		}()
+	}
+
 	select {
 	case <-ctx.Done():
 		log.Info("shutdown signal received")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
+		if tokenSrv != nil {
+			_ = tokenSrv.Shutdown(shutdownCtx)
+		}
 		return nil
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -150,6 +196,33 @@ func run(log *slog.Logger, tcpAddr string) error {
 		}
 		return err
 	}
+}
+
+// assertHostInternalBind refuses to bind the token listener to a wildcard/LAN
+// address. The token is the authorization; the bind is the blast-radius limiter.
+// A 0.0.0.0/:: bind would expose the autonomy API to the whole LAN, where only
+// the bearer token stands between an attacker and the host. Loopback is ideal
+// (reachable from containers via host.docker.internal on Docker Desktop); a
+// non-loopback host-internal address (e.g. a docker bridge gateway) is allowed
+// but warned, since the operator must ensure it isn't LAN-routable.
+func assertHostInternalBind(log *slog.Logger, addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("parse --token-tcp %q: %w", addr, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return fmt.Errorf("--token-tcp %q binds a wildcard address; the autonomy listener must bind a host-internal address (e.g. 127.0.0.1:<port>), never all interfaces", addr)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		// A hostname rather than a literal IP — can't statically verify it; warn.
+		log.Warn("token listener bind is not a literal IP; ensure it resolves to a host-internal address only", "addr", addr)
+		return nil
+	}
+	if !ip.IsLoopback() {
+		log.Warn("token listener bound to a non-loopback address; ensure it is not routable from the LAN", "addr", addr)
+	}
+	return nil
 }
 
 // probeExistingDaemon checks whether the socket has a healthy daemon behind it.
@@ -246,8 +319,8 @@ func loadTailscaleIPs(log *slog.Logger) ([]netip.Prefix, error) {
 		return nil, fmt.Errorf("run tailscale status: %w", err)
 	}
 	var status struct {
-		Self  struct{ TailscaleIPs []string } `json:"Self"`
-		Peer  map[string]struct{ TailscaleIPs []string } `json:"Peer"`
+		Self struct{ TailscaleIPs []string }            `json:"Self"`
+		Peer map[string]struct{ TailscaleIPs []string } `json:"Peer"`
 	}
 	if err := json.Unmarshal(out, &status); err != nil {
 		return nil, fmt.Errorf("parse tailscale status: %w", err)
