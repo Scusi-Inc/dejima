@@ -1,6 +1,6 @@
 # Dejima — The Port (brokered host-file access) — design & decision record
 
-**Status:** Adopted — V1 built; **live-Docker validation PENDING a confirmed `ALL GREEN` run.** (The first attempt died at island creation on a no-remote `--local-copy` bug, fixed 2026-06-12; logic is unit-tested + the daemon path now works, but the end-to-end `scripts/integration.sh` has not yet been confirmed green on real Docker.) Phase 2 (Home Island) core built; brain-driven path and read-write deferred. Living record.
+**Status:** Adopted — V1 built and **validated against a live Docker host** (`scripts/integration.sh` — 31/31 ALL GREEN on Minion, 2026-06-12). Phase 2 (Home Island) core built; brain-driven path and read-write deferred. Living record.
 **Last updated:** 2026-06-12
 **Extends:** `roadmap.md` §134 ("Local content ingestion for content-digesting agents") — advances it from *leaning (a)* to a decided (a)+(c) shape. Realizes the **Intake / Trade / Ledger** primitives named in `positioning.md` §"core tension" for the file domain.
 **Constrained by:** `positioning.md` (containment-first; not the brain; the contributor decision rule), and `roadmap.md` §152 (no inter-island channel).
@@ -24,7 +24,7 @@ assistant-class agents. It is a living document; phases update it as they ship.
 | `Intake` (host→island), read-only, symlink-safe, fail-closed-ledgered; `dejima port intake` | **Built** |
 | `Export` (island→host staging); `dejima port export` | **Built** |
 | Home Island role + `dejima home create` + native-vs-island fork | **Built (core)** |
-| Live-Docker end-to-end validation (`scripts/integration.sh`) | **Pending** — re-run on the fixed daemon; confirm `ALL GREEN` |
+| Live-Docker end-to-end validation (`scripts/integration.sh`) | **Green** — 31/31 on Minion, 2026-06-12 |
 | Brain-driven autonomous Port/spawn (macOS TCP path) | Deferred — §3.2 |
 | SSH-façade adoption wedge + framework adapters | Phase 3 — §5 |
 | Read-write trading | Phase 4 — §6 |
@@ -255,7 +255,7 @@ local, Docker, SSH, Singularity, Modal, Daytona; Goose has extension points). We
 V1 is the **security-foundation** release, not the assistant-enablement release: it serves the
 *coding/ingestion* profile and proves the plumbing; it does **not** yet enable the live-assistant
 profile (which needs read-write and liveness). V1 is **built, with the safety properties
-unit-tested**, under exactly these constraints (end-to-end live-Docker confirmation pending, §8):
+unit-tested and validated end-to-end on live Docker**, under exactly these constraints (§8):
 
 1. **Copy-in / copy-out only** (`Intake` / `Export`), not a live mount. A scoped file is brokered
    into the island; changes are brokered back out to host-owned staging explicitly.
@@ -301,10 +301,11 @@ the island (the agent-owned home; the container root isn't agent-writable).
 
 ## 8. Validation
 
-`scripts/integration.sh` is the end-to-end dogfood against a **live Docker host**. **Status: not
-yet confirmed green** — the first Minion attempt died at island creation on a no-remote
-`--local-copy` bug (fixed 2026-06-12); re-run on the fixed daemon and confirm `ALL GREEN`. In a
-throwaway `$HOME` it starts its own `dejimad`, builds the island image, and asserts, against real
+`scripts/integration.sh` is the end-to-end dogfood against a **live Docker host** — **31/31 ALL
+GREEN on Minion, 2026-06-12** (it caught and drove fixes for three real bugs the unit tests
+missed: intake's default dest landing in a root-owned dir, the multi-agent clone-wait for
+no-remote seeds, and the test seed needing a Docker-shared path). In a throwaway `$HOME` it starts
+its own `dejimad`, builds the island image, and asserts, against real
 containers:
 
 - deny-all before any grant; grant; intake (top-level, nested, custom dest) with content verified

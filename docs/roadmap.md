@@ -107,9 +107,9 @@ Questions worth answering before committing to an implementation.
 
 ## Port — brokered host-file access (assistant agents)
 
-Read-only V1 shipped; **live-Docker validation pending a confirmed green run** (first attempt died on a now-fixed `--local-copy` bug). Detail: `port-island-spec.md`, `runbook-openclaw-home-island.md`.
+Read-only V1 shipped & **validated on live Docker** (`scripts/integration.sh` 31/31, Minion 2026-06-12). Detail: `port-island-spec.md`, `runbook-openclaw-home-island.md`.
 
-- [x] **Phase 0–1** — per-island scopes (deny-all default), hash-chained tamper-evident Ledger, read-only `intake`/`export`, `dejima port …` + `dejima audit --verify`. Unit-tested; end-to-end `scripts/integration.sh` pending a confirmed green run.
+- [x] **Phase 0–1** — per-island scopes (deny-all default), hash-chained tamper-evident Ledger, read-only `intake`/`export`, `dejima port …` + `dejima audit --verify`. Unit-tested + validated end-to-end (`scripts/integration.sh` 31/31 on live Docker).
 - [x] **Phase 2 core** — Home Island (`role=home`, `dejima home create`) + native-vs-island fork.
 - [ ] **Intake read-normalization** — `chmod a+r` the copy after `docker cp` so the island agent (UID 1000) can read host files regardless of host mode. Blocked on smoke-test finding #1 (0600 host files land EACCES). (hours)
 - [ ] **macOS TCP autonomy path** — brain-driven Port/spawn is **blocked on macOS** (the in-island daemon socket is Linux-only; Minion is macOS), so a 24/7 assistant can't fetch its own context. Token-scoped local TCP: per-island token → host-internal-bound listener → bearer auth + island-scoping middleware → in-island TCP client; **parent-child token model** (spawn returns child token, no god-token; signed off). ~1–2d, 6 files mapped in `runbook-openclaw-home-island.md §5`. (near-term)
