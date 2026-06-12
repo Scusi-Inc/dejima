@@ -105,6 +105,28 @@ Questions worth answering before committing to an implementation.
 - [ ] **Multi-island sibling view in TUI / `dejima ls`** — group islands that share a repo (or a workspace volume) visually so multi-agent setups read as one project with N agents. UI-only change. (hours)
 - [ ] **Agent-scoped file access** — once islands host N agents on per-agent git worktrees, the file verbs (`GET/PUT …/files`, `dejima cp`, `dejima exec`) become path-ambiguous. The multi-agent MVP just defaults them to the primary worktree (`/workspace`, no new surface). Open question for later: a richer per-agent file surface — `--agent` targeting on `cp`/`exec`/`files`, and possibly a browse/read API over an agent's worktree. (open design, when multi-agent lands)
 
+## Port — brokered host-file access (assistant agents)
+
+Read-only V1 shipped & validated on live Docker. Detail: `port-island-spec.md`, `runbook-openclaw-home-island.md`.
+
+- [x] **Phase 0–1** — per-island scopes (deny-all default), hash-chained tamper-evident Ledger, read-only `intake`/`export`, `dejima port …` + `dejima audit --verify`. Validated by `scripts/integration.sh`.
+- [x] **Phase 2 core** — Home Island (`role=home`, `dejima home create`) + native-vs-island fork.
+- [ ] **Intake read-normalization** — `chmod a+r` the copy after `docker cp` so the island agent (UID 1000) can read host files regardless of host mode. Blocked on smoke-test finding #1 (0600 host files land EACCES). (hours)
+- [ ] **macOS TCP autonomy path** — brain-driven Port/spawn is **blocked on macOS** (the in-island daemon socket is Linux-only; Minion is macOS), so a 24/7 assistant can't fetch its own context. Token-scoped local TCP: per-island token → host-internal-bound listener → bearer auth + island-scoping middleware → in-island TCP client; **parent-child token model** (spawn returns child token, no god-token; signed off). ~1–2d, 6 files mapped in `runbook-openclaw-home-island.md §5`. (near-term)
+- [ ] **Phase 3 — SSH-façade adoption + framework backend adapters** (Hermes/Goose). Docker-daemon emulation **rejected** (`port-island-spec.md §5`). (week)
+- [ ] **Phase 4 — read-write trading** — `:rw` grants (today rejected) + `trade.write` into a scope; only after RO is field-proven. (week)
+- [ ] **Phase 5 — live brokered mount** — FUSE/9p/virtio: island sees a directory, broker mediates+logs each op; only after RW. (weeks)
+- [ ] **Capability brokering** — open: broker a curated allowlist of host commands (Shortcuts/Notes) or hold the files-only line. Collapses ledger tractability; fenced. (open design)
+
+**Known concerns (documented in spec/runbook; not blockers):**
+- *docker-cp UID mapping* — host files keep their numeric UID (macOS ~501) + mode; agent is `dejima` UID 1000, so 0600 host files are EACCES until read-normalization lands.
+- *macOS unix-socket limitation* — Docker Desktop/colima can't bind-mount the daemon socket into a container; drives the TCP-autonomy work above.
+
+## Multi-agent — shipped (phases 0–7); follow-ups
+
+- [ ] **TUI: seed multiple agents at create time** — parity with `init --agent X --agent Y`; today the TUI create flow picks one agent, then `a` adds more. UI-only. (hours)
+- [ ] **Cross-machine validation** — non-primary-agent attach + resize on Windows-client → macOS-daemon (historically fragile path); dogfood, not code.
+
 ## v2 — heavier features
 
 Substantial engineering. Defer until v1 dogfood proves the foundation.
