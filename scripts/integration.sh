@@ -68,6 +68,11 @@ BIN="$TMP/bin"; mkdir -p "$BIN"; export PATH="$BIN:$PATH"
 ISLAND="itest-port"
 ISLAND_MULTI="itest-multi"
 DAEMON_PID=""
+# The --local-copy seed is bind-mounted into the Docker VM, so it must live on a
+# path Docker shares. macOS shares /Users by default but NOT /var/folders (where
+# mktemp lands) — so put the test seed repo under the real home.
+REPO_DIR="$REAL_HOME/.cache/dejima-itest-$$"
+REPO="$REPO_DIR/repo"
 
 cleanup(){
   set +e
@@ -77,7 +82,7 @@ cleanup(){
   # The isolated HOME holds a read-only Go module cache ($HOME/go/pkg/mod);
   # make the tree writable before removing it so cleanup exits silently.
   chmod -R u+w "$TMP" 2>/dev/null
-  rm -rf "$TMP"
+  rm -rf "$TMP" "${REPO_DIR:-}"
 }
 trap cleanup EXIT
 
@@ -103,7 +108,7 @@ fi
 pass "island image present"
 
 step "Create a test repo + headless island (reliable, no-creds container)"
-REPO="$TMP/repo"; mkdir -p "$REPO"
+mkdir -p "$REPO"
 ( cd "$REPO" && git init -q && git config user.email t@t && git config user.name t \
   && echo "# test" > README.md && git add -A && git commit -qm init ) || die "test repo setup failed"
 dejima init --name "$ISLAND" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \

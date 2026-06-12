@@ -76,6 +76,12 @@ if [[ ! -d "${WORKSPACE}/.git" ]]; then
     elif [[ -n "$REPO" ]]; then
         echo "cloning ${REPO} into ${WORKSPACE}"
         git clone "$REPO" "$TMP/repo"
+    elif [[ -n "$SEED" ]]; then
+        # SEED was requested but has no .git — usually an empty or unshared
+        # bind-mount (e.g. a macOS seed path Docker doesn't share). Don't fail
+        # silently: /workspace won't be a git repo, so multi-agent worktrees
+        # can't be created.
+        echo "dejima: WARNING seed ${SEED} has no .git (empty/unshared bind-mount?) — ${WORKSPACE} will not be a git repo; multi-agent worktrees will fail" >&2
     fi
     if [[ -d "$TMP/repo" ]]; then
         # WORKSPACE is a volume mount; move cloned contents (incl. dotfiles) in.
