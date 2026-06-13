@@ -825,17 +825,18 @@ var asciiLogo = []string{
 	"      ####              #####      ",
 }
 
-// asciiLogoSmall is the same mark drawn at half scale (7 rows, 22 cols) for
+// asciiLogoSmall is the same mark drawn at half scale (7 rows, 21 cols) for
 // narrow terminals that can't fit asciiLogo beside the info lines. Artwork is
-// 18 cols centered with a 2-col margin each side.
+// 17 cols centered with a 2-col margin each side; every line is symmetric
+// about the field center.
 var asciiLogoSmall = []string{
-	"        ######        ",
-	"     ####    ####     ",
-	"   ###           ###  ",
-	"     #####   #####    ",
-	"          ###         ",
-	"    ######  #######   ",
-	"  ##              ##  ",
+	"    #############    ",
+	"  ####         ####  ",
+	"   ###         ###   ",
+	"    #####   #####    ",
+	"         ###         ",
+	"   ######   ######   ",
+	"  ##             ##  ",
 }
 
 func (m tuiModel) renderHeader() string {
@@ -850,8 +851,8 @@ func (m tuiModel) renderHeader() string {
 
 	// Compact single-line header when the terminal can't spare the rows, or
 	// is too narrow for the info lines beside even the small logo (longest
-	// info line is 69 cols; small logo + chrome is 22 + 9 = 31).
-	if m.height < 24 || m.width < 100 {
+	// info line is 69 cols; small logo + chrome is 21 + 9 = 30).
+	if m.height < 24 || m.width < 99 {
 		title := styleTitle.Render("Dejima")
 		right := styleMuted.Render(label + " ⇄ [s]")
 		pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
