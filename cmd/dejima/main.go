@@ -315,6 +315,7 @@ func newServiceCmd() *cobra.Command {
 	var skipNotifyPrompt bool
 	var tcpAddr string
 	var skipTCPPrompt bool
+	var tokenTCPAddr, sshAddr, autonomyDial string
 	installCmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install dejimad as a launchd (macOS) or systemd-user (Linux) service.",
@@ -350,7 +351,20 @@ func newServiceCmd() *cobra.Command {
 			}
 			var svcArgs []string
 			if tcpAddr != "" {
-				svcArgs = []string{"--tcp", tcpAddr}
+				svcArgs = append(svcArgs, "--tcp", tcpAddr)
+			}
+			// The in-island autonomy path (#8) and the SSH-façade (#9) are only
+			// reachable if the service daemon carries these flags — a hand-run
+			// dejimad would collide on the unix socket. Bake them into the plist
+			// alongside --tcp so the persisted daemon exposes them.
+			if tokenTCPAddr != "" {
+				svcArgs = append(svcArgs, "--token-tcp", tokenTCPAddr)
+			}
+			if sshAddr != "" {
+				svcArgs = append(svcArgs, "--ssh", sshAddr)
+			}
+			if autonomyDial != "" {
+				svcArgs = append(svcArgs, "--autonomy-dial", autonomyDial)
 			}
 			// Interactive notify prompt: only when we have a TTY, no flag, and
 			// the user didn't explicitly opt out.
@@ -388,6 +402,12 @@ func newServiceCmd() *cobra.Command {
 				fmt.Println("remote access: disabled (local Unix socket only).")
 				fmt.Println("  enable later: dejima service install --tcp :7273")
 			}
+			if tokenTCPAddr != "" {
+				fmt.Printf("in-island autonomy (#8): token-TCP on %s\n", tokenTCPAddr)
+			}
+			if sshAddr != "" {
+				fmt.Printf("ssh façade (#9): listening on %s — authorize keys with `dejima ssh authorize`\n", sshAddr)
+			}
 			if notifyURL != "" {
 				if err := waitForDaemonAndSubscribe(cmd.Context(), notifyURL, notifySecret); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: could not auto-subscribe webhook (%v)\n", err)
@@ -404,6 +424,9 @@ func newServiceCmd() *cobra.Command {
 	}
 	installCmd.Flags().StringVar(&tcpAddr, "tcp", "", "expose the Tailscale-pinned TCP listener at this addr (e.g. :7273); empty = local socket only")
 	installCmd.Flags().BoolVar(&skipTCPPrompt, "no-tcp-prompt", false, "skip the interactive remote-access prompt")
+	installCmd.Flags().StringVar(&tokenTCPAddr, "token-tcp", "", "host-internal addr for the in-island autonomy path (#8), e.g. 127.0.0.1:7274; empty disables")
+	installCmd.Flags().StringVar(&sshAddr, "ssh", "", "SSH-façade listen addr (#9), e.g. :2222 or a tailnet IP; empty disables")
+	installCmd.Flags().StringVar(&autonomyDial, "autonomy-dial", "", "host:port an in-island brain dials to reach --token-tcp (default host.docker.internal:<token-tcp port>)")
 	installCmd.Flags().StringVar(&notifyURL, "notify", "", "auto-subscribe this webhook URL after install")
 	installCmd.Flags().StringVar(&notifySecret, "notify-secret", "", "HMAC secret for the auto-subscribed webhook")
 	installCmd.Flags().BoolVar(&skipNotifyPrompt, "no-notify-prompt", false, "skip the interactive notification prompt")
