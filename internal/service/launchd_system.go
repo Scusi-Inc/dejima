@@ -7,11 +7,26 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
+	"time"
 )
 
 const launchdSystemPlist = "/Library/LaunchDaemons/" + launchdLabel + ".plist"
+
+// parseIDs converts a user's numeric uid/gid strings into ints for os.Chown.
+func parseIDs(u *user.User) (uid, gid int, ok bool) {
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return 0, 0, false
+	}
+	gid, err = strconv.Atoi(u.Gid)
+	if err != nil {
+		return 0, 0, false
+	}
+	return uid, gid, true
+}
 
 // launchdSystemManager installs dejimad as a system-wide LaunchDaemon,
 // bootstrapped into launchd's `system` domain. Unlike a per-user LaunchAgent
@@ -30,9 +45,28 @@ func (m *launchdSystemManager) Install(binaryPath string, args []string) error {
 	if err != nil {
 		return err
 	}
+	// `dejima service install --system` is run under sudo, so user.Current()
+	// reports root. But the daemon must run as the human who invoked it: that's
+	// who owns the Docker/colima socket, SSH keys, and login keychain it needs.
+	// Recover the real account from $SUDO_USER. (Without this the daemon runs as
+	// root with HOME=/var/root, sees none of the user's container runtime, and
+	// island operations fail.)
+	if u.Uid == "0" {
+		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && sudoUser != "root" {
+			if real, lerr := user.Lookup(sudoUser); lerr == nil {
+				u = real
+			}
+		}
+	}
+
 	logDir := filepath.Join(u.HomeDir, "Library", "Logs", "dejima")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return err
+	}
+	// We're running as root here; the daemon runs as u. Hand the log dir (and
+	// any parent dirs we just created) to u so it can write its own logs.
+	if uid, gid, ok := parseIDs(u); ok {
+		_ = os.Chown(logDir, uid, gid)
 	}
 
 	tmpl := template.Must(template.New("plist").Parse(launchdTemplate))
@@ -41,6 +75,7 @@ func (m *launchdSystemManager) Install(binaryPath string, args []string) error {
 		"Label":            launchdLabel,
 		"ProgramArguments": append([]string{binaryPath}, args...),
 		"WorkingDir":       u.HomeDir,
+		"Home":             u.HomeDir,
 		"UserName":         u.Username,
 		"StdoutPath":       filepath.Join(logDir, "dejimad.out.log"),
 		"StderrPath":       filepath.Join(logDir, "dejimad.err.log"),
@@ -80,10 +115,28 @@ func (m *launchdSystemManager) Install(binaryPath string, args []string) error {
 		return fmt.Errorf("sudo install %s: %w: %s", launchdSystemPlist, err, strings.TrimSpace(stderr))
 	}
 	_ = exec.Command("sudo", "launchctl", "bootout", "system/"+launchdLabel).Run()
-	if stderr, err := runCaptureStderr("sudo", "launchctl", "bootstrap", "system", launchdSystemPlist); err != nil {
-		return fmt.Errorf("launchctl bootstrap system: %w: %s", err, strings.TrimSpace(stderr))
+	// bootout returns before launchd finishes tearing down the old job;
+	// bootstrapping the same label mid-teardown fails with EIO ("Bootstrap
+	// failed: 5: Input/output error"). Wait for the label to vanish, then
+	// retry the bootstrap a few times for good measure.
+	for i := 0; i < 20; i++ {
+		if exec.Command("launchctl", "print", "system/"+launchdLabel).Run() != nil {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	return nil
+	var stderr string
+	var err2 error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+		stderr, err2 = runCaptureStderr("sudo", "launchctl", "bootstrap", "system", launchdSystemPlist)
+		if err2 == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("launchctl bootstrap system: %w: %s", err2, strings.TrimSpace(stderr))
 }
 
 func (m *launchdSystemManager) Uninstall() error {

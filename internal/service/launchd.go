@@ -50,6 +50,7 @@ func (m *launchdManager) Install(binaryPath string, args []string) error {
 		"Label":            launchdLabel,
 		"ProgramArguments": append([]string{binaryPath}, args...),
 		"WorkingDir":       home,
+		"Home":             home,
 		"StdoutPath":       outLog,
 		"StderrPath":       errLog,
 	}); err != nil {
@@ -190,6 +191,8 @@ const launchdTemplate = `<?xml version="1.0" encoding="UTF-8"?>
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>{{.Home}}</string>
   </dict>
 </dict>
 </plist>
