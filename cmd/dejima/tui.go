@@ -811,16 +811,18 @@ func (m tuiModel) View() string {
 // asciiLogo is a terminal rendering of assets/logo-transparent.png: the
 // island is an annulus sector (parallel top/bottom arcs joined by angled
 // sides), with a gate hanging from the bottom arc and a bridge crossing
-// beneath the curved shore. All lines are the same printed width so it
+// beneath the curved shore. Every line is padded to the same 35-column
+// width (artwork is 29 cols centered with a 3-col margin each side) so it
 // composes as a block.
 var asciiLogo = []string{
-	" _.------------._ ",
-	"  \\            /  ",
-	"    \\_.----._/    ",
-	"       |  |       ",
-	"       |[]|       ",
-	"   _.-'|  |'-._   ",
-	" .'    |  |    '. ",
+	"         ################          ",
+	"      ####              ####       ",
+	"   ####                     ####   ",
+	"      ##      ######      ###      ",
+	"       #########  ##########       ",
+	"              ##  ##               ",
+	"          ######  ######           ",
+	"      ####              #####      ",
 }
 
 func (m tuiModel) renderHeader() string {
@@ -834,8 +836,8 @@ func (m tuiModel) renderHeader() string {
 	}
 
 	// Compact single-line header when the terminal can't spare the rows, or
-	// is too narrow for the info lines (longest is 69 cols + 27 logo/chrome).
-	if m.height < 24 || m.width < 96 {
+	// is too narrow for the info lines (longest is 69 cols + 44 logo/chrome).
+	if m.height < 24 || m.width < 113 {
 		title := styleTitle.Render("Dejima")
 		right := styleMuted.Render(label + " ⇄ [s]")
 		pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
