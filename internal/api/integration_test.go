@@ -442,6 +442,15 @@ func TestGitHubIdentityPlumbedIntoIsland(t *testing.T) {
 	if !strings.Contains(string(data), "oauth_token: ghp_work") || !strings.Contains(string(data), "user: alockwood") {
 		t.Errorf("materialized hosts.yml missing the identity's creds:\n%s", data)
 	}
+
+	// Deleting the island must remove the materialized token, not just the
+	// project dir — it's a live credential living outside ~/.dejima/projects.
+	if rr := do(t, h, http.MethodDelete, "/v1/islands/proj", ""); rr.Code != http.StatusNoContent {
+		t.Fatalf("delete island: %d %s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(ghMount.HostPath); !os.IsNotExist(err) {
+		t.Errorf("per-island gh config should be gone after delete; stat err = %v", err)
+	}
 }
 
 // TestCreateSeedsMultipleAgents covers seeding >1 agent at create time via the

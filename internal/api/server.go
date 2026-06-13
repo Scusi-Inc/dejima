@@ -478,16 +478,14 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, errors.New("login and token are required"))
 		return
 	}
-	store, err := githubid.Load()
+	store, err := githubid.Update(func(s *githubid.Store) error {
+		s.Put(githubid.Identity{Name: name, Login: req.Login, Host: req.Host, Token: req.Token})
+		if req.Default {
+			_ = s.SetDefault(name)
+		}
+		return nil
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	store.Put(githubid.Identity{Name: name, Login: req.Login, Host: req.Host, Token: req.Token})
-	if req.Default {
-		_ = store.SetDefault(name)
-	}
-	if err := store.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -498,17 +496,16 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 // handleDeleteGitHubIdentity removes a GitHub identity.
 func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	store, err := githubid.Load()
-	if err != nil {
+	var missing bool
+	if _, err := githubid.Update(func(s *githubid.Store) error {
+		missing = !s.Remove(name)
+		return nil
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if !store.Remove(name) {
+	if missing {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", name))
-		return
-	}
-	if err := store.Save(); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1338,6 +1335,11 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	_ = s.rt.RemoveVolume(ctx, p.WorkspaceVolume(), force)
 	_ = s.rt.RemoveVolume(ctx, p.HomeVolume(), force)
 	_ = s.rt.RemoveNetwork(ctx, p.NetworkName())
+	// Drop the island's materialized GitHub identity (a plaintext token on disk);
+	// it lives outside the project dir, so project.Delete won't catch it.
+	if dir, err := paths.GitHubIslandConfigPath(p.Name); err == nil {
+		_ = os.RemoveAll(dir)
+	}
 	return project.Delete(p.Name)
 }
 

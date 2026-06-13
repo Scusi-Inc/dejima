@@ -114,15 +114,24 @@ func GitHubSecretsDir() (string, error) {
 	return dir, nil
 }
 
+// GitHubIslandConfigPath returns the per-island gh config dir path WITHOUT
+// creating it — for cleanup when an island is torn down.
+func GitHubIslandConfigPath(name string) (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "secrets", "github", "islands", name), nil
+}
+
 // GitHubIslandConfigDir returns the per-island gh config dir the daemon
 // materializes (containing a single-identity hosts.yml) and mounts read-only at
 // /opt/host/gh-config when an island uses a specific GitHub identity. Created 0700.
 func GitHubIslandConfigDir(name string) (string, error) {
-	base, err := GitHubSecretsDir()
+	dir, err := GitHubIslandConfigPath(name)
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(base, "islands", name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

@@ -1,9 +1,47 @@
 package githubid
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
+
+// TestUpdateIsSerializedAndAtomic runs many concurrent Update calls, each adding
+// a distinct identity, and asserts none are lost — i.e. the read-modify-write is
+// serialized and the atomic write never corrupts the store.
+func TestUpdateIsSerializedAndAtomic(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // isolate ~/.dejima
+
+	const n = 25
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := Update(func(s *Store) error {
+				s.Put(Identity{Name: fmt.Sprintf("id%02d", i), Login: "u", Token: "t"})
+				return nil
+			})
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Identities) != n {
+		t.Fatalf("lost updates under concurrency: got %d identities, want %d", len(s.Identities), n)
+	}
+}
 
 func TestPutSetsFirstAsDefault(t *testing.T) {
 	s := &Store{}

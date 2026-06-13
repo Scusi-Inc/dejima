@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/aoos/dejima/internal/paths"
 )
@@ -52,8 +53,38 @@ func storePath() (string, error) {
 	return filepath.Join(dir, "store.json"), nil
 }
 
-// Load reads the store, returning an empty (non-nil) store if none exists yet.
+// mu serializes the store across the daemon's request goroutines so a
+// read-modify-write (Update) is atomic and a Load never observes a torn write.
+var mu sync.Mutex
+
+// Update runs fn against the store under a process-wide lock and persists the
+// result atomically. Use it for every read-modify-write — Put/Remove/SetDefault
+// — so concurrent writers can't clobber each other (lost updates).
+func Update(fn func(*Store) error) (*Store, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	s, err := loadLocked()
+	if err != nil {
+		return nil, err
+	}
+	if err := fn(s); err != nil {
+		return nil, err
+	}
+	if err := s.saveLocked(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// Load reads the store under the lock — a consistent snapshot for read-only use.
+// Returns an empty (non-nil) store if none exists yet.
 func Load() (*Store, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	return loadLocked()
+}
+
+func loadLocked() (*Store, error) {
 	p, err := storePath()
 	if err != nil {
 		return nil, err
@@ -75,8 +106,16 @@ func Load() (*Store, error) {
 	return &s, nil
 }
 
-// Save persists the store at 0600 (it holds tokens).
+// Save persists the store atomically at 0600 (it holds tokens).
 func (s *Store) Save() error {
+	mu.Lock()
+	defer mu.Unlock()
+	return s.saveLocked()
+}
+
+// saveLocked writes the store via a temp file + rename so a crash or a
+// concurrent reader never sees a half-written file. Caller holds mu.
+func (s *Store) saveLocked() error {
 	p, err := storePath()
 	if err != nil {
 		return err
@@ -85,7 +124,24 @@ func (s *Store) Save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".store-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // harmless once the rename has consumed it
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, p)
 }
 
 // Put adds or updates an identity (keyed by Name). The first identity added
