@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
-# Claude Code hook script: posts agent events to dejimad over its Unix socket.
+# Claude Code hook: posts agent events to dejimad over the token-authenticated,
+# host-internal TCP path (DEJIMA_HOST + per-island DEJIMA_TOKEN).
 #
-# Installed at $HOME/.claude/hooks/notify.sh by image/agents/claude-code/init.sh.
-# Wired up in $HOME/.claude/settings.json (also written by init.sh) for the
-# Notification and Stop hook events.
+# Installed at $HOME/.claude/hooks/notify.sh by image/agents/claude-code/init.sh,
+# wired into $HOME/.claude/settings.json for the Notification and Stop hooks.
 #
-# Trust model: anyone with access to /run/dejima/dejimad.sock can spoof
-# agent-event payloads. In v1 the socket lives inside one container, which is
-# the same trust boundary as the agent itself, so this is acceptable.
+# The token is per-island and island-scoped (internal/api/tokenauth.go): the
+# daemon attributes the event to the token's island, so a hook can only emit for
+# its own island — it can't spoof another's. Best-effort: no-ops when the
+# in-island autonomy path isn't configured.
 
 set -euo pipefail
 
-SOCKET="${DEJIMA_SOCKET:-/run/dejima/dejimad.sock}"
+HOST="${DEJIMA_HOST:-}"
+TOKEN="${DEJIMA_TOKEN:-}"
 ISLAND="${DEJIMA_PROJECT_NAME:-unknown}"
 AGENT="${DEJIMA_AGENT_ID:-}"
 TYPE="${1:-agent.waiting-for-input}"
 
-if [[ ! -S "$SOCKET" ]]; then
-    # Daemon socket not mounted; nothing to do.
+if [[ -z "$HOST" || -z "$TOKEN" ]]; then
+    # In-island → daemon path not configured; nothing to do.
     exit 0
 fi
 
@@ -30,7 +32,7 @@ body=$(jq -n \
     '{island: $island, agent: $agent, type: $type, payload: $payload}')
 
 curl --silent --show-error --max-time 3 \
-     --unix-socket "$SOCKET" \
+     -H "Authorization: Bearer ${TOKEN}" \
      -H "Content-Type: application/json" \
-     -X POST "http://dejimad/v1/internal/agent-event" \
+     -X POST "http://${HOST}/v1/internal/agent-event" \
      -d "$body" || true

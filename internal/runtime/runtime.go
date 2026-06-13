@@ -30,6 +30,10 @@ type CreateRequest struct {
 	CPUs        string // e.g. "2.0" → --cpus
 	StorageSize string // e.g. "20G" → --storage-opt size=
 	Network     string // user-defined bridge network name (empty = default)
+	// ExtraHosts are "host:ip" entries added with --add-host. Used to give the
+	// container a route to the daemon's host-internal listener (the in-island
+	// autonomy/telemetry path), e.g. "host.docker.internal:host-gateway".
+	ExtraHosts []string
 }
 
 // VolumeMount represents a named-volume mount.

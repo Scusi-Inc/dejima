@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -963,22 +962,23 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	env := map[string]string{
 		"DEJIMA_PROJECT_NAME": p.Name,
 		"DEJIMA_REPO_URL":     p.RepoURL,
-		"DEJIMA_SOCKET":       "/run/dejima/dejimad.sock",
 	}
 	// A Home Island hosts an assistant brain; let it self-identify so it can
-	// drive the Port (intake/export) and spawn work islands via the daemon API
-	// reachable over DEJIMA_SOCKET.
+	// drive the Port (intake/export) and spawn work islands via the daemon API.
 	if p.IsHome() {
 		env["DEJIMA_HOME"] = "1"
 	}
-	// macOS autonomy path: where the unix socket can't be mounted, give the
-	// island a token-authenticated TCP route to the daemon. The token is
-	// per-island and island-scoped (see internal/api/tokenauth.go), so handing
-	// it to the container only grants the brain access to its own island.
+	// The in-island → dejimad path is the token-authenticated host-internal TCP
+	// listener (DEJIMA_HOST + per-island DEJIMA_TOKEN). It carries both the
+	// agent-event telemetry (notify.sh hooks) and the Home-island autonomy
+	// surface. The daemon's control socket is NOT mounted into containers, so
+	// this token — island-scoped in tokenauth.go — is the only way in, and it
+	// only reaches the island's own surface. autonomyDial is empty only when the
+	// token listener failed to bind; telemetry then degrades to a no-op.
 	if s.autonomyDial != "" {
 		tok, err := porttoken.Ensure(p.Name)
 		if err != nil {
-			return fmt.Errorf("mint island token for autonomy: %w", err)
+			return fmt.Errorf("mint island token: %w", err)
 		}
 		env["DEJIMA_HOST"] = s.autonomyDial
 		env["DEJIMA_TOKEN"] = tok
@@ -1009,23 +1009,16 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		env["DEJIMA_SEED"] = "/opt/host/seed"
 	}
 
-	// Mount the daemon's Unix socket into the container so per-agent shims can
-	// emit events via the internal API endpoint. Only possible when Docker is
-	// native to the daemon's host: when dejimad runs on macOS the engine lives
-	// in a VM (colima/Docker Desktop) that shares the host fs over virtiofs/sshfs,
-	// and unix sockets can't be bind-mounted through that share — Docker tries to
-	// mkdir the source path and fails with "operation not supported", aborting the
-	// whole run. Skip the mount there; notify.sh already no-ops without the socket.
-	if goruntime.GOOS == "linux" {
-		if socket, err := paths.SocketPath(); err == nil {
-			if _, statErr := os.Stat(socket); statErr == nil {
-				binds = append(binds, runtime.BindMount{
-					HostPath:      socket,
-					ContainerPath: "/run/dejima/dejimad.sock",
-					ReadOnly:      false,
-				})
-			}
-		}
+	// The daemon's control socket is deliberately NOT mounted into the container:
+	// it is the operator's full-control plane, and mounting it would let in-island
+	// code reach the entire API (create/delete islands, grant Port scopes, …).
+	// In-island callers reach the daemon only over the token-authenticated,
+	// island-scoped TCP path (DEJIMA_HOST above). The route to that host-internal
+	// listener needs host.docker.internal to resolve: built in on Docker Desktop /
+	// colima; add-host wires it on engines that don't provide it.
+	var extraHosts []string
+	if s.autonomyDial != "" {
+		extraHosts = append(extraHosts, "host.docker.internal:host-gateway")
 	}
 
 	req := runtime.CreateRequest{
@@ -1039,6 +1032,7 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 			{Name: p.HomeVolume(), Target: "/home/dejima"},
 		},
 		BindMounts:  binds,
+		ExtraHosts:  extraHosts,
 		Memory:      p.Resources.Memory,
 		CPUs:        p.Resources.CPUs,
 		StorageSize: p.Resources.Disk,

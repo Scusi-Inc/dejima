@@ -46,6 +46,11 @@ const (
 	// which spawns Project Islands and receives the child's token (no
 	// god-token; see porttoken).
 	accessHomeCreate
+	// accessEmitOwn is reachable by any valid token; the handler attributes the
+	// event to the token's island (TokenIslandFromContext), so a token can emit
+	// telemetry only for its own island — never spoof another's. Used for the
+	// agent-event endpoint, whose path carries no {name} to pin against.
+	accessEmitOwn
 )
 
 // tokenRouteAccess maps the exact ServeMux pattern (as registered in routes())
@@ -53,8 +58,9 @@ const (
 // matched *pattern* — not a hand-parsed path — keeps this table in lockstep
 // with the router: a non-canonical path matches no pattern and is denied.
 var tokenRouteAccess = map[string]tokenAccess{
-	"GET /v1/healthz":  accessAny,
-	"POST /v1/islands": accessHomeCreate,
+	"GET /v1/healthz":               accessAny,
+	"POST /v1/islands":              accessHomeCreate,
+	"POST /v1/internal/agent-event": accessEmitOwn,
 
 	"GET /v1/islands/{name}":                 accessOwnIsland, // status
 	"GET /v1/islands/{name}/events":          accessOwnIsland,
@@ -128,6 +134,11 @@ func (s *Server) tokenAuth(mux *http.ServeMux) http.Handler {
 func authorizeToken(island, pattern, escapedPath string) error {
 	switch tokenRouteAccess[pattern] {
 	case accessAny:
+		return nil
+
+	case accessEmitOwn:
+		// Any valid token may emit; handleAgentEvent pins the event to the
+		// token's island, so cross-island spoofing is impossible.
 		return nil
 
 	case accessOwnIsland:

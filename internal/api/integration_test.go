@@ -454,3 +454,54 @@ func TestIslandTitle(t *testing.T) {
 		t.Errorf("patch missing island: got %d, want 404", rr.Code)
 	}
 }
+
+// TestControlSocketNeverMountedIntoIsland is the core of the secure-routing
+// change: the daemon's full-control unix socket must never be bind-mounted into
+// a container, or in-island code could reach the whole control plane.
+func TestControlSocketNeverMountedIntoIsland(t *testing.T) {
+	h, f := newTestServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"proj"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	f.mu.Lock()
+	cr := f.lastCreate
+	f.mu.Unlock()
+	for _, bm := range cr.BindMounts {
+		if strings.Contains(bm.ContainerPath, "dejimad.sock") || strings.Contains(bm.HostPath, "dejimad.sock") {
+			t.Fatalf("control socket must never be mounted into an island; got bind %+v", bm)
+		}
+	}
+	if _, ok := cr.Env["DEJIMA_SOCKET"]; ok {
+		t.Errorf("DEJIMA_SOCKET env should be gone (no mounted socket)")
+	}
+}
+
+// TestAutonomyEnvAndExtraHosts verifies that with the in-island token path on,
+// every island gets DEJIMA_HOST/DEJIMA_TOKEN and the host.docker.internal route.
+func TestAutonomyEnvAndExtraHosts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := &fakeRuntime{status: runtime.StatusRunning}
+	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv.EnableAutonomy("host.docker.internal:7274")
+	h := srv.Handler()
+
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"proj"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	f.mu.Lock()
+	cr := f.lastCreate
+	f.mu.Unlock()
+
+	if cr.Env["DEJIMA_HOST"] != "host.docker.internal:7274" || cr.Env["DEJIMA_TOKEN"] == "" {
+		t.Errorf("autonomy env missing: HOST=%q TOKEN-set=%v", cr.Env["DEJIMA_HOST"], cr.Env["DEJIMA_TOKEN"] != "")
+	}
+	found := false
+	for _, eh := range cr.ExtraHosts {
+		if eh == "host.docker.internal:host-gateway" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected host.docker.internal:host-gateway in ExtraHosts; got %v", cr.ExtraHosts)
+	}
+}
