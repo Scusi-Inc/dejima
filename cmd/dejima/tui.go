@@ -825,6 +825,19 @@ var asciiLogo = []string{
 	"      ####              #####      ",
 }
 
+// asciiLogoSmall is the same mark drawn at half scale (7 rows, 22 cols) for
+// narrow terminals that can't fit asciiLogo beside the info lines. Artwork is
+// 18 cols centered with a 2-col margin each side.
+var asciiLogoSmall = []string{
+	"        ######        ",
+	"     ####    ####     ",
+	"   ###           ###  ",
+	"     #####   #####    ",
+	"          ###         ",
+	"    ######  #######   ",
+	"  ##              ##  ",
+}
+
 func (m tuiModel) renderHeader() string {
 	label := m.activeLabel
 	if label == "" {
@@ -836,8 +849,9 @@ func (m tuiModel) renderHeader() string {
 	}
 
 	// Compact single-line header when the terminal can't spare the rows, or
-	// is too narrow for the info lines (longest is 69 cols + 44 logo/chrome).
-	if m.height < 24 || m.width < 113 {
+	// is too narrow for the info lines beside even the small logo (longest
+	// info line is 69 cols; small logo + chrome is 22 + 9 = 31).
+	if m.height < 24 || m.width < 100 {
 		title := styleTitle.Render("Dejima")
 		right := styleMuted.Render(label + " ⇄ [s]")
 		pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
@@ -847,8 +861,15 @@ func (m tuiModel) renderHeader() string {
 		return " " + title + strings.Repeat(" ", pad) + right
 	}
 
-	logoLines := make([]string, len(asciiLogo))
-	for i, l := range asciiLogo {
+	// Full 35-col mark when there's room (≥113 = 69 info + 44 chrome),
+	// otherwise the compact 22-col mark for the 100–112 band.
+	logoArt := asciiLogo
+	if m.width < 113 {
+		logoArt = asciiLogoSmall
+	}
+
+	logoLines := make([]string, len(logoArt))
+	for i, l := range logoArt {
 		logoLines[i] = styleAccent.Render(l)
 	}
 	logo := strings.Join(logoLines, "\n")
@@ -861,7 +882,7 @@ func (m tuiModel) renderHeader() string {
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		styleMuted.Render("server: ") + styleAccent.Render(label) + styleMuted.Render("  ·  [s] switch  ·  [?] all keys"),
 	}, "\n")
-	infoW := m.width - lipgloss.Width(asciiLogo[0]) - 9
+	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
 	info = lipgloss.NewStyle().MaxWidth(infoW).Render(info)
 
 	box := lipgloss.JoinHorizontal(lipgloss.Top, logo, "   ", info)
