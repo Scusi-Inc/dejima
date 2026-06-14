@@ -371,7 +371,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// may exec `tailscale`), not every render, so the detail panel can
 			// show a connect string cheaply.
 			if msg.SSHAddr != "" && msg.SSHAddr != m.sshResolvedFor {
-				if h, p, err := endpointFromAddr(msg.SSHAddr); err == nil {
+				if h, p, err := endpointFromAddr(msg.SSHAddr, m.client.DaemonHost()); err == nil {
 					m.sshHost, m.sshPort, m.sshResolvedFor = h, p, msg.SSHAddr
 				}
 			}
@@ -768,7 +768,7 @@ func (m tuiModel) setupAccountSSH() (tea.Model, tea.Cmd) {
 		m.lastError = "authorize account key: " + err.Error()
 		return m, nil
 	}
-	host, port, err := endpointFromAddr(m.overview.SSHAddr)
+	host, port, err := endpointFromAddr(m.overview.SSHAddr, m.client.DaemonHost())
 	if err != nil {
 		m.lastError = err.Error()
 		return m, nil

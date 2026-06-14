@@ -397,22 +397,28 @@ func resolveSSHEndpoint(ctx context.Context) (host, port string, enabled bool, e
 	if o.SSHAddr == "" {
 		return "", "", false, nil
 	}
-	h, p, addrErr := endpointFromAddr(o.SSHAddr)
+	h, p, addrErr := endpointFromAddr(o.SSHAddr, c.DaemonHost())
 	return h, p, true, addrErr
 }
 
 // endpointFromAddr resolves a daemon-reported ssh listen addr into a reachable
-// host:port. When the listener binds a wildcard/empty host (":2222") it
-// substitutes a reachable host — the tailnet FQDN if up, else localhost. Pure,
-// so both the CLI (via resolveSSHEndpoint) and the TUI (which already holds the
-// addr from /v1/overview) can use it.
-func endpointFromAddr(sshAddr string) (host, port string, err error) {
+// host:port. When the listener binds a wildcard/empty host (":2222"), the host
+// is filled from (in order): the daemon host the client is talking to
+// (daemonHost — correct for a remote client like GIZMO, where the SSH façade is
+// on the *daemon's* host, not this machine), then this machine's tailnet FQDN
+// (a local daemon), then localhost. Pure, so both the CLI and the TUI can use it.
+func endpointFromAddr(sshAddr, daemonHost string) (host, port string, err error) {
 	h, p, splitErr := net.SplitHostPort(sshAddr)
 	if splitErr != nil {
 		return "", "", fmt.Errorf("malformed ssh addr %q: %w", sshAddr, splitErr)
 	}
 	if h == "" || h == "0.0.0.0" || h == "::" {
-		h = reachableHost()
+		switch {
+		case daemonHost != "":
+			h = daemonHost
+		default:
+			h = reachableHost()
+		}
 	}
 	return h, p, nil
 }

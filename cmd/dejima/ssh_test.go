@@ -21,6 +21,26 @@ func TestSSHConfigBlock(t *testing.T) {
 	}
 }
 
+func TestEndpointFromAddr(t *testing.T) {
+	// Explicit host in the bind is used verbatim, regardless of daemon host.
+	if h, p, err := endpointFromAddr("100.1.2.3:2222", "minion.ts.net"); err != nil || h != "100.1.2.3" || p != "2222" {
+		t.Errorf("explicit host = (%q,%q,%v)", h, p, err)
+	}
+	// Wildcard bind + remote daemon host → use the daemon host (the GIZMO case:
+	// the façade is on the daemon, not this machine).
+	if h, _, err := endpointFromAddr(":2222", "minion.ts.net"); err != nil || h != "minion.ts.net" {
+		t.Errorf("wildcard+remote = (%q,%v), want minion.ts.net", h, err)
+	}
+	// Wildcard bind + local daemon (no daemon host) → reachableHost fallback
+	// (tailnet FQDN or localhost); never empty.
+	if h, _, err := endpointFromAddr(":2222", ""); err != nil || h == "" {
+		t.Errorf("wildcard+local = (%q,%v), want non-empty", h, err)
+	}
+	if _, _, err := endpointFromAddr("garbage", "x"); err == nil {
+		t.Error("expected error for malformed addr")
+	}
+}
+
 func TestInstallSSHConfigIdempotent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

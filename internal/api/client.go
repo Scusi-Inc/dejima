@@ -80,6 +80,22 @@ func NewTCPClientWithToken(host, token string) (*Client, error) {
 	return c, nil
 }
 
+// DaemonHost returns the hostname this client talks to (no scheme/port), or ""
+// when the daemon is local (the unix-socket sentinel). Callers needing a
+// reachable address for a *daemon-side* service — e.g. the SSH façade, whose
+// bind the daemon may report host-less as ":2222" — use this to point at the
+// daemon's host rather than the local machine's.
+func (c *Client) DaemonHost() string {
+	u, err := url.Parse(c.base)
+	if err != nil {
+		return ""
+	}
+	if h := u.Hostname(); h != "dejimad" { // "dejimad" is the unix-socket sentinel
+		return h
+	}
+	return ""
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
