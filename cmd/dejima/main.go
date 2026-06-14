@@ -944,7 +944,23 @@ func runSession(ctx context.Context, c *api.Client, name, agentID, label string)
 	if err != nil {
 		return err
 	}
+	return runSessionConn(ctx, conn)
+}
+
+// runTerminalSession attaches the local terminal to a host terminal's session.
+func runTerminalSession(ctx context.Context, c *api.Client, id, label string) error {
+	conn, err := c.DialTerminalSession(ctx, id, label)
+	if err != nil {
+		return err
+	}
+	return runSessionConn(ctx, conn)
+}
+
+// runSessionConn bridges the local terminal to an already-dialed session
+// websocket — an island agent or a host terminal — until detach or EOF.
+func runSessionConn(ctx context.Context, conn *websocket.Conn) error {
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	var err error
 
 	// Surface the detach hint before raw mode swallows newlines.
 	stdinFd := int(os.Stdin.Fd())

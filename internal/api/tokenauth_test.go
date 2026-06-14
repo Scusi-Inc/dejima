@@ -131,6 +131,13 @@ func TestAuthorizeTokenMatrix(t *testing.T) {
 		{"reset denied", "proj", "POST /v1/islands/{name}/reset", "/v1/islands/proj/reset", true},
 		{"session denied", "proj", "GET /v1/islands/{name}/session", "/v1/islands/proj/session", true},
 
+		// Host terminals are the most privileged surface — operator-only, never
+		// reachable by an island token (absent from the allow-list → default-deny).
+		{"terminals list denied", "proj", "GET /v1/terminals", "/v1/terminals", true},
+		{"terminals create denied", "proj", "POST /v1/terminals", "/v1/terminals", true},
+		{"terminal delete denied", "proj", "DELETE /v1/terminals/{id}", "/v1/terminals/t1", true},
+		{"terminal attach denied", "proj", "GET /v1/terminals/{id}/session", "/v1/terminals/t1/session", true},
+
 		// Control plane denied.
 		{"list all denied", "proj", "GET /v1/islands", "/v1/islands", true},
 		{"overview denied", "proj", "GET /v1/overview", "/v1/overview", true},

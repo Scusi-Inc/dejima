@@ -85,8 +85,22 @@ type Server struct {
 	// authenticate. Empty on the Linux/unix-socket path.
 	autonomyDial string
 
+	// hostTerminals gates the operator host-terminal feature (uncontained shells
+	// on the daemon host). Off unless dejimad is started with --host-terminals.
+	// Even when on, the routes are operator-only and never reachable by an island
+	// token (tokenauth default-deny).
+	hostTerminals bool
+
 	startedAt time.Time
 }
+
+// EnableHostTerminals turns on the operator host-terminal feature. It exposes
+// uncontained shells on the daemon host, so it is off by default and meant to be
+// a deliberate operator opt-in (`dejimad --host-terminals`).
+func (s *Server) EnableHostTerminals() { s.hostTerminals = true }
+
+// HostTerminalsEnabled reports whether the host-terminal feature is on.
+func (s *Server) HostTerminalsEnabled() bool { return s.hostTerminals }
 
 // EnableAutonomy turns on the in-island → dejimad autonomy path: containers are
 // provisioned with DEJIMA_HOST=dial and their per-island DEJIMA_TOKEN. dial is
@@ -334,6 +348,12 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/sessions/revoke", s.handleRevokeSessions)
 	mux.HandleFunc("GET /v1/clients", s.handleClientHistory)
 	mux.HandleFunc("GET /v1/overview", s.handleOverview)
+	// Host terminals (operator-only, gated; never in tokenauth's allow-list).
+	mux.HandleFunc("GET /v1/terminals", s.handleListTerminals)
+	mux.HandleFunc("POST /v1/terminals", s.handleCreateTerminal)
+	mux.HandleFunc("DELETE /v1/terminals/{id}", s.handleDeleteTerminal)
+	mux.HandleFunc("PATCH /v1/terminals/{id}", s.handleRelabelTerminal)
+	mux.HandleFunc("GET /v1/terminals/{id}/session", s.terminalSessionWS)
 	mux.HandleFunc("GET /v1/islands/{name}/events", s.handleIslandEvents)
 	mux.HandleFunc("POST /v1/islands/{name}/exec", s.handleExec)
 	mux.HandleFunc("GET /v1/islands/{name}/files/{path...}", s.handleReadFile)

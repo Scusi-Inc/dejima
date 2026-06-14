@@ -31,13 +31,14 @@ import (
 
 func main() {
 	var (
-		showVersion  bool
-		debug        bool
-		foreground   bool
-		tcpAddr      string
-		tokenAddr    string
-		autonomyDial string
-		sshAddr      string
+		showVersion   bool
+		debug         bool
+		foreground    bool
+		tcpAddr       string
+		tokenAddr     string
+		autonomyDial  string
+		sshAddr       string
+		hostTerminals bool
 	)
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
@@ -46,6 +47,7 @@ func main() {
 	flag.StringVar(&tokenAddr, "token-tcp", os.Getenv("DEJIMAD_TOKEN_TCP"), "host-internal TCP addr for the token-authenticated in-island autonomy path (e.g. \"127.0.0.1:7274\"); empty disables. Never bind a wildcard/LAN address.")
 	flag.StringVar(&autonomyDial, "autonomy-dial", os.Getenv("DEJIMAD_AUTONOMY_DIAL"), "host:port an in-island brain dials to reach this daemon over --token-tcp (default \"host.docker.internal:<token-tcp port>\")")
 	flag.StringVar(&sshAddr, "ssh", os.Getenv("DEJIMAD_SSH"), "SSH-façade listen addr (e.g. \"100.x.y.z:2222\" on the tailnet, or \":2222\"); empty disables. Auth is per-island public key; ssh <island>@<addr>.")
+	flag.BoolVar(&hostTerminals, "host-terminals", os.Getenv("DEJIMAD_HOST_TERMINALS") == "1", "enable operator host terminals — UNCONTAINED shells on the daemon host (operator-only, never reachable by an island). Off by default.")
 	flag.Parse()
 	_ = foreground
 
@@ -60,7 +62,7 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(log, tcpAddr, tokenAddr, autonomyDial, sshAddr); err != nil {
+	if err := run(log, tcpAddr, tokenAddr, autonomyDial, sshAddr, hostTerminals); err != nil {
 		log.Error("dejimad fatal", "err", err)
 		os.Exit(1)
 	}
@@ -71,7 +73,7 @@ func main() {
 // socket is no longer mounted into containers — this is the only in-island path.
 const defaultTokenAddr = "127.0.0.1:7274"
 
-func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string) error {
+func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hostTerminals bool) error {
 	socketPath, err := paths.SocketPath()
 	if err != nil {
 		return err
@@ -99,6 +101,10 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string) err
 		return fmt.Errorf("events manager: %w", err)
 	}
 	server := api.NewServer(rt, log, em)
+	if hostTerminals {
+		server.EnableHostTerminals()
+		log.Warn("host terminals ENABLED — uncontained operator shells on this host are reachable to authenticated operators")
+	}
 
 	httpServer := &http.Server{
 		Handler:           server.Handler(),

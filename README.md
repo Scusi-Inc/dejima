@@ -35,6 +35,7 @@ A note on "API": throughout the docs, *the Dejima API* refers to Dejima's own HT
 - **Multi-device attach** — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.
 - **Direct push to GitHub** — host credentials mounted read-only into the island; `git push` just works.
 - **API-first** — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.
+- **Host terminals (opt-in)** — resumable, separately-instanced operator shells on the daemon host itself, for server navigation/repair — the tmux+ssh painkiller. Uncontained and operator-only (`dejimad --host-terminals`); agents stay contained. See [`docs/host-terminals.md`](docs/host-terminals.md).
 
 ## Setup at a glance
 

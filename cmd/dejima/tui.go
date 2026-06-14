@@ -16,6 +16,7 @@ import (
 
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/hostterm"
 )
 
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
@@ -44,6 +45,10 @@ func runTUI(ctx context.Context) error {
 		return err
 	}
 	final := finalRaw.(tuiModel)
+	if final.connectTerminal != "" {
+		// Attach to a host terminal (uncontained shell on the daemon host).
+		return runTerminalSession(ctx, final.client, final.connectTerminal, defaultLabel())
+	}
 	if final.connectTo != "" {
 		// Use the model's client, which may have been swapped via the switcher.
 		return runConnectFromTUI(ctx, final.client, final.connectTo, final.connectAgent)
@@ -80,9 +85,13 @@ type tuiModel struct {
 	lastError    string
 	connectTo    string // set on quit-to-connect; main() acts on this
 	connectAgent string // agent id to attach to alongside connectTo ("" = primary)
-	confirm      *confirmPrompt
-	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
-	building     bool              // island image build in flight
+	// connectTerminal, when set on quit, attaches to a host terminal instead of
+	// an island (a shell on the daemon host).
+	connectTerminal string
+	terminals       []hostterm.Terminal // host terminals (empty unless the daemon enables them)
+	confirm         *confirmPrompt
+	dirtyOps        map[string]string // name → "hibernating" etc. (transient hint)
+	building        bool              // island image build in flight
 
 	help         bool            // help overlay visible
 	helpAdvanced bool            // advanced section of the help overlay expanded
@@ -118,6 +127,7 @@ func initialTUIModel(c *api.Client) tuiModel {
 
 type tickMsg time.Time
 type listMsg []api.IslandInfo
+type terminalsMsg []hostterm.Terminal
 type overviewMsg *api.OverviewResponse
 type detailMsg struct {
 	info   *api.IslandInfo
@@ -130,6 +140,11 @@ type opCompleteMsg struct {
 	err  error
 }
 type imageBuildDoneMsg struct{ err error }
+type terminalCreatedMsg struct {
+	id  string
+	err error
+}
+type terminalRemovedMsg struct{ err error }
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
@@ -156,6 +171,43 @@ func (m tuiModel) fetchOverviewCmd() tea.Cmd {
 			return errMsg{err}
 		}
 		return overviewMsg(o)
+	}
+}
+
+// fetchTerminalsCmd loads host terminals, but only once the daemon has said it
+// offers them (avoids a 403 on every poll when the feature is off).
+func (m tuiModel) fetchTerminalsCmd() tea.Cmd {
+	if !m.hostTerminalsEnabled() {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		ts, err := m.client.ListTerminals(ctx)
+		if err != nil {
+			return errMsg{err}
+		}
+		return terminalsMsg(ts)
+	}
+}
+
+func (m tuiModel) createTerminalCmd(label string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		t, err := m.client.CreateTerminal(ctx, label)
+		if err != nil {
+			return terminalCreatedMsg{err: err}
+		}
+		return terminalCreatedMsg{id: t.ID}
+	}
+}
+
+func (m tuiModel) removeTerminalCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return terminalRemovedMsg{err: m.client.DeleteTerminal(ctx, id)}
 	}
 }
 
@@ -197,7 +249,32 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if name := m.selectedName(); name != "" {
 			cmds = append(cmds, m.fetchDetailCmd(name))
 		}
+		if c := m.fetchTerminalsCmd(); c != nil {
+			cmds = append(cmds, c)
+		}
 		return m, tea.Batch(cmds...)
+
+	case terminalsMsg:
+		m.terminals = msg
+		m.lastError = ""
+		if n := m.rowCount(); m.selected >= n && n > 0 {
+			m.selected = n - 1
+		}
+		return m, nil
+
+	case terminalCreatedMsg:
+		if msg.err != nil {
+			m.lastError = msg.err.Error()
+			return m, nil
+		}
+		m.connectTerminal = msg.id // attach to the freshly created terminal
+		return m, tea.Quit
+
+	case terminalRemovedMsg:
+		if msg.err != nil {
+			m.lastError = msg.err.Error()
+		}
+		return m, m.fetchTerminalsCmd()
 
 	case listMsg:
 		m.islands = sortIslands(msg)
@@ -218,7 +295,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg != nil {
 			m.skew = versionSkew(msg.DaemonVersion, msg.APIVersion)
 		}
-		return m, nil
+		return m, m.fetchTerminalsCmd() // nil (no-op) unless host terminals are on
 
 	case detailMsg:
 		if name := m.selectedName(); msg.info != nil && msg.info.Name == name {
@@ -341,6 +418,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		return m.openCreator()
+	case "t":
+		// New host terminal (uncontained shell on the daemon host) + attach.
+		if m.hostTerminalsEnabled() {
+			return m, m.createTerminalCmd("")
+		}
 	case "s":
 		return m.openSwitcher()
 	case "j", "down":
@@ -451,7 +533,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirm = &confirmPrompt{verb: "build-image"}
 		}
 	case "d":
-		if name := m.selectedName(); name != "" {
+		if r := m.currentRow(); r.kind == rowTerminal {
+			m.confirm = &confirmPrompt{verb: "remove-terminal", agent: r.termID}
+		} else if name := m.selectedName(); name != "" {
 			m.confirm = &confirmPrompt{verb: "purge", island: name}
 		}
 	case "R":
@@ -486,6 +570,10 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			m.dirtyOps[c.island] = "removing agent"
 			return m, m.removeAgentCmd(c.island, c.agent)
+		}
+	case "remove-terminal":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			return m, m.removeTerminalCmd(c.agent) // c.agent carries the terminal id
 		}
 	case "relabel-agent":
 		// The typed text is the new label (blank clears it); no y/n gate.
@@ -571,17 +659,26 @@ func (m tuiModel) opCmd(name, verb string) tea.Cmd {
 type rowKind int
 
 const (
-	rowIsland    rowKind = iota // an island header (also the primary, when collapsed)
-	rowAgent                    // an agent under an expanded island
-	rowAddAgent                 // the "+ add agent" affordance under an expanded island
-	rowNewIsland                // the trailing "+ new island" affordance
+	rowIsland      rowKind = iota // an island header (also the primary, when collapsed)
+	rowAgent                      // an agent under an expanded island
+	rowAddAgent                   // the "+ add agent" affordance under an expanded island
+	rowNewIsland                  // the trailing "+ new island" affordance
+	rowTerminal                   // a host terminal (uncontained shell) in the Host section
+	rowNewTerminal                // the "+ new terminal" affordance
 )
 
-// treeRow is one visible line in the two-level island→agent list.
+// treeRow is one visible line in the list.
 type treeRow struct {
 	kind    rowKind
 	island  string
 	agentID string
+	termID  string // for rowTerminal
+}
+
+// hostTerminalsEnabled reports whether the daemon offers host terminals (so the
+// TUI shows the Host section). Driven by the overview capability.
+func (m tuiModel) hostTerminalsEnabled() bool {
+	return m.overview != nil && m.overview.HostTerminalsEnabled
 }
 
 // islandExpanded reports whether an island's agents are revealed. Multi-agent
@@ -627,7 +724,25 @@ func (m tuiModel) visibleRows() []treeRow {
 		}
 	}
 	rows = append(rows, treeRow{kind: rowNewIsland})
+	// Host section: operator terminals on the daemon host (uncontained). Only
+	// when the daemon enables them.
+	if m.hostTerminalsEnabled() {
+		for _, t := range m.terminals {
+			rows = append(rows, treeRow{kind: rowTerminal, termID: t.ID})
+		}
+		rows = append(rows, treeRow{kind: rowNewTerminal})
+	}
 	return rows
+}
+
+// terminalByID finds a loaded host terminal by id.
+func (m tuiModel) terminalByID(id string) (hostterm.Terminal, bool) {
+	for _, t := range m.terminals {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return hostterm.Terminal{}, false
 }
 
 // islandDisplay is the user-facing island name: its Title if set, else the slug.
@@ -679,6 +794,11 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 		return m.openCreator()
 	case rowAddAgent:
 		return m.openAgentAdder(row.island)
+	case rowTerminal:
+		m.connectTerminal = row.termID // attach in this terminal (host shell)
+		return m, tea.Quit
+	case rowNewTerminal:
+		return m, m.createTerminalCmd("")
 	}
 	name := row.island
 	if name == "" {
@@ -935,7 +1055,13 @@ func (m tuiModel) renderList(_ int) string {
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("Islands"))
 	b.WriteString("\n\n")
+	hostHeaderDone := false
 	for i, row := range m.visibleRows() {
+		// The Host section gets its own (cautionary) header before its first row.
+		if (row.kind == rowTerminal || row.kind == rowNewTerminal) && !hostHeaderDone {
+			b.WriteString("\n" + styleHeader.Render("Host") + " " + styleMuted.Render("· not contained") + "\n\n")
+			hostHeaderDone = true
+		}
 		var line string
 		switch row.kind {
 		case rowNewIsland:
@@ -945,6 +1071,11 @@ func (m tuiModel) renderList(_ int) string {
 		case rowAgent:
 			a := agentByID(byName[row.island], row.agentID)
 			line = "   └ " + agentRowText(a)
+		case rowTerminal:
+			t, _ := m.terminalByID(row.termID)
+			line = terminalRowText(t)
+		case rowNewTerminal:
+			line = styleMuted.Render("+ new terminal")
 		default: // rowIsland
 			isl, ok := byName[row.island]
 			if !ok {
@@ -1029,6 +1160,16 @@ func agentDisplayName(a api.AgentInfo) string {
 
 // agentRowText renders one agent's list line: kind glyph, name (label/type),
 // the muted id handle, then the latest signal.
+// terminalRowText renders one host-terminal row: terminal glyph, name (label or
+// id), and the muted id handle.
+func terminalRowText(t hostterm.Terminal) string {
+	name := t.Label
+	if name == "" {
+		name = t.ID
+	}
+	return fmt.Sprintf("%s %-14s %s", glyphTerminal, truncate(name, 14), styleMuted.Render(t.ID))
+}
+
 func agentRowText(a api.AgentInfo) string {
 	sig := ""
 	if a.Error != "" {
@@ -1049,6 +1190,22 @@ func (m tuiModel) renderDetail(_ int) string {
 	if m.currentRow().kind == rowAddAgent {
 		return styleTitle.Render("+ Add agent") + "\n\n" +
 			styleMuted.Render("Press ⏎ to add an agent to "+styleAccent.Render(m.selectedName())+styleMuted.Render(".\nClaude Code, Codex, a terminal, or a headless command."))
+	}
+	if m.currentRow().kind == rowNewTerminal {
+		return styleTitle.Render("+ New terminal") + "\n\n" +
+			styleMuted.Render("Press ⏎ (or ") + styleAccent.Render("t") + styleMuted.Render(") to open a shell ") +
+			styleErrored.Render("on the daemon host — NOT contained") + styleMuted.Render(".\nResumable; reattach anytime.")
+	}
+	if r := m.currentRow(); r.kind == rowTerminal {
+		t, _ := m.terminalByID(r.termID)
+		name := t.Label
+		if name == "" {
+			name = t.ID
+		}
+		return styleTitle.Render("Host terminal · "+name) + "\n\n" +
+			styleErrored.Render("⚠ A shell on the daemon host — NOT contained.") + "\n\n" +
+			styleMuted.Render(fmt.Sprintf("id:        %s\n", t.ID)) +
+			styleMuted.Render("Press ⏎ to attach (resumes the live session); [d] to close.")
 	}
 	if m.detail == nil {
 		if name := m.selectedName(); name != "" {
@@ -1265,6 +1422,7 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n")
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
+		{"t", "new host terminal — an uncontained shell on the daemon host (if enabled)"},
 		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
@@ -1363,6 +1521,9 @@ func (m tuiModel) renderConfirm() string {
 	case "purge":
 		prompt = fmt.Sprintf("DESTROY %q (including all volumes). Type the island name to confirm: %s",
 			c.island, c.answer)
+	case "remove-terminal":
+		prompt = fmt.Sprintf("Close host terminal %s (kills the shell on the daemon host)? Type 'y' and press Enter: %s",
+			c.agent, c.answer)
 	case "relabel-agent":
 		prompt = fmt.Sprintf("Rename agent %s (blank clears the label). Type a name and press Enter: %s",
 			c.agent, c.answer)

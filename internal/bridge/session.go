@@ -45,7 +45,11 @@ func ExecPTY(ctx context.Context, dockerBin, container string, cmd []string, row
 		dockerBin = "docker"
 	}
 	args := append([]string{"exec", "-it", container}, cmd...)
-	c := exec.CommandContext(ctx, dockerBin, args...)
+	return startPTY(exec.CommandContext(ctx, dockerBin, args...), rows, cols)
+}
+
+// startPTY starts c against a host PTY, sized to rows/cols when both are non-zero.
+func startPTY(c *exec.Cmd, rows, cols uint16) (*PTYSession, error) {
 	var (
 		ptyFile *os.File
 		err     error
@@ -59,6 +63,23 @@ func ExecPTY(ctx context.Context, dockerBin, container string, cmd []string, row
 		return nil, fmt.Errorf("pty start: %w", err)
 	}
 	return &PTYSession{cmd: c, pty: ptyFile}, nil
+}
+
+// HostPTY starts cmd directly on the daemon host against a PTY — the operator
+// host-terminal path (no container). Mirrors ExecPTY without the docker wrapper.
+// This runs UNCONTAINED on the daemon host; it is gated to operators only and
+// must never be reachable by an island token (see internal/api/tokenauth.go).
+func HostPTY(ctx context.Context, cmd []string, rows, cols uint16) (*PTYSession, error) {
+	if len(cmd) == 0 {
+		return nil, fmt.Errorf("host pty: empty command")
+	}
+	return startPTY(exec.CommandContext(ctx, cmd[0], cmd[1:]...), rows, cols)
+}
+
+// AttachToHostTmux attaches (creating if absent) to a tmux session on the daemon
+// host — the operator host-terminal equivalent of AttachToTmux.
+func AttachToHostTmux(ctx context.Context, tmuxSession string, rows, cols uint16) (*PTYSession, error) {
+	return HostPTY(ctx, []string{"tmux", "new-session", "-A", "-s", tmuxSession}, rows, cols)
 }
 
 // Wait reaps the underlying `docker exec` and returns its exit code. Call it
@@ -106,8 +127,24 @@ func MaxClientSize(ctx context.Context, dockerBin, container, tmuxSession string
 	if err != nil {
 		return 0, 0, false
 	}
+	return parseMaxClientSize(string(out))
+}
+
+// HostMaxClientSize is MaxClientSize for a tmux session on the daemon host.
+func HostMaxClientSize(ctx context.Context, tmuxSession string) (rows, cols uint16, ok bool) {
+	out, err := exec.CommandContext(ctx, "tmux", "list-clients", "-t", tmuxSession,
+		"-F", "#{client_height} #{client_width}").Output()
+	if err != nil {
+		return 0, 0, false
+	}
+	return parseMaxClientSize(string(out))
+}
+
+// parseMaxClientSize returns the largest height/width across `tmux list-clients`
+// output lines ("<height> <width>" per client); ok is false if none parse.
+func parseMaxClientSize(out string) (rows, cols uint16, ok bool) {
 	var maxH, maxW uint16
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		f := strings.Fields(line)
 		if len(f) != 2 {
 			continue

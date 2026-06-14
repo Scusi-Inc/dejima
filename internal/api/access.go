@@ -192,11 +192,12 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := OverviewResponse{
-		TotalIslands:    len(projects),
-		DaemonStartedAt: s.startedAt,
-		IslandImage:     DefaultImage,
-		DaemonVersion:   version.Version,
-		APIVersion:      version.APIVersion,
+		TotalIslands:         len(projects),
+		DaemonStartedAt:      s.startedAt,
+		IslandImage:          DefaultImage,
+		HostTerminalsEnabled: s.hostTerminals,
+		DaemonVersion:        version.Version,
+		APIVersion:           version.APIVersion,
 	}
 	if s.events != nil {
 		out.WebhookCount = len(s.events.List())
