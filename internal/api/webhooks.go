@@ -74,6 +74,13 @@ func (s *Server) handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errMissingType)
 		return
 	}
+	// A token-authenticated caller (the in-island notify hooks) may only emit for
+	// its own island: override whatever the body claims with the token's island,
+	// so one island can't spoof another's telemetry. Trusted callers (operator
+	// socket / tailnet) carry no token island and keep the body's value.
+	if island := TokenIslandFromContext(r.Context()); island != "" {
+		req.Island = island
+	}
 	s.emit(events.Event{
 		Type:    req.Type,
 		Island:  req.Island,

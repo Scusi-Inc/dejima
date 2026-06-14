@@ -223,6 +223,9 @@ func (d *Docker) CreateContainer(ctx context.Context, req CreateRequest) (string
 	for k, v := range req.Labels {
 		args = append(args, "--label", k+"="+v)
 	}
+	for _, h := range req.ExtraHosts {
+		args = append(args, "--add-host", h)
+	}
 	for _, vol := range req.Volumes {
 		args = append(args, "-v", fmt.Sprintf("%s:%s", vol.Name, vol.Target))
 	}

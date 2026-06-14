@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# Codex CLI hook script: posts agent events to dejimad over its Unix socket.
+# Codex CLI hook: posts agent events to dejimad over the token-authenticated,
+# host-internal TCP path (DEJIMA_HOST + per-island DEJIMA_TOKEN).
 #
 # Installed at $HOME/.codex/hooks/dejima-notify.sh by image/agents/codex/init.sh
 # and wired into $HOME/.codex/config.toml via the top-level `notify` key.
 #
-# Codex invokes the configured notify command with a single argument: a JSON
-# blob describing the event (see Codex docs, "notifications"). The canonical
-# event we care about today is `agent-turn-complete`; anything else gets
-# forwarded with a `agent.codex.<type>` event name so the daemon (and any
-# webhook subscribers) can see it without us having to teach this script every
-# possible Codex type.
+# Codex invokes the notify command with one argument: a JSON blob describing the
+# event. The canonical event is `agent-turn-complete`; anything else is forwarded
+# as `agent.codex.<type>` so the daemon (and webhook subscribers) can see it.
 #
-# Trust model is the same as the Claude hook: anyone with access to the
-# socket inside the container can spoof; that boundary is the agent itself.
+# The token is per-island and island-scoped (internal/api/tokenauth.go): the
+# daemon attributes the event to the token's island, so this hook can only emit
+# for its own island. Best-effort: no-ops when the autonomy path isn't set.
 
 set -euo pipefail
 
-SOCKET="${DEJIMA_SOCKET:-/run/dejima/dejimad.sock}"
+HOST="${DEJIMA_HOST:-}"
+TOKEN="${DEJIMA_TOKEN:-}"
 ISLAND="${DEJIMA_PROJECT_NAME:-unknown}"
 AGENT="${DEJIMA_AGENT_ID:-}"
 payload_json="${1:-{}}"
 
-if [[ ! -S "$SOCKET" ]]; then
+if [[ -z "$HOST" || -z "$TOKEN" ]]; then
     exit 0
 fi
 
@@ -41,7 +41,7 @@ body=$(jq -n \
     '{island: $island, agent: $agent, type: $type, payload: $payload}')
 
 curl --silent --show-error --max-time 3 \
-     --unix-socket "$SOCKET" \
+     -H "Authorization: Bearer ${TOKEN}" \
      -H "Content-Type: application/json" \
-     -X POST "http://dejimad/v1/internal/agent-event" \
+     -X POST "http://${HOST}/v1/internal/agent-event" \
      -d "$body" || true

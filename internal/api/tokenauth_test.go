@@ -94,6 +94,10 @@ func TestAuthorizeTokenMatrix(t *testing.T) {
 		// Reachability probe: any island token.
 		{"healthz any", "proj", "GET /v1/healthz", "/v1/healthz", false},
 
+		// Telemetry: any valid token may emit agent-event; the handler pins the
+		// event to the token's island, so this can't spoof another island.
+		{"agent-event any", "proj", "POST /v1/internal/agent-event", "/v1/internal/agent-event", false},
+
 		// Own-island autonomy surface.
 		{"intake own", "proj", "POST /v1/islands/{name}/port/intake", "/v1/islands/proj/port/intake", false},
 		{"write own", "proj", "POST /v1/islands/{name}/port/write", "/v1/islands/proj/port/write", false},
@@ -163,6 +167,7 @@ func TestTokenAuthMiddleware(t *testing.T) {
 	mux.HandleFunc("GET /v1/healthz", sentinel)
 	mux.HandleFunc("POST /v1/islands", sentinel)
 	mux.HandleFunc("POST /v1/islands/{name}/port/intake", sentinel)
+	mux.HandleFunc("POST /v1/internal/agent-event", sentinel)
 
 	s := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	h := s.tokenAuth(mux)
@@ -219,6 +224,22 @@ func TestTokenAuthMiddleware(t *testing.T) {
 	t.Run("home token can create", func(t *testing.T) {
 		if w := do("POST", "/v1/islands", homeTok); w.Code != http.StatusTeapot {
 			t.Fatalf("code=%d want 418 (handler reached)", w.Code)
+		}
+	})
+	t.Run("agent-event needs a token", func(t *testing.T) {
+		if w := do("POST", "/v1/internal/agent-event", ""); w.Code != http.StatusUnauthorized {
+			t.Fatalf("code=%d want 401", w.Code)
+		}
+	})
+	t.Run("agent-event reaches handler with the token's island in ctx", func(t *testing.T) {
+		// This is the anti-spoof property: whatever island the body claims,
+		// handleAgentEvent attributes the event to gotIsland (the token's).
+		w := do("POST", "/v1/internal/agent-event", projTok)
+		if w.Code != http.StatusTeapot {
+			t.Fatalf("code=%d want 418 (handler reached)", w.Code)
+		}
+		if gotIsland != "proj" {
+			t.Fatalf("ctx island=%q want proj", gotIsland)
 		}
 	})
 }

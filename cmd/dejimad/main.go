@@ -66,6 +66,11 @@ func main() {
 	}
 }
 
+// defaultTokenAddr is the loopback bind for the in-island token listener when
+// the operator doesn't set --token-tcp. It's on by default because the control
+// socket is no longer mounted into containers — this is the only in-island path.
+const defaultTokenAddr = "127.0.0.1:7274"
+
 func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string) error {
 	socketPath, err := paths.SocketPath()
 	if err != nil {
@@ -106,24 +111,32 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string) err
 	// DEJIMA_HOST/DEJIMA_TOKEN. The bind must be host-internal (loopback,
 	// reachable via host.docker.internal) — never a wildcard/LAN address: the
 	// token authorizes, the bind limits exposure.
+	// On by default (loopback): an explicit --token-tcp that fails to bind is
+	// fatal, but a failure of the default is best-effort — telemetry/autonomy
+	// degrade to a no-op rather than bricking the daemon (e.g. on a port clash).
+	tokenExplicit := tokenAddr != ""
+	if tokenAddr == "" {
+		tokenAddr = defaultTokenAddr
+	}
 	var tokenSrv *http.Server
 	var tokenLn net.Listener
-	if tokenAddr != "" {
-		if err := assertHostInternalBind(log, tokenAddr); err != nil {
-			return err
+	if err := assertHostInternalBind(log, tokenAddr); err != nil {
+		return err
+	}
+	dial := autonomyDial
+	if dial == "" {
+		_, port, splitErr := net.SplitHostPort(tokenAddr)
+		if splitErr != nil {
+			return fmt.Errorf("parse token-tcp addr %q: %w", tokenAddr, splitErr)
 		}
-		dial := autonomyDial
-		if dial == "" {
-			_, port, splitErr := net.SplitHostPort(tokenAddr)
-			if splitErr != nil {
-				return fmt.Errorf("parse --token-tcp %q: %w", tokenAddr, splitErr)
-			}
-			dial = "host.docker.internal:" + port
-		}
-		tokenLn, err = net.Listen("tcp", tokenAddr)
-		if err != nil {
+		dial = "host.docker.internal:" + port
+	}
+	if tokenLn, err = net.Listen("tcp", tokenAddr); err != nil {
+		if tokenExplicit {
 			return fmt.Errorf("token-tcp listen %s: %w", tokenAddr, err)
 		}
+		log.Warn("default token listener bind failed; in-island telemetry/autonomy disabled (set --token-tcp to choose another address)", "addr", tokenAddr, "err", err)
+	} else {
 		defer tokenLn.Close()
 		tokenSrv = &http.Server{
 			Handler:           server.TokenAuthHandler(),
