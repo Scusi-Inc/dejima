@@ -272,6 +272,23 @@ func daemonUpdateAvailable(latest string, o *api.OverviewResponse) bool {
 	return selfupdate.Evaluate(o.DaemonVersion, latest, selfupdate.ModeSource).UpdateAvailable
 }
 
+// clientUpdatedMsg is the result of an in-TUI client self-update.
+type clientUpdatedMsg struct {
+	version string
+	err     error
+}
+
+// applyClientUpdateCmd downloads + verifies + replaces this binary (release
+// installs only). Network IO, so it runs as a command off the UI loop.
+func applyClientUpdateCmd(ver string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		err := selfupdate.ApplyReleaseSelf(ctx, ver, io.Discard)
+		return clientUpdatedMsg{version: ver, err: err}
+	}
+}
+
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -348,6 +365,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.latestRelease = msg.latest
 			m.clientUpdate = selfupdate.Evaluate(version.Version, msg.latest, selfupdate.DetectMode()).UpdateAvailable
 			m.daemonUpdate = daemonUpdateAvailable(msg.latest, m.overview)
+		}
+		return m, nil
+
+	case clientUpdatedMsg:
+		if msg.err != nil {
+			m.lastError = "client update failed: " + msg.err.Error()
+		} else {
+			m.clientUpdate = false
+			m.lastNotice = "updated client to " + msg.version + " — restart dejima to run the new version"
 		}
 		return m, nil
 
@@ -617,6 +643,19 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.confirm = &confirmPrompt{verb: "setup-ssh"}
 		return m, nil
+	case "U":
+		// Update Dejima itself (distinct from lowercase 'u' = upgrade an island).
+		switch {
+		case m.clientUpdate:
+			m.confirm = &confirmPrompt{verb: "update-client"}
+		case m.daemonUpdate:
+			// Daemon self-update lands in the next slice (admin endpoint); until
+			// then point at the command on the daemon host.
+			m.lastNotice = "daemon is behind — run `dejima update --apply` on the daemon host (in-TUI daemon update coming)"
+		default:
+			m.lastNotice = "already up to date"
+		}
+		return m, nil
 	case "R":
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd())
 	}
@@ -665,6 +704,10 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	case "setup-ssh":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			return m.setupAccountSSH()
+		}
+	case "update-client":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			return m, applyClientUpdateCmd(m.latestRelease)
 		}
 	}
 	return m, nil
@@ -1074,7 +1117,11 @@ func (m tuiModel) renderUpdateBanner() string {
 	if m.daemonUpdate && m.overview != nil {
 		parts = append(parts, fmt.Sprintf("daemon %s→%s", m.overview.DaemonVersion, m.latestRelease))
 	}
-	msg := " ⬆ update available: " + strings.Join(parts, " · ") + "   ·   run: dejima update "
+	action := "run: dejima update"
+	if m.clientUpdate {
+		action = "[U] update" // client self-update is wired; daemon points at the command
+	}
+	msg := " ⬆ update available: " + strings.Join(parts, " · ") + "   ·   " + action + " "
 	if w := m.width - 2; w > 0 {
 		return styleWaiting.Width(w).Render(msg)
 	}
@@ -1726,6 +1773,9 @@ func (m tuiModel) renderConfirm() string {
 	case "setup-ssh":
 		prompt = fmt.Sprintf("Authorize this machine's SSH key for ALL islands and add ~/.ssh/config entries for VS Code/Cursor? Type 'y' and Enter: %s",
 			c.answer)
+	case "update-client":
+		prompt = fmt.Sprintf("Download %s and replace this dejima binary (verified against the release checksums)? Type 'y' and Enter: %s",
+			m.latestRelease, c.answer)
 	}
 	return styleErrored.Render("┌── ") + prompt + styleErrored.Render(" ──┐")
 }

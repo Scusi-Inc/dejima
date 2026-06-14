@@ -24,8 +24,8 @@ func newUpdateCmd() *cobra.Command {
 			"With --apply on a *source* install, it fast-forwards your checkout and reinstalls\n" +
 			"(git pull --ff-only && make install && dejima service restart). --apply alone is a\n" +
 			"dry run; add --yes to execute. A dirty or diverged tree is refused.\n\n" +
-			"Release (binary) installs print manual steps; automatic binary replacement is not\n" +
-			"wired yet (it needs signed-artifact verification).",
+			"With --apply --yes on a *release* (binary) install, it downloads the latest release,\n" +
+			"verifies it against the release SHA256SUMS, and replaces this binary in place.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := selfupdate.Check(cmd.Context())
 			if err != nil {
@@ -52,9 +52,17 @@ func newUpdateCmd() *cobra.Command {
 
 			// --apply path.
 			if st.Mode == selfupdate.ModeRelease {
-				fmt.Println("\nautomatic apply for release installs isn't supported yet (it needs")
-				fmt.Println("signed-artifact verification). update manually with:")
-				fmt.Printf("  %s\n", selfupdate.ManualSteps(st.Mode))
+				// Release install: download the new binary, verify it against the
+				// release SHA256SUMS, and replace this executable in place.
+				if !yes {
+					fmt.Printf("\nwould download %s and replace this binary (%s). re-run with --yes to apply.\n",
+						st.Latest, selfExe())
+					return nil
+				}
+				if err := selfupdate.ApplyReleaseSelf(cmd.Context(), st.Latest, cmd.OutOrStdout()); err != nil {
+					return fmt.Errorf("apply update: %w", err)
+				}
+				fmt.Println("done — restart any running `dejima` to pick up the new version.")
 				return nil
 			}
 			dir := source
@@ -74,6 +82,14 @@ func newUpdateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "with --apply, actually execute (otherwise it's a dry run)")
 	cmd.Flags().StringVar(&source, "source", "", "path to the dejima checkout (default: found from the current directory)")
 	return cmd
+}
+
+// selfExe returns the running binary's path for display, or "this binary".
+func selfExe() string {
+	if p, err := os.Executable(); err == nil {
+		return p
+	}
+	return "this binary"
 }
 
 func dryRunSuffix(execute bool) string {
