@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/paths"
 )
 
@@ -503,6 +504,59 @@ func (c *Client) DialAgentSession(ctx context.Context, name, agentID, label stri
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dial session: %w", err)
+	}
+	return conn, nil
+}
+
+// ListTerminals returns the daemon's host terminals.
+func (c *Client) ListTerminals(ctx context.Context) ([]hostterm.Terminal, error) {
+	var out TerminalsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/terminals", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Terminals, nil
+}
+
+// CreateTerminal creates a host terminal with an optional label.
+func (c *Client) CreateTerminal(ctx context.Context, label string) (*hostterm.Terminal, error) {
+	var out hostterm.Terminal
+	if err := c.do(ctx, http.MethodPost, "/v1/terminals", CreateTerminalRequest{Label: label}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteTerminal removes a host terminal (and kills its tmux session).
+func (c *Client) DeleteTerminal(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/terminals/"+url.PathEscape(id), nil, nil)
+}
+
+// RelabelTerminal renames a host terminal.
+func (c *Client) RelabelTerminal(ctx context.Context, id, label string) (*hostterm.Terminal, error) {
+	var out hostterm.Terminal
+	if err := c.do(ctx, http.MethodPatch, "/v1/terminals/"+url.PathEscape(id), RelabelTerminalRequest{Label: label}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DialTerminalSession opens a websocket against a host terminal's session.
+func (c *Client) DialTerminalSession(ctx context.Context, id, label string) (*websocket.Conn, error) {
+	q := url.Values{}
+	if label != "" {
+		q.Set("label", label)
+	}
+	wsBase := c.base
+	if len(wsBase) > 4 && wsBase[:4] == "http" {
+		wsBase = "ws" + wsBase[4:]
+	}
+	wsURL := wsBase + "/v1/terminals/" + url.PathEscape(id) + "/session"
+	if encoded := q.Encode(); encoded != "" {
+		wsURL += "?" + encoded
+	}
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: c.httpc})
+	if err != nil {
+		return nil, fmt.Errorf("dial terminal session: %w", err)
 	}
 	return conn, nil
 }
