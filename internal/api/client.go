@@ -161,13 +161,14 @@ func (c *Client) DeleteGitHubIdentity(ctx context.Context, name string) error {
 }
 
 // ListGitHubRepos lists repositories the identity can access, fetched daemon-side
-// so a client without its own gh can still browse.
-func (c *Client) ListGitHubRepos(ctx context.Context, name string) ([]githubid.Repo, error) {
+// so a client without its own gh can still browse. capped is true when the
+// identity sees more repos than the single page returned.
+func (c *Client) ListGitHubRepos(ctx context.Context, name string) (repos []githubid.Repo, capped bool, err error) {
 	var out GitHubReposResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/credentials/github/"+url.PathEscape(name)+"/repos", nil, &out); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return out.Repos, nil
+	return out.Repos, out.Capped, nil
 }
 
 // Health returns nil if dejimad is reachable and healthy.

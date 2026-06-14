@@ -92,6 +92,11 @@ type Server struct {
 	// token (tokenauth default-deny).
 	hostTerminals bool
 
+	// reposFetch resolves the repositories an identity can browse. It defaults to
+	// githubid.ListRepos (a live GitHub call); tests inject a stub so the handler
+	// can be covered without reaching GitHub.
+	reposFetch func(ctx context.Context, id githubid.Identity, limit int) (githubid.RepoList, error)
+
 	startedAt time.Time
 }
 
@@ -141,6 +146,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		agentErrors: map[string]agentErrInfo{},
 		events_:     map[string][]events.Event{},
 		eventsCap:   50,
+		reposFetch:  githubid.ListRepos,
 		startedAt:   time.Now().UTC(),
 	}
 }
@@ -543,12 +549,12 @@ func (s *Server) handleGitHubRepos(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", r.PathValue("name")))
 		return
 	}
-	repos, err := githubid.ListRepos(r.Context(), id, 100)
+	res, err := s.reposFetch(r.Context(), id, 100)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, fmt.Errorf("list github repos: %w", err))
 		return
 	}
-	writeJSON(w, http.StatusOK, GitHubReposResponse{Repos: repos})
+	writeJSON(w, http.StatusOK, GitHubReposResponse{Repos: res.Repos, Capped: res.Capped})
 }
 
 func (s *Server) listIslands(w http.ResponseWriter, r *http.Request) {

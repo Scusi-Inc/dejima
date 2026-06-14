@@ -228,8 +228,11 @@ type PutGitHubIdentityRequest struct {
 }
 
 // GitHubReposResponse is the body of GET /v1/credentials/github/:name/repos.
+// Capped is true when the identity can see more repos than the single page
+// returned, so the browser can say "showing the first N".
 type GitHubReposResponse struct {
-	Repos []githubid.Repo `json:"repos"`
+	Repos  []githubid.Repo `json:"repos"`
+	Capped bool            `json:"capped,omitempty"`
 }
 
 // PortScopeRequest is the body of POST /v1/islands/:name/port/scopes.

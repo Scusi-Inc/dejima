@@ -21,6 +21,14 @@ type Repo struct {
 	Private       bool   `json:"private"`
 }
 
+// RepoList is a page of repositories plus whether the identity can see more
+// than the page returned (the GitHub API advertises a next page via a Link
+// header). Capped lets the UI say "showing the first N" honestly.
+type RepoList struct {
+	Repos  []Repo `json:"repos"`
+	Capped bool   `json:"capped"`
+}
+
 // apiBase returns the REST API root for a GitHub host: api.github.com for the
 // public host, /api/v3 for a GitHub Enterprise host.
 func apiBase(host string) string {
@@ -35,11 +43,11 @@ func apiBase(host string) string {
 // or org member), most-recently-pushed first, capped at limit (default/max 100,
 // a single API page). The daemon owns this call so any client device — even one
 // without gh — can browse before an island exists.
-func ListRepos(ctx context.Context, id Identity, limit int) ([]Repo, error) {
+func ListRepos(ctx context.Context, id Identity, limit int) (RepoList, error) {
 	return listRepos(ctx, apiBase(id.Host), id.Token, limit)
 }
 
-func listRepos(ctx context.Context, base, token string, limit int) ([]Repo, error) {
+func listRepos(ctx context.Context, base, token string, limit int) (RepoList, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
@@ -49,7 +57,7 @@ func listRepos(ctx context.Context, base, token string, limit int) ([]Repo, erro
 	q.Set("affiliation", "owner,collaborator,organization_member")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/user/repos?"+q.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return RepoList{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -57,12 +65,12 @@ func listRepos(ctx context.Context, base, token string, limit int) ([]Repo, erro
 
 	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {
-		return nil, err
+		return RepoList{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("github api %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return RepoList{}, fmt.Errorf("github api %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var raw []struct {
 		FullName    string `json:"full_name"`
@@ -71,11 +79,14 @@ func listRepos(ctx context.Context, base, token string, limit int) ([]Repo, erro
 		Private     bool   `json:"private"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("decode github repos: %w", err)
+		return RepoList{}, fmt.Errorf("decode github repos: %w", err)
 	}
 	out := make([]Repo, len(raw))
 	for i, r := range raw {
 		out[i] = Repo{NameWithOwner: r.FullName, URL: r.CloneURL, Description: r.Description, Private: r.Private}
 	}
-	return out, nil
+	// GitHub advertises further pages with a Link header carrying rel="next".
+	// Its presence means the identity sees more repos than this single page.
+	capped := strings.Contains(resp.Header.Get("Link"), `rel="next"`)
+	return RepoList{Repos: out, Capped: capped}, nil
 }

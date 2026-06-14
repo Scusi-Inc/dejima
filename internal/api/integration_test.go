@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -68,6 +69,66 @@ func TestHostTerminalsAPI(t *testing.T) {
 	}
 	if rr := do(t, h, http.MethodDelete, "/v1/terminals/t1", ""); rr.Code != http.StatusNotFound {
 		t.Errorf("delete missing: %d, want 404", rr.Code)
+	}
+}
+
+// TestGitHubReposHandler covers the repos handler at the HTTP layer: identity
+// resolution, the Capped passthrough, unknown-identity 404, and upstream-error
+// 502. The live GitHub call is replaced via the reposFetch seam; the HTTP/
+// base-URL layer itself is covered in internal/githubid/repos_test.go.
+func TestGitHubReposHandler(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := githubid.Update(func(s *githubid.Store) error {
+		s.Put(githubid.Identity{Name: "work", Login: "octocat", Token: "tok"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeRuntime{status: runtime.StatusRunning}
+	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	var gotName string
+	srv.reposFetch = func(_ context.Context, id githubid.Identity, _ int) (githubid.RepoList, error) {
+		gotName = id.Name
+		if id.Token != "tok" {
+			t.Errorf("handler passed token %q, want tok", id.Token)
+		}
+		return githubid.RepoList{
+			Repos:  []githubid.Repo{{NameWithOwner: "octocat/app", URL: "https://x/app.git"}},
+			Capped: true,
+		}, nil
+	}
+	h := srv.Handler()
+
+	rr := do(t, h, http.MethodGet, "/v1/credentials/github/work/repos", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("repos: %d %s", rr.Code, rr.Body.String())
+	}
+	if gotName != "work" {
+		t.Errorf("resolved identity = %q, want work", gotName)
+	}
+	var resp GitHubReposResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Repos) != 1 || resp.Repos[0].NameWithOwner != "octocat/app" {
+		t.Errorf("repos = %+v", resp.Repos)
+	}
+	if !resp.Capped {
+		t.Error("Capped should pass through from the fetch result")
+	}
+
+	// Unknown identity → 404.
+	if rr := do(t, h, http.MethodGet, "/v1/credentials/github/nope/repos", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("unknown identity: %d, want 404", rr.Code)
+	}
+
+	// Upstream failure → 502.
+	srv.reposFetch = func(context.Context, githubid.Identity, int) (githubid.RepoList, error) {
+		return githubid.RepoList{}, fmt.Errorf("github api 401")
+	}
+	if rr := do(t, h, http.MethodGet, "/v1/credentials/github/work/repos", ""); rr.Code != http.StatusBadGateway {
+		t.Errorf("upstream error: %d, want 502", rr.Code)
 	}
 }
 

@@ -120,6 +120,44 @@ func TestNextAgentID(t *testing.T) {
 	}
 }
 
+func TestSetPrimaryID(t *testing.T) {
+	t.Run("renames primary id and derives tmux", func(t *testing.T) {
+		p := &Project{Name: "Port", Agents: []AgentSpec{
+			{ID: "a1", Tmux: "agent-a1"},
+			{ID: "a2", Tmux: "agent-a2"},
+		}}
+		p.SetPrimaryID("p1")
+		if p.Agents[0].ID != "p1" {
+			t.Errorf("primary id = %q, want p1", p.Agents[0].ID)
+		}
+		if p.Agents[0].Tmux != "agent-p1" {
+			t.Errorf("primary tmux = %q, want agent-p1", p.Agents[0].Tmux)
+		}
+		if p.Agents[1].ID != "a2" || p.Agents[1].Tmux != "agent-a2" {
+			t.Errorf("non-primary agent mutated: %+v", p.Agents[1])
+		}
+	})
+
+	t.Run("headless primary with no tmux keeps tmux empty", func(t *testing.T) {
+		p := &Project{Name: "Home", Agents: []AgentSpec{{ID: "a1", Tmux: ""}}}
+		p.SetPrimaryID("h1")
+		if p.Agents[0].ID != "h1" {
+			t.Errorf("primary id = %q, want h1", p.Agents[0].ID)
+		}
+		if p.Agents[0].Tmux != "" {
+			t.Errorf("tmux = %q, want empty (headless gets no session)", p.Agents[0].Tmux)
+		}
+	})
+
+	t.Run("no agents is a no-op", func(t *testing.T) {
+		p := &Project{Name: "Empty"}
+		p.SetPrimaryID("e1") // must not panic
+		if len(p.Agents) != 0 {
+			t.Errorf("agents grew to %d", len(p.Agents))
+		}
+	})
+}
+
 func TestAddRemoveAgent(t *testing.T) {
 	p := &Project{Agents: []AgentSpec{{ID: "a1"}}}
 	p.AddAgent(AgentSpec{ID: "a2"})

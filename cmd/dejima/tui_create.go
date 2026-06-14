@@ -73,6 +73,7 @@ type creatorModel struct {
 	ghIdentCur   int
 	ghRepos      []githubid.Repo
 	ghRepoCur    int
+	ghCapped     bool // identity sees more repos than the page we fetched
 	ghLoading    bool
 	ghHint       string // shown when the daemon has no identities
 
@@ -111,8 +112,9 @@ type ghIdentitiesMsg struct {
 	err        error
 }
 type ghReposMsg struct {
-	repos []githubid.Repo
-	err   error
+	repos  []githubid.Repo
+	capped bool
+	err    error
 }
 
 // --- entry / commands -----------------------------------------------------
@@ -434,8 +436,8 @@ func (c *creatorModel) ghReposCmd(identity string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		repos, err := client.ListGitHubRepos(ctx, identity)
-		return ghReposMsg{repos: repos, err: err}
+		repos, capped, err := client.ListGitHubRepos(ctx, identity)
+		return ghReposMsg{repos: repos, capped: capped, err: err}
 	}
 }
 
@@ -469,6 +471,7 @@ func (c *creatorModel) onGhRepos(msg ghReposMsg) {
 		return
 	}
 	c.ghRepos = msg.repos
+	c.ghCapped = msg.capped
 	if c.ghRepoCur >= len(c.ghRepos) {
 		c.ghRepoCur = 0
 	}
@@ -828,7 +831,13 @@ func (c *creatorModel) viewGitHub(b *strings.Builder) {
 		c.writeChoice(b, i == c.ghRepoCur, line)
 	}
 	if end < len(c.ghRepos) || start > 0 {
-		b.WriteString(styleMuted.Render(fmt.Sprintf("  … %d–%d of %d\n", start+1, end, len(c.ghRepos))))
+		total := fmt.Sprintf("%d", len(c.ghRepos))
+		if c.ghCapped {
+			total = fmt.Sprintf("first %d (more exist — refine on GitHub)", len(c.ghRepos))
+		}
+		b.WriteString(styleMuted.Render(fmt.Sprintf("  … %d–%d of %s\n", start+1, end, total)))
+	} else if c.ghCapped {
+		b.WriteString(styleMuted.Render(fmt.Sprintf("  showing the first %d — more exist (refine on GitHub)\n", len(c.ghRepos))))
 	}
 	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [esc] back"))
 }

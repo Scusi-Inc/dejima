@@ -35,18 +35,38 @@ func TestListReposParsesAndAuthenticates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	repos, err := listRepos(context.Background(), srv.URL, "tok123", 50)
+	res, err := listRepos(context.Background(), srv.URL, "tok123", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(repos) != 2 {
-		t.Fatalf("want 2 repos, got %d", len(repos))
+	if len(res.Repos) != 2 {
+		t.Fatalf("want 2 repos, got %d", len(res.Repos))
 	}
-	if repos[0].NameWithOwner != "me/app" || repos[0].URL != "https://github.com/me/app.git" || !repos[0].Private {
-		t.Errorf("repo[0] mismapped: %+v", repos[0])
+	if res.Capped {
+		t.Error("Capped should be false when there's no next-page Link header")
 	}
-	if repos[1].Private {
-		t.Errorf("repo[1] should be public: %+v", repos[1])
+	if res.Repos[0].NameWithOwner != "me/app" || res.Repos[0].URL != "https://github.com/me/app.git" || !res.Repos[0].Private {
+		t.Errorf("repo[0] mismapped: %+v", res.Repos[0])
+	}
+	if res.Repos[1].Private {
+		t.Errorf("repo[1] should be public: %+v", res.Repos[1])
+	}
+}
+
+func TestListReposReportsCappedFromLinkHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", `<https://api.github.com/user/repos?page=2>; rel="next", `+
+			`<https://api.github.com/user/repos?page=5>; rel="last"`)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"full_name":"me/app","clone_url":"https://x/app.git"}]`))
+	}))
+	defer srv.Close()
+	res, err := listRepos(context.Background(), srv.URL, "tok", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Capped {
+		t.Error("Capped should be true when a rel=\"next\" Link is present")
 	}
 }
 
