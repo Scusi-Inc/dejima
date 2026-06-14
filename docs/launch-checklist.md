@@ -74,9 +74,9 @@ area. Keep it honest: update the status as coverage changes.
 
 - [ ] New island primary id uses the island letter (`Port`→`p1`); added agents continue (`p2`,`p3`). **A**
 - [ ] Legacy islands keep `a1` (EnsureAgents back-fill, no live-session rename). **A**
-- [ ] `SetPrimaryID` unit-covered (rename + tmux derive, no-op cases). **!** (task #7)
+- [x] `SetPrimaryID` unit-covered (rename + tmux derive, no-op cases). **A** (task #7)
 - [ ] List rows lead with the name (label, or id when unlabeled); detail view shows the id handle. **A**
-- [ ] Duplicate labels don't render two identical rows. **!** (task #10)
+- [x] Duplicate labels don't render two identical rows (id handle appended). **A** (task #10)
 
 ## 6. Sessions & multi-device
 
@@ -113,14 +113,14 @@ area. Keep it honest: update the status as coverage changes.
 - [ ] `auth status` lists identities (login@host, default marker) — never tokens. **A** (no-leak) / **M**
 - [ ] `GET/PUT/DELETE /v1/credentials/github` CRUD; list omits tokens. **A**
 - [ ] Identity store is atomic + locked (no lost updates / torn reads under concurrency). **A**
-- [ ] Repo browse via daemon (`/repos`) works from a device with no gh; Enterprise host via `/api/v3`. **A** (client) / **M** (live)
+- [x] Repo browse via daemon (`/repos`) works from a device with no gh; Enterprise host via `/api/v3`. **A** (handler + client) / **M** (live)
 - [ ] Create with `--github-identity` / TUI picker; unknown identity → 400; empty → default → host gh fallback. **A**
-- [ ] Chosen identity materializes one `hosts.yml` mounted at `/opt/host/gh-config`; **git push inside the container actually authenticates as it**. **!** (task #3, live)
+- [ ] Chosen identity materializes one `hosts.yml` mounted at `/opt/host/gh-config`; **git push inside the container actually authenticates as it**. **!** (task #3, live — see §L2)
 - [ ] Per-island token removed on island delete. **A**
-- [ ] Deleting an identity an island uses warns rather than silently changing/losing auth. **!** (task #4)
-- [ ] `auth push --github` token is validated before storing. **!** (task #5)
-- [ ] Repo browser indicates when the list is capped (100). **!** (task #9)
-- [ ] Enterprise host seedable via `auth push --github --host`. **!** (task #8)
+- [x] Deleting an identity an island uses warns rather than silently changing/losing auth (`affected_islands`). **A** (task #4)
+- [x] `auth push --github` token is validated before storing (GET /user). **A** (task #5)
+- [x] Repo browser indicates when the list is capped (`Capped` from the Link header). **A** (task #9)
+- [x] Enterprise host seedable via `auth push --github --host`. **A** (unit) / **M** (live, task #8)
 
 ## 10b. Host terminals (operator-only, `--host-terminals`)
 
