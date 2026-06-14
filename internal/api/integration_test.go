@@ -17,6 +17,7 @@ import (
 
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
+	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
 )
 
@@ -69,6 +70,47 @@ func TestHostTerminalsAPI(t *testing.T) {
 	}
 	if rr := do(t, h, http.MethodDelete, "/v1/terminals/t1", ""); rr.Code != http.StatusNotFound {
 		t.Errorf("delete missing: %d, want 404", rr.Code)
+	}
+}
+
+// TestDeleteGitHubIdentityWarnsAffectedIslands covers #4: deleting an identity
+// an island still references returns that island in affected_islands so the
+// caller can warn rather than silently changing/losing the island's auth.
+func TestDeleteGitHubIdentityWarnsAffectedIslands(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := githubid.Update(func(s *githubid.Store) error {
+		s.Put(githubid.Identity{Name: "work", Login: "octocat", Token: "tok"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// An island that uses the identity, plus one that doesn't.
+	if err := (&project.Project{Name: "uses-it", GitHubIdentity: "work"}).Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&project.Project{Name: "unrelated"}).Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeRuntime{status: runtime.StatusRunning}
+	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	h := srv.Handler()
+
+	rr := do(t, h, http.MethodDelete, "/v1/credentials/github/work", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", rr.Code, rr.Body.String())
+	}
+	var resp DeleteGitHubIdentityResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.AffectedIslands) != 1 || resp.AffectedIslands[0] != "uses-it" {
+		t.Errorf("affected = %v, want [uses-it]", resp.AffectedIslands)
+	}
+
+	// Deleting a never-referenced identity → 404 (and no panic).
+	if rr := do(t, h, http.MethodDelete, "/v1/credentials/github/work", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("second delete: %d, want 404", rr.Code)
 	}
 }
 
@@ -502,8 +544,14 @@ func TestGitHubIdentityAPI(t *testing.T) {
 		t.Fatalf("list = %+v, want one default 'work'/'alockwood'", resp.Identities)
 	}
 
-	if rr := do(t, h, http.MethodDelete, "/v1/credentials/github/work", ""); rr.Code != http.StatusNoContent {
-		t.Errorf("delete: got %d, want 204", rr.Code)
+	rr = do(t, h, http.MethodDelete, "/v1/credentials/github/work", "")
+	if rr.Code != http.StatusOK {
+		t.Errorf("delete: got %d, want 200", rr.Code)
+	}
+	var del DeleteGitHubIdentityResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &del)
+	if len(del.AffectedIslands) != 0 {
+		t.Errorf("no islands referenced 'work', got affected = %v", del.AffectedIslands)
 	}
 	if rr := do(t, h, http.MethodDelete, "/v1/credentials/github/work", ""); rr.Code != http.StatusNotFound {
 		t.Errorf("delete missing: got %d, want 404", rr.Code)

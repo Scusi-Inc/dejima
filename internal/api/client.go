@@ -155,9 +155,15 @@ func (c *Client) PutGitHubIdentity(ctx context.Context, name string, req PutGitH
 	return out.Identities, nil
 }
 
-// DeleteGitHubIdentity removes a GitHub identity from the daemon.
-func (c *Client) DeleteGitHubIdentity(ctx context.Context, name string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/credentials/github/"+url.PathEscape(name), nil, nil)
+// DeleteGitHubIdentity removes a GitHub identity from the daemon and returns the
+// names of any islands that still referenced it, so the caller can warn that
+// those islands will lose this auth on their next reseed.
+func (c *Client) DeleteGitHubIdentity(ctx context.Context, name string) (affected []string, err error) {
+	var out DeleteGitHubIdentityResponse
+	if err := c.do(ctx, http.MethodDelete, "/v1/credentials/github/"+url.PathEscape(name), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.AffectedIslands, nil
 }
 
 // ListGitHubRepos lists repositories the identity can access, fetched daemon-side

@@ -533,7 +533,29 @@ func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", name))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	affected := s.islandsUsingIdentity(name)
+	if len(affected) > 0 {
+		s.log.Warn("deleted a github identity still referenced by islands",
+			"name", name, "islands", affected)
+	}
+	writeJSON(w, http.StatusOK, DeleteGitHubIdentityResponse{AffectedIslands: affected})
+}
+
+// islandsUsingIdentity returns the names of islands that reference the named
+// GitHub identity. Best-effort: a project-list failure yields no names rather
+// than blocking the delete.
+func (s *Server) islandsUsingIdentity(name string) []string {
+	projects, err := project.List()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, p := range projects {
+		if p.GitHubIdentity == name {
+			out = append(out, p.Name)
+		}
+	}
+	return out
 }
 
 // handleGitHubRepos lists the repositories an identity can access, fetched

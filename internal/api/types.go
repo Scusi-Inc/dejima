@@ -227,6 +227,14 @@ type PutGitHubIdentityRequest struct {
 	Default bool   `json:"default,omitempty"` // make this the default identity
 }
 
+// DeleteGitHubIdentityResponse reports which islands still referenced the
+// identity that was just deleted. Those islands keep working until their next
+// credential reseed (reset/upgrade), at which point they fall back to the host
+// gh or lose push auth — so the caller should warn about them.
+type DeleteGitHubIdentityResponse struct {
+	AffectedIslands []string `json:"affected_islands,omitempty"`
+}
+
 // GitHubReposResponse is the body of GET /v1/credentials/github/:name/repos.
 // Capped is true when the identity can see more repos than the single page
 // returned, so the browser can say "showing the first N".
