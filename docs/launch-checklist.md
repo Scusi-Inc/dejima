@@ -17,10 +17,12 @@ area. Keep it honest: update the status as coverage changes.
 
 ## 0. Launch blockers (must be green before any release)
 
-- [ ] **!** In-island code cannot reach the daemon control plane. The Linux unix
-  socket currently serves the full unauthenticated `routes()` mux and is mounted
-  into every island — a contained agent can self-grant Port scopes, create/delete
-  islands, and read/tamper with GitHub identities. (task #1) **M/!**
+- [x] **In-island code cannot reach the daemon control plane.** Fixed by
+  `feat/secure-island-routing` (merged `57ecb32`): the unix control socket is no
+  longer mounted into islands; in-island traffic (incl. `agent-event`) goes only
+  over the token-authenticated, island-scoped TCP path. Denial is locked by
+  `tokenauth_test.go`. **Live-verify still pending** on a real engine — see
+  *Live verification procedures* §L1/§L4. **A** (auth) / **M/!** (live)
 - [ ] Fresh-host first run works end to end: install → `dejima init` → connect,
   with no pre-existing image or credentials. **M**
 - [ ] The live integration suite passes against a real engine
@@ -39,9 +41,10 @@ area. Keep it honest: update the status as coverage changes.
 
 ## 2. Daemon & listeners (security boundary)
 
-- [ ] Unix socket listener (Linux): control-plane reachable only as intended. **!** (see §0)
+- [ ] Unix socket listener (Linux): operator-only; **no longer mounted into islands** (`secure-island-routing`). **A** (denial) / **M** (bind)
 - [ ] Tailnet TCP listener: only tailnet IPs accepted; off-tailnet refused. **A** (tokenauth scope) / **M** (bind)
-- [ ] Host-internal token-TCP listener (macOS autonomy): default-deny, island-scoped. **A** (`tokenauth_test.go`)
+- [ ] Host-internal token-TCP listener: default-deny, island-scoped; **on by default** (`127.0.0.1:7274`) since it's now the only in-island path. **A** (`tokenauth_test.go`) / **M** (live reach, see §L1)
+- [ ] Host terminals listener: `/v1/terminals*` present only with `--host-terminals`; denied to island tokens. **A** (`tokenauth_test.go`, integration) / **M** (live attach, §L3)
 - [ ] `dejima service install/uninstall/restart` manages `dejimad` as a host service. **M**
 - [ ] Daemon survives restart with all islands/state intact. **M**
 
@@ -88,7 +91,7 @@ area. Keep it honest: update the status as coverage changes.
 - [ ] `port` grant/revoke scopes; deny-all by default. **A** (`port_trade_test.go`)
 - [ ] `intake` / `export` / `write` honor scope + RW vs RO. **A**
 - [ ] An island cannot reach host content outside its granted scopes. **A**
-- [ ] Scope grant/revoke is operator-only — never self-service from inside an island. **A** (token path) / **!** (socket, §0)
+- [ ] Scope grant/revoke is operator-only — never self-service from inside an island. **A** (token path; socket no longer mounted, §0)
 - [ ] `cp` in/out of an island; `exec` one-shot command. **M**
 
 ## 8. Autonomy / Home Island / spawn
@@ -118,6 +121,14 @@ area. Keep it honest: update the status as coverage changes.
 - [ ] `auth push --github` token is validated before storing. **!** (task #5)
 - [ ] Repo browser indicates when the list is capped (100). **!** (task #9)
 - [ ] Enterprise host seedable via `auth push --github --host`. **!** (task #8)
+
+## 10b. Host terminals (operator-only, `--host-terminals`)
+
+- [ ] Routes absent from the token-auth allow-list — island tokens get 403. **A** (`tokenauth_test.go`)
+- [ ] Off by default; `dejimad --host-terminals` (or `DEJIMAD_HOST_TERMINALS=1`) enables; startup logs a warning. **A** (gate) / **M** (warning)
+- [ ] Create/list/relabel/delete CRUD; registry persists at `~/.dejima/host-terminals.json`. **A** (integration)
+- [ ] TUI "Host · not contained" section; `t` creates+attaches; `d` kills; detail warns "NOT contained". **M** (§L3)
+- [ ] Terminal is a host tmux session `dejima-term-<id>`; survives disconnect + daemon restart; resumable from another device. **M** (§L3)
 
 ## 11. Events & webhooks
 
@@ -153,6 +164,65 @@ Each command runs, `--help` is sane, errors are clean (not panics): `init`,
 
 ---
 
+## Live verification procedures (host-gated — run on the daemon host)
+
+These need a **real container engine** and can't run in a dev island (no Docker).
+Run them on Minion (macOS) unless a step says otherwise. Each maps to a checklist
+row above and/or an open task. Tick the row when the step passes.
+
+### §L1 — In-island routing over the token path (secure-island-routing)
+*Verifies §0 / §2. The highest-stakes test: it changed the containment boundary.*
+1. Start/refresh the daemon (token listener is on by default at `127.0.0.1:7274`;
+   pass `--token-tcp <addr>` only to override).
+2. Create an island and attach an interactive agent.
+3. Confirm agent state still flows to the TUI/`events` stream (a banner/idle
+   transition appears). This exercises `agent-event` over the **token path**,
+   since the control socket is no longer mounted.
+4. Negative: from **inside** the island, try to reach a control route, e.g.
+   `curl --unix-socket /run/dejima.sock http://x/v1/islands` → must fail (socket
+   absent), and a token-bearing call to a non-allow-listed route (e.g. create
+   island) → `403`. Confirms the hole is closed live, not just in tests.
+5. On macOS the container reaches the host via `host.docker.internal`; confirm
+   no `--token-tcp` wildcard/LAN bind is in use (loopback only).
+
+### §L2 — In-container GitHub auth / `git push` (task #3)
+*Verifies §10 line 115 — the one identity row still marked `!`.*
+1. `dejima auth push --github --name work --default` from a host that has `gh`
+   logged in (seeds the daemon identity store).
+2. Create an island selecting that identity (TUI GitHub browser, or
+   `dejima init <repo> --github-identity work`).
+3. Inside the island: `gh auth status` → authenticated as the expected login;
+   `cat /opt/host/gh-config/hosts.yml` present and single-identity.
+4. Make a trivial commit and `git push` → succeeds, authored/authenticated as the
+   chosen identity (not the host's default). This is the real end-to-end gap.
+5. Delete the island → confirm `~/.dejima/secrets/github/islands/<name>` and the
+   per-island token are gone (§3 / §10 line 116).
+
+### §L3 — Host terminals live (host-terminals)
+*Verifies §10b. Needs `tmux` on the daemon host.*
+1. Start the daemon with `--host-terminals`; confirm the startup warning.
+2. In the TUI, `t` → a new host terminal opens and attaches; run `hostname` /
+   `whoami` → it's the **host**, not a container.
+3. Detach, then reattach (`⏎`) from a second device → same live session.
+4. Restart the daemon → the `dejima-term-<id>` tmux session survives; reattach.
+5. `d` closes it (confirmed) and the tmux session is gone.
+6. Negative: an in-island token hitting `/v1/terminals` → `403` (also **A**).
+
+### §L4 — Native-Linux token-listener reachability (task #12)
+*Linux daemon only — the known caveat. Verifies §2 line for the token listener.*
+1. On a **native-Linux** daemon host, start dejimad (token listener defaults to
+   `127.0.0.1:7274`).
+2. Create an island; from inside it, try to reach the host token endpoint via the
+   bridge gateway (`host.docker.internal` / `172.17.0.1`).
+3. **Expected today: this can fail** — a loopback (`127.0.0.1`) bind on the host
+   is not reachable from the container across the bridge. Record the outcome.
+4. If it fails, the fix options are: bind the token listener to the docker bridge
+   gateway (e.g. `--token-tcp 172.17.0.1:7274`) instead of loopback, or add a
+   host-gateway alias and bind there. Confirm one works, then decide the default
+   for Linux (macOS is unaffected — `host.docker.internal` resolves to the VM host).
+
+---
+
 ## Coverage snapshot (today)
 
 Automated tests exist for: `internal/api` (islands/agents/port/tokenauth/github),
@@ -161,6 +231,9 @@ Automated tests exist for: `internal/api` (islands/agents/port/tokenauth/github)
 `internal/agentcreds`, `internal/version`, `cmd/dejima`, `cmd/dejimad`. Live
 end-to-end lives in `scripts/integration.sh`.
 
-Biggest gaps right now: the unix-socket containment hole (§0/§2/§7), no live test
-of in-container GitHub auth (§10), and a lot of **M**-only CLI/lifecycle paths
-that only `scripts/integration.sh` partially covers.
+Biggest gaps right now (all **host-gated**, see *Live verification procedures*):
+live in-island routing over the token path (§L1), in-container GitHub auth /
+`git push` (§L2, task #3), host-terminal attach (§L3), native-Linux token
+reachability (§L4, task #12), and the broad **M**-only CLI/lifecycle paths that
+only `scripts/integration.sh` exercises. The unix-socket containment hole is
+**closed in code** (`secure-island-routing`); only its live confirmation remains.
