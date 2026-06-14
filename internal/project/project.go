@@ -92,6 +92,10 @@ type Project struct {
 	// Role is the island's purpose: "" (a work island) or "home" (a Home Island
 	// hosting an assistant brain). Empty for islands created before roles existed.
 	Role string `toml:"role,omitempty"`
+	// GitHubIdentity names which of the daemon's GitHub identities this island
+	// clones and pushes as (see internal/githubid). Empty means the daemon's
+	// default identity, or — when the store is empty — the host's ~/.config/gh.
+	GitHubIdentity string `toml:"github_identity,omitempty"`
 	// Ports are brokered host-filesystem grants for this island (see ports.go).
 	// Empty means deny-all: the island reaches no host content outside its repo.
 	Ports []PortScope `toml:"ports,omitempty"`
@@ -139,8 +143,12 @@ func (p *Project) AgentByID(id string) (*AgentSpec, bool) {
 	return nil, false
 }
 
-// NextAgentID returns the next monotonic "a<N>" id not currently in use. Ids are
-// never reused within an island's life, so a removed agent's id stays retired.
+// NextAgentID returns the next monotonic "<letter><N>" id not currently in use.
+// The letter is the island's mnemonic prefix (see agentIDPrefix), so an island
+// named "Port" yields p1, p2, …. Ids are scoped per island and never reused
+// within an island's life, so a removed agent's id stays retired. Numbering is
+// monotonic across whatever prefixes already exist, so a legacy island that
+// holds a1/a2 simply continues at the new prefix (p3).
 func (p *Project) NextAgentID() string {
 	max := 0
 	for _, a := range p.Agents {
@@ -148,14 +156,60 @@ func (p *Project) NextAgentID() string {
 			max = n
 		}
 	}
-	return fmt.Sprintf("a%d", max+1)
+	return fmt.Sprintf("%s%d", agentIDPrefix(p.Name), max+1)
 }
 
+// agentIDPrefix is the per-island letter that leads its agent ids: the first
+// ASCII letter of the island name, lowercased ("Port" → "p"). It is purely a
+// mnemonic — ids are island-scoped and addressed as island/<id>, so two islands
+// sharing a first letter never actually collide. Names with no leading letter
+// (e.g. "123") fall back to "a".
+func agentIDPrefix(name string) string {
+	for i := 0; i < len(name); i++ {
+		switch c := name[i]; {
+		case c >= 'A' && c <= 'Z':
+			return string(c - 'A' + 'a')
+		case c >= 'a' && c <= 'z':
+			return string(c)
+		}
+	}
+	return "a"
+}
+
+// PrimaryAgentID is the id a brand-new island's primary agent gets: the island's
+// mnemonic letter + "1" (e.g. "Port" → "p1"), matching the scheme NextAgentID
+// uses for added agents. Legacy islands migrated by EnsureAgents keep "a1" so a
+// live attached session isn't renamed out from under the user.
+func PrimaryAgentID(name string) string {
+	return agentIDPrefix(name) + "1"
+}
+
+// SetPrimaryID renames the primary agent's id and the tmux session derived from
+// it. Intended for fresh provision only — before any container or session
+// exists — so it deliberately does not migrate a running session.
+func (p *Project) SetPrimaryID(id string) {
+	if len(p.Agents) == 0 {
+		return
+	}
+	a := &p.Agents[0]
+	a.ID = id
+	if a.Tmux != "" {
+		a.Tmux = "agent-" + id
+	}
+}
+
+// parseAgentID extracts the trailing number of an agent id like "a1" or "p3".
+// Ids are <letters><number>; the leading letters are an island mnemonic and are
+// ignored here so numbering stays monotonic even across a prefix change.
 func parseAgentID(id string) (int, bool) {
-	if len(id) < 2 || id[0] != 'a' {
+	i := 0
+	for i < len(id) && ((id[i] >= 'a' && id[i] <= 'z') || (id[i] >= 'A' && id[i] <= 'Z')) {
+		i++
+	}
+	if i == 0 || i == len(id) {
 		return 0, false
 	}
-	n, err := strconv.Atoi(id[1:])
+	n, err := strconv.Atoi(id[i:])
 	if err != nil || n < 1 {
 		return 0, false
 	}
@@ -259,14 +313,6 @@ func (p *Project) Save() error {
 
 // Load reads an existing project by name.
 func Load(name string) (*Project, error) {
-	// Validate before building any path: an unvalidated name (e.g. one carrying
-	// a path separator or traversal, as a decoded "%2F" in a request can) would
-	// be Clean-ed by filepath.Join into a different project's directory, letting
-	// a caller scoped to one island read another's config. Names are validated
-	// at create, so every legitimate on-disk project passes this.
-	if err := ValidateName(name); err != nil {
-		return nil, err
-	}
 	path, err := paths.ProjectConfigPath(name)
 	if err != nil {
 		return nil, err

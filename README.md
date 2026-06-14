@@ -33,7 +33,7 @@ A note on "API": throughout the docs, *the Dejima API* refers to Dejima's own HT
 - **Multi-project, multi-agent** — N islands on one host, each its own repo; and N agents *within* an island (one container, per-agent git worktrees, shared credentials/tool-auth). No context bleed between islands. See [`docs/multi-agent-spec.md`](docs/multi-agent-spec.md).
 - **Persistent sessions** — long-running agent work survives disconnects and host reboots via tmux + named volumes (interactive agents) or supervised processes with captured logs (headless agents).
 - **Multi-device attach** — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.
-- **Direct push to GitHub** — host credentials mounted read-only into the island; `git push` just works.
+- **Direct push to GitHub** — the daemon holds one or more GitHub identities (e.g. `work` and `personal`); each island clones and pushes as the one it picks, so `git push` just works from any device. See [`docs/github-identities.md`](docs/github-identities.md).
 - **API-first** — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.
 - **Host terminals (opt-in)** — resumable, separately-instanced operator shells on the daemon host itself, for server navigation/repair — the tmux+ssh painkiller. Uncontained and operator-only (`dejimad --host-terminals`); agents stay contained. See [`docs/host-terminals.md`](docs/host-terminals.md).
 
@@ -324,7 +324,7 @@ dejima purge     Destroy island and volumes.
 dejima exec      Run a one-shot command inside an island.
 dejima cp        Copy files in or out of an island.
 dejima logs      Tail an island's container logs (--follow).
-dejima auth      Push this machine's Claude login to the daemon host (push/status).
+dejima auth      Manage daemon credentials: Claude login + GitHub identities (push [--github]/status).
 dejima doctor    Health check: daemon, Docker, image, projects, networks, webhooks.
 dejima image     Build the island image on the daemon host (no source checkout needed).
 dejima onboard   Walk through Dejima setup; safe to re-run.
@@ -357,7 +357,7 @@ This is the integration point for Slack / Discord / Telegram bots, mobile push, 
 | `image dejima/island:latest not found locally`        | Run `make image`. The first build takes a few minutes.                              |
 | `docker: command not found` / daemon not reachable    | Install Docker Desktop (or OrbStack / colima). On Linux: `sudo apt install docker.io` (or distro equivalent).|
 | `gh auth setup-git failed`                            | `gh auth login` on the host; restart the island (`dejima reset <name>`).            |
-| Agent can't push to GitHub                            | Make sure `~/.config/gh/` exists on the host. SSH-key flow: `dejima init --ssh-key`.|
+| Agent can't push to GitHub                            | `dejima auth status` — seed an identity with `dejima auth push --github`, or `gh auth login` on the daemon host. See [`docs/github-identities.md`](docs/github-identities.md).|
 | TCP listener: connection refused from off-tailnet     | This is intentional. Only tailnet IPs are accepted on the TCP listener.             |
 | Memory creeping over time                             | `dejima hibernate <name>` then `dejima wake <name>` for a clean restart.            |
 

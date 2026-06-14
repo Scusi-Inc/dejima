@@ -85,7 +85,6 @@ func newRootCmd() *cobra.Command {
 		newExecCmd(),
 		newCpCmd(),
 		newPortCmd(),
-		newSSHCmd(),
 		newAuditCmd(),
 		newLogsCmd(),
 		newImageCmd(),
@@ -766,15 +765,16 @@ func resolveDaemonBinary() (string, error) {
 
 func newInitCmd() *cobra.Command {
 	var (
-		repo      string
-		name      string
-		agents    []string
-		image     string
-		cmdStr    string
-		memory    string
-		cpus      string
-		disk      string
-		localCopy bool
+		repo       string
+		name       string
+		agents     []string
+		image      string
+		cmdStr     string
+		memory     string
+		cpus       string
+		disk       string
+		localCopy  bool
+		ghIdentity string
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -834,13 +834,14 @@ func newInitCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
 			info, err := c.CreateIsland(ctx, api.CreateIslandRequest{
-				Name:     name,
-				Repo:     res.Repo,
-				SeedPath: res.SeedPath,
-				Agent:    agent,
-				Agents:   reqAgents,
-				Image:    image,
-				Cmd:      cmdStr,
+				Name:           name,
+				Repo:           res.Repo,
+				SeedPath:       res.SeedPath,
+				Agent:          agent,
+				Agents:         reqAgents,
+				Image:          image,
+				Cmd:            cmdStr,
+				GitHubIdentity: ghIdentity,
 				Resources: api.Resources{
 					Memory: memory,
 					CPUs:   cpus,
@@ -874,6 +875,7 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&agents, "agent", nil, "agent to run: claude-code (default), codex, or headless (with --cmd); repeat to seed multiple agents")
 	cmd.Flags().StringVar(&image, "image", "", "island image (default: dejima/island:latest)")
 	cmd.Flags().StringVar(&cmdStr, "cmd", "", `entrypoint command for --agent headless (e.g. "python my_loop.py"); ignored for other agents`)
+	cmd.Flags().StringVar(&ghIdentity, "github-identity", "", "daemon GitHub identity to clone/push as (see `dejima auth status`); default: the daemon's default identity")
 	cmd.Flags().StringVar(&memory, "memory", "", "memory limit (e.g. 4G); default: unlimited")
 	cmd.Flags().StringVar(&cpus, "cpus", "", "CPU limit (e.g. 2.0); default: unlimited")
 	cmd.Flags().StringVar(&disk, "disk", "", "disk size (e.g. 20G); default: unlimited")

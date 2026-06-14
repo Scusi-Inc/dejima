@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/paths"
 )
@@ -134,6 +135,39 @@ func (c *Client) ClaudeCredentialsStatus(ctx context.Context) (*ClaudeCredential
 		return nil, err
 	}
 	return &st, nil
+}
+
+// ListGitHubIdentities returns the daemon's GitHub identities (no tokens).
+func (c *Client) ListGitHubIdentities(ctx context.Context) ([]githubid.Meta, error) {
+	var out GitHubIdentitiesResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/credentials/github", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Identities, nil
+}
+
+// PutGitHubIdentity seeds or updates a named GitHub identity on the daemon.
+func (c *Client) PutGitHubIdentity(ctx context.Context, name string, req PutGitHubIdentityRequest) ([]githubid.Meta, error) {
+	var out GitHubIdentitiesResponse
+	if err := c.do(ctx, http.MethodPut, "/v1/credentials/github/"+url.PathEscape(name), req, &out); err != nil {
+		return nil, err
+	}
+	return out.Identities, nil
+}
+
+// DeleteGitHubIdentity removes a GitHub identity from the daemon.
+func (c *Client) DeleteGitHubIdentity(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/credentials/github/"+url.PathEscape(name), nil, nil)
+}
+
+// ListGitHubRepos lists repositories the identity can access, fetched daemon-side
+// so a client without its own gh can still browse.
+func (c *Client) ListGitHubRepos(ctx context.Context, name string) ([]githubid.Repo, error) {
+	var out GitHubReposResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/credentials/github/"+url.PathEscape(name)+"/repos", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Repos, nil
 }
 
 // Health returns nil if dejimad is reachable and healthy.
