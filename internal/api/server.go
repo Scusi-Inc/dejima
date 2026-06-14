@@ -86,6 +86,10 @@ type Server struct {
 	// authenticate. Empty on the Linux/unix-socket path.
 	autonomyDial string
 
+	// sshAddr is the SSH-façade listen addr, recorded via EnableSSH purely so
+	// /v1/overview can report it to clients. Empty unless dejimad has --ssh.
+	sshAddr string
+
 	// hostTerminals gates the operator host-terminal feature (uncontained shells
 	// on the daemon host). Off unless dejimad is started with --host-terminals.
 	// Even when on, the routes are operator-only and never reachable by an island
@@ -114,6 +118,11 @@ func (s *Server) HostTerminalsEnabled() bool { return s.hostTerminals }
 // host.docker.internal:<port>). Call only when the token listener is bound; an
 // empty dial is a no-op.
 func (s *Server) EnableAutonomy(dial string) { s.autonomyDial = dial }
+
+// EnableSSH records the SSH-façade listen addr so clients (the TUI,
+// `dejima ssh config/info`) can surface the connection target. Reporting only —
+// the listener itself is owned by dejimad/main; this never opens a port.
+func (s *Server) EnableSSH(addr string) { s.sshAddr = addr }
 
 // statsAll returns per-container stats, serving from a short-TTL cache.
 // Holding statsMu across the engine query makes concurrent callers wait for

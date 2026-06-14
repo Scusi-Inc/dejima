@@ -1008,6 +1008,15 @@ func (m tuiModel) renderHeader() string {
 	}
 	logo := strings.Join(logoLines, "\n")
 
+	// server: <label>  [·  ssh <addr>]  ·  [s] switch  ·  [?] all keys
+	// The ssh hint appears only when the daemon has the SSH-façade listener on
+	// (--ssh); `dejima ssh config <island> --install` resolves the full address.
+	serverLine := styleMuted.Render("server: ") + styleAccent.Render(label)
+	if m.overview != nil && m.overview.SSHAddr != "" {
+		serverLine += styleMuted.Render("  ·  ssh ") + styleAccent.Render(m.overview.SSHAddr)
+	}
+	serverLine += styleMuted.Render("  ·  [s] switch  ·  [?] all keys")
+
 	info := strings.Join([]string{
 		"", // leading blank so the 6 info lines match the small logo's 7 rows
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
@@ -1015,7 +1024,7 @@ func (m tuiModel) renderHeader() string {
 		styleMuted.Render("Each island is one repo + one agent in its own container."),
 		styleAccent.Render("↑/↓") + styleMuted.Render(" pick an island  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open in a new window  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
-		styleMuted.Render("server: ") + styleAccent.Render(label) + styleMuted.Render("  ·  [s] switch  ·  [?] all keys"),
+		serverLine,
 	}, "\n")
 	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
 	info = lipgloss.NewStyle().MaxWidth(infoW).Render(info)

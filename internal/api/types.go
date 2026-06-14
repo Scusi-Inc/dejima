@@ -112,6 +112,11 @@ type OverviewResponse struct {
 	// HostTerminalsEnabled lets a client (the TUI) show the Host section only
 	// when the daemon was started with --host-terminals.
 	HostTerminalsEnabled bool `json:"host_terminals_enabled"`
+	// SSHAddr is the SSH-façade listen addr, empty unless dejimad was started
+	// with --ssh. Lets clients (the TUI, `dejima ssh config/info`) show the
+	// connection target and generate an ssh config entry. The bind host may be
+	// wildcard/empty (":2222"); clients resolve a reachable host themselves.
+	SSHAddr string `json:"ssh_addr,omitempty"`
 	// DaemonVersion / APIVersion let a client detect skew against the daemon.
 	// APIVersion is 0 from daemons predating version reporting.
 	DaemonVersion string `json:"daemon_version,omitempty"`

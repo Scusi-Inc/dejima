@@ -196,6 +196,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		DaemonStartedAt:      s.startedAt,
 		IslandImage:          DefaultImage,
 		HostTerminalsEnabled: s.hostTerminals,
+		SSHAddr:              s.sshAddr,
 		DaemonVersion:        version.Version,
 		APIVersion:           version.APIVersion,
 	}
