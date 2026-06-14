@@ -811,16 +811,32 @@ func (m tuiModel) View() string {
 // asciiLogo is a terminal rendering of assets/logo-transparent.png: the
 // island is an annulus sector (parallel top/bottom arcs joined by angled
 // sides), with a gate hanging from the bottom arc and a bridge crossing
-// beneath the curved shore. All lines are the same printed width so it
+// beneath the curved shore. Every line is padded to the same 35-column
+// width (artwork is 29 cols centered with a 3-col margin each side) so it
 // composes as a block.
 var asciiLogo = []string{
-	" _.------------._ ",
-	"  \\            /  ",
-	"    \\_.----._/    ",
-	"       |  |       ",
-	"       |[]|       ",
-	"   _.-'|  |'-._   ",
-	" .'    |  |    '. ",
+	"         ################          ",
+	"      ####              ####       ",
+	"   ####                     ####   ",
+	"      ##      ######      ###      ",
+	"       #########  ##########       ",
+	"              ##  ##               ",
+	"          ######  ######           ",
+	"      ####              #####      ",
+}
+
+// asciiLogoSmall is the same mark drawn at half scale (7 rows, 21 cols) for
+// narrow terminals that can't fit asciiLogo beside the info lines. Artwork is
+// 17 cols centered with a 2-col margin each side; every line is symmetric
+// about the field center.
+var asciiLogoSmall = []string{
+	"    #############    ",
+	"  ####         ####  ",
+	"   ###         ###   ",
+	"    #####   #####    ",
+	"         ###         ",
+	"   ######   ######   ",
+	"  ##             ##  ",
 }
 
 func (m tuiModel) renderHeader() string {
@@ -834,8 +850,9 @@ func (m tuiModel) renderHeader() string {
 	}
 
 	// Compact single-line header when the terminal can't spare the rows, or
-	// is too narrow for the info lines (longest is 69 cols + 27 logo/chrome).
-	if m.height < 24 || m.width < 96 {
+	// is too narrow for the info lines beside even the small logo (longest
+	// info line is 69 cols; small logo + chrome is 21 + 9 = 30).
+	if m.height < 24 || m.width < 99 {
 		title := styleTitle.Render("Dejima")
 		right := styleMuted.Render(label + " ⇄ [s]")
 		pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
@@ -845,8 +862,15 @@ func (m tuiModel) renderHeader() string {
 		return " " + title + strings.Repeat(" ", pad) + right
 	}
 
-	logoLines := make([]string, len(asciiLogo))
-	for i, l := range asciiLogo {
+	// Full 35-col mark when there's room (≥113 = 69 info + 44 chrome),
+	// otherwise the compact 22-col mark for the 100–112 band.
+	logoArt := asciiLogo
+	if m.width < 113 {
+		logoArt = asciiLogoSmall
+	}
+
+	logoLines := make([]string, len(logoArt))
+	for i, l := range logoArt {
 		logoLines[i] = styleAccent.Render(l)
 	}
 	logo := strings.Join(logoLines, "\n")
@@ -859,7 +883,7 @@ func (m tuiModel) renderHeader() string {
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		styleMuted.Render("server: ") + styleAccent.Render(label) + styleMuted.Render("  ·  [s] switch  ·  [?] all keys"),
 	}, "\n")
-	infoW := m.width - lipgloss.Width(asciiLogo[0]) - 9
+	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
 	info = lipgloss.NewStyle().MaxWidth(infoW).Render(info)
 
 	box := lipgloss.JoinHorizontal(lipgloss.Top, logo, "   ", info)
