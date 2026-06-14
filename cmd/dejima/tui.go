@@ -862,12 +862,13 @@ func (m tuiModel) renderHeader() string {
 		return " " + title + strings.Repeat(" ", pad) + right
 	}
 
-	// Full 35-col mark when there's room (≥113 = 69 info + 44 chrome),
-	// otherwise the compact 22-col mark for the 100–112 band.
-	logoArt := asciiLogo
-	if m.width < 113 {
-		logoArt = asciiLogoSmall
-	}
+	// Always use the small mark, regardless of width. The responsive larger logo
+	// is kept (commented out) so it's trivially recoverable if we want it back.
+	logoArt := asciiLogoSmall
+	// logoArt := asciiLogo
+	// if m.width < 113 {
+	// 	logoArt = asciiLogoSmall
+	// }
 
 	logoLines := make([]string, len(logoArt))
 	for i, l := range logoArt {
@@ -876,6 +877,7 @@ func (m tuiModel) renderHeader() string {
 	logo := strings.Join(logoLines, "\n")
 
 	info := strings.Join([]string{
+		"", // leading blank so the 6 info lines match the small logo's 7 rows
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
 		styleMuted.Render("Each island is one repo + one agent in its own container."),
