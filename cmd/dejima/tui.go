@@ -17,6 +17,7 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
+	"github.com/aoos/dejima/internal/sshfacade"
 )
 
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
@@ -83,6 +84,7 @@ type tuiModel struct {
 	width          int
 	height         int
 	lastError      string
+	lastNotice     string // transient success hint (e.g. ssh setup); shown until replaced
 	sshHost        string // resolved SSH-façade host (cached from overview; see overviewMsg)
 	sshPort        string // resolved SSH-façade port
 	sshResolvedFor string // the SSHAddr we last resolved, so we don't re-exec tailscale each frame
@@ -388,6 +390,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// A success notice lingers until the next keystroke, then clears (an action
+	// may set a fresh one — e.g. setup-ssh sets it via runConfirmed below).
+	m.lastNotice = ""
 	// The new-island creator owns all keys while active.
 	if m.creator != nil {
 		return m.creatorKey(msg)
@@ -561,6 +566,16 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if name := m.selectedName(); name != "" {
 			m.confirm = &confirmPrompt{verb: "purge", island: name}
 		}
+	case "S":
+		// Set up SSH for the whole account: authorize this machine's key
+		// fleet-wide + write ~/.ssh/config entries for every island (the TUI
+		// equivalent of `ssh authorize --account` + `ssh config --all --install`).
+		if m.overview == nil || m.overview.SSHAddr == "" {
+			m.lastError = "ssh façade is off — start dejimad with --ssh (e.g. `dejima service install --ssh :2222`)"
+			return m, nil
+		}
+		m.confirm = &confirmPrompt{verb: "setup-ssh"}
+		return m, nil
 	case "R":
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
 	}
@@ -606,8 +621,56 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		// The typed text is the new display title (blank resets to the name).
 		m.dirtyOps[c.island] = "renaming"
 		return m, m.setIslandTitleCmd(c.island, strings.TrimSpace(c.answer))
+	case "setup-ssh":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			return m.setupAccountSSH()
+		}
 	}
 	return m, nil
+}
+
+// setupAccountSSH authorizes this machine's default SSH key fleet-wide and
+// writes a ~/.ssh/config entry for every island, so VS Code / Cursor can connect
+// to any island with no further setup. Local, fast operations; on success a
+// notice shows the result, on failure lastError explains. (No stdout — the
+// shared CLI helpers' print-free cores are used.)
+func (m tuiModel) setupAccountSSH() (tea.Model, tea.Cmd) {
+	pub, err := defaultPublicKey()
+	if err != nil {
+		m.lastError = err.Error()
+		return m, nil
+	}
+	line, err := os.ReadFile(pub)
+	if err != nil {
+		m.lastError = "read " + pub + ": " + err.Error()
+		return m, nil
+	}
+	if _, err := sshfacade.AddAccountKey(strings.TrimSpace(string(line))); err != nil {
+		m.lastError = "authorize account key: " + err.Error()
+		return m, nil
+	}
+	host, port, err := endpointFromAddr(m.overview.SSHAddr)
+	if err != nil {
+		m.lastError = err.Error()
+		return m, nil
+	}
+	for _, isl := range m.islands {
+		if _, _, werr := writeSSHConfigEntry(isl.Name, sshConfigBlock(isl.Name, host, port)); werr != nil {
+			m.lastError = "write ssh config: " + werr.Error()
+			return m, nil
+		}
+	}
+	m.lastError = ""
+	m.lastNotice = fmt.Sprintf("ssh ready — key authorized for all islands; %d ~/.ssh/config entr%s written. VS Code/Cursor: Remote-SSH → dejima-<island>",
+		len(m.islands), pluralY(len(m.islands)))
+	return m, nil
+}
+
+func pluralY(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
 }
 
 // setIslandTitleCmd sets an island's cosmetic display title (blank resets it).
@@ -1420,7 +1483,7 @@ func (m tuiModel) renderFooter() string {
 		expandAll = "[E] collapse all"
 	}
 	keys1 := "[n] new   [⏎] open   [space] expand   " + expandAll + "   [+] add agent   [s] server   [?] help   [q] quit"
-	keys2 := "[a] attach here   [e] rename   [X] rm agent   [h] hibernate   [w] wake   [r] reset   [d] purge"
+	keys2 := "[a] attach here   [e] rename   [X] rm agent   [h] hibernate   [w] wake   [r] reset   [d] purge   [S] ssh setup"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -1440,6 +1503,9 @@ func (m tuiModel) renderFooter() string {
 func (m tuiModel) renderFooterLeft() string {
 	if m.lastError != "" {
 		return styleErrored.Render("⚠ " + truncate(m.lastError, 60))
+	}
+	if m.lastNotice != "" {
+		return styleRunning.Render("✓ " + truncate(m.lastNotice, 76))
 	}
 	o := m.overview
 	if o == nil {
@@ -1590,6 +1656,9 @@ func (m tuiModel) renderConfirm() string {
 	case "rename-island":
 		prompt = fmt.Sprintf("Rename %q (display title; blank resets to the name). Type a title and press Enter: %s",
 			c.island, c.answer)
+	case "setup-ssh":
+		prompt = fmt.Sprintf("Authorize this machine's SSH key for ALL islands and add ~/.ssh/config entries for VS Code/Cursor? Type 'y' and Enter: %s",
+			c.answer)
 	}
 	return styleErrored.Render("┌── ") + prompt + styleErrored.Render(" ──┐")
 }

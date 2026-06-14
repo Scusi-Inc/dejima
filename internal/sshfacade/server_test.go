@@ -87,9 +87,18 @@ func TestSSHAuthAndExec(t *testing.T) {
 		if err != nil {
 			t.Fatalf("exec: %v", err)
 		}
-		// `echo exec -i dejima-isle bash -lc whoami` → output names the container.
+		// `echo exec -i dejima-isle bash -c whoami` → output names the container.
 		if !strings.Contains(string(out), "dejima-isle") || !strings.Contains(string(out), "whoami") {
 			t.Fatalf("unexpected exec output: %q", out)
+		}
+		// exec must use a NON-login shell (`bash -c`), not `bash -lc`: a login
+		// shell's profile output corrupts the channel VS Code parses for platform
+		// detection. Guard against a regression to `-lc`.
+		if strings.Contains(string(out), "-lc") {
+			t.Fatalf("exec used a login shell (-lc); must be non-login `bash -c`: %q", out)
+		}
+		if !strings.Contains(string(out), "bash -c whoami") {
+			t.Fatalf("expected non-login `bash -c whoami` in argv: %q", out)
 		}
 	})
 

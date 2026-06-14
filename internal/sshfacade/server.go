@@ -164,7 +164,7 @@ func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
 			var p struct{ Command string }
 			_ = ssh.Unmarshal(req.Payload, &p)
 			_ = req.Reply(true, nil)
-			sess = s.run(ch, container, loginShellCmd(p.Command), wantPTY, rows, cols)
+			sess = s.run(ch, container, execCmd(p.Command), wantPTY, rows, cols)
 		case "subsystem":
 			if started {
 				_ = req.Reply(false, nil)
@@ -232,13 +232,19 @@ func (s *Server) run(ch ssh.Channel, container string, cmd []string, wantPTY boo
 	return nil
 }
 
-// loginShell is the command for an interactive `shell` request.
+// loginShell is the command for an interactive `shell` request — a login shell,
+// so a human gets the usual PATH/profile/MOTD they'd expect at a terminal.
 func loginShell() []string { return []string{"bash", "-l"} }
 
-// loginShellCmd wraps an `exec` request's command in a login shell so PATH and
-// profile match an interactive session (frameworks expect `ssh host -- cmd` to
-// behave like a normal login).
-func loginShellCmd(command string) []string { return []string{"bash", "-lc", command} }
+// execCmd wraps an `exec` request's command in a NON-login, non-interactive
+// shell — matching OpenSSH's `$SHELL -c command`. A login shell would source
+// /etc/profile and ~/.bash_profile, whose banners/MOTD/profile.d output pollute
+// the channel's stdout; tools that parse exec output (VS Code / Cursor
+// Remote-SSH platform detection — "getPlatformForHost") then hang or fail. The
+// container image's PATH (docker exec env) is already set, so commands resolve
+// without a login shell. A caller needing login semantics can invoke
+// `bash -lc …` explicitly in its command.
+func execCmd(command string) []string { return []string{"bash", "-c", command} }
 
 // sftpServerCmd is the in-container sftp-server (Debian/Ubuntu path, provided by
 // the openssh-sftp-server package baked into the island image). Run directly —
