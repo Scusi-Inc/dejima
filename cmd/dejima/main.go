@@ -22,6 +22,7 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/reposrc"
+	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/service"
 	"github.com/aoos/dejima/internal/version"
 )
@@ -393,6 +394,20 @@ func newServiceCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("installed dejimad service (binary: %s)\n", bin)
+			// Record install context so the daemon can later update + restart
+			// itself (TUI 'U' / dejima update): the source checkout for a source
+			// install, and whether it's a system service (restart domain).
+			meta := selfupdate.InstallMeta{System: systemSvc}
+			if selfupdate.DetectMode() == selfupdate.ModeSource {
+				if cwd, werr := os.Getwd(); werr == nil {
+					if dir, ferr := selfupdate.FindCheckout(cwd); ferr == nil {
+						meta.SourceDir = dir
+					}
+				}
+			}
+			if err := selfupdate.SaveInstallMeta(meta); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not record install metadata for self-update: %v\n", err)
+			}
 			if tcpAddr != "" {
 				fmt.Printf("remote access: listening on %s (tailnet peers only)\n", tcpAddr)
 				if fqdn := tailnetFQDN(); fqdn != "" {

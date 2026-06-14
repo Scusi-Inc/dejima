@@ -95,6 +95,17 @@ func HostKeyPath() (string, error) {
 	return filepath.Join(root, "ssh_host_ed25519"), nil
 }
 
+// DaemonInstallMetaPath returns ~/.dejima/daemon-install.json — install context
+// recorded by `dejima service install` (the source checkout dir and whether it's
+// a system service) so the daemon can update + restart itself correctly.
+func DaemonInstallMetaPath() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "daemon-install.json"), nil
+}
+
 // AccountAuthorizedKeysPath returns ~/.dejima/ssh_authorized_keys — the
 // account-wide allow-set of public keys that may ssh into *every* island
 // (current and future). Consulted in addition to each island's own

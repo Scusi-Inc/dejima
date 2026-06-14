@@ -128,6 +128,12 @@ func TestAuthorizeTokenMatrix(t *testing.T) {
 		{"overview denied", "proj", "GET /v1/overview", "/v1/overview", true},
 		{"creds denied", "proj", "PUT /v1/credentials/claude", "/v1/credentials/claude", true},
 
+		// Daemon self-update is operator-only — a contained agent must never be
+		// able to make the daemon replace its own binary (absent from the
+		// allow-list → default-deny).
+		{"daemon update denied", "proj", "POST /v1/admin/update", "/v1/admin/update", true},
+		{"daemon update denied (home)", "home", "POST /v1/admin/update", "/v1/admin/update", true},
+
 		// Unmatched pattern (non-canonical path / unknown route) → denied.
 		{"empty pattern denied", "proj", "", "/v1/islands/proj/../home/exec", true},
 	}

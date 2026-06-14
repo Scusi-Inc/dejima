@@ -123,6 +123,23 @@ type OverviewResponse struct {
 	APIVersion    int    `json:"api_version,omitempty"`
 }
 
+// AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the
+// default) reports the plan without changing anything.
+type AdminUpdateRequest struct {
+	Execute bool `json:"execute"`
+}
+
+// AdminUpdateResponse reports the daemon's update status and, when Execute was
+// set and an update is available, that the apply has started (the daemon then
+// restarts, so this response is the client's confirmation it began).
+type AdminUpdateResponse struct {
+	Current         string `json:"current"`
+	Latest          string `json:"latest"`
+	Mode            string `json:"mode"` // source | release
+	UpdateAvailable bool   `json:"update_available"`
+	Applying        bool   `json:"applying"`
+}
+
 // CreateIslandRequest is the body of POST /v1/islands.
 type CreateIslandRequest struct {
 	Name      string    `json:"name,omitempty"`  // optional; derived from repo if empty

@@ -505,6 +505,17 @@ func (c *Client) Overview(ctx context.Context) (*OverviewResponse, error) {
 	return &out, nil
 }
 
+// DaemonUpdate asks the daemon to update itself. execute=false reports the plan;
+// execute=true applies it (the daemon then restarts, so the connection may drop
+// right after this returns — the Applying flag is the confirmation it began).
+func (c *Client) DaemonUpdate(ctx context.Context, execute bool) (*AdminUpdateResponse, error) {
+	var out AdminUpdateResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/admin/update", AdminUpdateRequest{Execute: execute}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // IslandEvents returns the recent event log for one island.
 func (c *Client) IslandEvents(ctx context.Context, name string) ([]events.Event, error) {
 	var out []events.Event

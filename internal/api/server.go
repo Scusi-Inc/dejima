@@ -347,6 +347,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/islands/{name}/reset", s.resetIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/upgrade", s.upgradeIsland)
 	mux.HandleFunc("POST /v1/image/build", s.handleImageBuild)
+	mux.HandleFunc("POST /v1/admin/update", s.handleAdminUpdate)
 	mux.HandleFunc("GET /v1/islands/{name}/session", s.sessionWS)
 	mux.HandleFunc("GET /v1/islands/{name}/agents", s.listAgents)
 	mux.HandleFunc("POST /v1/islands/{name}/agents", s.addAgent)

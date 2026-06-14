@@ -52,11 +52,10 @@ func sourcePlan(dir string) []sourceStep {
 	}
 }
 
-// ApplySource updates a source install. It preflights (a clean dejima checkout
-// that can fast-forward), then either prints the plan (execute=false, the
-// default) or runs it. It never force-merges or discards local work: a dirty or
-// diverged tree is a hard stop, not something to paper over.
-func ApplySource(ctx context.Context, dir string, execute bool, out io.Writer, run Runner) error {
+// SourcePreflight verifies dir is a dejima git checkout with a clean tree (safe
+// to fast-forward + reinstall). Shared by ApplySource and the daemon's
+// self-update so neither force-merges or clobbers local work.
+func SourcePreflight(ctx context.Context, dir string) error {
 	if !isGitRepo(dir) {
 		return fmt.Errorf("%s is not a git checkout", dir)
 	}
@@ -66,6 +65,17 @@ func ApplySource(ctx context.Context, dir string, execute bool, out io.Writer, r
 	}
 	if !clean {
 		return fmt.Errorf("working tree at %s is dirty; commit or stash first (refusing to touch local changes)", dir)
+	}
+	return nil
+}
+
+// ApplySource updates a source install. It preflights (a clean dejima checkout
+// that can fast-forward), then either prints the plan (execute=false, the
+// default) or runs it. It never force-merges or discards local work: a dirty or
+// diverged tree is a hard stop, not something to paper over.
+func ApplySource(ctx context.Context, dir string, execute bool, out io.Writer, run Runner) error {
+	if err := SourcePreflight(ctx, dir); err != nil {
+		return err
 	}
 
 	for _, s := range sourcePlan(dir) {

@@ -289,6 +289,25 @@ func applyClientUpdateCmd(ver string) tea.Cmd {
 	}
 }
 
+// daemonUpdatedMsg is the result of asking the daemon to update itself.
+type daemonUpdatedMsg struct {
+	resp *api.AdminUpdateResponse
+	err  error
+}
+
+// updateDaemonCmd asks the daemon to update + restart itself. The daemon restarts
+// after responding, so the connection may drop right after — the Applying flag
+// in the response is the confirmation it began.
+func (m tuiModel) updateDaemonCmd() tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		resp, err := c.DaemonUpdate(ctx, true)
+		return daemonUpdatedMsg{resp: resp, err: err}
+	}
+}
+
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -374,6 +393,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.clientUpdate = false
 			m.lastNotice = "updated client to " + msg.version + " — restart dejima to run the new version"
+		}
+		return m, nil
+
+	case daemonUpdatedMsg:
+		switch {
+		case msg.err != nil:
+			// The daemon restarts right after responding, so a dropped
+			// connection here often means it *did* start — say so, don't alarm.
+			m.lastError = "daemon update: " + msg.err.Error() + " (if it restarted, this is expected)"
+		case msg.resp != nil && msg.resp.Applying:
+			m.daemonUpdate = false
+			m.lastNotice = "daemon updating to " + msg.resp.Latest + " + restarting — it'll reconnect shortly"
+		default:
+			m.lastNotice = "daemon already up to date"
 		}
 		return m, nil
 
@@ -649,9 +682,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case m.clientUpdate:
 			m.confirm = &confirmPrompt{verb: "update-client"}
 		case m.daemonUpdate:
-			// Daemon self-update lands in the next slice (admin endpoint); until
-			// then point at the command on the daemon host.
-			m.lastNotice = "daemon is behind — run `dejima update --apply` on the daemon host (in-TUI daemon update coming)"
+			m.confirm = &confirmPrompt{verb: "update-daemon"}
 		default:
 			m.lastNotice = "already up to date"
 		}
@@ -708,6 +739,10 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	case "update-client":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			return m, applyClientUpdateCmd(m.latestRelease)
+		}
+	case "update-daemon":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			return m, m.updateDaemonCmd()
 		}
 	}
 	return m, nil
@@ -1775,6 +1810,9 @@ func (m tuiModel) renderConfirm() string {
 			c.answer)
 	case "update-client":
 		prompt = fmt.Sprintf("Download %s and replace this dejima binary (verified against the release checksums)? Type 'y' and Enter: %s",
+			m.latestRelease, c.answer)
+	case "update-daemon":
+		prompt = fmt.Sprintf("Update the daemon to %s and restart it (briefly disconnects)? Type 'y' and Enter: %s",
 			m.latestRelease, c.answer)
 	}
 	return styleErrored.Render("┌── ") + prompt + styleErrored.Render(" ──┐")
