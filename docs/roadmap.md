@@ -30,26 +30,27 @@ build island (no live Docker/macOS host here). Run them on Minion and feed findi
 
 ---
 
-## 🌿 In-flight feature branches (unmerged — pushed to `origin`)
+## 🌿 Recently merged feature work (now on `master`)
 
-Three feature branches are built, unit/security-reviewed, and **pushed to origin**
-but **not yet merged** to master. Master has advanced since they were cut (TUI
-work, doctor #9, service #8/#9) and `origin/tui/agent-activity` overlaps the
-name-first agent-row change — so merging needs conflict reconciliation, not a
-fast-forward. Open follow-ups below are a self-generated backlog, none blocking.
+Three feature branches are built, unit/security-reviewed, and **merged to
+`master`** (merge commits `57ecb32`, `d991bc4`, `8fee087`). The merge restored
+the SSH-façade path helpers that the UX branch's GitHub-identity edit had
+displaced in `internal/paths`, so the live SSH-façade (#9) is intact. The
+remaining items per branch are a self-generated backlog (live-verify + polish),
+none blocking.
 
-### `origin/feat/island-ux-fixes` (`5f7bf67`) — agent ids, name-first rows, GitHub identities
+### `feat/island-ux-fixes` (merged `8fee087`) — agent ids, name-first rows, GitHub identities
 - Island-letter agent ids (`p1`,`p2`…; primary via `SetPrimaryID`; legacy keeps `a1`). Agent rows lead with name (id when unlabeled).
 - Add-island repo picker: paste-URL row + daemon-backed "Browse GitHub" (pick identity → repo).
 - **Per-daemon GitHub identities** end-to-end: `internal/githubid` (atomic+locked store), `GET/PUT/DELETE /v1/credentials/github[/repos]`, per-island `hosts.yml` mounted at `/opt/host/gh-config` (fallback to host `~/.config/gh`; removed on island delete), `dejima auth push --github` / `auth status` / `dejima init --github-identity`. Docs: `docs/github-identities.md`.
 - [ ] Open: live in-container `git push` test · warn on dangling identity ref · verify token on push · `handleGitHubRepos` handler test (base-URL seam) · `SetPrimaryID` unit test · Enterprise host in auth push · "N of M" repo-cap indicator · disambiguate duplicate-label rows.
 
-### `origin/feat/secure-island-routing` (`2914b8d`) — close the in-island control-plane hole
+### `feat/secure-island-routing` (merged `57ecb32`) — close the in-island control-plane hole
 - Fixes a critical pre-existing containment hole: the operator unix socket was bind-mounted into every Linux island. Now the control socket is **not** mounted; islands reach the daemon only over the token-authenticated, island-scoped TCP path; `agent-event` moved onto it (authenticated, anti-spoof); `host.docker.internal:host-gateway` added. Docs: `docs/secure-island-routing.md`.
 - [ ] Live-verify: in-island telemetry/autonomy over the token path on Minion (macOS).
 - [ ] Open: native-Linux token-listener reachability (loopback bind unreachable via the bridge gateway).
 
-### `origin/feat/host-terminals` (`8cc0f93`) — operator host terminals
+### `feat/host-terminals` (merged `d991bc4`) — operator host terminals
 - Uncontained operator shells in tmux on the daemon host (humans, **not** agents — "agent ⇒ always a container"). `internal/hostterm` + `internal/bridge` host PTY; `/v1/terminals*` operator-only (`dejimad --host-terminals`, off by default, audited, island-token-denied by test); TUI "Host · not contained" section (`t` to create+attach). Docs: `docs/host-terminals.md`.
 - [ ] Live-verify: interactive attach on a daemon with `--host-terminals` + tmux installed.
 - [ ] Roadmap: `dejima term` CLI intentionally deferred (kept TUI-only to bound the most-privileged surface).
