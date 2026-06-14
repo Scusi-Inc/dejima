@@ -70,6 +70,39 @@ func TestListReposReportsCappedFromLinkHeader(t *testing.T) {
 	}
 }
 
+func TestVerifyToken(t *testing.T) {
+	t.Run("returns login on 200", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/user" {
+				t.Errorf("path = %q, want /user", r.URL.Path)
+			}
+			if r.Header.Get("Authorization") != "Bearer good" {
+				t.Errorf("auth header = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"login":"octocat"}`))
+		}))
+		defer srv.Close()
+		login, err := verifyToken(context.Background(), srv.URL, "good")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if login != "octocat" {
+			t.Errorf("login = %q, want octocat", login)
+		}
+	})
+
+	t.Run("errors on 401", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+		}))
+		defer srv.Close()
+		if _, err := verifyToken(context.Background(), srv.URL, "bad"); err == nil {
+			t.Fatal("expected an error on 401")
+		}
+	})
+}
+
 func TestListReposSurfacesHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

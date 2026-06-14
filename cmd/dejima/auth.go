@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/agentcreds"
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/reposrc"
 )
 
@@ -29,6 +31,7 @@ func newAuthPushCmd() *cobra.Command {
 	var github bool
 	var name string
 	var makeDefault bool
+	var host string
 	cmd := &cobra.Command{
 		Use:   "push",
 		Short: "Send this machine's credentials to the daemon.",
@@ -41,20 +44,34 @@ func newAuthPushCmd() *cobra.Command {
 				return err
 			}
 			if github {
-				login, token, err := reposrc.LocalGitHubLogin()
+				login, token, err := reposrc.LocalGitHubLogin(host)
 				if err != nil {
 					return err
+				}
+				// Verify before storing so a bad/expired token fails here, not
+				// later inside an island. The verified login wins if gh and the
+				// token disagree (e.g. a token minted for another account).
+				verified, err := githubid.VerifyToken(cmd.Context(), host, token)
+				if err != nil {
+					return fmt.Errorf("token verification failed (nothing stored): %w", err)
+				}
+				if verified != "" {
+					login = verified
 				}
 				id := name
 				if id == "" {
 					id = login
 				}
 				if _, err := c.PutGitHubIdentity(cmd.Context(), id, api.PutGitHubIdentityRequest{
-					Login: login, Token: token, Default: makeDefault,
+					Login: login, Host: host, Token: token, Default: makeDefault,
 				}); err != nil {
 					return err
 				}
-				fmt.Printf("pushed GitHub identity %q (login %s) to the daemon\n", id, login)
+				where := "github.com"
+				if h := strings.TrimSpace(host); h != "" {
+					where = h
+				}
+				fmt.Printf("pushed GitHub identity %q (login %s @ %s) to the daemon\n", id, login, where)
 				fmt.Println("new islands can select it; see `dejima auth status`")
 				return nil
 			}
@@ -73,6 +90,7 @@ func newAuthPushCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&github, "github", false, "push the active gh account as a daemon GitHub identity")
 	cmd.Flags().StringVar(&name, "name", "", "identity name (default: the GitHub login)")
 	cmd.Flags().BoolVar(&makeDefault, "default", false, "make this the daemon's default GitHub identity")
+	cmd.Flags().StringVar(&host, "host", "", "GitHub host for --github (default github.com; set a GitHub Enterprise host to seed an enterprise identity)")
 	return cmd
 }
 
