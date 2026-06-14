@@ -1081,8 +1081,9 @@ func (m tuiModel) renderList(_ int) string {
 		case rowAddAgent:
 			line = "   " + styleMuted.Render("+ add agent")
 		case rowAgent:
-			a := agentByID(byName[row.island], row.agentID)
-			line = "   └ " + agentRowText(a)
+			isl := byName[row.island]
+			a := agentByID(isl, row.agentID)
+			line = "   └ " + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
 		case rowTerminal:
 			t, _ := m.terminalByID(row.termID)
 			line = terminalRowText(t)
@@ -1182,16 +1183,35 @@ func terminalRowText(t hostterm.Terminal) string {
 
 // agentRowText renders one agent's list line: kind glyph, name (label, or id
 // when unlabeled), then the latest signal. The id isn't repeated when a label
-// is present — it stays available in the detail view.
-func agentRowText(a api.AgentInfo) string {
+// is present — it stays available in the detail view — unless ambiguous is set,
+// meaning another agent in the same island shares this display name, in which
+// case the muted id is appended so the two rows aren't indistinguishable.
+func agentRowText(a api.AgentInfo, ambiguous bool) string {
 	sig := ""
 	if a.Error != "" {
 		sig = "  " + styleErrored.Render("error")
 	} else if a.AgentState != nil && a.AgentState.Latest != "" {
 		sig = "  " + a.AgentState.Latest
 	}
-	return fmt.Sprintf("%s %s%s",
-		agentGlyph(a), truncate(agentDisplayName(a), 18), sig)
+	name := truncate(agentDisplayName(a), 18)
+	if ambiguous {
+		name = truncate(agentDisplayName(a), 12) + " " + styleMuted.Render(a.ID)
+	}
+	return fmt.Sprintf("%s %s%s", agentGlyph(a), name, sig)
+}
+
+// labelIsAmbiguous reports whether another agent in the same island renders to
+// the same display name as a — used to decide whether a row needs its id handle
+// appended to stay distinguishable.
+func labelIsAmbiguous(agents []api.AgentInfo, a api.AgentInfo) bool {
+	name := agentDisplayName(a)
+	n := 0
+	for _, other := range agents {
+		if agentDisplayName(other) == name {
+			n++
+		}
+	}
+	return n > 1
 }
 
 func (m tuiModel) renderDetail(_ int) string {
@@ -1298,7 +1318,7 @@ func (m tuiModel) renderDetail(_ int) string {
 		b.WriteString(styleHeader.Render("Agents"))
 		b.WriteString("\n")
 		for _, a := range d.Agents {
-			b.WriteString("  " + agentRowText(a) + "\n")
+			b.WriteString("  " + agentRowText(a, labelIsAmbiguous(d.Agents, a)) + "\n")
 		}
 		b.WriteString(styleMuted.Render("  [+] add   [X] remove (on an agent)") + "\n")
 	}

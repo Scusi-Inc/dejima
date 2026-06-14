@@ -55,6 +55,32 @@ func TestAgentGlyphKind(t *testing.T) {
 	}
 }
 
+func TestAgentRowDisambiguatesDuplicateLabels(t *testing.T) {
+	dup := []api.AgentInfo{
+		{ID: "p1", Label: "builder", Type: "claude-code"},
+		{ID: "p2", Label: "builder", Type: "claude-code"}, // same label
+		{ID: "p3", Label: "tests", Type: "claude-code"},   // unique label
+	}
+	if !labelIsAmbiguous(dup, dup[0]) {
+		t.Error("dup[0] should be ambiguous (shares 'builder')")
+	}
+	if labelIsAmbiguous(dup, dup[2]) {
+		t.Error("dup[2] 'tests' is unique, should not be ambiguous")
+	}
+	// The ambiguous rows carry their id so they aren't identical; the unique one doesn't.
+	r0 := plain(agentRowText(dup[0], labelIsAmbiguous(dup, dup[0])))
+	r1 := plain(agentRowText(dup[1], labelIsAmbiguous(dup, dup[1])))
+	if r0 == r1 {
+		t.Errorf("duplicate-label rows render identically: %q", r0)
+	}
+	if !strings.Contains(r0, "p1") || !strings.Contains(r1, "p2") {
+		t.Errorf("ambiguous rows missing id handle: %q / %q", r0, r1)
+	}
+	if r2 := plain(agentRowText(dup[2], labelIsAmbiguous(dup, dup[2]))); strings.Contains(r2, "p3") {
+		t.Errorf("unique-label row should not show its id: %q", r2)
+	}
+}
+
 // TestRenderListGlyphs renders the list and asserts each kind shows up. The
 // rendered output is logged so the visual can be eyeballed with `go test -v`.
 func TestRenderListGlyphs(t *testing.T) {
