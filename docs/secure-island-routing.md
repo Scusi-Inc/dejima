@@ -1,5 +1,11 @@
 # Secure in-island routing
 
+> This is the runtime *enforcement layer* for the higher-level invariant in
+> [`security-boundary.md`](security-boundary.md) (privilege exchange-down):
+> the master identity stops at the control plane; the island only ever holds an
+> attenuated per-island token. This doc is how that token path is the *only* way
+> in.
+
 ## The problem
 
 The daemon's operator control socket (`paths.SocketPath()`) — the full,
