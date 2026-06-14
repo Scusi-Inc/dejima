@@ -108,6 +108,9 @@ type OverviewResponse struct {
 	DockerReachable    bool      `json:"docker_reachable"`
 	IslandImagePresent bool      `json:"island_image_present"`
 	IslandImage        string    `json:"island_image,omitempty"`
+	// HostTerminalsEnabled lets a client (the TUI) show the Host section only
+	// when the daemon was started with --host-terminals.
+	HostTerminalsEnabled bool `json:"host_terminals_enabled"`
 	// DaemonVersion / APIVersion let a client detect skew against the daemon.
 	// APIVersion is 0 from daemons predating version reporting.
 	DaemonVersion string `json:"daemon_version,omitempty"`

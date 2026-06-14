@@ -12,8 +12,61 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/runtime"
 )
+
+// TestHostTerminalsAPI covers the operator host-terminal CRUD: gated off by
+// default (403), then create/list/relabel/delete once enabled.
+func TestHostTerminalsAPI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := &fakeRuntime{status: runtime.StatusRunning}
+	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	h := srv.Handler()
+
+	// Off by default → 403 with a hint.
+	if rr := do(t, h, http.MethodGet, "/v1/terminals", ""); rr.Code != http.StatusForbidden {
+		t.Fatalf("disabled list: got %d, want 403", rr.Code)
+	}
+	if rr := do(t, h, http.MethodPost, "/v1/terminals", `{"label":"x"}`); rr.Code != http.StatusForbidden {
+		t.Errorf("disabled create: got %d, want 403", rr.Code)
+	}
+
+	srv.EnableHostTerminals()
+
+	rr := do(t, h, http.MethodPost, "/v1/terminals", `{"label":"repair"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	var created hostterm.Terminal
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.ID != "t1" || created.Label != "repair" || created.Tmux() != "dejima-term-t1" {
+		t.Fatalf("created = %+v, want t1/repair/dejima-term-t1", created)
+	}
+
+	rr = do(t, h, http.MethodPost, "/v1/terminals", ``) // empty body → no label
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.ID != "t2" {
+		t.Errorf("second id = %q, want t2 (monotonic)", created.ID)
+	}
+
+	rr = do(t, h, http.MethodGet, "/v1/terminals", "")
+	var list TerminalsResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &list)
+	if len(list.Terminals) != 2 {
+		t.Fatalf("list = %d terminals, want 2", len(list.Terminals))
+	}
+
+	if rr := do(t, h, http.MethodPatch, "/v1/terminals/t2", `{"label":"logs"}`); rr.Code != http.StatusOK {
+		t.Errorf("relabel: %d, want 200", rr.Code)
+	}
+	if rr := do(t, h, http.MethodDelete, "/v1/terminals/t1", ""); rr.Code != http.StatusNoContent {
+		t.Errorf("delete: %d, want 204", rr.Code)
+	}
+	if rr := do(t, h, http.MethodDelete, "/v1/terminals/t1", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("delete missing: %d, want 404", rr.Code)
+	}
+}
 
 // fakeRuntime implements runtime.Runtime in-memory, recording the exec commands
 // the daemon issues and the last CreateContainer request, so a test can assert
