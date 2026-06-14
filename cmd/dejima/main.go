@@ -406,7 +406,8 @@ func newServiceCmd() *cobra.Command {
 				fmt.Printf("in-island autonomy (#8): token-TCP on %s\n", tokenTCPAddr)
 			}
 			if sshAddr != "" {
-				fmt.Printf("ssh façade (#9): listening on %s — authorize keys with `dejima ssh authorize`\n", sshAddr)
+				fmt.Printf("ssh façade (#9): listening on %s\n", sshAddr)
+				maybeAuthorizeAccountKey()
 			}
 			if notifyURL != "" {
 				if err := waitForDaemonAndSubscribe(cmd.Context(), notifyURL, notifySecret); err != nil {

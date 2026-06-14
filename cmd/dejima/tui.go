@@ -79,12 +79,15 @@ type tuiModel struct {
 	detail   *api.IslandInfo
 	events_  []events.Event
 
-	selected     int
-	width        int
-	height       int
-	lastError    string
-	connectTo    string // set on quit-to-connect; main() acts on this
-	connectAgent string // agent id to attach to alongside connectTo ("" = primary)
+	selected       int
+	width          int
+	height         int
+	lastError      string
+	sshHost        string // resolved SSH-façade host (cached from overview; see overviewMsg)
+	sshPort        string // resolved SSH-façade port
+	sshResolvedFor string // the SSHAddr we last resolved, so we don't re-exec tailscale each frame
+	connectTo      string // set on quit-to-connect; main() acts on this
+	connectAgent   string // agent id to attach to alongside connectTo ("" = primary)
 	// connectTerminal, when set on quit, attaches to a host terminal instead of
 	// an island (a shell on the daemon host).
 	connectTerminal string
@@ -294,6 +297,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overview = msg
 		if msg != nil {
 			m.skew = versionSkew(msg.DaemonVersion, msg.APIVersion)
+			// Resolve the SSH endpoint once per distinct addr (endpointFromAddr
+			// may exec `tailscale`), not every render, so the detail panel can
+			// show a connect string cheaply.
+			if msg.SSHAddr != "" && msg.SSHAddr != m.sshResolvedFor {
+				if h, p, err := endpointFromAddr(msg.SSHAddr); err == nil {
+					m.sshHost, m.sshPort, m.sshResolvedFor = h, p, msg.SSHAddr
+				}
+			}
 		}
 		return m, m.fetchTerminalsCmd() // nil (no-op) unless host terminals are on
 
@@ -1306,6 +1317,13 @@ func (m tuiModel) renderDetail(_ int) string {
 			labels = append(labels, a.Label)
 		}
 		b.WriteString("attached:  " + strings.Join(labels, ", ") + "\n")
+	}
+	// SSH connect info — shown when the daemon's SSH-façade is enabled. The host
+	// is resolved once per overview refresh (see overviewMsg); editor setup is a
+	// one-liner via `dejima ssh config`.
+	if m.overview != nil && m.overview.SSHAddr != "" && m.sshHost != "" {
+		b.WriteString(fmt.Sprintf("ssh:       %s  (%s@%s -p %s)\n",
+			styleAccent.Render("dejima-"+d.Name), d.Name, m.sshHost, m.sshPort))
 	}
 	// Crash health — only worth showing when something's wrong.
 	if h := d.Health; h != nil && (h.OOMKilled || h.RestartCount > 0) {

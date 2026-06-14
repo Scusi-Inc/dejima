@@ -95,6 +95,19 @@ func HostKeyPath() (string, error) {
 	return filepath.Join(root, "ssh_host_ed25519"), nil
 }
 
+// AccountAuthorizedKeysPath returns ~/.dejima/ssh_authorized_keys — the
+// account-wide allow-set of public keys that may ssh into *every* island
+// (current and future). Consulted in addition to each island's own
+// authorized_keys, so registering a key once grants fleet-wide access without
+// per-island seeding. 0600.
+func AccountAuthorizedKeysPath() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "ssh_authorized_keys"), nil
+}
+
 // SSHDir returns ~/.dejima/projects/<name>/ssh — the per-island SSH dir holding
 // authorized_keys (the public keys allowed to ssh into this island). Created 0700.
 func SSHDir(name string) (string, error) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/sshfacade"
@@ -38,21 +39,52 @@ func newSSHCmd() *cobra.Command {
 
 func newSSHAuthorizeCmd() *cobra.Command {
 	var keyFile string
+	var account bool
 	cmd := &cobra.Command{
-		Use:   "authorize <island> [public-key-line]",
-		Short: "Authorize a public key to ssh into an island",
-		Long: "Adds an OpenSSH public key to the island's authorized_keys. Provide the key as an\n" +
+		Use:   "authorize [island] [public-key-line]",
+		Short: "Authorize a public key to ssh into an island (or --account, every island)",
+		Long: "Adds an OpenSSH public key to an island's authorized_keys. Provide the key as an\n" +
 			"argument, via --key <file>, or on stdin:\n\n" +
-			"  dejima ssh authorize myisland \"$(cat ~/.ssh/id_ed25519.pub)\"\n" +
 			"  dejima ssh authorize myisland --key ~/.ssh/id_ed25519.pub\n" +
-			"  cat ~/.ssh/id_ed25519.pub | dejima ssh authorize myisland",
-		Args: cobra.RangeArgs(1, 2),
+			"  cat ~/.ssh/id_ed25519.pub | dejima ssh authorize myisland\n\n" +
+			"With --account the key is registered fleet-wide: it authorizes EVERY island,\n" +
+			"current and future, with no per-island step (use this for your own devices):\n\n" +
+			"  dejima ssh authorize --account --key ~/.ssh/id_ed25519.pub",
+		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if account {
+				// account-wide: args are key-only (0 or 1 positional).
+				if len(args) > 1 {
+					return fmt.Errorf("--account takes no island; pass only the key (or --key/stdin)")
+				}
+				positional := ""
+				if len(args) == 1 {
+					positional = args[0]
+				}
+				line, err := resolveKeyLine(cmd, positional, keyFile)
+				if err != nil {
+					return err
+				}
+				fp, err := sshfacade.AddAccountKey(line)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("authorized %s for ALL islands (account-wide)\n", fp)
+				fmt.Println("set up your editor for every island:  dejima ssh config --all")
+				return nil
+			}
+			if len(args) < 1 {
+				return fmt.Errorf("give an island name, or --account to authorize every island")
+			}
 			island := args[0]
 			if _, err := project.Load(island); err != nil {
 				return err
 			}
-			line, err := readKey(cmd, args, keyFile)
+			positional := ""
+			if len(args) == 2 {
+				positional = args[1]
+			}
+			line, err := resolveKeyLine(cmd, positional, keyFile)
 			if err != nil {
 				return err
 			}
@@ -66,15 +98,34 @@ func newSSHAuthorizeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&keyFile, "key", "", "read the public key from this file")
+	cmd.Flags().BoolVar(&account, "account", false, "register the key fleet-wide (authorizes every island, current and future)")
 	return cmd
 }
 
 func newSSHListCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list <island>",
-		Short: "List the public keys authorized to ssh into an island",
-		Args:  cobra.ExactArgs(1),
+	var account bool
+	cmd := &cobra.Command{
+		Use:   "list [island]",
+		Short: "List authorized keys for an island (or --account, the fleet-wide keys)",
+		Args:  cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if account {
+				keys, err := sshfacade.ListAccountKeys()
+				if err != nil {
+					return err
+				}
+				if len(keys) == 0 {
+					fmt.Println("no account-wide keys (authorize one: dejima ssh authorize --account --key ~/.ssh/id_ed25519.pub)")
+					return nil
+				}
+				for _, k := range keys {
+					fmt.Printf("%s  %-12s %s\n", k.Fingerprint, k.Type, k.Comment)
+				}
+				return nil
+			}
+			if len(args) < 1 {
+				return fmt.Errorf("give an island name, or --account to list fleet-wide keys")
+			}
 			island := args[0]
 			if _, err := project.Load(island); err != nil {
 				return err
@@ -84,7 +135,7 @@ func newSSHListCmd() *cobra.Command {
 				return err
 			}
 			if len(keys) == 0 {
-				fmt.Printf("no keys authorized for %q (ssh is closed until you add one)\n", island)
+				fmt.Printf("no per-island keys for %q (account-wide keys, if any, still apply — see `dejima ssh list --account`)\n", island)
 				return nil
 			}
 			for _, k := range keys {
@@ -93,25 +144,50 @@ func newSSHListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&account, "account", false, "list the fleet-wide (account) keys instead of an island's")
+	return cmd
 }
 
 func newSSHRevokeCmd() *cobra.Command {
-	var all bool
+	var all, account bool
 	cmd := &cobra.Command{
-		Use:   "revoke <island> [fingerprint]",
-		Short: "Revoke a public key's SSH access to an island",
+		Use:   "revoke [island] [fingerprint]",
+		Short: "Revoke an SSH key from an island (or --account, fleet-wide)",
 		Long: "Removes an authorized key by its SHA256 fingerprint (see `dejima ssh list`), or\n" +
-			"--all to revoke every key (closes SSH to the island until you authorize a new one).",
-		Args: cobra.RangeArgs(1, 2),
+			"--all to revoke every key. With --account, operates on the fleet-wide allow-set —\n" +
+			"revoking there removes access to every island at once.",
+		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			island := args[0]
-			if _, err := project.Load(island); err != nil {
-				return err
-			}
 			var (
 				n   int
 				err error
 			)
+			if account {
+				// account-wide: optional fingerprint is the sole positional.
+				switch {
+				case all:
+					n, err = sshfacade.RemoveAllAccountKeys()
+				case len(args) >= 1:
+					n, err = sshfacade.RemoveAccountKey(args[0])
+				default:
+					return fmt.Errorf("give a fingerprint to revoke (from `dejima ssh list --account`), or --all")
+				}
+				if err != nil {
+					return err
+				}
+				if n == 0 {
+					return fmt.Errorf("no matching account-wide key (nothing revoked)")
+				}
+				fmt.Printf("revoked %d account-wide key(s) — fleet-wide access removed\n", n)
+				return nil
+			}
+			if len(args) < 1 {
+				return fmt.Errorf("give an island name, or --account to revoke fleet-wide keys")
+			}
+			island := args[0]
+			if _, err := project.Load(island); err != nil {
+				return err
+			}
 			switch {
 			case all:
 				n, err = sshfacade.RemoveAllAuthorizedKeys(island)
@@ -130,7 +206,8 @@ func newSSHRevokeCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "revoke every authorized key for the island")
+	cmd.Flags().BoolVar(&all, "all", false, "revoke every key (for the island, or fleet-wide with --account)")
+	cmd.Flags().BoolVar(&account, "account", false, "operate on the fleet-wide (account) allow-set")
 	return cmd
 }
 
@@ -169,21 +246,19 @@ func newSSHInfoCmd() *cobra.Command {
 // so this is the dead-simple path: authorize a key, run `config --install`, then
 // pick `dejima-<island>` in the editor.
 func newSSHConfigCmd() *cobra.Command {
-	var install bool
+	var install, all bool
 	cmd := &cobra.Command{
-		Use:   "config <island>",
-		Short: "Print or install an ~/.ssh/config entry for VS Code / Cursor Remote-SSH",
-		Long: "Generates an ssh config Host block aliased `dejima-<island>`, resolving the real\n" +
+		Use:   "config [island]",
+		Short: "Print or install ~/.ssh/config entries for VS Code / Cursor Remote-SSH",
+		Long: "Generates ssh config Host blocks aliased `dejima-<island>`, resolving the real\n" +
 			"connection address from the daemon (tailnet host when the listener binds a wildcard).\n" +
-			"With --install it appends the block to ~/.ssh/config (idempotent); without it, prints\n" +
-			"the block so you can review or redirect it. VS Code/Cursor then show `dejima-<island>`\n" +
-			"in Remote-SSH: Connect to Host…",
-		Args: cobra.ExactArgs(1),
+			"With --install it appends to ~/.ssh/config (idempotent); without it, prints the blocks.\n" +
+			"With --all it does this for every island at once, so your whole fleet shows up in\n" +
+			"Remote-SSH: Connect to Host…\n\n" +
+			"  dejima ssh config myisland --install\n" +
+			"  dejima ssh config --all --install",
+		Args: cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			island := args[0]
-			if _, err := project.Load(island); err != nil {
-				return err
-			}
 			host, port, enabled, err := resolveSSHEndpoint(cmd.Context())
 			if err != nil {
 				return err
@@ -192,18 +267,54 @@ func newSSHConfigCmd() *cobra.Command {
 				return fmt.Errorf("the SSH façade is not enabled on the daemon; start it with " +
 					"`dejimad --ssh <addr>` (or `dejima service install --ssh :2222`)")
 			}
-			block := sshConfigBlock(island, host, port)
+
+			// Resolve the target island list: --all = every island; else the one arg.
+			var names []string
+			if all {
+				c, cerr := client()
+				if cerr != nil {
+					return cerr
+				}
+				islands, lerr := c.ListIslands(cmd.Context())
+				if lerr != nil {
+					return lerr
+				}
+				for _, isl := range islands {
+					names = append(names, isl.Name)
+				}
+				if len(names) == 0 {
+					fmt.Println("no islands yet — create one with `dejima init`")
+					return nil
+				}
+			} else {
+				if len(args) < 1 {
+					return fmt.Errorf("give an island name, or --all for every island")
+				}
+				if _, err := project.Load(args[0]); err != nil {
+					return err
+				}
+				names = []string{args[0]}
+			}
+
 			if !install {
-				fmt.Print(block)
-				fmt.Fprintf(os.Stderr,
+				for _, name := range names {
+					fmt.Print(sshConfigBlock(name, host, port))
+				}
+				fmt.Fprintln(os.Stderr,
 					"\n# add the above to ~/.ssh/config (or re-run with --install), then in VS Code/Cursor:\n"+
-						"#   Remote-SSH: Connect to Host… → dejima-%s\n", island)
+						"#   Remote-SSH: Connect to Host… → dejima-<island>")
 				return nil
 			}
-			return installSSHConfig(island, block)
+			for _, name := range names {
+				if err := installSSHConfig(name, sshConfigBlock(name, host, port)); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&install, "install", false, "append the entry to ~/.ssh/config (idempotent)")
+	cmd.Flags().BoolVar(&install, "install", false, "append the entry(ies) to ~/.ssh/config (idempotent)")
+	cmd.Flags().BoolVar(&all, "all", false, "generate entries for every island")
 	return cmd
 }
 
@@ -218,43 +329,56 @@ func sshConfigBlock(island, host, port string) string {
 		island, host, port, island)
 }
 
-// installSSHConfig appends the block to ~/.ssh/config unless an entry for this
-// island is already present (so re-running is safe and won't duplicate).
+// installSSHConfig is the CLI wrapper: it mutates ~/.ssh/config via
+// writeSSHConfigEntry and prints what happened.
 func installSSHConfig(island, block string) error {
-	home, err := os.UserHomeDir()
+	status, path, err := writeSSHConfigEntry(island, block)
 	if err != nil {
 		return err
+	}
+	if status == "exists" {
+		fmt.Printf("~/.ssh/config already has Host dejima-%s (left unchanged)\n", island)
+	} else {
+		fmt.Printf("added Host dejima-%s to %s\n", island, path)
+	}
+	fmt.Printf("VS Code / Cursor → Remote-SSH: Connect to Host… → dejima-%s\n", island)
+	return nil
+}
+
+// writeSSHConfigEntry appends the block to ~/.ssh/config unless an entry for the
+// island is already present (so re-running is safe and won't duplicate). Returns
+// "added" or "exists" and the config path. No output — callers report (the CLI
+// prints; the TUI sets a status line).
+func writeSSHConfigEntry(island, block string) (status, path string, err error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", err
 	}
 	dir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return "", "", err
 	}
-	path := filepath.Join(dir, "config")
+	path = filepath.Join(dir, "config")
 	existing, _ := os.ReadFile(path)
-	marker := "Host dejima-" + island
 	for _, line := range strings.Split(string(existing), "\n") {
 		f := strings.Fields(line)
 		if len(f) >= 2 && f[0] == "Host" && f[1] == "dejima-"+island {
-			fmt.Printf("~/.ssh/config already has %s (left unchanged)\n", marker)
-			fmt.Printf("VS Code / Cursor → Remote-SSH: Connect to Host… → dejima-%s\n", island)
-			return nil
+			return "exists", path, nil
 		}
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return "", "", err
 	}
-	defer f.Close()
+	defer fh.Close()
 	sep := ""
 	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n\n") {
 		sep = "\n"
 	}
-	if _, err := f.WriteString(sep + block); err != nil {
-		return err
+	if _, err := fh.WriteString(sep + block); err != nil {
+		return "", "", err
 	}
-	fmt.Printf("added %s to %s\n", marker, path)
-	fmt.Printf("VS Code / Cursor → Remote-SSH: Connect to Host… → dejima-%s\n", island)
-	return nil
+	return "added", path, nil
 }
 
 // resolveSSHEndpoint asks the daemon for the SSH-façade addr and resolves a
@@ -273,14 +397,40 @@ func resolveSSHEndpoint(ctx context.Context) (host, port string, enabled bool, e
 	if o.SSHAddr == "" {
 		return "", "", false, nil
 	}
-	h, p, splitErr := net.SplitHostPort(o.SSHAddr)
+	h, p, addrErr := endpointFromAddr(o.SSHAddr)
+	return h, p, true, addrErr
+}
+
+// endpointFromAddr resolves a daemon-reported ssh listen addr into a reachable
+// host:port. When the listener binds a wildcard/empty host (":2222") it
+// substitutes a reachable host — the tailnet FQDN if up, else localhost. Pure,
+// so both the CLI (via resolveSSHEndpoint) and the TUI (which already holds the
+// addr from /v1/overview) can use it.
+func endpointFromAddr(sshAddr string) (host, port string, err error) {
+	h, p, splitErr := net.SplitHostPort(sshAddr)
 	if splitErr != nil {
-		return "", "", true, fmt.Errorf("daemon reported a malformed ssh addr %q: %w", o.SSHAddr, splitErr)
+		return "", "", fmt.Errorf("malformed ssh addr %q: %w", sshAddr, splitErr)
 	}
 	if h == "" || h == "0.0.0.0" || h == "::" {
 		h = reachableHost()
 	}
-	return h, p, true, nil
+	return h, p, nil
+}
+
+// defaultPublicKey returns the path to the user's default SSH public key,
+// preferring ed25519. Errors with guidance when none exists.
+func defaultPublicKey() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	for _, name := range []string{"id_ed25519.pub", "id_rsa.pub"} {
+		p := filepath.Join(home, ".ssh", name)
+		if _, statErr := os.Stat(p); statErr == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no default SSH public key in ~/.ssh — generate one: ssh-keygen -t ed25519")
 }
 
 // reachableHost returns the best address a remote editor can dial: the tailnet
@@ -323,11 +473,45 @@ func printConnectHint(ctx context.Context, island string) {
 	fmt.Printf("connect:  ssh %s@<daemon-host> -p <ssh-port>  (enable the listener: dejimad --ssh <addr>)\n", island)
 }
 
-// readKey resolves the public-key line from (in priority) the positional arg,
-// --key file, or stdin.
-func readKey(cmd *cobra.Command, args []string, keyFile string) (string, error) {
-	if len(args) == 2 {
-		return strings.TrimSpace(args[1]), nil
+// maybeAuthorizeAccountKey offers, during `service install --ssh`, to register
+// this machine's default SSH key fleet-wide so every island — current and
+// future — accepts it, the dead-simple "set up once" path. Interactive and
+// opt-in: we never grab a key silently. AddAccountKey dedups, so re-running is
+// harmless.
+func maybeAuthorizeAccountKey() {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return
+	}
+	pub, err := defaultPublicKey()
+	if err != nil {
+		fmt.Println("  authorize a key for all islands later: dejima ssh authorize --account --key <pub>")
+		return
+	}
+	fmt.Printf("Authorize this machine's key (%s) for ALL islands so VS Code/Cursor can connect? [Y/n]: ", pub)
+	var input string
+	_, _ = fmt.Scanln(&input)
+	if t := strings.TrimSpace(input); t != "" && !strings.EqualFold(t, "y") {
+		fmt.Println("  skipped — later: dejima ssh authorize --account --key " + pub)
+		return
+	}
+	line, err := os.ReadFile(pub)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  could not read %s: %v\n", pub, err)
+		return
+	}
+	fp, err := sshfacade.AddAccountKey(strings.TrimSpace(string(line)))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  could not authorize key: %v\n", err)
+		return
+	}
+	fmt.Printf("  authorized %s for all islands. Set up your editor: dejima ssh config --all --install\n", fp)
+}
+
+// resolveKeyLine resolves the public-key line from (in priority) an explicit
+// positional value, --key file, or stdin. positional is "" when none was given.
+func resolveKeyLine(cmd *cobra.Command, positional, keyFile string) (string, error) {
+	if positional != "" {
+		return strings.TrimSpace(positional), nil
 	}
 	if keyFile != "" {
 		b, err := os.ReadFile(keyFile)

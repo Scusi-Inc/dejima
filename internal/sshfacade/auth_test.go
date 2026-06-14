@@ -141,3 +141,54 @@ func TestAuthorizeRejectsBadIslandName(t *testing.T) {
 		t.Fatal("expected error for traversal island name")
 	}
 }
+
+func TestAccountKeyAuthorizesEveryIsland(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	acct, acctLine := newKey(t)
+	islandOnly, islandLine := newKey(t)
+	stranger, _ := newKey(t)
+
+	// No keys anywhere → deny, even for a valid island name.
+	if ok, err := Authorize("alpha", acct); err != nil || ok {
+		t.Fatalf("pre-add Authorize = (%v,%v), want (false,nil)", ok, err)
+	}
+
+	// Register the account key once; it authorizes EVERY island — including
+	// ones that have no per-island authorized_keys at all (and need not exist).
+	if _, err := AddAccountKey(acctLine); err != nil {
+		t.Fatalf("AddAccountKey: %v", err)
+	}
+	for _, isl := range []string{"alpha", "beta", "never-created"} {
+		if ok, err := Authorize(isl, acct); err != nil || !ok {
+			t.Errorf("account key Authorize(%q) = (%v,%v), want (true,nil)", isl, ok, err)
+		}
+	}
+	// A stranger key is still denied fleet-wide.
+	if ok, _ := Authorize("alpha", stranger); ok {
+		t.Error("stranger key authorized fleet-wide")
+	}
+
+	// Per-island keys still work alongside the account set (the union): a key
+	// authorized only on beta opens beta but not alpha.
+	if _, err := AddAuthorizedKey("beta", islandLine); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := Authorize("beta", islandOnly); !ok {
+		t.Error("per-island key should authorize its own island")
+	}
+	if ok, _ := Authorize("alpha", islandOnly); ok {
+		t.Error("per-island key leaked to another island")
+	}
+
+	// Revoking the account key removes fleet-wide access instantly.
+	if n, err := RemoveAccountKey(ssh.FingerprintSHA256(acct)); err != nil || n != 1 {
+		t.Fatalf("RemoveAccountKey = (%d,%v), want (1,nil)", n, err)
+	}
+	if ok, _ := Authorize("alpha", acct); ok {
+		t.Error("revoked account key still authorizes")
+	}
+	// beta's own per-island key survives the account revoke.
+	if ok, _ := Authorize("beta", islandOnly); !ok {
+		t.Error("account revoke wrongly affected a per-island key")
+	}
+}
