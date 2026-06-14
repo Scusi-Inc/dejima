@@ -354,6 +354,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/terminals", s.handleCreateTerminal)
 	mux.HandleFunc("DELETE /v1/terminals/{id}", s.handleDeleteTerminal)
 	mux.HandleFunc("PATCH /v1/terminals/{id}", s.handleRelabelTerminal)
+	mux.HandleFunc("GET /v1/terminals/{id}/session", s.terminalSessionWS)
 	mux.HandleFunc("GET /v1/islands/{name}/events", s.handleIslandEvents)
 	mux.HandleFunc("POST /v1/islands/{name}/exec", s.handleExec)
 	mux.HandleFunc("GET /v1/islands/{name}/files/{path...}", s.handleReadFile)
