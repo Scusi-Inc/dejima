@@ -17,7 +17,9 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
+	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/sshfacade"
+	"github.com/aoos/dejima/internal/version"
 )
 
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
@@ -88,6 +90,9 @@ type tuiModel struct {
 	sshHost        string // resolved SSH-façade host (cached from overview; see overviewMsg)
 	sshPort        string // resolved SSH-façade port
 	sshResolvedFor string // the SSHAddr we last resolved, so we don't re-exec tailscale each frame
+	latestRelease  string // newest published release tag (from GitHub; "" until fetched)
+	clientUpdate   bool   // this CLI build is behind latestRelease
+	daemonUpdate   bool   // the connected daemon is behind latestRelease
 	connectTo      string // set on quit-to-connect; main() acts on this
 	connectAgent   string // agent id to attach to alongside connectTo ("" = primary)
 	// connectTerminal, when set on quit, attaches to a host terminal instead of
@@ -237,7 +242,34 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 // ---------------------------------------------------------------------------
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), tickCmd())
+	return tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd(), tickCmd())
+}
+
+// latestReleaseMsg carries the newest published release tag (or "" on any
+// error — the update banner simply stays hidden, never blocks the TUI).
+type latestReleaseMsg struct{ latest string }
+
+// fetchLatestReleaseCmd queries GitHub for the latest release tag. Run sparingly
+// (Init + manual refresh), never on the 2s tick — the GitHub API rate-limits
+// unauthenticated callers.
+func fetchLatestReleaseCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		v, err := selfupdate.LatestRelease(ctx)
+		if err != nil {
+			return latestReleaseMsg{}
+		}
+		return latestReleaseMsg{latest: v}
+	}
+}
+
+// daemonUpdateAvailable reports whether the connected daemon is behind latest.
+func daemonUpdateAvailable(latest string, o *api.OverviewResponse) bool {
+	if latest == "" || o == nil || o.DaemonVersion == "" {
+		return false
+	}
+	return selfupdate.Evaluate(o.DaemonVersion, latest, selfupdate.ModeSource).UpdateAvailable
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -307,8 +339,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sshHost, m.sshPort, m.sshResolvedFor = h, p, msg.SSHAddr
 				}
 			}
+			m.daemonUpdate = daemonUpdateAvailable(m.latestRelease, msg)
 		}
 		return m, m.fetchTerminalsCmd() // nil (no-op) unless host terminals are on
+
+	case latestReleaseMsg:
+		if msg.latest != "" {
+			m.latestRelease = msg.latest
+			m.clientUpdate = selfupdate.Evaluate(version.Version, msg.latest, selfupdate.DetectMode()).UpdateAvailable
+			m.daemonUpdate = daemonUpdateAvailable(msg.latest, m.overview)
+		}
+		return m, nil
 
 	case detailMsg:
 		if name := m.selectedName(); msg.info != nil && msg.info.Name == name {
@@ -577,7 +618,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirm = &confirmPrompt{verb: "setup-ssh"}
 		return m, nil
 	case "R":
-		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd())
 	}
 	return m, nil
 }
@@ -988,6 +1029,11 @@ func (m tuiModel) View() string {
 	}
 
 	header := m.renderHeader()
+	// A prominent update banner rides just below the header (so body sizing,
+	// which keys off header height, accounts for it automatically).
+	if banner := m.renderUpdateBanner(); banner != "" {
+		header = lipgloss.JoinVertical(lipgloss.Left, header, banner)
+	}
 	hh := lipgloss.Height(header)
 
 	// Full-pane overlays take over the body + footer.
@@ -1012,6 +1058,27 @@ func (m tuiModel) View() string {
 	body := m.renderBody(hh)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+// renderUpdateBanner returns a prominent one-line banner when the client and/or
+// daemon are behind the latest release, or "" when up to date. The apply flow is
+// added in a follow-up; for now it points at the command.
+func (m tuiModel) renderUpdateBanner() string {
+	if !m.clientUpdate && !m.daemonUpdate {
+		return ""
+	}
+	var parts []string
+	if m.clientUpdate {
+		parts = append(parts, fmt.Sprintf("client %s→%s", version.Version, m.latestRelease))
+	}
+	if m.daemonUpdate && m.overview != nil {
+		parts = append(parts, fmt.Sprintf("daemon %s→%s", m.overview.DaemonVersion, m.latestRelease))
+	}
+	msg := " ⬆ update available: " + strings.Join(parts, " · ") + "   ·   run: dejima update "
+	if w := m.width - 2; w > 0 {
+		return styleWaiting.Width(w).Render(msg)
+	}
+	return styleWaiting.Render(msg)
 }
 
 // asciiLogo is a terminal rendering of assets/logo-transparent.png: the
