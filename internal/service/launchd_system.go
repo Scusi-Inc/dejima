@@ -15,6 +15,30 @@ import (
 
 const launchdSystemPlist = "/Library/LaunchDaemons/" + launchdLabel + ".plist"
 
+// launchdSystemSudoers is a narrowly-scoped sudoers drop-in that lets the daemon
+// user apply self-updates without a password. sudo ignores files with a '.' in
+// the name, so the basename is bare.
+const launchdSystemSudoers = "/etc/sudoers.d/dejima"
+
+// sudoersTemplate grants exactly the two privileged steps a daemon self-update
+// needs and nothing else: replace the two dejima binaries in their install dir,
+// and restart this one launchd job. The binary destinations and the restart
+// target are pinned; only the copy's source path is a wildcard (sudo matches
+// arguments positionally, so no extra flags can be smuggled in). Verbs:
+// %[1]s=user, %[2]s=dejima path, %[3]s=dejimad path, %[4]s=launchd label.
+const sudoersTemplate = `# Managed by dejima (dejima service install --system).
+# Remove with 'dejima service uninstall' or by deleting this file.
+#
+# Lets %[1]s apply daemon self-updates (dejima update, TUI [U]) without a
+# password prompt: the system daemon is headless (no TTY), so the two privileged
+# steps — replacing the dejima binaries and restarting the launchd job — cannot
+# prompt for one. Scope is deliberately narrow: the binary destinations and the
+# restart target are pinned; only the source path of the copy is a wildcard.
+%[1]s ALL=(root) NOPASSWD: /usr/bin/install -m 0755 * %[2]s, \
+                          /usr/bin/install -m 0755 * %[3]s, \
+                          /bin/launchctl kickstart -k system/%[4]s
+`
+
 // parseIDs converts a user's numeric uid/gid strings into ints for os.Chown.
 func parseIDs(u *user.User) (uid, gid int, ok bool) {
 	uid, err := strconv.Atoi(u.Uid)
@@ -114,6 +138,19 @@ func (m *launchdSystemManager) Install(binaryPath string, args []string) error {
 		tmp.Name(), launchdSystemPlist); err != nil {
 		return fmt.Errorf("sudo install %s: %w: %s", launchdSystemPlist, err, strings.TrimSpace(stderr))
 	}
+
+	// Drop a passwordless self-update sudoers rule so `dejima update` / TUI [U] can
+	// update this headless daemon with no TTY. Best-effort: the daemon is fine
+	// without it; self-update just falls back to a manual sudo. binDir is where the
+	// binaries live (and where make install puts them) — the dir of the daemon path
+	// we just wrote into the plist.
+	if err := installSelfUpdateSudoers(u, filepath.Dir(binaryPath)); err != nil {
+		fmt.Printf("note: passwordless self-update not enabled (%v)\n", err)
+		fmt.Println("      `dejima update` will need a manual sudo; the daemon itself is unaffected.")
+	} else {
+		fmt.Printf("installed %s — `dejima update` / TUI [U] can self-update the daemon without a password\n", launchdSystemSudoers)
+	}
+
 	_ = exec.Command("sudo", "launchctl", "bootout", "system/"+launchdLabel).Run()
 	// bootout returns before launchd finishes tearing down the old job;
 	// bootstrapping the same label mid-teardown fails with EIO ("Bootstrap
@@ -141,6 +178,8 @@ func (m *launchdSystemManager) Install(binaryPath string, args []string) error {
 
 func (m *launchdSystemManager) Uninstall() error {
 	_ = exec.Command("sudo", "launchctl", "bootout", "system/"+launchdLabel).Run()
+	// Retire the passwordless self-update rule alongside the daemon (best-effort).
+	_ = exec.Command("sudo", "rm", "-f", launchdSystemSudoers).Run()
 	if stderr, err := runCaptureStderr("sudo", "rm", "-f", launchdSystemPlist); err != nil {
 		return fmt.Errorf("sudo rm %s: %w: %s", launchdSystemPlist, err, strings.TrimSpace(stderr))
 	}
@@ -172,6 +211,41 @@ func (m *launchdSystemManager) Restart() error {
 	if stderr, err := runCaptureStderr("sudo", "launchctl", "kickstart", "-k", target); err != nil {
 		return fmt.Errorf("launchctl kickstart %s: %w: %s — is the service installed? (`dejima service install --system`)",
 			target, err, strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+// installSelfUpdateSudoers writes the scoped /etc/sudoers.d/dejima drop-in (see
+// sudoersTemplate) so the headless daemon can self-update with no TTY. It
+// validates with `visudo -cf` first and never installs an unparseable file — a
+// broken sudoers drop-in can wedge sudo for every user on the box.
+func installSelfUpdateSudoers(u *user.User, binDir string) error {
+	content := fmt.Sprintf(sudoersTemplate,
+		u.Username,
+		filepath.Join(binDir, "dejima"),
+		filepath.Join(binDir, "dejimad"),
+		launchdLabel,
+	)
+	tmp, err := os.CreateTemp("", "dejima-sudoers-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if stderr, err := runCaptureStderr("/usr/sbin/visudo", "-cf", tmp.Name()); err != nil {
+		return fmt.Errorf("validate sudoers: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	// sudo ignores a drop-in that isn't 0440 root:wheel. We may not be root (the
+	// caller routes privileged steps through sudo), so do the same here.
+	if stderr, err := runCaptureStderr("sudo", "install", "-m", "0440", "-o", "root", "-g", "wheel",
+		tmp.Name(), launchdSystemSudoers); err != nil {
+		return fmt.Errorf("install %s: %w: %s", launchdSystemSudoers, err, strings.TrimSpace(stderr))
 	}
 	return nil
 }
