@@ -1,9 +1,22 @@
 package main
 
 import (
+	"context"
 	"reflect"
 	"testing"
+
+	"github.com/aoos/dejima/internal/api"
 )
+
+// A non-running island can't be verified for unpushed work, so the uninstall
+// pre-flight flags it without ever calling the daemon (nil client proves the
+// short-circuit: a regression that fetched detail here would nil-deref).
+func TestIslandAtRiskNotRunning(t *testing.T) {
+	reason := islandAtRisk(context.Background(), nil, api.IslandInfo{Name: "x", Container: "hibernated"})
+	if reason == "" {
+		t.Fatal("expected a non-empty at-risk reason for a non-running island")
+	}
+}
 
 func TestParseTags(t *testing.T) {
 	got, err := parseTags([]string{"team=web", "env=staging", "flag="})
