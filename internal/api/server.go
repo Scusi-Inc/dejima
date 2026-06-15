@@ -616,7 +616,7 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	info.Agents = s.agentInfos(r.Context(), p, info.Container == string(runtime.StatusRunning))
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
-	info.Git = s.gitStatusOf(r, p.ContainerName())
+	info.Git = s.gitStatusOf(r.Context(), p.ContainerName())
 	// Crash health is one extra inspect; detail-only to keep list refreshes cheap.
 	if h, err := s.rt.Inspect(r.Context(), p.ContainerName()); err == nil {
 		info.Health = &IslandHealth{
@@ -1020,6 +1020,7 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	force := r.URL.Query().Get("force") == "true"
 	lock := s.projectLock(name)
 	lock.Lock()
 	defer lock.Unlock()
@@ -1029,12 +1030,67 @@ func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if !force {
+		if riskErr := s.purgeRiskError(r.Context(), p); riskErr != nil {
+			writeError(w, http.StatusConflict, riskErr)
+			return
+		}
+	}
 	if err := s.teardown(r.Context(), p, true); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandPurged, Island: p.Name})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// purgeRiskError returns a non-nil error describing at-risk work in an island's
+// workspace when purging without --force would be unsafe, or nil when there is
+// nothing worth guarding. Purge removes the workspace volume, so any uncommitted
+// or unpushed git work in /workspace is destroyed unrecoverably.
+//
+// When the container is running we inspect /workspace directly. When it is not
+// running we cannot verify (the workspace lives in a Docker volume we don't exec
+// into), so we fail safe: ask the operator to wake it or pass --force.
+func (s *Server) purgeRiskError(ctx context.Context, p *project.Project) error {
+	status, _ := s.rt.Status(ctx, p.ContainerName())
+	if status != runtime.StatusRunning {
+		return fmt.Errorf("island %q is not running, so its workspace can't be checked for "+
+			"uncommitted or unpushed work; wake it (`dejima wake %s`) to let the guard verify, "+
+			"or re-run with --force to purge anyway", p.Name, p.Name)
+	}
+	git := s.gitStatusOf(ctx, p.ContainerName())
+	if git == nil {
+		// /workspace isn't a git repo (or the check failed) — nothing git-tracked
+		// to lose. Allow the purge.
+		return nil
+	}
+	var risks []string
+	if !git.Clean && git.DirtyFiles > 0 {
+		risks = append(risks, countNoun(git.DirtyFiles, "uncommitted change"))
+	}
+	if git.Ahead > 0 {
+		risks = append(risks, countNoun(git.Ahead, "unpushed commit"))
+	}
+	if len(risks) == 0 {
+		return nil
+	}
+	branch := git.Branch
+	if branch == "" {
+		branch = "HEAD"
+	}
+	return fmt.Errorf("island %q has %s on branch %s — purging destroys it permanently; "+
+		"commit/push first, or re-run with --force to purge anyway",
+		p.Name, strings.Join(risks, " and "), branch)
+}
+
+// countNoun renders a count with a singular/plural noun: countNoun(1, "commit")
+// → "1 commit", countNoun(3, "commit") → "3 commits".
+func countNoun(n int, singular string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	return fmt.Sprintf("%d %ss", n, singular)
 }
 
 // provision creates the on-disk project, volumes, and a running container.

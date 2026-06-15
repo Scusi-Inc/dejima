@@ -183,6 +183,10 @@ type fakeRuntime struct {
 	lastCreate     runtime.CreateRequest
 	status         runtime.ContainerStatus
 	failNewSession bool // when true, `tmux new-session` exits non-zero
+	// execHook, when set, can intercept an Exec call and return a canned
+	// (stdout, stderr, exitCode); returning handled=false falls through to the
+	// default behavior. Lets a test drive e.g. git-status output.
+	execHook func(cmd []string) (stdout, stderr string, code int, handled bool)
 }
 
 func (f *fakeRuntime) record(cmd []string) {
@@ -229,6 +233,11 @@ func (f *fakeRuntime) CreateContainer(_ context.Context, req runtime.CreateReque
 }
 func (f *fakeRuntime) Exec(_ context.Context, _ string, cmd []string) (string, string, int, error) {
 	f.record(cmd)
+	if f.execHook != nil {
+		if stdout, stderr, code, handled := f.execHook(cmd); handled {
+			return stdout, stderr, code, nil
+		}
+	}
 	switch {
 	case len(cmd) >= 3 && cmd[0] == "test" && strings.Contains(cmd[2], "/.agents/") && strings.HasSuffix(cmd[2], "/.git"):
 		return "", "", 1, nil // agent worktree not created yet

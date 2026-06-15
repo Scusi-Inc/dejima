@@ -425,6 +425,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case opCompleteMsg:
 		delete(m.dirtyOps, msg.name)
 		if msg.err != nil {
+			// A purge blocked by the unpushed-work guard ends with "...--force...".
+			// Offer a force-purge confirmation instead of just surfacing the error,
+			// so the operator can override from the TUI without dropping to the CLI.
+			if msg.verb == "purge" && strings.Contains(msg.err.Error(), "--force") {
+				m.lastError = msg.err.Error()
+				m.confirm = &confirmPrompt{verb: "force-purge", island: msg.name}
+				return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+			}
 			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
 		}
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
@@ -714,6 +722,12 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			m.dirtyOps[c.island] = "purging"
 			return m, m.opCmd(c.island, "purge")
 		}
+	case "force-purge":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			m.lastError = ""
+			m.dirtyOps[c.island] = "purging"
+			return m, m.opCmd(c.island, "purge-force")
+		}
 	case "remove-agent":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			m.dirtyOps[c.island] = "removing agent"
@@ -858,7 +872,9 @@ func (m tuiModel) opCmd(name, verb string) tea.Cmd {
 		case "upgrade":
 			_, err = m.client.UpgradeIsland(ctx, name)
 		case "purge":
-			err = m.client.DeleteIsland(ctx, name)
+			err = m.client.DeleteIsland(ctx, name, false)
+		case "purge-force":
+			err = m.client.DeleteIsland(ctx, name, true)
 		}
 		return opCompleteMsg{name: name, verb: verb, err: err}
 	}
@@ -1799,6 +1815,9 @@ func (m tuiModel) renderConfirm() string {
 			c.answer)
 	case "purge":
 		prompt = fmt.Sprintf("DESTROY %q (including all volumes). Type the island name to confirm: %s",
+			c.island, c.answer)
+	case "force-purge":
+		prompt = fmt.Sprintf("%q has unpushed/uncommitted work that will be LOST. Force-purge anyway? Type 'y' and Enter: %s",
 			c.island, c.answer)
 	case "remove-terminal":
 		prompt = fmt.Sprintf("Close host terminal %s (kills the shell on the daemon host)? Type 'y' and press Enter: %s",

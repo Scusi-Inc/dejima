@@ -294,9 +294,15 @@ func (c *Client) CreateIsland(ctx context.Context, req CreateIslandRequest) (*Cr
 	return &out, nil
 }
 
-// DeleteIsland tears down an island (purge).
-func (c *Client) DeleteIsland(ctx context.Context, name string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name, nil, nil)
+// DeleteIsland tears down an island (purge). When force is false the daemon
+// refuses if the workspace has uncommitted or unpushed git work; force bypasses
+// that guard.
+func (c *Client) DeleteIsland(ctx context.Context, name string, force bool) error {
+	path := "/v1/islands/" + name
+	if force {
+		path += "?force=true"
+	}
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // HibernateIsland stops the container, preserving volumes.

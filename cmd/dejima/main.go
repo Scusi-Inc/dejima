@@ -1367,14 +1367,14 @@ func newPurgeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.DeleteIsland(cmd.Context(), name); err != nil {
+			if err := c.DeleteIsland(cmd.Context(), name, force); err != nil {
 				return err
 			}
 			fmt.Printf("purged %s\n", name)
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation and the unpushed-work guard")
 	return cmd
 }
 
