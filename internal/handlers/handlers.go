@@ -55,12 +55,18 @@ var registry = map[string]Handler{
 	// OpenClaw: a first-class headless assistant. Self-installs on first launch
 	// (kept out of the base image to avoid bloating every island) and runs its
 	// gateway from /workspace — which should hold the brain's config (the Home
-	// Island model). --allow-unconfigured makes the gateway idle (wait for a
-	// config) instead of exiting nonzero when /workspace has none yet, so a
-	// freshly-created Home Island sits ready to be configured rather than
-	// restart-looping in the logs.
+	// Island model).
+	//   --allow-unconfigured lets the gateway idle (wait for config) instead of
+	//     exiting when /workspace has no brain config yet.
+	//   --bind loopback is required *inside a container*: OpenClaw detects the
+	//     container, defaults to bind=auto (0.0.0.0) "for port-forwarding
+	//     compatibility", and then REFUSES to start on a non-loopback bind
+	//     without auth ("Refusing to bind gateway to auto without auth"). Without
+	//     this the gateway exits immediately on a fresh, auth-less island. Binding
+	//     loopback makes it self-generate a runtime token and come up `ready`;
+	//     widening the bind is the operator's job once auth/config is in place.
 	"openclaw": {ID: "openclaw", Kind: KindHeadless,
-		Launch:   "bash -lc 'command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; openclaw gateway --allow-unconfigured'",
+		Launch:   "bash -lc 'command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; openclaw gateway --allow-unconfigured --bind loopback'",
 		StateDir: "/home/dejima/.openclaw"},
 	Headless: {ID: Headless, Kind: KindHeadless, Launch: "", StateDir: "/home/dejima/.agent-state"},
 }
