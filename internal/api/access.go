@@ -200,6 +200,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		SSHAddr:              s.sshAddr,
 		DaemonVersion:        version.Version,
 		APIVersion:           version.APIVersion,
+		Panicked:             panicEngaged(),
 	}
 	if s.events != nil {
 		out.WebhookCount = len(s.events.List())

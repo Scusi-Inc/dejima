@@ -305,6 +305,35 @@ func (c *Client) DeleteIsland(ctx context.Context, name string, force bool) erro
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
+// Panic engages the daemon-wide panic stop: every island is stopped and a
+// PANIC flag is written so the daemon won't auto-start them on restart.
+func (c *Client) Panic(ctx context.Context, reason string) (*PanicResponse, error) {
+	var out PanicResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/panic", PanicRequest{Reason: reason}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ClearPanic removes the PANIC flag and restarts islands whose desired state is
+// running.
+func (c *Client) ClearPanic(ctx context.Context) (*PanicResponse, error) {
+	var out PanicResponse
+	if err := c.do(ctx, http.MethodDelete, "/v1/panic", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PanicStatus reports whether panic mode is currently engaged.
+func (c *Client) PanicStatus(ctx context.Context) (*PanicResponse, error) {
+	var out PanicResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/panic", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // HibernateIsland stops the container, preserving volumes.
 func (c *Client) HibernateIsland(ctx context.Context, name string) (*IslandInfo, error) {
 	var out IslandInfo

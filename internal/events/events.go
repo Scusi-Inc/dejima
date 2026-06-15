@@ -20,6 +20,8 @@ const (
 	TypeIslandAgentAdded   Type = "island.agent-added"
 	TypeIslandAgentRemoved Type = "island.agent-removed"
 	TypeContainerCrashed   Type = "container.crashed"
+	TypePanicEngaged       Type = "daemon.panic-engaged"
+	TypePanicCleared       Type = "daemon.panic-cleared"
 	TypeClientAttached     Type = "client.attached"
 	TypeClientDetached     Type = "client.detached"
 	TypeLastClientDetached Type = "last-client.detached"

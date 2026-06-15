@@ -121,6 +121,9 @@ type OverviewResponse struct {
 	// APIVersion is 0 from daemons predating version reporting.
 	DaemonVersion string `json:"daemon_version,omitempty"`
 	APIVersion    int    `json:"api_version,omitempty"`
+	// Panicked is true while the ~/.dejima/PANIC flag is set: every island is
+	// stopped and the daemon won't auto-start them until panic is cleared.
+	Panicked bool `json:"panicked,omitempty"`
 }
 
 // AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the
@@ -236,6 +239,19 @@ type ExecResponse struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	ExitCode int    `json:"exit_code"`
+}
+
+// PanicRequest is the optional body of POST /v1/panic.
+type PanicRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// PanicResponse is returned by the /v1/panic endpoints. Affected is the number
+// of islands stopped (on engage) or restarted (on clear).
+type PanicResponse struct {
+	Panicked bool   `json:"panicked"`
+	Affected int    `json:"affected"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // PushCredentialsRequest is the body of PUT /v1/credentials/claude.

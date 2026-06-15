@@ -348,6 +348,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/islands/{name}/upgrade", s.upgradeIsland)
 	mux.HandleFunc("POST /v1/image/build", s.handleImageBuild)
 	mux.HandleFunc("POST /v1/admin/update", s.handleAdminUpdate)
+	mux.HandleFunc("GET /v1/panic", s.handlePanicStatus)
+	mux.HandleFunc("POST /v1/panic", s.handlePanic)
+	mux.HandleFunc("DELETE /v1/panic", s.handleUnpanic)
 	mux.HandleFunc("POST /v1/ssh/account-keys", s.handleAuthorizeAccountKey)
 	mux.HandleFunc("GET /v1/ssh/account-keys", s.handleListAccountKeys)
 	mux.HandleFunc("GET /v1/islands/{name}/session", s.sessionWS)
@@ -396,6 +399,10 @@ func (s *Server) routes() *http.ServeMux {
 // state. Called at daemon startup. Best-effort: errors are logged but do not
 // prevent the daemon from serving.
 func (s *Server) AdoptExisting(ctx context.Context) {
+	if panicEngaged() {
+		s.log.Warn("adopt: PANIC flag set — leaving all islands stopped; `dejima panic --clear` to resume")
+		return
+	}
 	projects, err := project.List()
 	if err != nil {
 		s.log.Error("adopt: list projects", "err", err)

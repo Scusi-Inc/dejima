@@ -194,6 +194,11 @@ func checkDaemon(ctx context.Context, r *doctorReport) {
 			r.add("System", "version", "OK",
 				fmt.Sprintf("client %s · daemon %s (api v%d)", version.Version, o.DaemonVersion, o.APIVersion), "")
 		}
+		// Panic mode is easy to forget you left engaged — every island stays down.
+		if o.Panicked {
+			r.add("System", "panic", "WARN", "PANIC engaged — all islands stopped, auto-restart blocked",
+				"`dejima panic --clear` to resume")
+		}
 	}
 }
 

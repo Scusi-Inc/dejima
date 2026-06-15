@@ -182,6 +182,8 @@ type fakeRuntime struct {
 	execs          [][]string
 	lastCreate     runtime.CreateRequest
 	status         runtime.ContainerStatus
+	startCalls     int
+	stopCalls      int
 	failNewSession bool // when true, `tmux new-session` exits non-zero
 	// execHook, when set, can intercept an Exec call and return a canned
 	// (stdout, stderr, exitCode); returning handled=false falls through to the
@@ -208,8 +210,18 @@ func (f *fakeRuntime) EnsureVolume(context.Context, string) error        { retur
 func (f *fakeRuntime) RemoveVolume(context.Context, string, bool) error  { return nil }
 func (f *fakeRuntime) EnsureNetwork(context.Context, string) error       { return nil }
 func (f *fakeRuntime) RemoveNetwork(context.Context, string) error       { return nil }
-func (f *fakeRuntime) StartContainer(context.Context, string) error      { return nil }
-func (f *fakeRuntime) StopContainer(context.Context, string) error       { return nil }
+func (f *fakeRuntime) StartContainer(context.Context, string) error {
+	f.mu.Lock()
+	f.startCalls++
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeRuntime) StopContainer(context.Context, string) error {
+	f.mu.Lock()
+	f.stopCalls++
+	f.mu.Unlock()
+	return nil
+}
 func (f *fakeRuntime) RemoveContainer(context.Context, string, bool) error {
 	return nil
 }

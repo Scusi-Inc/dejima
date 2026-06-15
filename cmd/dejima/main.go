@@ -82,6 +82,7 @@ func newRootCmd() *cobra.Command {
 		newWakeCmd(),
 		newResetCmd(),
 		newPurgeCmd(),
+		newPanicCmd(),
 		newUpgradeCmd(),
 		newExecCmd(),
 		newCpCmd(),
@@ -1375,6 +1376,76 @@ func newPurgeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation and the unpushed-work guard")
+	return cmd
+}
+
+// countNoun renders a count with a singular/plural noun: countNoun(1, "island")
+// → "1 island", countNoun(0, "island") → "0 islands".
+func countNoun(n int, singular string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	return fmt.Sprintf("%d %ss", n, singular)
+}
+
+// --- panic ----------------------------------------------------------------
+
+func newPanicCmd() *cobra.Command {
+	var clear, status bool
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "panic",
+		Short: "Stop every island now and block auto-restart (emergency brake).",
+		Long: "Immediately stops every running island and writes a ~/.dejima/PANIC flag so the\n" +
+			"daemon will not auto-start any island — even across a daemon restart — until the\n" +
+			"flag is cleared. Volumes and desired state are preserved.\n\n" +
+			"  dejima panic              engage: stop everything, set the flag\n" +
+			"  dejima panic --clear      clear the flag and restart islands meant to be running\n" +
+			"  dejima panic --status     report whether panic mode is engaged",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			switch {
+			case status:
+				st, err := c.PanicStatus(ctx)
+				if err != nil {
+					return err
+				}
+				if st.Panicked {
+					msg := "panic: ENGAGED — islands are stopped; `dejima panic --clear` to resume"
+					if st.Reason != "" {
+						msg += "\nreason: " + st.Reason
+					}
+					fmt.Println(msg)
+				} else {
+					fmt.Println("panic: not engaged")
+				}
+				return nil
+			case clear:
+				st, err := c.ClearPanic(ctx)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("panic cleared — restarted %s\n", countNoun(st.Affected, "island"))
+				return nil
+			default:
+				st, err := c.Panic(ctx, reason)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("PANIC engaged — stopped %s; auto-restart blocked until `dejima panic --clear`\n",
+					countNoun(st.Affected, "island"))
+				return nil
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "clear the PANIC flag and restart islands meant to be running")
+	cmd.Flags().BoolVar(&status, "status", false, "report whether panic mode is engaged")
+	cmd.Flags().StringVar(&reason, "reason", "", "note recorded with the panic flag")
 	return cmd
 }
 

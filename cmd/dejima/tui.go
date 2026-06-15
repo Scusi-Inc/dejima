@@ -1127,6 +1127,10 @@ func (m tuiModel) View() string {
 	}
 
 	header := m.renderHeader()
+	// PANIC overrides everything — show it first, in alarm styling.
+	if banner := m.renderPanicBanner(); banner != "" {
+		header = lipgloss.JoinVertical(lipgloss.Left, header, banner)
+	}
 	// A prominent update banner rides just below the header (so body sizing,
 	// which keys off header height, accounts for it automatically).
 	if banner := m.renderUpdateBanner(); banner != "" {
@@ -1156,6 +1160,19 @@ func (m tuiModel) View() string {
 	body := m.renderBody(hh)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+// renderPanicBanner returns an alarm banner while the daemon is in panic mode
+// (every island stopped, auto-restart blocked), or "" otherwise.
+func (m tuiModel) renderPanicBanner() string {
+	if m.overview == nil || !m.overview.Panicked {
+		return ""
+	}
+	msg := " ⛔ PANIC — all islands stopped, auto-restart blocked   ·   run: dejima panic --clear "
+	if w := m.width - 2; w > 0 {
+		return styleErrored.Width(w).Render(msg)
+	}
+	return styleErrored.Render(msg)
 }
 
 // renderUpdateBanner returns a prominent one-line banner when the client and/or
