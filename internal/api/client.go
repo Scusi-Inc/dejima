@@ -504,8 +504,8 @@ func decodeErr(resp *http.Response) error {
 }
 
 // SubscribeWebhook registers a webhook URL with the daemon.
-func (c *Client) SubscribeWebhook(ctx context.Context, url, secret string) (*events.Subscription, error) {
-	req := SubscribeWebhookRequest{URL: url, Secret: secret}
+func (c *Client) SubscribeWebhook(ctx context.Context, url, secret string, eventTypes []events.Type) (*events.Subscription, error) {
+	req := SubscribeWebhookRequest{URL: url, Secret: secret, Events: eventTypes}
 	var out events.Subscription
 	if err := c.do(ctx, http.MethodPost, "/v1/events/subscribe", req, &out); err != nil {
 		return nil, err

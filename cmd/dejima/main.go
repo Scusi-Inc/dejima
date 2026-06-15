@@ -22,6 +22,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/reposrc"
@@ -520,27 +521,45 @@ func newWebhookCmd() *cobra.Command {
 		Short: "Manage webhook subscriptions for state-change events.",
 	}
 	var url, secret string
+	var eventNames []string
 	subscribe := &cobra.Command{
 		Use:   "subscribe",
 		Short: "Subscribe a URL to receive event POSTs.",
+		Long: "Subscribe a URL to receive event POSTs. With no --event, every event is\n" +
+			"delivered; pass --event (repeatable) to scope it — e.g. a headless-box health\n" +
+			"monitor wants only `--event container.crashed --event daemon.started`.\n" +
+			"See `dejima webhook events` for the catalog.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if url == "" {
 				return fmt.Errorf("--url is required")
+			}
+			var types []events.Type
+			for _, n := range eventNames {
+				t := events.Type(strings.TrimSpace(n))
+				if !events.KnownType(t) {
+					return fmt.Errorf("unknown event type %q (see `dejima webhook events`)", n)
+				}
+				types = append(types, t)
 			}
 			c, err := client()
 			if err != nil {
 				return err
 			}
-			sub, err := c.SubscribeWebhook(cmd.Context(), url, secret)
+			sub, err := c.SubscribeWebhook(cmd.Context(), url, secret, types)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("subscribed: %s -> %s\n", sub.ID, sub.URL)
+			scope := "all events"
+			if len(sub.Events) > 0 {
+				scope = formatEventTypes(sub.Events)
+			}
+			fmt.Printf("subscribed: %s -> %s (%s)\n", sub.ID, sub.URL, scope)
 			return nil
 		},
 	}
 	subscribe.Flags().StringVar(&url, "url", "", "webhook URL (required)")
 	subscribe.Flags().StringVar(&secret, "secret", "", "HMAC secret signed into the X-Dejima-Signature header")
+	subscribe.Flags().StringArrayVar(&eventNames, "event", nil, "event type to deliver (repeatable); default all (see: dejima webhook events)")
 
 	list := &cobra.Command{
 		Use:   "ls",
@@ -559,7 +578,22 @@ func newWebhookCmd() *cobra.Command {
 				return nil
 			}
 			for _, s := range subs {
-				fmt.Printf("%s\t%s\n", s.ID, s.URL)
+				scope := "all"
+				if len(s.Events) > 0 {
+					scope = formatEventTypes(s.Events)
+				}
+				fmt.Printf("%s\t%s\t%s\n", s.ID, s.URL, scope)
+			}
+			return nil
+		},
+	}
+
+	eventsCmd := &cobra.Command{
+		Use:   "events",
+		Short: "List the event types a webhook can subscribe to.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, t := range events.KnownTypes() {
+				fmt.Println(t)
 			}
 			return nil
 		},
@@ -582,8 +616,17 @@ func newWebhookCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(subscribe, list, unsubscribe)
+	cmd.AddCommand(subscribe, list, eventsCmd, unsubscribe)
 	return cmd
+}
+
+// formatEventTypes renders a list of event types as a comma-separated string.
+func formatEventTypes(types []events.Type) string {
+	parts := make([]string, len(types))
+	for i, t := range types {
+		parts[i] = string(t)
+	}
+	return strings.Join(parts, ",")
 }
 
 // --- hibernate ------------------------------------------------------------
@@ -759,7 +802,7 @@ func waitForDaemonAndSubscribe(ctx context.Context, url, secret string) error {
 		c, err := client()
 		if err == nil {
 			if healthErr := c.Health(ctx); healthErr == nil {
-				_, subErr := c.SubscribeWebhook(ctx, url, secret)
+				_, subErr := c.SubscribeWebhook(ctx, url, secret, nil) // install-time: all events
 				return subErr
 			} else {
 				lastErr = healthErr
