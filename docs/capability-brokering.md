@@ -1,8 +1,20 @@
 # Decision memo — capability brokering (Shortcuts/Notes vs files-only)
 
-**Status:** analysis for ratification. Resolves open question
-[`port-island-spec.md` §10.4](port-island-spec.md). **The call is the maintainer's** —
-this memo frames the options and recommends one; it does not decide.
+**Status: RATIFIED 2026-06-15.** Resolves open question
+[`port-island-spec.md` §10.4](port-island-spec.md).
+
+> **Decision (maintainer):** **Fast-track a pragmatic Option C *now*** — a narrow,
+> typed capability broker — rather than holding files-only (A) through dogfood.
+> Rationale: the brains Dejima targets (OpenClaw, Hermes, Letta) are
+> function-calling agents that need *structured tool calls*, not just a
+> filesystem, to be useful. **Option B (general host-command broker) is a
+> non-starter — permanently rejected.** Architecture: a daemon endpoint
+> `POST /v1/capabilities/execute` taking a named target + a string→string arg map,
+> mapped by per-platform adapters — **macOS → Apple Shortcuts**, **Linux →
+> user-authored scripts in `~/.dejima/capabilities/`**. Full design in
+> [`capability-broker-spec.md`](capability-broker-spec.md). The analysis below is
+> retained as the reasoning of record; §A "skip" is superseded by the decision to
+> build C now (the recommendation that follows was the pre-ratification view).
 
 ---
 
