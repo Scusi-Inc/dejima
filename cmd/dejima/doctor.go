@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/service"
 	"github.com/aoos/dejima/internal/sshfacade"
 	"github.com/aoos/dejima/internal/version"
 )
@@ -121,6 +122,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 
 	// --- System ---------------------------------------------------------
 	checkDaemon(ctx, r)
+	checkSupervision(ctx, r)
 	checkDocker(ctx, r)
 	checkIslandImage(ctx, r)
 	checkTailscale(ctx, r)
@@ -212,6 +214,35 @@ func checkDaemon(ctx context.Context, r *doctorReport) {
 			r.add("System", "panic", "WARN", "PANIC engaged — all islands stopped, auto-restart blocked",
 				"`dejima panic --clear` to resume")
 		}
+	}
+}
+
+// checkSupervision answers "how is the daemon running, and will it survive a
+// reboot?" — not just "is it reachable?". It flags an orphan (reachable but
+// unsupervised), a per-boot/login-gated supervisor that won't come back on a
+// headless host, and a system plist that's installed but not loaded.
+func checkSupervision(ctx context.Context, r *doctorReport) {
+	reachable := false
+	if c, err := client(); err == nil {
+		reachable = c.Health(ctx) == nil
+	}
+	sup := service.Detect()
+	switch {
+	case sup.Mode == "unknown":
+		return // unsupported OS; nothing useful to say
+	case !sup.Managed && sup.Mode == "none":
+		if reachable {
+			r.add("System", "supervision", "WARN",
+				"daemon is reachable but unsupervised (hand-run) — it won't survive a reboot",
+				"install it as a service: `dejima service install` (`--system` on a headless Mac)")
+		}
+		// Not reachable + unmanaged: checkDaemon already FAILed; stay quiet.
+	case !sup.Managed: // e.g. system plist present but not loaded
+		r.add("System", "supervision", "WARN", sup.Summary, sup.Concern)
+	case sup.Concern != "":
+		r.add("System", "supervision", "WARN", sup.Summary, sup.Concern)
+	default:
+		r.add("System", "supervision", "OK", sup.Summary, "")
 	}
 }
 

@@ -492,6 +492,15 @@ func newServiceCmd() *cobra.Command {
 					return err
 				}
 				fmt.Println(s)
+				// Beyond "is it loaded?", report how it's supervised and whether
+				// that survives a reboot — the headless-Mac footgun doctor flags.
+				sup := service.Detect()
+				if sup.Mode != "unknown" && sup.Summary != "" {
+					fmt.Printf("supervision: %s\n", sup.Summary)
+					if sup.Concern != "" {
+						fmt.Printf("  ⚠ %s\n", sup.Concern)
+					}
+				}
 				return nil
 			},
 		},
