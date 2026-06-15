@@ -31,6 +31,7 @@ type IslandInfo struct {
 	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
 	Git        *GitInfo        `json:"git,omitempty"`
 	Health     *IslandHealth   `json:"health,omitempty"`
+	Disk       *IslandDisk     `json:"disk,omitempty"`
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
@@ -239,6 +240,16 @@ type ExecResponse struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	ExitCode int    `json:"exit_code"`
+}
+
+// IslandDisk reports an island's on-disk volume usage (detail endpoint only;
+// from `docker system df -v`, cached). Bytes are 0 when the storage driver
+// doesn't report size. WorkspaceBytes is the code volume, HomeBytes the
+// per-island home (creds + agent state); Total is their sum.
+type IslandDisk struct {
+	WorkspaceBytes int64 `json:"workspace_bytes"`
+	HomeBytes      int64 `json:"home_bytes"`
+	TotalBytes     int64 `json:"total_bytes"`
 }
 
 // PanicRequest is the optional body of POST /v1/panic.

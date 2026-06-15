@@ -77,6 +77,13 @@ type Server struct {
 	statsData map[string]runtime.Stats
 	statsAt   time.Time
 
+	// Volume-size cache. `docker system df -v` is slower than `docker stats`
+	// and disk size moves slowly, so this is cached with a longer TTL than
+	// statsData and only consulted on the detail endpoint.
+	diskMu   sync.Mutex
+	diskData map[string]int64
+	diskAt   time.Time
+
 	// autonomyDial, when non-empty, is the host:port an in-island brain dials
 	// to reach this daemon over the token-authenticated TCP path (the macOS
 	// route where the unix socket can't be bind-mounted; e.g.
@@ -139,6 +146,23 @@ func (s *Server) statsAll(ctx context.Context) map[string]runtime.Stats {
 		return s.statsData
 	}
 	s.statsData, s.statsAt = data, time.Now()
+	return data
+}
+
+// volumeSizes returns on-disk size (bytes) per volume name, cached for 30s
+// because `docker system df -v` is slow and disk usage drifts slowly. Returns
+// the last good sample (possibly nil) on error.
+func (s *Server) volumeSizes(ctx context.Context) map[string]int64 {
+	s.diskMu.Lock()
+	defer s.diskMu.Unlock()
+	if s.diskData != nil && time.Since(s.diskAt) < 30*time.Second {
+		return s.diskData
+	}
+	data, err := s.rt.VolumeSizes(ctx)
+	if err != nil {
+		return s.diskData
+	}
+	s.diskData, s.diskAt = data, time.Now()
 	return data
 }
 
@@ -630,6 +654,14 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 			OOMKilled:    h.OOMKilled,
 			RestartCount: h.RestartCount,
 			ExitCode:     h.ExitCode,
+		}
+	}
+	// Per-island disk usage (workspace + home volumes). Detail-only and cached
+	// because `docker system df -v` is slow; 0 means the driver didn't report it.
+	if sizes := s.volumeSizes(r.Context()); sizes != nil {
+		ws, home := sizes[p.WorkspaceVolume()], sizes[p.HomeVolume()]
+		if ws > 0 || home > 0 {
+			info.Disk = &IslandDisk{WorkspaceBytes: ws, HomeBytes: home, TotalBytes: ws + home}
 		}
 	}
 	writeJSON(w, http.StatusOK, info)

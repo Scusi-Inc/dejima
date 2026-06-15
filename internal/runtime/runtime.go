@@ -91,6 +91,12 @@ type Runtime interface {
 	// must use this instead of per-container Stats calls.
 	StatsAll(ctx context.Context) (map[string]Stats, error)
 
+	// VolumeSizes returns the on-disk size in bytes of every volume in one
+	// engine query, keyed by volume name. Slower than StatsAll and reads 0 on
+	// storage drivers that don't report volume size, so callers should poll it
+	// sparingly and treat 0 as "unknown".
+	VolumeSizes(ctx context.Context) (map[string]int64, error)
+
 	// CreateContainer creates and starts a container. Returns the container ID.
 	CreateContainer(ctx context.Context, req CreateRequest) (string, error)
 

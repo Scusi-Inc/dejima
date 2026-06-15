@@ -1263,6 +1263,11 @@ func newStatusCmd() *cobra.Command {
 				fmt.Printf("memory:      %s / %s\n", humanBytes(info.Stats.MemoryUsageBytes), humanBytes(info.Stats.MemoryLimitBytes))
 				fmt.Printf("cpu:         %.1f%%\n", info.Stats.CPUPercent)
 			}
+			if info.Disk != nil && info.Disk.TotalBytes > 0 {
+				fmt.Printf("disk:        %s (workspace %s · home %s)\n",
+					humanBytes(uint64(info.Disk.TotalBytes)), humanBytes(uint64(info.Disk.WorkspaceBytes)),
+					humanBytes(uint64(info.Disk.HomeBytes)))
+			}
 			if info.AgentState != nil {
 				fmt.Printf("agent:       %s (%s ago)\n", info.AgentState.Latest, time.Since(info.AgentState.UpdatedAt).Round(time.Second))
 			}

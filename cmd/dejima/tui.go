@@ -1539,6 +1539,11 @@ func (m tuiModel) renderDetail(_ int) string {
 			humanBytes(d.Stats.MemoryUsageBytes), humanBytes(d.Stats.MemoryLimitBytes)))
 		b.WriteString(fmt.Sprintf("cpu:       %.1f%%\n", d.Stats.CPUPercent))
 	}
+	if d.Disk != nil && d.Disk.TotalBytes > 0 {
+		b.WriteString(fmt.Sprintf("disk:      %s (ws %s · home %s)\n",
+			humanBytes(uint64(d.Disk.TotalBytes)), humanBytes(uint64(d.Disk.WorkspaceBytes)),
+			humanBytes(uint64(d.Disk.HomeBytes))))
+	}
 	if d.AgentState != nil {
 		b.WriteString(fmt.Sprintf("agent:     %s (%s ago)\n",
 			d.AgentState.Latest, time.Since(d.AgentState.UpdatedAt).Round(time.Second)))
