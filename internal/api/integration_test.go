@@ -182,6 +182,7 @@ type fakeRuntime struct {
 	execs          [][]string
 	lastCreate     runtime.CreateRequest
 	status         runtime.ContainerStatus
+	health         runtime.Health
 	startCalls     int
 	stopCalls      int
 	failNewSession bool // when true, `tmux new-session` exits non-zero
@@ -232,7 +233,9 @@ func (f *fakeRuntime) StatsAll(context.Context) (map[string]runtime.Stats, error
 	return map[string]runtime.Stats{}, nil
 }
 func (f *fakeRuntime) Inspect(context.Context, string) (runtime.Health, error) {
-	return runtime.Health{}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.health, nil
 }
 func (f *fakeRuntime) Status(context.Context, string) (runtime.ContainerStatus, error) {
 	return f.status, nil
