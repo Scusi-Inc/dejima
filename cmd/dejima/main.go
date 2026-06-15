@@ -10,7 +10,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -802,6 +804,8 @@ func newInitCmd() *cobra.Command {
 		disk       string
 		localCopy  bool
 		ghIdentity string
+		owner      string
+		tagPairs   []string
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -860,6 +864,13 @@ func newInitCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
+			tags, err := parseTags(tagPairs)
+			if err != nil {
+				return err
+			}
+			if owner == "" {
+				owner = defaultOwner()
+			}
 			info, err := c.CreateIsland(ctx, api.CreateIslandRequest{
 				Name:           name,
 				Repo:           res.Repo,
@@ -869,6 +880,8 @@ func newInitCmd() *cobra.Command {
 				Image:          image,
 				Cmd:            cmdStr,
 				GitHubIdentity: ghIdentity,
+				Owner:          owner,
+				Tags:           tags,
 				Resources: api.Resources{
 					Memory: memory,
 					CPUs:   cpus,
@@ -906,6 +919,8 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&memory, "memory", "", "memory limit (e.g. 4G); default: unlimited")
 	cmd.Flags().StringVar(&cpus, "cpus", "", "CPU limit (e.g. 2.0); default: unlimited")
 	cmd.Flags().StringVar(&disk, "disk", "", "disk size (e.g. 20G); default: unlimited")
+	cmd.Flags().StringVar(&owner, "owner", "", "creator label for this island (default: <user>@<host>)")
+	cmd.Flags().StringArrayVar(&tagPairs, "tag", nil, "free-form key=value label (repeatable), e.g. --tag team=web --tag env=staging")
 	return cmd
 }
 
@@ -1265,6 +1280,12 @@ func newStatusCmd() *cobra.Command {
 			fmt.Printf("image:       %s\n", info.Image)
 			fmt.Printf("state:       %s (desired)\n", info.State)
 			fmt.Printf("container:   %s\n", info.Container)
+			if info.Owner != "" {
+				fmt.Printf("owner:       %s\n", info.Owner)
+			}
+			if len(info.Tags) > 0 {
+				fmt.Printf("tags:        %s\n", formatTags(info.Tags))
+			}
 			if !info.CreatedAt.IsZero() {
 				fmt.Printf("created:     %s\n", info.CreatedAt.Local().Format(time.RFC3339))
 			}
@@ -1391,6 +1412,51 @@ func newPurgeCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation and the unpushed-work guard")
 	return cmd
+}
+
+// parseTags turns repeated --tag key=value flags into a map, rejecting entries
+// without a "=" or with an empty key.
+func parseTags(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	tags := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, ok := strings.Cut(p, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			return nil, fmt.Errorf("invalid --tag %q (want key=value)", p)
+		}
+		tags[k] = strings.TrimSpace(v)
+	}
+	return tags, nil
+}
+
+// formatTags renders a tag map as "k=v k=v" in sorted key order (stable output).
+func formatTags(tags map[string]string) string {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+tags[k])
+	}
+	return strings.Join(parts, " ")
+}
+
+// defaultOwner derives a creator label as "<user>@<host>" for attribution,
+// falling back gracefully when either lookup fails.
+func defaultOwner() string {
+	name := "unknown"
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		name = u.Username
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return name + "@" + host
+	}
+	return name
 }
 
 // countNoun renders a count with a singular/plural noun: countNoun(1, "island")

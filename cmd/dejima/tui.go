@@ -1536,6 +1536,12 @@ func (m tuiModel) renderDetail(_ int) string {
 		b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(d.Agent)))
 	}
 	b.WriteString(fmt.Sprintf("state:     %s\n", coloredStateText(d)))
+	if d.Owner != "" {
+		b.WriteString(fmt.Sprintf("owner:     %s\n", styleMuted.Render(d.Owner)))
+	}
+	if len(d.Tags) > 0 {
+		b.WriteString(fmt.Sprintf("tags:      %s\n", styleMuted.Render(formatTags(d.Tags))))
+	}
 	if d.Stats != nil {
 		b.WriteString(fmt.Sprintf("memory:    %s / %s\n",
 			humanBytes(d.Stats.MemoryUsageBytes), humanBytes(d.Stats.MemoryLimitBytes)))

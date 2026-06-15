@@ -1034,6 +1034,15 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// Attach ownership metadata (informational; no auth model). Set after a
+	// successful provision so it doesn't complicate provision's signature.
+	if owner := strings.TrimSpace(req.Owner); owner != "" || len(req.Tags) > 0 {
+		p.Owner = owner
+		p.Tags = sanitizeTags(req.Tags)
+		if err := p.Save(); err != nil {
+			s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
+		}
+	}
 
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: p.Name})
 	s.emit(events.Event{Type: events.TypeIslandRunning, Island: p.Name})
@@ -1121,6 +1130,27 @@ func (s *Server) purgeRiskError(ctx context.Context, p *project.Project) error {
 	return fmt.Errorf("island %q has %s on branch %s — purging destroys it permanently; "+
 		"commit/push first, or re-run with --force to purge anyway",
 		p.Name, strings.Join(risks, " and "), branch)
+}
+
+// sanitizeTags trims keys/values and drops entries with an empty key, so a
+// malformed --tag can't persist a blank-keyed label. Returns nil when nothing
+// survives (so an empty map isn't written to config).
+func sanitizeTags(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		out[k] = strings.TrimSpace(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // countNoun renders a count with a singular/plural noun: countNoun(1, "commit")
@@ -1770,6 +1800,8 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		Image:      p.Image,
 		Cmd:        cmd,
 		Role:       p.Role,
+		Owner:      p.Owner,
+		Tags:       p.Tags,
 		State:      string(p.DesiredState),
 		CreatedAt:  p.CreatedAt,
 		LastUsedAt: p.LastUsedAt,

@@ -21,17 +21,19 @@ type IslandInfo struct {
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
-	Role       string          `json:"role,omitempty"`
-	State      string          `json:"state"`     // desired state from config
-	Container  string          `json:"container"` // observed status from runtime
-	CreatedAt  time.Time       `json:"created_at"`
-	LastUsedAt time.Time       `json:"last_used_at"`
-	Attached   []PresenceEntry `json:"attached,omitempty"`
-	Stats      *IslandStats    `json:"stats,omitempty"`
-	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
-	Git        *GitInfo        `json:"git,omitempty"`
-	Health     *IslandHealth   `json:"health,omitempty"`
-	Disk       *IslandDisk     `json:"disk,omitempty"`
+	Role       string            `json:"role,omitempty"`
+	Owner      string            `json:"owner,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	State      string            `json:"state"`     // desired state from config
+	Container  string            `json:"container"` // observed status from runtime
+	CreatedAt  time.Time         `json:"created_at"`
+	LastUsedAt time.Time         `json:"last_used_at"`
+	Attached   []PresenceEntry   `json:"attached,omitempty"`
+	Stats      *IslandStats      `json:"stats,omitempty"`
+	AgentState *AgentStateInfo   `json:"agent_state,omitempty"`
+	Git        *GitInfo          `json:"git,omitempty"`
+	Health     *IslandHealth     `json:"health,omitempty"`
+	Disk       *IslandDisk       `json:"disk,omitempty"`
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
@@ -197,6 +199,11 @@ type CreateIslandRequest struct {
 	// pushes as (see GET /v1/credentials/github). Empty uses the daemon default,
 	// or the host's ~/.config/gh when no identities are configured.
 	GitHubIdentity string `json:"github_identity,omitempty"`
+	// Owner is a free-form creator label (e.g. "alice@laptop") and Tags are
+	// free-form key=value labels (team=web, …); both are informational metadata
+	// surfaced in IslandInfo for wrapper dashboards. Optional.
+	Owner string            `json:"owner,omitempty"`
+	Tags  map[string]string `json:"tags,omitempty"`
 }
 
 // CreateIslandResponse is the result of POST /v1/islands: an IslandInfo
