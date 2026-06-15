@@ -164,6 +164,20 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
+// releaseCheckInterval is how often the TUI re-polls GitHub for a newer release
+// while it's open, so a release that drops mid-session surfaces on its own. Kept
+// long — the GitHub API rate-limits unauthenticated callers, and a fresh release
+// is not urgent — but short enough to catch one within a working day.
+const releaseCheckInterval = 6 * time.Hour
+
+// releaseTickMsg fires on releaseCheckInterval to trigger a background re-poll;
+// distinct from the 2s tickMsg so the rate-limited release check stays slow.
+type releaseTickMsg time.Time
+
+func releaseTickCmd() tea.Cmd {
+	return tea.Tick(releaseCheckInterval, func(t time.Time) tea.Msg { return releaseTickMsg(t) })
+}
+
 func (m tuiModel) fetchListCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -246,7 +260,7 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 // ---------------------------------------------------------------------------
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd(), tickCmd())
+	return tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
 // latestReleaseMsg carries the newest published release tag (or "" on any
@@ -254,8 +268,8 @@ func (m tuiModel) Init() tea.Cmd {
 type latestReleaseMsg struct{ latest string }
 
 // fetchLatestReleaseCmd queries GitHub for the latest release tag. Run sparingly
-// (Init + manual refresh), never on the 2s tick — the GitHub API rate-limits
-// unauthenticated callers.
+// (Init, manual refresh, and the slow releaseCheckInterval re-poll), never on the
+// 2s tick — the GitHub API rate-limits unauthenticated callers.
 func fetchLatestReleaseCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -330,6 +344,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, c)
 		}
 		return m, tea.Batch(cmds...)
+
+	case releaseTickMsg:
+		// Re-poll GitHub and re-arm the slow ticker. The result (latestReleaseMsg)
+		// recomputes clientUpdate/daemonUpdate, so a release that dropped mid-
+		// session lights up the announcement bar without an R or a relaunch.
+		return m, tea.Batch(releaseTickCmd(), fetchLatestReleaseCmd())
 
 	case terminalsMsg:
 		m.terminals = msg
