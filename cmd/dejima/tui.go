@@ -1164,6 +1164,10 @@ var (
 	styleErrored   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
 	styleWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
 	styleFooter    = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
+	// styleBroadcast is the attention bar for the header's top line: amber
+	// background, near-black bold text. Amber, not red — an update is attention,
+	// not danger; red stays reserved for PANIC/errors so the two never blur.
+	styleBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#0b1220")).Background(lipgloss.Color("#fbbf24")).Bold(true)
 )
 
 func (m tuiModel) View() string {
@@ -1176,11 +1180,8 @@ func (m tuiModel) View() string {
 	if banner := m.renderPanicBanner(); banner != "" {
 		header = lipgloss.JoinVertical(lipgloss.Left, header, banner)
 	}
-	// A prominent update banner rides just below the header (so body sizing,
-	// which keys off header height, accounts for it automatically).
-	if banner := m.renderUpdateBanner(); banner != "" {
-		header = lipgloss.JoinVertical(lipgloss.Left, header, banner)
-	}
+	// The update broadcast now lives inside the header (its top line / a compact
+	// chip), so body sizing via header height accounts for it automatically.
 	hh := lipgloss.Height(header)
 
 	// Full-pane overlays take over the body + footer.
@@ -1220,13 +1221,14 @@ func (m tuiModel) renderPanicBanner() string {
 	return styleErrored.Render(msg)
 }
 
-// renderUpdateBanner returns a prominent one-line banner when the client and/or
-// daemon are behind the latest release, or "" when up to date. [U] applies the
-// update in place (client and/or daemon); see the U key handler.
-func (m tuiModel) renderUpdateBanner() string {
-	if !m.clientUpdate && !m.daemonUpdate {
-		return ""
-	}
+// updateParts returns the "client X→Y · daemon X→Y" fragment naming whatever is
+// behind the latest release, or "" when up to date. Broadcast in the header's top
+// line (full mode) and as a chip on the right (compact). [U] applies whichever is
+// behind — a client self-update (replace this binary), a daemon self-update
+// (operator endpoint → daemon updates and restarts), or, with both stale, client
+// then daemon. (Earlier this hinted "run: dejima update", which is wrong for a
+// daemon-only update from a remote client — that command updates the client.)
+func (m tuiModel) updateParts() string {
 	var parts []string
 	if m.clientUpdate {
 		parts = append(parts, fmt.Sprintf("client %s→%s", version.Version, m.latestRelease))
@@ -1234,17 +1236,23 @@ func (m tuiModel) renderUpdateBanner() string {
 	if m.daemonUpdate && m.overview != nil {
 		parts = append(parts, fmt.Sprintf("daemon %s→%s", m.overview.DaemonVersion, m.latestRelease))
 	}
-	// U applies whichever is behind: a client self-update (replace this binary),
-	// a daemon self-update (operator endpoint → the daemon updates and restarts),
-	// or, with both stale, the client first then the daemon. The banner only
-	// renders when at least one is available, so [U] is always the right hint —
-	// the old "run: dejima update" fallback was wrong for a daemon-only update,
-	// since that command updates the client, not the remote daemon.
-	msg := " ⬆ update available: " + strings.Join(parts, " · ") + "   ·   [U] update "
-	if w := m.width - 2; w > 0 {
-		return styleWaiting.Width(w).Render(msg)
+	return strings.Join(parts, " · ")
+}
+
+// announcement is the header's single broadcast slot: the most important thing to
+// tell the user right now, or ok=false when there's nothing. It's deliberately a
+// general slot — today the only source is an available update, but other
+// transient, attention-worthy state (skew warnings, daemon notices) should reuse
+// it rather than grow a new banner each time. `full` fills the top line in the
+// roomy header; `short` is the chip for the compact one. Highest priority wins;
+// PANIC stays its own override (renderPanicBanner) since it supersedes the UI.
+func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok bool) {
+	switch {
+	case m.clientUpdate || m.daemonUpdate:
+		return " ⬆ update available: " + m.updateParts() + "   ·   [U] update",
+			" ⬆ [U] update ", styleBroadcast, true
 	}
-	return styleWaiting.Render(msg)
+	return "", "", lipgloss.Style{}, false
 }
 
 // asciiLogo is a terminal rendering of assets/logo-transparent.png: the
@@ -1301,6 +1309,10 @@ func (m tuiModel) renderHeader() string {
 	if m.height < 24 || m.width < 99 {
 		title := styleTitle.Render("Dejima")
 		right := styleMuted.Render(label + envNote + " ⇄ [s]")
+		if _, short, style, ok := m.announcement(); ok {
+			// No room for the full bar; a highlighted chip still draws the eye.
+			right = style.Render(short) + " " + right
+		}
 		pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
 		if pad < 1 {
 			pad = 1
@@ -1334,8 +1346,18 @@ func (m tuiModel) renderHeader() string {
 	}
 	serverLine += styleMuted.Render("  ·  [s] switch  ·  [?] all keys")
 
+	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
+
+	// The top line is the announcement bar: normally blank (keeping the 7-row
+	// info block aligned with the logo), but a full-width highlighted broadcast
+	// when there's something to say (an available update, today).
+	topLine := ""
+	if full, _, style, ok := m.announcement(); ok {
+		topLine = style.Width(infoW).Render(full)
+	}
+
 	info := strings.Join([]string{
-		"", // leading blank so the 6 info lines match the small logo's 7 rows
+		topLine,
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
 		styleMuted.Render("Each island is one repo + one agent in its own container."),
@@ -1343,7 +1365,6 @@ func (m tuiModel) renderHeader() string {
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		serverLine,
 	}, "\n")
-	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
 	info = lipgloss.NewStyle().MaxWidth(infoW).Render(info)
 
 	box := lipgloss.JoinHorizontal(lipgloss.Top, logo, "   ", info)

@@ -9,6 +9,25 @@ import (
 	"github.com/aoos/dejima/internal/clientcfg"
 )
 
+// The header announcement bar shows only when there's something to broadcast,
+// and an available update is its first source.
+func TestAnnouncement(t *testing.T) {
+	if _, _, _, ok := (tuiModel{}).announcement(); ok {
+		t.Fatal("expected no announcement when up to date")
+	}
+	m := tuiModel{clientUpdate: true, latestRelease: "v9.9.9"}
+	full, short, _, ok := m.announcement()
+	if !ok {
+		t.Fatal("expected an announcement when a client update is available")
+	}
+	if !strings.Contains(full, "update available") || !strings.Contains(full, "[U] update") {
+		t.Fatalf("full bar missing content: %q", full)
+	}
+	if !strings.Contains(short, "[U]") {
+		t.Fatalf("compact chip missing action: %q", short)
+	}
+}
+
 // resolveTarget is the single source of truth for the connection target. It must
 // honor DEJIMA_HOST first (override + in-island path), then the saved active
 // profile (so a remote target survives restarts), then the local socket.
