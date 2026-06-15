@@ -39,6 +39,17 @@ func LedgerPath() (string, error) {
 	return filepath.Join(root, "ledger.jsonl"), nil
 }
 
+// PanicFlagPath returns ~/.dejima/PANIC — the presence of this file stops the
+// daemon from auto-starting (adopting) any island at startup. Written by
+// `dejima panic`, removed by `dejima panic --clear`.
+func PanicFlagPath() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "PANIC"), nil
+}
+
 // ProjectsDir returns ~/.dejima/projects, creating it if necessary.
 func ProjectsDir() (string, error) {
 	root, err := Root()

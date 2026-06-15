@@ -294,9 +294,54 @@ func (c *Client) CreateIsland(ctx context.Context, req CreateIslandRequest) (*Cr
 	return &out, nil
 }
 
-// DeleteIsland tears down an island (purge).
-func (c *Client) DeleteIsland(ctx context.Context, name string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name, nil, nil)
+// DeleteIsland tears down an island (purge). When force is false the daemon
+// refuses if the workspace has uncommitted or unpushed git work; force bypasses
+// that guard.
+func (c *Client) DeleteIsland(ctx context.Context, name string, force bool) error {
+	path := "/v1/islands/" + name
+	if force {
+		path += "?force=true"
+	}
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// Panic engages the daemon-wide panic stop: every island is stopped and a
+// PANIC flag is written so the daemon won't auto-start them on restart.
+func (c *Client) Panic(ctx context.Context, reason string) (*PanicResponse, error) {
+	var out PanicResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/panic", PanicRequest{Reason: reason}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ClearPanic removes the PANIC flag and restarts islands whose desired state is
+// running.
+func (c *Client) ClearPanic(ctx context.Context) (*PanicResponse, error) {
+	var out PanicResponse
+	if err := c.do(ctx, http.MethodDelete, "/v1/panic", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PanicStatus reports whether panic mode is currently engaged.
+func (c *Client) PanicStatus(ctx context.Context) (*PanicResponse, error) {
+	var out PanicResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/panic", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CloneIsland duplicates an island under newName, copying its workspace + home
+// volumes (credentials and git history come along).
+func (c *Client) CloneIsland(ctx context.Context, name, newName string) (*IslandInfo, error) {
+	var out IslandInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/clone", CloneIslandRequest{NewName: newName}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // HibernateIsland stops the container, preserving volumes.
@@ -469,8 +514,8 @@ func decodeErr(resp *http.Response) error {
 }
 
 // SubscribeWebhook registers a webhook URL with the daemon.
-func (c *Client) SubscribeWebhook(ctx context.Context, url, secret string) (*events.Subscription, error) {
-	req := SubscribeWebhookRequest{URL: url, Secret: secret}
+func (c *Client) SubscribeWebhook(ctx context.Context, url, secret string, eventTypes []events.Type) (*events.Subscription, error) {
+	req := SubscribeWebhookRequest{URL: url, Secret: secret, Events: eventTypes}
 	var out events.Subscription
 	if err := c.do(ctx, http.MethodPost, "/v1/events/subscribe", req, &out); err != nil {
 		return nil, err

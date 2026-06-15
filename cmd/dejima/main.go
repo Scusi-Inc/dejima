@@ -10,7 +10,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -20,6 +22,8 @@ import (
 	"golang.org/x/term"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/reposrc"
 	"github.com/aoos/dejima/internal/selfupdate"
@@ -82,6 +86,9 @@ func newRootCmd() *cobra.Command {
 		newWakeCmd(),
 		newResetCmd(),
 		newPurgeCmd(),
+		newPanicCmd(),
+		newUninstallCmd(),
+		newCloneCmd(),
 		newUpgradeCmd(),
 		newExecCmd(),
 		newCpCmd(),
@@ -491,6 +498,15 @@ func newServiceCmd() *cobra.Command {
 					return err
 				}
 				fmt.Println(s)
+				// Beyond "is it loaded?", report how it's supervised and whether
+				// that survives a reboot — the headless-Mac footgun doctor flags.
+				sup := service.Detect()
+				if sup.Mode != "unknown" && sup.Summary != "" {
+					fmt.Printf("supervision: %s\n", sup.Summary)
+					if sup.Concern != "" {
+						fmt.Printf("  ⚠ %s\n", sup.Concern)
+					}
+				}
 				return nil
 			},
 		},
@@ -506,27 +522,45 @@ func newWebhookCmd() *cobra.Command {
 		Short: "Manage webhook subscriptions for state-change events.",
 	}
 	var url, secret string
+	var eventNames []string
 	subscribe := &cobra.Command{
 		Use:   "subscribe",
 		Short: "Subscribe a URL to receive event POSTs.",
+		Long: "Subscribe a URL to receive event POSTs. With no --event, every event is\n" +
+			"delivered; pass --event (repeatable) to scope it — e.g. a headless-box health\n" +
+			"monitor wants only `--event container.crashed --event daemon.started`.\n" +
+			"See `dejima webhook events` for the catalog.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if url == "" {
 				return fmt.Errorf("--url is required")
+			}
+			var types []events.Type
+			for _, n := range eventNames {
+				t := events.Type(strings.TrimSpace(n))
+				if !events.KnownType(t) {
+					return fmt.Errorf("unknown event type %q (see `dejima webhook events`)", n)
+				}
+				types = append(types, t)
 			}
 			c, err := client()
 			if err != nil {
 				return err
 			}
-			sub, err := c.SubscribeWebhook(cmd.Context(), url, secret)
+			sub, err := c.SubscribeWebhook(cmd.Context(), url, secret, types)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("subscribed: %s -> %s\n", sub.ID, sub.URL)
+			scope := "all events"
+			if len(sub.Events) > 0 {
+				scope = formatEventTypes(sub.Events)
+			}
+			fmt.Printf("subscribed: %s -> %s (%s)\n", sub.ID, sub.URL, scope)
 			return nil
 		},
 	}
 	subscribe.Flags().StringVar(&url, "url", "", "webhook URL (required)")
 	subscribe.Flags().StringVar(&secret, "secret", "", "HMAC secret signed into the X-Dejima-Signature header")
+	subscribe.Flags().StringArrayVar(&eventNames, "event", nil, "event type to deliver (repeatable); default all (see: dejima webhook events)")
 
 	list := &cobra.Command{
 		Use:   "ls",
@@ -545,7 +579,22 @@ func newWebhookCmd() *cobra.Command {
 				return nil
 			}
 			for _, s := range subs {
-				fmt.Printf("%s\t%s\n", s.ID, s.URL)
+				scope := "all"
+				if len(s.Events) > 0 {
+					scope = formatEventTypes(s.Events)
+				}
+				fmt.Printf("%s\t%s\t%s\n", s.ID, s.URL, scope)
+			}
+			return nil
+		},
+	}
+
+	eventsCmd := &cobra.Command{
+		Use:   "events",
+		Short: "List the event types a webhook can subscribe to.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, t := range events.KnownTypes() {
+				fmt.Println(t)
 			}
 			return nil
 		},
@@ -568,8 +617,17 @@ func newWebhookCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(subscribe, list, unsubscribe)
+	cmd.AddCommand(subscribe, list, eventsCmd, unsubscribe)
 	return cmd
+}
+
+// formatEventTypes renders a list of event types as a comma-separated string.
+func formatEventTypes(types []events.Type) string {
+	parts := make([]string, len(types))
+	for i, t := range types {
+		parts[i] = string(t)
+	}
+	return strings.Join(parts, ",")
 }
 
 // --- hibernate ------------------------------------------------------------
@@ -654,6 +712,35 @@ func newResetCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation")
+	return cmd
+}
+
+func newCloneCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "clone <name> <new-name>",
+		Short: "Duplicate an island, credentials and all.",
+		Long: "Creates a new island that is a byte-for-byte copy of an existing one: its\n" +
+			"workspace (code + git history) and home volume (tool credentials, agent state)\n" +
+			"are copied into fresh volumes. Best run when the source is idle, so the copy is\n" +
+			"consistent. Host-filesystem Port grants are NOT carried over (the clone starts\n" +
+			"deny-all).",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+			defer cancel()
+			fmt.Printf("cloning %q → %q (copying workspace + home volumes)…\n", args[0], args[1])
+			info, err := c.CloneIsland(ctx, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("cloned to island %q (container: %s)\n", info.Name, info.Container)
+			return nil
+		},
+	}
 	return cmd
 }
 
@@ -745,7 +832,7 @@ func waitForDaemonAndSubscribe(ctx context.Context, url, secret string) error {
 		c, err := client()
 		if err == nil {
 			if healthErr := c.Health(ctx); healthErr == nil {
-				_, subErr := c.SubscribeWebhook(ctx, url, secret)
+				_, subErr := c.SubscribeWebhook(ctx, url, secret, nil) // install-time: all events
 				return subErr
 			} else {
 				lastErr = healthErr
@@ -792,6 +879,8 @@ func newInitCmd() *cobra.Command {
 		disk       string
 		localCopy  bool
 		ghIdentity string
+		owner      string
+		tagPairs   []string
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -850,6 +939,13 @@ func newInitCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
+			tags, err := parseTags(tagPairs)
+			if err != nil {
+				return err
+			}
+			if owner == "" {
+				owner = defaultOwner()
+			}
 			info, err := c.CreateIsland(ctx, api.CreateIslandRequest{
 				Name:           name,
 				Repo:           res.Repo,
@@ -859,6 +955,8 @@ func newInitCmd() *cobra.Command {
 				Image:          image,
 				Cmd:            cmdStr,
 				GitHubIdentity: ghIdentity,
+				Owner:          owner,
+				Tags:           tags,
 				Resources: api.Resources{
 					Memory: memory,
 					CPUs:   cpus,
@@ -896,6 +994,8 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&memory, "memory", "", "memory limit (e.g. 4G); default: unlimited")
 	cmd.Flags().StringVar(&cpus, "cpus", "", "CPU limit (e.g. 2.0); default: unlimited")
 	cmd.Flags().StringVar(&disk, "disk", "", "disk size (e.g. 20G); default: unlimited")
+	cmd.Flags().StringVar(&owner, "owner", "", "creator label for this island (default: <user>@<host>)")
+	cmd.Flags().StringArrayVar(&tagPairs, "tag", nil, "free-form key=value label (repeatable), e.g. --tag team=web --tag env=staging")
 	return cmd
 }
 
@@ -1098,7 +1198,7 @@ func printPresence(prefix string, entries []api.PresenceEntry) {
 // --- ls -------------------------------------------------------------------
 
 func newLsCmd() *cobra.Command {
-	var showAgents bool
+	var showAgents, group bool
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List all islands.",
@@ -1116,8 +1216,7 @@ func newLsCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tAGENT\tREPO\tSTATE\tCONTAINER")
-			for _, i := range items {
+			writeRow := func(i api.IslandInfo) {
 				agentCol := i.Agent
 				if len(i.Agents) > 1 {
 					agentCol = fmt.Sprintf("%d agents", len(i.Agents))
@@ -1134,11 +1233,60 @@ func newLsCmd() *cobra.Command {
 					}
 				}
 			}
+
+			if group {
+				// Sibling view: islands sharing a repo read as one project with N
+				// islands/agents. UI-only grouping over the same rows.
+				for gi, g := range groupByRepo(items) {
+					if gi > 0 {
+						fmt.Fprintln(tw)
+					}
+					fmt.Fprintf(tw, "%s\t\t\t\t(%s)\n", shortenRepo(g.repo), countNoun(len(g.islands), "island"))
+					for _, i := range g.islands {
+						writeRow(i)
+					}
+				}
+				return tw.Flush()
+			}
+
+			fmt.Fprintln(tw, "NAME\tAGENT\tREPO\tSTATE\tCONTAINER")
+			for _, i := range items {
+				writeRow(i)
+			}
 			return tw.Flush()
 		},
 	}
 	cmd.Flags().BoolVarP(&showAgents, "agents", "a", false, "expand each island's agents")
+	cmd.Flags().BoolVarP(&group, "group", "g", false, "group islands that share a repo (multi-agent projects read as one)")
 	return cmd
+}
+
+// islandGroup is a set of islands sharing one repo, for the `dejima ls -g` view.
+type islandGroup struct {
+	repo    string
+	islands []api.IslandInfo
+}
+
+// groupByRepo groups islands by their repo URL, preserving first-seen repo order
+// and the input order within each group. Islands with no repo collect under a
+// "(no repo)" group.
+func groupByRepo(items []api.IslandInfo) []islandGroup {
+	idx := map[string]int{}
+	var groups []islandGroup
+	for _, it := range items {
+		key := it.Repo
+		if key == "" {
+			key = "(no repo)"
+		}
+		i, ok := idx[key]
+		if !ok {
+			i = len(groups)
+			idx[key] = i
+			groups = append(groups, islandGroup{repo: key})
+		}
+		groups[i].islands = append(groups[i].islands, it)
+	}
+	return groups
 }
 
 // newAgentCmd groups per-agent management verbs.
@@ -1255,12 +1403,23 @@ func newStatusCmd() *cobra.Command {
 			fmt.Printf("image:       %s\n", info.Image)
 			fmt.Printf("state:       %s (desired)\n", info.State)
 			fmt.Printf("container:   %s\n", info.Container)
+			if info.Owner != "" {
+				fmt.Printf("owner:       %s\n", info.Owner)
+			}
+			if len(info.Tags) > 0 {
+				fmt.Printf("tags:        %s\n", formatTags(info.Tags))
+			}
 			if !info.CreatedAt.IsZero() {
 				fmt.Printf("created:     %s\n", info.CreatedAt.Local().Format(time.RFC3339))
 			}
 			if info.Stats != nil {
 				fmt.Printf("memory:      %s / %s\n", humanBytes(info.Stats.MemoryUsageBytes), humanBytes(info.Stats.MemoryLimitBytes))
 				fmt.Printf("cpu:         %.1f%%\n", info.Stats.CPUPercent)
+			}
+			if info.Disk != nil && info.Disk.TotalBytes > 0 {
+				fmt.Printf("disk:        %s (workspace %s · home %s)\n",
+					humanBytes(uint64(info.Disk.TotalBytes)), humanBytes(uint64(info.Disk.WorkspaceBytes)),
+					humanBytes(uint64(info.Disk.HomeBytes)))
 			}
 			if info.AgentState != nil {
 				fmt.Printf("agent:       %s (%s ago)\n", info.AgentState.Latest, time.Since(info.AgentState.UpdatedAt).Round(time.Second))
@@ -1367,14 +1526,271 @@ func newPurgeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.DeleteIsland(cmd.Context(), name); err != nil {
+			if err := c.DeleteIsland(cmd.Context(), name, force); err != nil {
 				return err
 			}
 			fmt.Printf("purged %s\n", name)
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation and the unpushed-work guard")
+	return cmd
+}
+
+// parseTags turns repeated --tag key=value flags into a map, rejecting entries
+// without a "=" or with an empty key.
+func parseTags(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	tags := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, ok := strings.Cut(p, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			return nil, fmt.Errorf("invalid --tag %q (want key=value)", p)
+		}
+		tags[k] = strings.TrimSpace(v)
+	}
+	return tags, nil
+}
+
+// formatTags renders a tag map as "k=v k=v" in sorted key order (stable output).
+func formatTags(tags map[string]string) string {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+tags[k])
+	}
+	return strings.Join(parts, " ")
+}
+
+// defaultOwner derives a creator label as "<user>@<host>" for attribution,
+// falling back gracefully when either lookup fails.
+func defaultOwner() string {
+	name := "unknown"
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		name = u.Username
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return name + "@" + host
+	}
+	return name
+}
+
+// countNoun renders a count with a singular/plural noun: countNoun(1, "island")
+// → "1 island", countNoun(0, "island") → "0 islands".
+func countNoun(n int, singular string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	return fmt.Sprintf("%d %ss", n, singular)
+}
+
+// --- uninstall ------------------------------------------------------------
+
+// islandAtRisk mirrors the daemon's purge guard so `dejima uninstall` can
+// pre-flight the whole batch and refuse before purging anything. Returns a
+// human reason when the island has at-risk work (or can't be verified), or ""
+// when it's safe to purge.
+func islandAtRisk(ctx context.Context, c *api.Client, isl api.IslandInfo) string {
+	if isl.Container != "running" {
+		return "not running — unpushed work can't be verified"
+	}
+	d, err := c.GetIsland(ctx, isl.Name)
+	if err != nil || d.Git == nil {
+		return "" // no git info → nothing git-tracked to lose
+	}
+	var risks []string
+	if !d.Git.Clean && d.Git.DirtyFiles > 0 {
+		risks = append(risks, countNoun(d.Git.DirtyFiles, "uncommitted change"))
+	}
+	if d.Git.Ahead > 0 {
+		risks = append(risks, countNoun(d.Git.Ahead, "unpushed commit"))
+	}
+	return strings.Join(risks, " and ")
+}
+
+func newUninstallCmd() *cobra.Command {
+	var yes, force, systemSvc, keepData bool
+	cmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove Dejima entirely: purge all islands, uninstall the service, delete binaries + ~/.dejima.",
+		Long: "One-shot clean removal: purges every island (honoring the unpushed-work guard),\n" +
+			"uninstalls the dejimad service, removes the dejima/dejimad binaries, and deletes\n" +
+			"~/.dejima. Destructive and irreversible — confirms first unless --yes.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			islands, err := c.ListIslands(ctx)
+			if err != nil {
+				return fmt.Errorf("list islands: %w (is the daemon running?)", err)
+			}
+
+			// Pre-flight the unpushed-work guard across ALL islands first, so we
+			// never purge some and then abort on a guarded one (half-uninstall).
+			if !force {
+				var atRisk []string
+				for _, isl := range islands {
+					if reason := islandAtRisk(ctx, c, isl); reason != "" {
+						atRisk = append(atRisk, fmt.Sprintf("  %s — %s", isl.Name, reason))
+					}
+				}
+				if len(atRisk) > 0 {
+					return fmt.Errorf("refusing to uninstall — these islands have at-risk or unverifiable work:\n%s\n\ncommit/push (or `dejima wake` to verify), or re-run with --force",
+						strings.Join(atRisk, "\n"))
+				}
+			}
+
+			selfBin, _ := os.Executable()
+			daemonBin, _ := resolveDaemonBinary()
+			root, _ := paths.Root()
+
+			fmt.Println("This will permanently:")
+			fmt.Printf("  • purge %s (and all their volumes)\n", countNoun(len(islands), "island"))
+			fmt.Println("  • uninstall the dejimad service")
+			if daemonBin != "" {
+				fmt.Printf("  • remove %s\n", daemonBin)
+			}
+			if selfBin != "" {
+				fmt.Printf("  • remove %s\n", selfBin)
+			}
+			if !keepData && root != "" {
+				fmt.Printf("  • delete %s\n", root)
+			}
+			fmt.Println()
+
+			if !yes {
+				fmt.Print("Type 'uninstall' to confirm: ")
+				var in string
+				_, _ = fmt.Scanln(&in)
+				if strings.TrimSpace(in) != "uninstall" {
+					return fmt.Errorf("aborted")
+				}
+			}
+
+			// 1. Purge every island. The guard pre-flight already ran, so force.
+			for _, isl := range islands {
+				if err := c.DeleteIsland(ctx, isl.Name, true); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: purge %s: %v\n", isl.Name, err)
+				} else {
+					fmt.Printf("  purged %s\n", isl.Name)
+				}
+			}
+
+			// 2. Uninstall the service (stops the daemon).
+			if mgr, mErr := serviceMgr(systemSvc); mErr == nil {
+				if err := mgr.Uninstall(); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: service uninstall: %v\n", err)
+				} else {
+					fmt.Println("  service uninstalled")
+				}
+			}
+
+			// 3. Remove the binaries. A running binary can be unlinked on unix
+			// (the inode lives until the process exits).
+			for _, bin := range []string{daemonBin, selfBin} {
+				if bin == "" {
+					continue
+				}
+				switch err := os.Remove(bin); {
+				case err == nil:
+					fmt.Printf("  removed %s\n", bin)
+				case errors.Is(err, os.ErrNotExist):
+					// already gone
+				case errors.Is(err, os.ErrPermission):
+					fmt.Fprintf(os.Stderr, "  note: couldn't remove %s (permission) — `sudo rm %s`\n", bin, bin)
+				default:
+					fmt.Fprintf(os.Stderr, "  warning: remove %s: %v\n", bin, err)
+				}
+			}
+
+			// 4. Delete ~/.dejima.
+			if !keepData && root != "" {
+				if err := os.RemoveAll(root); err != nil {
+					fmt.Fprintf(os.Stderr, "  note: couldn't fully delete %s: %v (root-owned files? `sudo rm -rf %s`)\n", root, err, root)
+				} else {
+					fmt.Printf("  deleted %s\n", root)
+				}
+			}
+
+			fmt.Println("\nDejima uninstalled.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "bypass the unpushed-work guard (purge islands even with unpushed/uncommitted work)")
+	cmd.Flags().BoolVar(&systemSvc, "system", false, "uninstall the system-wide LaunchDaemon (macOS)")
+	cmd.Flags().BoolVar(&keepData, "keep-data", false, "keep ~/.dejima (config, GitHub identities, ledger)")
+	return cmd
+}
+
+// --- panic ----------------------------------------------------------------
+
+func newPanicCmd() *cobra.Command {
+	var clear, status bool
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "panic",
+		Short: "Stop every island now and block auto-restart (emergency brake).",
+		Long: "Immediately stops every running island and writes a ~/.dejima/PANIC flag so the\n" +
+			"daemon will not auto-start any island — even across a daemon restart — until the\n" +
+			"flag is cleared. Volumes and desired state are preserved.\n\n" +
+			"  dejima panic              engage: stop everything, set the flag\n" +
+			"  dejima panic --clear      clear the flag and restart islands meant to be running\n" +
+			"  dejima panic --status     report whether panic mode is engaged",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			switch {
+			case status:
+				st, err := c.PanicStatus(ctx)
+				if err != nil {
+					return err
+				}
+				if st.Panicked {
+					msg := "panic: ENGAGED — islands are stopped; `dejima panic --clear` to resume"
+					if st.Reason != "" {
+						msg += "\nreason: " + st.Reason
+					}
+					fmt.Println(msg)
+				} else {
+					fmt.Println("panic: not engaged")
+				}
+				return nil
+			case clear:
+				st, err := c.ClearPanic(ctx)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("panic cleared — restarted %s\n", countNoun(st.Affected, "island"))
+				return nil
+			default:
+				st, err := c.Panic(ctx, reason)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("PANIC engaged — stopped %s; auto-restart blocked until `dejima panic --clear`\n",
+					countNoun(st.Affected, "island"))
+				return nil
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "clear the PANIC flag and restart islands meant to be running")
+	cmd.Flags().BoolVar(&status, "status", false, "report whether panic mode is engaged")
+	cmd.Flags().StringVar(&reason, "reason", "", "note recorded with the panic flag")
 	return cmd
 }
 

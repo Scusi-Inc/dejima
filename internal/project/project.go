@@ -99,6 +99,14 @@ type Project struct {
 	// Ports are brokered host-filesystem grants for this island (see ports.go).
 	// Empty means deny-all: the island reaches no host content outside its repo.
 	Ports []PortScope `toml:"ports,omitempty"`
+	// Owner is a free-form creator label (e.g. "alice@laptop"), captured at
+	// create time. Purely informational — there is no auth model yet — but it
+	// lets wrapper dashboards attribute islands per person/team. Empty for
+	// islands created before ownership existed.
+	Owner string `toml:"owner,omitempty"`
+	// Tags are free-form key=value labels (e.g. team=web, env=staging) for
+	// grouping and per-team rollups in wrapper tooling. Empty when untagged.
+	Tags map[string]string `toml:"tags,omitempty"`
 }
 
 // IsHome reports whether this island is a Home Island (hosts an assistant brain).

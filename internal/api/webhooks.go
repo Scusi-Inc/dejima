@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/aoos/dejima/internal/events"
@@ -39,6 +40,15 @@ func (s *Server) subscribeWebhook(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
+	}
+	// Reject unknown event types up front: a typo'd filter would otherwise create
+	// a subscription that silently matches nothing.
+	for _, t := range req.Events {
+		if !events.KnownType(t) {
+			writeError(w, http.StatusBadRequest,
+				fmt.Errorf("unknown event type %q (see `dejima webhook events`)", t))
+			return
+		}
 	}
 	sub, err := s.events.Subscribe(events.Subscription{
 		URL:    req.URL,

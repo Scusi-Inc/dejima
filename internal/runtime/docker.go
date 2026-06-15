@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,6 +49,17 @@ func (d *Docker) runOK(ctx context.Context, args ...string) (string, error) {
 func (d *Docker) EnsureVolume(ctx context.Context, name string) error {
 	// `docker volume create` is idempotent.
 	_, err := d.runOK(ctx, "volume", "create", name)
+	return err
+}
+
+// CopyVolumeData copies the contents of src into dst via a throwaway container
+// that mounts both volumes (src read-only) and runs `cp -a`. image must provide
+// a POSIX sh + cp (the island image does). Used by island clone.
+func (d *Docker) CopyVolumeData(ctx context.Context, src, dst, image string) error {
+	_, err := d.runOK(ctx, "run", "--rm",
+		"-v", src+":/from:ro",
+		"-v", dst+":/to",
+		image, "sh", "-c", "cp -a /from/. /to/")
 	return err
 }
 
@@ -116,6 +128,28 @@ func (d *Docker) StatsAll(ctx context.Context) (map[string]Stats, error) {
 		}
 	}
 	return all, nil
+}
+
+// VolumeSizes returns each volume's on-disk size in bytes via a single
+// `docker system df -v` query. Best-effort: returns nil on error, and 0 for any
+// volume whose size the storage driver doesn't report (shows as "N/A").
+func (d *Docker) VolumeSizes(ctx context.Context) (map[string]int64, error) {
+	out, _, err := d.run(ctx, "system", "df", "-v", "--format", "{{json .Volumes}}")
+	if err != nil {
+		return nil, err
+	}
+	var vols []struct {
+		Name string `json:"Name"`
+		Size string `json:"Size"` // human string, e.g. "1.2GB" or "N/A"
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &vols); err != nil {
+		return nil, err
+	}
+	sizes := make(map[string]int64, len(vols))
+	for _, v := range vols {
+		sizes[v.Name] = int64(parseBytes(strings.TrimSpace(v.Size)))
+	}
+	return sizes, nil
 }
 
 func parsePercent(s string) float64 {

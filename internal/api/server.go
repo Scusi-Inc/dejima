@@ -77,6 +77,13 @@ type Server struct {
 	statsData map[string]runtime.Stats
 	statsAt   time.Time
 
+	// Volume-size cache. `docker system df -v` is slower than `docker stats`
+	// and disk size moves slowly, so this is cached with a longer TTL than
+	// statsData and only consulted on the detail endpoint.
+	diskMu   sync.Mutex
+	diskData map[string]int64
+	diskAt   time.Time
+
 	// autonomyDial, when non-empty, is the host:port an in-island brain dials
 	// to reach this daemon over the token-authenticated TCP path (the macOS
 	// route where the unix socket can't be bind-mounted; e.g.
@@ -139,6 +146,23 @@ func (s *Server) statsAll(ctx context.Context) map[string]runtime.Stats {
 		return s.statsData
 	}
 	s.statsData, s.statsAt = data, time.Now()
+	return data
+}
+
+// volumeSizes returns on-disk size (bytes) per volume name, cached for 30s
+// because `docker system df -v` is slow and disk usage drifts slowly. Returns
+// the last good sample (possibly nil) on error.
+func (s *Server) volumeSizes(ctx context.Context) map[string]int64 {
+	s.diskMu.Lock()
+	defer s.diskMu.Unlock()
+	if s.diskData != nil && time.Since(s.diskAt) < 30*time.Second {
+		return s.diskData
+	}
+	data, err := s.rt.VolumeSizes(ctx)
+	if err != nil {
+		return s.diskData
+	}
+	s.diskData, s.diskAt = data, time.Now()
 	return data
 }
 
@@ -346,8 +370,12 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/islands/{name}/wake", s.wakeIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/reset", s.resetIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/upgrade", s.upgradeIsland)
+	mux.HandleFunc("POST /v1/islands/{name}/clone", s.cloneIsland)
 	mux.HandleFunc("POST /v1/image/build", s.handleImageBuild)
 	mux.HandleFunc("POST /v1/admin/update", s.handleAdminUpdate)
+	mux.HandleFunc("GET /v1/panic", s.handlePanicStatus)
+	mux.HandleFunc("POST /v1/panic", s.handlePanic)
+	mux.HandleFunc("DELETE /v1/panic", s.handleUnpanic)
 	mux.HandleFunc("POST /v1/ssh/account-keys", s.handleAuthorizeAccountKey)
 	mux.HandleFunc("GET /v1/ssh/account-keys", s.handleListAccountKeys)
 	mux.HandleFunc("GET /v1/islands/{name}/session", s.sessionWS)
@@ -358,6 +386,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
 	mux.HandleFunc("GET /v1/credentials/github", s.handleGitHubIdentities)
@@ -396,6 +425,10 @@ func (s *Server) routes() *http.ServeMux {
 // state. Called at daemon startup. Best-effort: errors are logged but do not
 // prevent the daemon from serving.
 func (s *Server) AdoptExisting(ctx context.Context) {
+	if panicEngaged() {
+		s.log.Warn("adopt: PANIC flag set — leaving all islands stopped; `dejima panic --clear` to resume")
+		return
+	}
 	projects, err := project.List()
 	if err != nil {
 		s.log.Error("adopt: list projects", "err", err)
@@ -616,13 +649,21 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	info.Agents = s.agentInfos(r.Context(), p, info.Container == string(runtime.StatusRunning))
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
-	info.Git = s.gitStatusOf(r, p.ContainerName())
+	info.Git = s.gitStatusOf(r.Context(), p.ContainerName())
 	// Crash health is one extra inspect; detail-only to keep list refreshes cheap.
 	if h, err := s.rt.Inspect(r.Context(), p.ContainerName()); err == nil {
 		info.Health = &IslandHealth{
 			OOMKilled:    h.OOMKilled,
 			RestartCount: h.RestartCount,
 			ExitCode:     h.ExitCode,
+		}
+	}
+	// Per-island disk usage (workspace + home volumes). Detail-only and cached
+	// because `docker system df -v` is slow; 0 means the driver didn't report it.
+	if sizes := s.volumeSizes(r.Context()); sizes != nil {
+		ws, home := sizes[p.WorkspaceVolume()], sizes[p.HomeVolume()]
+		if ws > 0 || home > 0 {
+			info.Disk = &IslandDisk{WorkspaceBytes: ws, HomeBytes: home, TotalBytes: ws + home}
 		}
 	}
 	writeJSON(w, http.StatusOK, info)
@@ -995,6 +1036,15 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// Attach ownership metadata (informational; no auth model). Set after a
+	// successful provision so it doesn't complicate provision's signature.
+	if owner := strings.TrimSpace(req.Owner); owner != "" || len(req.Tags) > 0 {
+		p.Owner = owner
+		p.Tags = sanitizeTags(req.Tags)
+		if err := p.Save(); err != nil {
+			s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
+		}
+	}
 
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: p.Name})
 	s.emit(events.Event{Type: events.TypeIslandRunning, Island: p.Name})
@@ -1018,8 +1068,126 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// cloneProjectConfig builds a new Project that duplicates src under newName.
+// Title and Ports are deliberately dropped: Title is cosmetic (the clone shows
+// its own name), and Ports are host-filesystem grants — a clone starts deny-all
+// and never silently inherits the source's host access. The home + workspace
+// volumes (copied separately) carry tool credentials and the git history along.
+func cloneProjectConfig(src *project.Project, newName string, now time.Time) *project.Project {
+	dst := &project.Project{
+		Name:           newName,
+		RepoURL:        src.RepoURL,
+		Agent:          src.Agent,
+		Image:          src.Image,
+		Cmd:            src.Cmd,
+		Resources:      src.Resources,
+		Role:           src.Role,
+		GitHubIdentity: src.GitHubIdentity,
+		Owner:          src.Owner,
+		DesiredState:   project.StateRunning,
+		CreatedAt:      now,
+		LastUsedAt:     now,
+	}
+	if len(src.Agents) > 0 {
+		dst.Agents = make([]project.AgentSpec, len(src.Agents))
+		copy(dst.Agents, src.Agents)
+	}
+	if len(src.Tags) > 0 {
+		dst.Tags = make(map[string]string, len(src.Tags))
+		for k, v := range src.Tags {
+			dst.Tags[k] = v
+		}
+	}
+	return dst
+}
+
+// cloneIsland duplicates an island: a new config plus byte-for-byte copies of
+// its workspace and home volumes (so credentials, tool auth, and git history
+// come along). Caveats are inherent: device/host-bound tokens may not survive,
+// and duplicating the home volume duplicates session/runtime state.
+func (s *Server) cloneIsland(w http.ResponseWriter, r *http.Request) {
+	srcName := r.PathValue("name")
+	var req CloneIslandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	newName := strings.TrimSpace(req.NewName)
+	if err := project.ValidateName(newName); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if newName == srcName {
+		writeError(w, http.StatusBadRequest, errors.New("clone target must differ from the source"))
+		return
+	}
+
+	// Lock the new name (the resource being created), mirroring createIsland.
+	lock := s.projectLock(newName)
+	lock.Lock()
+	defer lock.Unlock()
+
+	src, err := project.Load(srcName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if project.Exists(newName) {
+		writeError(w, http.StatusConflict, fmt.Errorf("island %q already exists", newName))
+		return
+	}
+
+	dst := cloneProjectConfig(src, newName, time.Now().UTC())
+	if err := project.EnsureProjectSubdirs(newName); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := dst.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Provision volumes/network, copy the source data in, then bring up the
+	// container. Volumes must be populated BEFORE the container starts so the
+	// entrypoint sees /workspace/.git and skips re-cloning the repo.
+	fail := func(err error) {
+		s.log.Error("clone failed; cleaning up", "src", srcName, "new", newName, "err", err)
+		_ = s.teardown(context.Background(), dst, true)
+		writeError(w, http.StatusInternalServerError, err)
+	}
+	if err := s.rt.EnsureVolume(r.Context(), dst.WorkspaceVolume()); err != nil {
+		fail(fmt.Errorf("create workspace volume: %w", err))
+		return
+	}
+	if err := s.rt.EnsureVolume(r.Context(), dst.HomeVolume()); err != nil {
+		fail(fmt.Errorf("create home volume: %w", err))
+		return
+	}
+	if err := s.rt.EnsureNetwork(r.Context(), dst.NetworkName()); err != nil {
+		fail(fmt.Errorf("create network: %w", err))
+		return
+	}
+	if err := s.rt.CopyVolumeData(r.Context(), src.WorkspaceVolume(), dst.WorkspaceVolume(), src.Image); err != nil {
+		fail(fmt.Errorf("copy workspace volume: %w", err))
+		return
+	}
+	if err := s.rt.CopyVolumeData(r.Context(), src.HomeVolume(), dst.HomeVolume(), src.Image); err != nil {
+		fail(fmt.Errorf("copy home volume: %w", err))
+		return
+	}
+	if err := s.createContainerForProject(r.Context(), dst, ""); err != nil {
+		fail(err)
+		return
+	}
+	s.reconcileAgentsAsync(dst)
+	s.emit(events.Event{Type: events.TypeIslandCreated, Island: dst.Name})
+	s.emit(events.Event{Type: events.TypeIslandRunning, Island: dst.Name})
+	writeJSON(w, http.StatusCreated, s.toInfo(r.Context(), dst))
+}
+
 func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	force := r.URL.Query().Get("force") == "true"
 	lock := s.projectLock(name)
 	lock.Lock()
 	defer lock.Unlock()
@@ -1029,12 +1197,88 @@ func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if !force {
+		if riskErr := s.purgeRiskError(r.Context(), p); riskErr != nil {
+			writeError(w, http.StatusConflict, riskErr)
+			return
+		}
+	}
 	if err := s.teardown(r.Context(), p, true); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandPurged, Island: p.Name})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// purgeRiskError returns a non-nil error describing at-risk work in an island's
+// workspace when purging without --force would be unsafe, or nil when there is
+// nothing worth guarding. Purge removes the workspace volume, so any uncommitted
+// or unpushed git work in /workspace is destroyed unrecoverably.
+//
+// When the container is running we inspect /workspace directly. When it is not
+// running we cannot verify (the workspace lives in a Docker volume we don't exec
+// into), so we fail safe: ask the operator to wake it or pass --force.
+func (s *Server) purgeRiskError(ctx context.Context, p *project.Project) error {
+	status, _ := s.rt.Status(ctx, p.ContainerName())
+	if status != runtime.StatusRunning {
+		return fmt.Errorf("island %q is not running, so its workspace can't be checked for "+
+			"uncommitted or unpushed work; wake it (`dejima wake %s`) to let the guard verify, "+
+			"or re-run with --force to purge anyway", p.Name, p.Name)
+	}
+	git := s.gitStatusOf(ctx, p.ContainerName())
+	if git == nil {
+		// /workspace isn't a git repo (or the check failed) — nothing git-tracked
+		// to lose. Allow the purge.
+		return nil
+	}
+	var risks []string
+	if !git.Clean && git.DirtyFiles > 0 {
+		risks = append(risks, countNoun(git.DirtyFiles, "uncommitted change"))
+	}
+	if git.Ahead > 0 {
+		risks = append(risks, countNoun(git.Ahead, "unpushed commit"))
+	}
+	if len(risks) == 0 {
+		return nil
+	}
+	branch := git.Branch
+	if branch == "" {
+		branch = "HEAD"
+	}
+	return fmt.Errorf("island %q has %s on branch %s — purging destroys it permanently; "+
+		"commit/push first, or re-run with --force to purge anyway",
+		p.Name, strings.Join(risks, " and "), branch)
+}
+
+// sanitizeTags trims keys/values and drops entries with an empty key, so a
+// malformed --tag can't persist a blank-keyed label. Returns nil when nothing
+// survives (so an empty map isn't written to config).
+func sanitizeTags(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		out[k] = strings.TrimSpace(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// countNoun renders a count with a singular/plural noun: countNoun(1, "commit")
+// → "1 commit", countNoun(3, "commit") → "3 commits".
+func countNoun(n int, singular string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	return fmt.Sprintf("%d %ss", n, singular)
 }
 
 // provision creates the on-disk project, volumes, and a running container.
@@ -1380,6 +1624,40 @@ func (s *Server) tmuxHasSession(ctx context.Context, p *project.Project, session
 	return err == nil && code == 0, err
 }
 
+// agentLiveness classifies an attachable agent's session: "stopped" (no tmux
+// session), "exited" (session alive but its foreground process fell back to a
+// bare shell — the agent process died while start.sh kept the container up), or
+// "running". The "exited" verdict never applies to the shell agent type, whose
+// foreground IS a shell. Best-effort heuristic via the tmux pane command.
+func (s *Server) agentLiveness(ctx context.Context, p *project.Project, session, agentType string) string {
+	ok, _ := s.tmuxHasSession(ctx, p, session)
+	if !ok {
+		return "stopped"
+	}
+	if agentType == handlers.Shell {
+		return "running" // a shell prompt is the healthy state here
+	}
+	out, _, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"tmux", "display-message", "-p", "-t", session, "#{pane_current_command}"})
+	if err != nil || code != 0 {
+		return "running" // can't tell; don't cry wolf
+	}
+	if isLoginShell(strings.TrimSpace(out)) {
+		return "exited"
+	}
+	return "running"
+}
+
+// isLoginShell reports whether a tmux pane_current_command names a bare shell —
+// i.e. the agent's foreground process is gone and only a prompt remains.
+func isLoginShell(cmd string) bool {
+	switch strings.TrimPrefix(cmd, "-") {
+	case "bash", "sh", "zsh", "dash", "ash", "fish":
+		return true
+	}
+	return false
+}
+
 // teardown removes the container, volumes, network, and on-host config dir.
 func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) error {
 	if p == nil {
@@ -1641,6 +1919,8 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		Image:      p.Image,
 		Cmd:        cmd,
 		Role:       p.Role,
+		Owner:      p.Owner,
+		Tags:       p.Tags,
 		State:      string(p.DesiredState),
 		CreatedAt:  p.CreatedAt,
 		LastUsedAt: p.LastUsedAt,
@@ -1683,11 +1963,7 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 			CreatedAt:  a.CreatedAt,
 		}
 		if live && a.Tmux != "" {
-			if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
-				ai.State = "running"
-			} else {
-				ai.State = "stopped"
-			}
+			ai.State = s.agentLiveness(ctx, p, a.Tmux, a.Type)
 		}
 		ai.Attached = s.presenceSnapshot(p.Name, a.ID)
 		ai.AgentState = s.agentStateOf(p.Name, a.ID)

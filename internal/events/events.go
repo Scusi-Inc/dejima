@@ -20,6 +20,9 @@ const (
 	TypeIslandAgentAdded   Type = "island.agent-added"
 	TypeIslandAgentRemoved Type = "island.agent-removed"
 	TypeContainerCrashed   Type = "container.crashed"
+	TypeDaemonStarted      Type = "daemon.started"
+	TypePanicEngaged       Type = "daemon.panic-engaged"
+	TypePanicCleared       Type = "daemon.panic-cleared"
 	TypeClientAttached     Type = "client.attached"
 	TypeClientDetached     Type = "client.detached"
 	TypeLastClientDetached Type = "last-client.detached"
@@ -29,6 +32,35 @@ const (
 	TypeAgentTaskComplete    Type = "agent.task-complete"
 	TypeAgentError           Type = "agent.error"
 )
+
+// catalog is every event type a subscriber can filter on, in display order.
+// Kept in sync with the constants above; KnownType validates against it so a
+// typo'd subscription filter (which would silently match nothing) is rejected.
+var catalog = []Type{
+	TypeIslandCreated, TypeIslandRunning, TypeIslandHibernated, TypeIslandWoken,
+	TypeIslandReset, TypeIslandUpgraded, TypeIslandPurged,
+	TypeIslandAgentAdded, TypeIslandAgentRemoved,
+	TypeContainerCrashed, TypeDaemonStarted, TypePanicEngaged, TypePanicCleared,
+	TypeClientAttached, TypeClientDetached, TypeLastClientDetached,
+	TypeAgentWaitingForInput, TypeAgentTaskComplete, TypeAgentError,
+}
+
+// KnownTypes returns the catalog of subscribable event types (a copy).
+func KnownTypes() []Type {
+	out := make([]Type, len(catalog))
+	copy(out, catalog)
+	return out
+}
+
+// KnownType reports whether t is a recognized event type.
+func KnownType(t Type) bool {
+	for _, k := range catalog {
+		if k == t {
+			return true
+		}
+	}
+	return false
+}
 
 // Event is the JSON envelope POSTed to webhook subscribers.
 type Event struct {

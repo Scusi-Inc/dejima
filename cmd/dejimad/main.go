@@ -231,6 +231,21 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hos
 		}()
 	}
 
+	// Announce the daemon is up (push signal for headless hosts) and start the
+	// container watchdog that emits container.crashed on unexpected exits.
+	listenModes := []string{"unix"}
+	if tcpAddr != "" {
+		listenModes = append(listenModes, "tcp")
+	}
+	if tokenSrv != nil {
+		listenModes = append(listenModes, "token-tcp")
+	}
+	if sshSrv != nil {
+		listenModes = append(listenModes, "ssh")
+	}
+	server.EmitDaemonStarted(listenModes)
+	go server.RunWatchdog(ctx, 0)
+
 	select {
 	case <-ctx.Done():
 		log.Info("shutdown signal received")

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -199,6 +200,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		SSHAddr:              s.sshAddr,
 		DaemonVersion:        version.Version,
 		APIVersion:           version.APIVersion,
+		Panicked:             panicEngaged(),
 	}
 	if s.events != nil {
 		out.WebhookCount = len(s.events.List())
@@ -242,24 +244,25 @@ func (s *Server) handleIslandEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // gitStatusOf inspects the workspace of a running island and returns a
-// GitInfo. Uses container exec; only called by the detail endpoint, not the
-// list. Returns nil on any failure (best-effort).
-func (s *Server) gitStatusOf(r *http.Request, containerName string) *GitInfo {
-	if status, _ := s.rt.Status(r.Context(), containerName); status != runtime.StatusRunning {
+// GitInfo. Uses container exec; called by the detail endpoint and the purge
+// guard. Returns nil on any failure or if the workspace isn't a git repo
+// (best-effort).
+func (s *Server) gitStatusOf(ctx context.Context, containerName string) *GitInfo {
+	if status, _ := s.rt.Status(ctx, containerName); status != runtime.StatusRunning {
 		return nil
 	}
 	// Quick check: is /workspace a git repo at all?
-	if _, _, code, _ := s.rt.Exec(r.Context(), containerName,
+	if _, _, code, _ := s.rt.Exec(ctx, containerName,
 		[]string{"git", "-C", "/workspace", "rev-parse", "--git-dir"}); code != 0 {
 		return nil
 	}
 	info := &GitInfo{}
 
-	if out, _, _, _ := s.rt.Exec(r.Context(), containerName,
+	if out, _, _, _ := s.rt.Exec(ctx, containerName,
 		[]string{"git", "-C", "/workspace", "rev-parse", "--abbrev-ref", "HEAD"}); out != "" {
 		info.Branch = strings.TrimSpace(out)
 	}
-	if out, _, code, _ := s.rt.Exec(r.Context(), containerName,
+	if out, _, code, _ := s.rt.Exec(ctx, containerName,
 		[]string{"git", "-C", "/workspace", "status", "--porcelain"}); code == 0 {
 		out = strings.TrimSpace(out)
 		if out == "" {
@@ -268,13 +271,13 @@ func (s *Server) gitStatusOf(r *http.Request, containerName string) *GitInfo {
 			info.DirtyFiles = strings.Count(out, "\n") + 1
 		}
 	}
-	if out, _, code, _ := s.rt.Exec(r.Context(), containerName,
+	if out, _, code, _ := s.rt.Exec(ctx, containerName,
 		[]string{"git", "-C", "/workspace", "rev-list", "--count", "@{u}..HEAD"}); code == 0 {
 		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
 			info.Ahead = n
 		}
 	}
-	if out, _, code, _ := s.rt.Exec(r.Context(), containerName,
+	if out, _, code, _ := s.rt.Exec(ctx, containerName,
 		[]string{"git", "-C", "/workspace", "rev-list", "--count", "HEAD..@{u}"}); code == 0 {
 		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
 			info.Behind = n

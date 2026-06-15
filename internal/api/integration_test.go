@@ -182,7 +182,16 @@ type fakeRuntime struct {
 	execs          [][]string
 	lastCreate     runtime.CreateRequest
 	status         runtime.ContainerStatus
+	health         runtime.Health
+	volumeSizes    map[string]int64
+	volumeCopies   [][2]string
+	startCalls     int
+	stopCalls      int
 	failNewSession bool // when true, `tmux new-session` exits non-zero
+	// execHook, when set, can intercept an Exec call and return a canned
+	// (stdout, stderr, exitCode); returning handled=false falls through to the
+	// default behavior. Lets a test drive e.g. git-status output.
+	execHook func(cmd []string) (stdout, stderr string, code int, handled bool)
 }
 
 func (f *fakeRuntime) record(cmd []string) {
@@ -202,10 +211,26 @@ func (f *fakeRuntime) calls() [][]string {
 func (f *fakeRuntime) ImageExists(context.Context, string) (bool, error) { return true, nil }
 func (f *fakeRuntime) EnsureVolume(context.Context, string) error        { return nil }
 func (f *fakeRuntime) RemoveVolume(context.Context, string, bool) error  { return nil }
-func (f *fakeRuntime) EnsureNetwork(context.Context, string) error       { return nil }
-func (f *fakeRuntime) RemoveNetwork(context.Context, string) error       { return nil }
-func (f *fakeRuntime) StartContainer(context.Context, string) error      { return nil }
-func (f *fakeRuntime) StopContainer(context.Context, string) error       { return nil }
+func (f *fakeRuntime) CopyVolumeData(_ context.Context, src, dst, _ string) error {
+	f.mu.Lock()
+	f.volumeCopies = append(f.volumeCopies, [2]string{src, dst})
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeRuntime) EnsureNetwork(context.Context, string) error { return nil }
+func (f *fakeRuntime) RemoveNetwork(context.Context, string) error { return nil }
+func (f *fakeRuntime) StartContainer(context.Context, string) error {
+	f.mu.Lock()
+	f.startCalls++
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeRuntime) StopContainer(context.Context, string) error {
+	f.mu.Lock()
+	f.stopCalls++
+	f.mu.Unlock()
+	return nil
+}
 func (f *fakeRuntime) RemoveContainer(context.Context, string, bool) error {
 	return nil
 }
@@ -215,8 +240,15 @@ func (f *fakeRuntime) Stats(context.Context, string) (runtime.Stats, error) {
 func (f *fakeRuntime) StatsAll(context.Context) (map[string]runtime.Stats, error) {
 	return map[string]runtime.Stats{}, nil
 }
+func (f *fakeRuntime) VolumeSizes(context.Context) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.volumeSizes, nil
+}
 func (f *fakeRuntime) Inspect(context.Context, string) (runtime.Health, error) {
-	return runtime.Health{}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.health, nil
 }
 func (f *fakeRuntime) Status(context.Context, string) (runtime.ContainerStatus, error) {
 	return f.status, nil
@@ -229,6 +261,11 @@ func (f *fakeRuntime) CreateContainer(_ context.Context, req runtime.CreateReque
 }
 func (f *fakeRuntime) Exec(_ context.Context, _ string, cmd []string) (string, string, int, error) {
 	f.record(cmd)
+	if f.execHook != nil {
+		if stdout, stderr, code, handled := f.execHook(cmd); handled {
+			return stdout, stderr, code, nil
+		}
+	}
 	switch {
 	case len(cmd) >= 3 && cmd[0] == "test" && strings.Contains(cmd[2], "/.agents/") && strings.HasSuffix(cmd[2], "/.git"):
 		return "", "", 1, nil // agent worktree not created yet

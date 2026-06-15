@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/service"
 	"github.com/aoos/dejima/internal/sshfacade"
 	"github.com/aoos/dejima/internal/version"
 )
@@ -121,6 +122,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 
 	// --- System ---------------------------------------------------------
 	checkDaemon(ctx, r)
+	checkSupervision(ctx, r)
 	checkDocker(ctx, r)
 	checkIslandImage(ctx, r)
 	checkTailscale(ctx, r)
@@ -151,6 +153,19 @@ func runDoctor(ctx context.Context) *doctorReport {
 							detail, humanBytes(info.Stats.MemoryUsageBytes), info.Stats.CPUPercent)
 					}
 					r.add("Projects", info.Name, "OK", detail, "")
+					// The list view doesn't probe agent liveness; fetch detail for
+					// running islands so a dead agent in a live container is flagged.
+					if info.Container == "running" {
+						if d, err := c.GetIsland(ctx, info.Name); err == nil {
+							for _, a := range d.Agents {
+								if a.State == "exited" {
+									r.add("Projects", info.Name+"/"+a.ID, "WARN",
+										"agent process died (session alive on a shell prompt)",
+										fmt.Sprintf("dejima connect %s/%s to inspect, or restart the agent", info.Name, a.ID))
+								}
+							}
+						}
+					}
 				}
 			}
 		} else {
@@ -194,6 +209,40 @@ func checkDaemon(ctx context.Context, r *doctorReport) {
 			r.add("System", "version", "OK",
 				fmt.Sprintf("client %s · daemon %s (api v%d)", version.Version, o.DaemonVersion, o.APIVersion), "")
 		}
+		// Panic mode is easy to forget you left engaged — every island stays down.
+		if o.Panicked {
+			r.add("System", "panic", "WARN", "PANIC engaged — all islands stopped, auto-restart blocked",
+				"`dejima panic --clear` to resume")
+		}
+	}
+}
+
+// checkSupervision answers "how is the daemon running, and will it survive a
+// reboot?" — not just "is it reachable?". It flags an orphan (reachable but
+// unsupervised), a per-boot/login-gated supervisor that won't come back on a
+// headless host, and a system plist that's installed but not loaded.
+func checkSupervision(ctx context.Context, r *doctorReport) {
+	reachable := false
+	if c, err := client(); err == nil {
+		reachable = c.Health(ctx) == nil
+	}
+	sup := service.Detect()
+	switch {
+	case sup.Mode == "unknown":
+		return // unsupported OS; nothing useful to say
+	case !sup.Managed && sup.Mode == "none":
+		if reachable {
+			r.add("System", "supervision", "WARN",
+				"daemon is reachable but unsupervised (hand-run) — it won't survive a reboot",
+				"install it as a service: `dejima service install` (`--system` on a headless Mac)")
+		}
+		// Not reachable + unmanaged: checkDaemon already FAILed; stay quiet.
+	case !sup.Managed: // e.g. system plist present but not loaded
+		r.add("System", "supervision", "WARN", sup.Summary, sup.Concern)
+	case sup.Concern != "":
+		r.add("System", "supervision", "WARN", sup.Summary, sup.Concern)
+	default:
+		r.add("System", "supervision", "OK", sup.Summary, "")
 	}
 }
 

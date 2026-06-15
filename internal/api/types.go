@@ -21,16 +21,19 @@ type IslandInfo struct {
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
-	Role       string          `json:"role,omitempty"`
-	State      string          `json:"state"`     // desired state from config
-	Container  string          `json:"container"` // observed status from runtime
-	CreatedAt  time.Time       `json:"created_at"`
-	LastUsedAt time.Time       `json:"last_used_at"`
-	Attached   []PresenceEntry `json:"attached,omitempty"`
-	Stats      *IslandStats    `json:"stats,omitempty"`
-	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
-	Git        *GitInfo        `json:"git,omitempty"`
-	Health     *IslandHealth   `json:"health,omitempty"`
+	Role       string            `json:"role,omitempty"`
+	Owner      string            `json:"owner,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	State      string            `json:"state"`     // desired state from config
+	Container  string            `json:"container"` // observed status from runtime
+	CreatedAt  time.Time         `json:"created_at"`
+	LastUsedAt time.Time         `json:"last_used_at"`
+	Attached   []PresenceEntry   `json:"attached,omitempty"`
+	Stats      *IslandStats      `json:"stats,omitempty"`
+	AgentState *AgentStateInfo   `json:"agent_state,omitempty"`
+	Git        *GitInfo          `json:"git,omitempty"`
+	Health     *IslandHealth     `json:"health,omitempty"`
+	Disk       *IslandDisk       `json:"disk,omitempty"`
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
@@ -48,7 +51,9 @@ type AgentInfo struct {
 	// CreatedAt is when the agent was added to the island — the basis for its
 	// displayed uptime/age. Zero for legacy agents persisted before this field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
-	// State is the agent's session liveness ("running"/"stopped"/"").
+	// State is the agent's session liveness: "running", "stopped" (no tmux
+	// session), "exited" (session alive but the agent process died and only a
+	// shell prompt remains), or "" (not probed). Detail endpoint only.
 	State      string          `json:"state,omitempty"`
 	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
 	Attached   []PresenceEntry `json:"attached,omitempty"`
@@ -121,6 +126,9 @@ type OverviewResponse struct {
 	// APIVersion is 0 from daemons predating version reporting.
 	DaemonVersion string `json:"daemon_version,omitempty"`
 	APIVersion    int    `json:"api_version,omitempty"`
+	// Panicked is true while the ~/.dejima/PANIC flag is set: every island is
+	// stopped and the daemon won't auto-start them until panic is cleared.
+	Panicked bool `json:"panicked,omitempty"`
 }
 
 // AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the
@@ -191,6 +199,11 @@ type CreateIslandRequest struct {
 	// pushes as (see GET /v1/credentials/github). Empty uses the daemon default,
 	// or the host's ~/.config/gh when no identities are configured.
 	GitHubIdentity string `json:"github_identity,omitempty"`
+	// Owner is a free-form creator label (e.g. "alice@laptop") and Tags are
+	// free-form key=value labels (team=web, …); both are informational metadata
+	// surfaced in IslandInfo for wrapper dashboards. Optional.
+	Owner string            `json:"owner,omitempty"`
+	Tags  map[string]string `json:"tags,omitempty"`
 }
 
 // CreateIslandResponse is the result of POST /v1/islands: an IslandInfo
@@ -236,6 +249,34 @@ type ExecResponse struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	ExitCode int    `json:"exit_code"`
+}
+
+// IslandDisk reports an island's on-disk volume usage (detail endpoint only;
+// from `docker system df -v`, cached). Bytes are 0 when the storage driver
+// doesn't report size. WorkspaceBytes is the code volume, HomeBytes the
+// per-island home (creds + agent state); Total is their sum.
+type IslandDisk struct {
+	WorkspaceBytes int64 `json:"workspace_bytes"`
+	HomeBytes      int64 `json:"home_bytes"`
+	TotalBytes     int64 `json:"total_bytes"`
+}
+
+// CloneIslandRequest is the body of POST /v1/islands/{name}/clone.
+type CloneIslandRequest struct {
+	NewName string `json:"new_name"`
+}
+
+// PanicRequest is the optional body of POST /v1/panic.
+type PanicRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// PanicResponse is returned by the /v1/panic endpoints. Affected is the number
+// of islands stopped (on engage) or restarted (on clear).
+type PanicResponse struct {
+	Panicked bool   `json:"panicked"`
+	Affected int    `json:"affected"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // PushCredentialsRequest is the body of PUT /v1/credentials/claude.

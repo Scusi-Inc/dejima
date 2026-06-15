@@ -82,6 +82,7 @@ type tuiModel struct {
 	events_  []events.Event
 
 	selected       int
+	grouped        bool // group the island list by repo (toggled with `p`)
 	width          int
 	height         int
 	lastError      string
@@ -425,6 +426,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case opCompleteMsg:
 		delete(m.dirtyOps, msg.name)
 		if msg.err != nil {
+			// A purge blocked by the unpushed-work guard ends with "...--force...".
+			// Offer a force-purge confirmation instead of just surfacing the error,
+			// so the operator can override from the TUI without dropping to the CLI.
+			if msg.verb == "purge" && strings.Contains(msg.err.Error(), "--force") {
+				m.lastError = msg.err.Error()
+				m.confirm = &confirmPrompt{verb: "force-purge", island: msg.name}
+				return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+			}
 			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
 		}
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
@@ -594,6 +603,20 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.expanded[isl.Name] = expand
 		}
 		return m, nil
+	case "p":
+		// Toggle grouping the island list by repo (sibling/project view). Reorders
+		// rows, so re-anchor the cursor on the island it was on.
+		anchor := m.selectedName()
+		m.grouped = !m.grouped
+		if anchor != "" {
+			for i, row := range m.visibleRows() {
+				if row.kind == rowIsland && row.island == anchor {
+					m.selected = i
+					break
+				}
+			}
+		}
+		return m, nil
 	case "a":
 		// Explicit "attach in this terminal" — replaces the dashboard. Useful
 		// when the user actually wants the old behavior even though a
@@ -713,6 +736,12 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(c.answer) == c.island {
 			m.dirtyOps[c.island] = "purging"
 			return m, m.opCmd(c.island, "purge")
+		}
+	case "force-purge":
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			m.lastError = ""
+			m.dirtyOps[c.island] = "purging"
+			return m, m.opCmd(c.island, "purge-force")
 		}
 	case "remove-agent":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
@@ -858,7 +887,9 @@ func (m tuiModel) opCmd(name, verb string) tea.Cmd {
 		case "upgrade":
 			_, err = m.client.UpgradeIsland(ctx, name)
 		case "purge":
-			err = m.client.DeleteIsland(ctx, name)
+			err = m.client.DeleteIsland(ctx, name, false)
+		case "purge-force":
+			err = m.client.DeleteIsland(ctx, name, true)
 		}
 		return opCompleteMsg{name: name, verb: verb, err: err}
 	}
@@ -923,7 +954,7 @@ func (m tuiModel) islandExpandedByName(name string) bool {
 // new-island row.
 func (m tuiModel) visibleRows() []treeRow {
 	rows := make([]treeRow, 0, len(m.islands)+1)
-	for _, isl := range m.islands {
+	for _, isl := range m.orderedIslands() {
 		rows = append(rows, treeRow{kind: rowIsland, island: isl.Name})
 		if m.islandExpanded(isl) {
 			for _, a := range isl.Agents {
@@ -942,6 +973,32 @@ func (m tuiModel) visibleRows() []treeRow {
 		rows = append(rows, treeRow{kind: rowNewTerminal})
 	}
 	return rows
+}
+
+// orderedIslands returns the islands in display order: m.islands as-is, or —
+// when grouped — reordered so islands sharing a repo are contiguous (first-seen
+// repo order, original order within each repo). Drives both the row list and the
+// rendered group headers, so navigation indices and headers stay consistent.
+func (m tuiModel) orderedIslands() []api.IslandInfo {
+	if !m.grouped {
+		return m.islands
+	}
+	idx := map[string]int{}
+	var groups [][]api.IslandInfo
+	for _, isl := range m.islands {
+		i, ok := idx[isl.Repo]
+		if !ok {
+			i = len(groups)
+			idx[isl.Repo] = i
+			groups = append(groups, nil)
+		}
+		groups[i] = append(groups[i], isl)
+	}
+	out := make([]api.IslandInfo, 0, len(m.islands))
+	for _, g := range groups {
+		out = append(out, g...)
+	}
+	return out
 }
 
 // terminalByID finds a loaded host terminal by id.
@@ -1111,6 +1168,10 @@ func (m tuiModel) View() string {
 	}
 
 	header := m.renderHeader()
+	// PANIC overrides everything — show it first, in alarm styling.
+	if banner := m.renderPanicBanner(); banner != "" {
+		header = lipgloss.JoinVertical(lipgloss.Left, header, banner)
+	}
 	// A prominent update banner rides just below the header (so body sizing,
 	// which keys off header height, accounts for it automatically).
 	if banner := m.renderUpdateBanner(); banner != "" {
@@ -1140,6 +1201,19 @@ func (m tuiModel) View() string {
 	body := m.renderBody(hh)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+// renderPanicBanner returns an alarm banner while the daemon is in panic mode
+// (every island stopped, auto-restart blocked), or "" otherwise.
+func (m tuiModel) renderPanicBanner() string {
+	if m.overview == nil || !m.overview.Panicked {
+		return ""
+	}
+	msg := " ⛔ PANIC — all islands stopped, auto-restart blocked   ·   run: dejima panic --clear "
+	if w := m.width - 2; w > 0 {
+		return styleErrored.Width(w).Render(msg)
+	}
+	return styleErrored.Render(msg)
 }
 
 // renderUpdateBanner returns a prominent one-line banner when the client and/or
@@ -1304,11 +1378,25 @@ func (m tuiModel) renderList(_ int) string {
 	b.WriteString(styleHeader.Render("Islands"))
 	b.WriteString("\n\n")
 	hostHeaderDone := false
+	lastRepo := "\x00" // sentinel so the first group always prints its header
 	for i, row := range m.visibleRows() {
 		// The Host section gets its own (cautionary) header before its first row.
 		if (row.kind == rowTerminal || row.kind == rowNewTerminal) && !hostHeaderDone {
 			b.WriteString("\n" + styleHeader.Render("Host") + " " + styleMuted.Render("· not contained") + "\n\n")
 			hostHeaderDone = true
+		}
+		// Grouped view: a muted repo header before each repo group's first island.
+		// Injected like the Host header — an extra line that doesn't consume a row
+		// index, so the cursor mapping is unaffected.
+		if m.grouped && row.kind == rowIsland {
+			if isl, ok := byName[row.island]; ok && isl.Repo != lastRepo {
+				label := isl.Repo
+				if label == "" {
+					label = "(no repo)"
+				}
+				b.WriteString(styleMuted.Render("◇ "+shortenRepo(label)) + "\n")
+				lastRepo = isl.Repo
+			}
 		}
 		var line string
 		switch row.kind {
@@ -1388,6 +1476,8 @@ func agentGlyph(a api.AgentInfo) string {
 	switch {
 	case a.Error != "":
 		style = styleErrored
+	case a.State == "exited":
+		style = styleErrored // session alive but the agent process died
 	case a.AgentState != nil && a.AgentState.Latest == "waiting-for-input":
 		style = styleWaiting
 	case a.State == "running":
@@ -1501,10 +1591,21 @@ func (m tuiModel) renderDetail(_ int) string {
 		b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(d.Agent)))
 	}
 	b.WriteString(fmt.Sprintf("state:     %s\n", coloredStateText(d)))
+	if d.Owner != "" {
+		b.WriteString(fmt.Sprintf("owner:     %s\n", styleMuted.Render(d.Owner)))
+	}
+	if len(d.Tags) > 0 {
+		b.WriteString(fmt.Sprintf("tags:      %s\n", styleMuted.Render(formatTags(d.Tags))))
+	}
 	if d.Stats != nil {
 		b.WriteString(fmt.Sprintf("memory:    %s / %s\n",
 			humanBytes(d.Stats.MemoryUsageBytes), humanBytes(d.Stats.MemoryLimitBytes)))
 		b.WriteString(fmt.Sprintf("cpu:       %.1f%%\n", d.Stats.CPUPercent))
+	}
+	if d.Disk != nil && d.Disk.TotalBytes > 0 {
+		b.WriteString(fmt.Sprintf("disk:      %s (ws %s · home %s)\n",
+			humanBytes(uint64(d.Disk.TotalBytes)), humanBytes(uint64(d.Disk.WorkspaceBytes)),
+			humanBytes(uint64(d.Disk.HomeBytes))))
 	}
 	if d.AgentState != nil {
 		b.WriteString(fmt.Sprintf("agent:     %s (%s ago)\n",
@@ -1586,8 +1687,11 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 	}
 	b.WriteString(fmt.Sprintf("kind:      %s %s\n", agentGlyph(a), styleMuted.Render(kind)))
 	state := a.State
-	if state == "" {
+	switch a.State {
+	case "":
 		state = "—"
+	case "exited":
+		state = styleErrored.Render("exited — agent process died (shell prompt remains)")
 	}
 	b.WriteString(fmt.Sprintf("session:   %s\n", state))
 	if !a.CreatedAt.IsZero() {
@@ -1705,6 +1809,7 @@ func (m tuiModel) renderHelp() string {
 		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
+		{"p", "group the island list by repo — multi-agent projects read as one"},
 		{"+", "add an agent — Claude Code, Codex, a terminal, or a headless command"},
 		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
@@ -1799,6 +1904,9 @@ func (m tuiModel) renderConfirm() string {
 			c.answer)
 	case "purge":
 		prompt = fmt.Sprintf("DESTROY %q (including all volumes). Type the island name to confirm: %s",
+			c.island, c.answer)
+	case "force-purge":
+		prompt = fmt.Sprintf("%q has unpushed/uncommitted work that will be LOST. Force-purge anyway? Type 'y' and Enter: %s",
 			c.island, c.answer)
 	case "remove-terminal":
 		prompt = fmt.Sprintf("Close host terminal %s (kills the shell on the daemon host)? Type 'y' and press Enter: %s",
