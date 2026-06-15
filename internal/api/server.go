@@ -385,6 +385,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
 	mux.HandleFunc("GET /v1/credentials/github", s.handleGitHubIdentities)

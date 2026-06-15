@@ -173,6 +173,7 @@ JSON-over-HTTP with websocket streams for PTY. Endpoints (v1):
 - `GET    /v1/islands/:name/logs`         — stream/tail container logs (supports `?follow=true`)
 - `POST   /v1/events/subscribe`           — register a webhook URL for state-change events; optional `events:[…]` filter scopes delivery to specific types (unknown types are rejected). `dejima webhook events` lists the catalog (`container.crashed`, `daemon.started`, `daemon.panic-engaged`, …)
 - `GET/POST/DELETE /v1/panic`              — report / engage / clear the emergency stop (`dejima panic`); engage stops every island and blocks auto-restart until cleared
+- `GET   /metrics`                        — Prometheus text-exposition metrics (islands-by-state, per-island cpu/mem/disk, restart/OOM counts, attached clients, panic, daemon build); operator-level — island tokens are denied
 - `POST   /v1/internal/agent-event`       — internal endpoint used by per-agent shims to emit agent-specific events (not for external use)
 
 The CLI is the first consumer. The contract is the public surface; third-party apps target the API, not the CLI.
