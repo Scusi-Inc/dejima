@@ -9,23 +9,27 @@ import (
 	"github.com/aoos/dejima/internal/selfupdate"
 )
 
-// newUpdateCmd checks for a newer Dejima release and explains how to update.
-// Self-applying the update (git pull+rebuild in source mode; download+replace in
-// release mode) is a later, separately-reviewed slice; today this reports and
-// hands off to the manual steps for the detected install mode.
+// newUpdateCmd checks for a newer Dejima release and, by default, applies it.
+// "update means update": the bare command upgrades in place — download + verify
+// + atomic replace for a released binary, or git pull --ff-only + make install +
+// service restart for a source checkout. `--check` is the look-don't-touch
+// escape hatch. Integrity guards live in the selfupdate package (SHA256SUMS
+// verification for releases; refusal of a dirty/diverged tree for source).
 func newUpdateCmd() *cobra.Command {
-	var checkOnly, apply, yes bool
+	var checkOnly bool
 	var source string
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Check for a newer Dejima release, or apply one (source installs)",
+		Short: "Update Dejima to the latest release (use --check to only look)",
 		Long: "Detects how this Dejima was installed (a source checkout vs a released binary) and\n" +
-			"reports whether a newer release is available.\n\n" +
-			"With --apply on a *source* install, it fast-forwards your checkout and reinstalls\n" +
-			"(git pull --ff-only && make install && dejima service restart). --apply alone is a\n" +
-			"dry run; add --yes to execute. A dirty or diverged tree is refused.\n\n" +
-			"With --apply --yes on a *release* (binary) install, it downloads the latest release,\n" +
-			"verifies it against the release SHA256SUMS, and replaces this binary in place.",
+			"upgrades it to the latest release.\n\n" +
+			"By default `dejima update` applies the update:\n" +
+			"  • release (binary) install — downloads the latest release, verifies it against the\n" +
+			"    release SHA256SUMS, and replaces this binary in place.\n" +
+			"  • source install — fast-forwards your checkout and reinstalls\n" +
+			"    (git pull --ff-only && make install && dejima service restart). A dirty or\n" +
+			"    diverged tree is refused.\n\n" +
+			"Use --check to only report whether an update is available, without applying it.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := selfupdate.Check(cmd.Context())
 			if err != nil {
@@ -40,25 +44,15 @@ func newUpdateCmd() *cobra.Command {
 			}
 			fmt.Printf("\nan update is available (%s → %s).\n", st.Current, st.Latest)
 
-			if !apply {
-				if checkOnly {
-					return nil
-				}
-				fmt.Println("update with:")
-				fmt.Printf("  %s\n", selfupdate.ManualSteps(st.Mode))
-				fmt.Println("(or, on a source install: dejima update --apply)")
+			// --check: look, don't touch. Point at the one-word command to apply.
+			if checkOnly {
+				fmt.Println("\napply it with: dejima update")
 				return nil
 			}
 
-			// --apply path.
+			// Default path: apply the update.
 			if st.Mode == selfupdate.ModeRelease {
-				// Release install: download the new binary, verify it against the
-				// release SHA256SUMS, and replace this executable in place.
-				if !yes {
-					fmt.Printf("\nwould download %s and replace this binary (%s). re-run with --yes to apply.\n",
-						st.Latest, selfExe())
-					return nil
-				}
+				fmt.Printf("\ndownloading %s and replacing this binary (%s)…\n", st.Latest, selfExe())
 				if err := selfupdate.ApplyReleaseSelf(cmd.Context(), st.Latest, cmd.OutOrStdout()); err != nil {
 					return fmt.Errorf("apply update: %w", err)
 				}
@@ -73,13 +67,11 @@ func newUpdateCmd() *cobra.Command {
 					return err
 				}
 			}
-			fmt.Printf("\napplying source update in %s%s:\n", dir, dryRunSuffix(yes))
-			return selfupdate.ApplySource(cmd.Context(), dir, yes, cmd.OutOrStdout(), selfupdate.ExecRunner(cmd.OutOrStdout()))
+			fmt.Printf("\napplying source update in %s:\n", dir)
+			return selfupdate.ApplySource(cmd.Context(), dir, true, cmd.OutOrStdout(), selfupdate.ExecRunner(cmd.OutOrStdout()))
 		},
 	}
-	cmd.Flags().BoolVar(&checkOnly, "check", false, "only report whether an update is available; don't print update steps")
-	cmd.Flags().BoolVar(&apply, "apply", false, "apply the update (source installs); a dry run unless --yes is also given")
-	cmd.Flags().BoolVar(&yes, "yes", false, "with --apply, actually execute (otherwise it's a dry run)")
+	cmd.Flags().BoolVar(&checkOnly, "check", false, "only report whether an update is available; don't apply it")
 	cmd.Flags().StringVar(&source, "source", "", "path to the dejima checkout (default: found from the current directory)")
 	return cmd
 }
@@ -90,11 +82,4 @@ func selfExe() string {
 		return p
 	}
 	return "this binary"
-}
-
-func dryRunSuffix(execute bool) string {
-	if execute {
-		return ""
-	}
-	return " (dry run)"
 }

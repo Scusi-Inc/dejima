@@ -109,14 +109,3 @@ func Check(ctx context.Context) (Status, error) {
 	}
 	return Evaluate(version.Version, latest, DetectMode()), nil
 }
-
-// ManualSteps returns the commands a user runs to update by hand, per mode —
-// the honest fallback until the mutating self-update path ships.
-func ManualSteps(mode Mode) string {
-	switch mode {
-	case ModeSource:
-		return "cd <your dejima checkout> && git pull && make install && dejima service restart"
-	default:
-		return "curl -fsSL https://aoos.github.io/dejima/install.sh | bash && dejima service restart"
-	}
-}
