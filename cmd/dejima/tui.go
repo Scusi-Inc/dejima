@@ -1221,8 +1221,8 @@ func (m tuiModel) renderPanicBanner() string {
 }
 
 // renderUpdateBanner returns a prominent one-line banner when the client and/or
-// daemon are behind the latest release, or "" when up to date. The apply flow is
-// added in a follow-up; for now it points at the command.
+// daemon are behind the latest release, or "" when up to date. [U] applies the
+// update in place (client and/or daemon); see the U key handler.
 func (m tuiModel) renderUpdateBanner() string {
 	if !m.clientUpdate && !m.daemonUpdate {
 		return ""
@@ -1234,11 +1234,13 @@ func (m tuiModel) renderUpdateBanner() string {
 	if m.daemonUpdate && m.overview != nil {
 		parts = append(parts, fmt.Sprintf("daemon %s→%s", m.overview.DaemonVersion, m.latestRelease))
 	}
-	action := "run: dejima update"
-	if m.clientUpdate {
-		action = "[U] update" // client self-update is wired; daemon points at the command
-	}
-	msg := " ⬆ update available: " + strings.Join(parts, " · ") + "   ·   " + action + " "
+	// U applies whichever is behind: a client self-update (replace this binary),
+	// a daemon self-update (operator endpoint → the daemon updates and restarts),
+	// or, with both stale, the client first then the daemon. The banner only
+	// renders when at least one is available, so [U] is always the right hint —
+	// the old "run: dejima update" fallback was wrong for a daemon-only update,
+	// since that command updates the client, not the remote daemon.
+	msg := " ⬆ update available: " + strings.Join(parts, " · ") + "   ·   [U] update "
 	if w := m.width - 2; w > 0 {
 		return styleWaiting.Width(w).Render(msg)
 	}
