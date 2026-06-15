@@ -334,6 +334,16 @@ func (c *Client) PanicStatus(ctx context.Context) (*PanicResponse, error) {
 	return &out, nil
 }
 
+// CloneIsland duplicates an island under newName, copying its workspace + home
+// volumes (credentials and git history come along).
+func (c *Client) CloneIsland(ctx context.Context, name, newName string) (*IslandInfo, error) {
+	var out IslandInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/clone", CloneIslandRequest{NewName: newName}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // HibernateIsland stops the container, preserving volumes.
 func (c *Client) HibernateIsland(ctx context.Context, name string) (*IslandInfo, error) {
 	var out IslandInfo

@@ -52,6 +52,17 @@ func (d *Docker) EnsureVolume(ctx context.Context, name string) error {
 	return err
 }
 
+// CopyVolumeData copies the contents of src into dst via a throwaway container
+// that mounts both volumes (src read-only) and runs `cp -a`. image must provide
+// a POSIX sh + cp (the island image does). Used by island clone.
+func (d *Docker) CopyVolumeData(ctx context.Context, src, dst, image string) error {
+	_, err := d.runOK(ctx, "run", "--rm",
+		"-v", src+":/from:ro",
+		"-v", dst+":/to",
+		image, "sh", "-c", "cp -a /from/. /to/")
+	return err
+}
+
 func (d *Docker) RemoveVolume(ctx context.Context, name string, force bool) error {
 	args := []string{"volume", "rm"}
 	if force {

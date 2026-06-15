@@ -184,6 +184,7 @@ type fakeRuntime struct {
 	status         runtime.ContainerStatus
 	health         runtime.Health
 	volumeSizes    map[string]int64
+	volumeCopies   [][2]string
 	startCalls     int
 	stopCalls      int
 	failNewSession bool // when true, `tmux new-session` exits non-zero
@@ -210,8 +211,14 @@ func (f *fakeRuntime) calls() [][]string {
 func (f *fakeRuntime) ImageExists(context.Context, string) (bool, error) { return true, nil }
 func (f *fakeRuntime) EnsureVolume(context.Context, string) error        { return nil }
 func (f *fakeRuntime) RemoveVolume(context.Context, string, bool) error  { return nil }
-func (f *fakeRuntime) EnsureNetwork(context.Context, string) error       { return nil }
-func (f *fakeRuntime) RemoveNetwork(context.Context, string) error       { return nil }
+func (f *fakeRuntime) CopyVolumeData(_ context.Context, src, dst, _ string) error {
+	f.mu.Lock()
+	f.volumeCopies = append(f.volumeCopies, [2]string{src, dst})
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeRuntime) EnsureNetwork(context.Context, string) error { return nil }
+func (f *fakeRuntime) RemoveNetwork(context.Context, string) error { return nil }
 func (f *fakeRuntime) StartContainer(context.Context, string) error {
 	f.mu.Lock()
 	f.startCalls++

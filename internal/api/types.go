@@ -261,6 +261,11 @@ type IslandDisk struct {
 	TotalBytes     int64 `json:"total_bytes"`
 }
 
+// CloneIslandRequest is the body of POST /v1/islands/{name}/clone.
+type CloneIslandRequest struct {
+	NewName string `json:"new_name"`
+}
+
 // PanicRequest is the optional body of POST /v1/panic.
 type PanicRequest struct {
 	Reason string `json:"reason,omitempty"`

@@ -73,6 +73,11 @@ type Runtime interface {
 	// RemoveVolume deletes a volume. Errors if missing unless force=true.
 	RemoveVolume(ctx context.Context, name string, force bool) error
 
+	// CopyVolumeData copies the contents of volume src into volume dst (via a
+	// throwaway container running `cp -a`, src mounted read-only). image must
+	// provide sh + cp. Used to clone an island's workspace and home volumes.
+	CopyVolumeData(ctx context.Context, src, dst, image string) error
+
 	// EnsureNetwork creates a user-defined bridge network if it doesn't exist.
 	// Idempotent. The network isolates containers from other networks while
 	// retaining outbound internet access via Docker's NAT.

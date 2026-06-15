@@ -370,6 +370,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/islands/{name}/wake", s.wakeIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/reset", s.resetIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/upgrade", s.upgradeIsland)
+	mux.HandleFunc("POST /v1/islands/{name}/clone", s.cloneIsland)
 	mux.HandleFunc("POST /v1/image/build", s.handleImageBuild)
 	mux.HandleFunc("POST /v1/admin/update", s.handleAdminUpdate)
 	mux.HandleFunc("GET /v1/panic", s.handlePanicStatus)
@@ -1065,6 +1066,123 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("home spawned child island", "child", p.Name, "parent", parent)
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// cloneProjectConfig builds a new Project that duplicates src under newName.
+// Title and Ports are deliberately dropped: Title is cosmetic (the clone shows
+// its own name), and Ports are host-filesystem grants — a clone starts deny-all
+// and never silently inherits the source's host access. The home + workspace
+// volumes (copied separately) carry tool credentials and the git history along.
+func cloneProjectConfig(src *project.Project, newName string, now time.Time) *project.Project {
+	dst := &project.Project{
+		Name:           newName,
+		RepoURL:        src.RepoURL,
+		Agent:          src.Agent,
+		Image:          src.Image,
+		Cmd:            src.Cmd,
+		Resources:      src.Resources,
+		Role:           src.Role,
+		GitHubIdentity: src.GitHubIdentity,
+		Owner:          src.Owner,
+		DesiredState:   project.StateRunning,
+		CreatedAt:      now,
+		LastUsedAt:     now,
+	}
+	if len(src.Agents) > 0 {
+		dst.Agents = make([]project.AgentSpec, len(src.Agents))
+		copy(dst.Agents, src.Agents)
+	}
+	if len(src.Tags) > 0 {
+		dst.Tags = make(map[string]string, len(src.Tags))
+		for k, v := range src.Tags {
+			dst.Tags[k] = v
+		}
+	}
+	return dst
+}
+
+// cloneIsland duplicates an island: a new config plus byte-for-byte copies of
+// its workspace and home volumes (so credentials, tool auth, and git history
+// come along). Caveats are inherent: device/host-bound tokens may not survive,
+// and duplicating the home volume duplicates session/runtime state.
+func (s *Server) cloneIsland(w http.ResponseWriter, r *http.Request) {
+	srcName := r.PathValue("name")
+	var req CloneIslandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	newName := strings.TrimSpace(req.NewName)
+	if err := project.ValidateName(newName); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if newName == srcName {
+		writeError(w, http.StatusBadRequest, errors.New("clone target must differ from the source"))
+		return
+	}
+
+	// Lock the new name (the resource being created), mirroring createIsland.
+	lock := s.projectLock(newName)
+	lock.Lock()
+	defer lock.Unlock()
+
+	src, err := project.Load(srcName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if project.Exists(newName) {
+		writeError(w, http.StatusConflict, fmt.Errorf("island %q already exists", newName))
+		return
+	}
+
+	dst := cloneProjectConfig(src, newName, time.Now().UTC())
+	if err := project.EnsureProjectSubdirs(newName); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := dst.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Provision volumes/network, copy the source data in, then bring up the
+	// container. Volumes must be populated BEFORE the container starts so the
+	// entrypoint sees /workspace/.git and skips re-cloning the repo.
+	fail := func(err error) {
+		s.log.Error("clone failed; cleaning up", "src", srcName, "new", newName, "err", err)
+		_ = s.teardown(context.Background(), dst, true)
+		writeError(w, http.StatusInternalServerError, err)
+	}
+	if err := s.rt.EnsureVolume(r.Context(), dst.WorkspaceVolume()); err != nil {
+		fail(fmt.Errorf("create workspace volume: %w", err))
+		return
+	}
+	if err := s.rt.EnsureVolume(r.Context(), dst.HomeVolume()); err != nil {
+		fail(fmt.Errorf("create home volume: %w", err))
+		return
+	}
+	if err := s.rt.EnsureNetwork(r.Context(), dst.NetworkName()); err != nil {
+		fail(fmt.Errorf("create network: %w", err))
+		return
+	}
+	if err := s.rt.CopyVolumeData(r.Context(), src.WorkspaceVolume(), dst.WorkspaceVolume(), src.Image); err != nil {
+		fail(fmt.Errorf("copy workspace volume: %w", err))
+		return
+	}
+	if err := s.rt.CopyVolumeData(r.Context(), src.HomeVolume(), dst.HomeVolume(), src.Image); err != nil {
+		fail(fmt.Errorf("copy home volume: %w", err))
+		return
+	}
+	if err := s.createContainerForProject(r.Context(), dst, ""); err != nil {
+		fail(err)
+		return
+	}
+	s.reconcileAgentsAsync(dst)
+	s.emit(events.Event{Type: events.TypeIslandCreated, Island: dst.Name})
+	s.emit(events.Event{Type: events.TypeIslandRunning, Island: dst.Name})
+	writeJSON(w, http.StatusCreated, s.toInfo(r.Context(), dst))
 }
 
 func (s *Server) deleteIsland(w http.ResponseWriter, r *http.Request) {

@@ -88,6 +88,7 @@ func newRootCmd() *cobra.Command {
 		newPurgeCmd(),
 		newPanicCmd(),
 		newUninstallCmd(),
+		newCloneCmd(),
 		newUpgradeCmd(),
 		newExecCmd(),
 		newCpCmd(),
@@ -711,6 +712,35 @@ func newResetCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation")
+	return cmd
+}
+
+func newCloneCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "clone <name> <new-name>",
+		Short: "Duplicate an island, credentials and all.",
+		Long: "Creates a new island that is a byte-for-byte copy of an existing one: its\n" +
+			"workspace (code + git history) and home volume (tool credentials, agent state)\n" +
+			"are copied into fresh volumes. Best run when the source is idle, so the copy is\n" +
+			"consistent. Host-filesystem Port grants are NOT carried over (the clone starts\n" +
+			"deny-all).",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+			defer cancel()
+			fmt.Printf("cloning %q → %q (copying workspace + home volumes)…\n", args[0], args[1])
+			info, err := c.CloneIsland(ctx, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("cloned to island %q (container: %s)\n", info.Name, info.Container)
+			return nil
+		},
+	}
 	return cmd
 }
 
