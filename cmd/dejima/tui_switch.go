@@ -96,6 +96,13 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 	m.client = c
 	m.activeHost = p.Host
 	m.activeLabel = p.Name
+	// An explicit pick in the switcher is profile- or local-sourced, never env —
+	// even if DEJIMA_HOST is set, the user just chose a target by hand.
+	if p.Host == "" {
+		m.activeSource = "local"
+	} else {
+		m.activeSource = "profile"
+	}
 	m.islands = nil
 	m.detail = nil
 	m.overview = nil
@@ -132,6 +139,7 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 			m.client = c
 			m.activeHost = ""
 			m.activeLabel = "local"
+			m.activeSource = "local"
 			m.islands = nil
 			m.detail = nil
 			m.overview = nil

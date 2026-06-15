@@ -110,9 +110,10 @@ type tuiModel struct {
 	agentAdder   *agentAdder     // non-nil while the add-agent flow is active
 	expanded     map[string]bool // island name → agents-revealed (default: all expanded)
 
-	activeHost  string // current target: "" = local socket, else host:port
-	activeLabel string // profile name for the active target, if known
-	skew        string // client/daemon version-skew warning, or ""
+	activeHost   string // current target: "" = local socket, else host:port
+	activeLabel  string // profile name for the active target, if known
+	activeSource string // where the target came from: "env" | "profile" | "local"
+	skew         string // client/daemon version-skew warning, or ""
 }
 
 type confirmPrompt struct {
@@ -123,13 +124,14 @@ type confirmPrompt struct {
 }
 
 func initialTUIModel(c *api.Client) tuiModel {
-	host, label := resolveTarget()
+	host, label, source := resolveTarget()
 	return tuiModel{
-		client:      c,
-		dirtyOps:    map[string]string{},
-		expanded:    map[string]bool{},
-		activeHost:  host,
-		activeLabel: label,
+		client:       c,
+		dirtyOps:     map[string]string{},
+		expanded:     map[string]bool{},
+		activeHost:   host,
+		activeLabel:  label,
+		activeSource: source,
 	}
 }
 
@@ -1284,12 +1286,19 @@ func (m tuiModel) renderHeader() string {
 		}
 	}
 
+	// Flag an env-sourced target: DEJIMA_HOST overrides any saved profile, so a
+	// stale export silently wins — making that visible is the whole point.
+	envNote := ""
+	if m.activeSource == "env" {
+		envNote = " (env)"
+	}
+
 	// Compact single-line header when the terminal can't spare the rows, or
 	// is too narrow for the info lines beside even the small logo (longest
 	// info line is 69 cols; small logo + chrome is 21 + 9 = 30).
 	if m.height < 24 || m.width < 99 {
 		title := styleTitle.Render("Dejima")
-		right := styleMuted.Render(label + " ⇄ [s]")
+		right := styleMuted.Render(label + envNote + " ⇄ [s]")
 		pad := m.width - lipgloss.Width(title) - lipgloss.Width(right) - 2
 		if pad < 1 {
 			pad = 1
@@ -1315,6 +1324,9 @@ func (m tuiModel) renderHeader() string {
 	// The ssh hint appears only when the daemon has the SSH-façade listener on
 	// (--ssh); `dejima ssh config <island> --install` resolves the full address.
 	serverLine := styleMuted.Render("server: ") + styleAccent.Render(label)
+	if m.activeSource == "env" {
+		serverLine += styleMuted.Render(" via $DEJIMA_HOST")
+	}
 	if m.overview != nil && m.overview.SSHAddr != "" {
 		serverLine += styleMuted.Render("  ·  ssh ") + styleAccent.Render(m.overview.SSHAddr)
 	}

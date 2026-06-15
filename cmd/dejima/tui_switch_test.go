@@ -23,16 +23,17 @@ func TestResolveTargetPrecedence(t *testing.T) {
 
 	t.Run("env wins over saved profile", func(t *testing.T) {
 		t.Setenv("DEJIMA_HOST", "host.docker.internal:7274")
-		if host, _ := resolveTarget(); host != "host.docker.internal:7274" {
-			t.Fatalf("env should win, got %q", host)
+		host, _, source := resolveTarget()
+		if host != "host.docker.internal:7274" || source != "env" {
+			t.Fatalf("env should win, got (%q, source=%q)", host, source)
 		}
 	})
 
 	t.Run("saved active profile when env unset", func(t *testing.T) {
 		t.Setenv("DEJIMA_HOST", "")
-		host, label := resolveTarget()
-		if host != "100.77.85.107:7273" || label != "minion" {
-			t.Fatalf("want (100.77.85.107:7273, minion), got (%q, %q)", host, label)
+		host, label, source := resolveTarget()
+		if host != "100.77.85.107:7273" || label != "minion" || source != "profile" {
+			t.Fatalf("want (100.77.85.107:7273, minion, profile), got (%q, %q, %q)", host, label, source)
 		}
 	})
 }

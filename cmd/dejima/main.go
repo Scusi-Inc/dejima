@@ -760,21 +760,23 @@ func client() (*api.Client, error) {
 // This is the single source of truth for "where do we connect": before, every
 // call site read DEJIMA_HOST directly, so a saved profile never became the
 // persistent default and a dangling active_profile silently broke the client.
-func resolveTarget() (host, label string) {
+// source is one of "env", "profile", or "local" — where the target came from,
+// surfaced in the TUI header so a stale DEJIMA_HOST override is visible.
+func resolveTarget() (host, label, source string) {
 	if h := strings.TrimSpace(os.Getenv("DEJIMA_HOST")); h != "" {
-		return h, h
+		return h, h, "env"
 	}
 	cfg, _ := clientcfg.Load()
 	if h, ok := cfg.ActiveHost(); ok {
-		return h, cfg.ActiveProfile
+		return h, cfg.ActiveProfile, "profile"
 	}
-	return "", "local"
+	return "", "local", "local"
 }
 
-// resolveHost is resolveTarget without the label, for call sites that only need
-// the connection string (the CLI client and the local-vs-remote decision).
+// resolveHost is resolveTarget reduced to the connection string, for call sites
+// that only need it (the CLI client and the local-vs-remote decision).
 func resolveHost() string {
-	h, _ := resolveTarget()
+	h, _, _ := resolveTarget()
 	return h
 }
 
