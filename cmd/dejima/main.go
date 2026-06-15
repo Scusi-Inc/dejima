@@ -1198,7 +1198,7 @@ func printPresence(prefix string, entries []api.PresenceEntry) {
 // --- ls -------------------------------------------------------------------
 
 func newLsCmd() *cobra.Command {
-	var showAgents bool
+	var showAgents, group bool
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List all islands.",
@@ -1216,8 +1216,7 @@ func newLsCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tAGENT\tREPO\tSTATE\tCONTAINER")
-			for _, i := range items {
+			writeRow := func(i api.IslandInfo) {
 				agentCol := i.Agent
 				if len(i.Agents) > 1 {
 					agentCol = fmt.Sprintf("%d agents", len(i.Agents))
@@ -1234,11 +1233,60 @@ func newLsCmd() *cobra.Command {
 					}
 				}
 			}
+
+			if group {
+				// Sibling view: islands sharing a repo read as one project with N
+				// islands/agents. UI-only grouping over the same rows.
+				for gi, g := range groupByRepo(items) {
+					if gi > 0 {
+						fmt.Fprintln(tw)
+					}
+					fmt.Fprintf(tw, "%s\t\t\t\t(%s)\n", shortenRepo(g.repo), countNoun(len(g.islands), "island"))
+					for _, i := range g.islands {
+						writeRow(i)
+					}
+				}
+				return tw.Flush()
+			}
+
+			fmt.Fprintln(tw, "NAME\tAGENT\tREPO\tSTATE\tCONTAINER")
+			for _, i := range items {
+				writeRow(i)
+			}
 			return tw.Flush()
 		},
 	}
 	cmd.Flags().BoolVarP(&showAgents, "agents", "a", false, "expand each island's agents")
+	cmd.Flags().BoolVarP(&group, "group", "g", false, "group islands that share a repo (multi-agent projects read as one)")
 	return cmd
+}
+
+// islandGroup is a set of islands sharing one repo, for the `dejima ls -g` view.
+type islandGroup struct {
+	repo    string
+	islands []api.IslandInfo
+}
+
+// groupByRepo groups islands by their repo URL, preserving first-seen repo order
+// and the input order within each group. Islands with no repo collect under a
+// "(no repo)" group.
+func groupByRepo(items []api.IslandInfo) []islandGroup {
+	idx := map[string]int{}
+	var groups []islandGroup
+	for _, it := range items {
+		key := it.Repo
+		if key == "" {
+			key = "(no repo)"
+		}
+		i, ok := idx[key]
+		if !ok {
+			i = len(groups)
+			idx[key] = i
+			groups = append(groups, islandGroup{repo: key})
+		}
+		groups[i].islands = append(groups[i].islands, it)
+	}
+	return groups
 }
 
 // newAgentCmd groups per-agent management verbs.
