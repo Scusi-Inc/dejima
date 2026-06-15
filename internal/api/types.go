@@ -49,7 +49,9 @@ type AgentInfo struct {
 	// CreatedAt is when the agent was added to the island — the basis for its
 	// displayed uptime/age. Zero for legacy agents persisted before this field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
-	// State is the agent's session liveness ("running"/"stopped"/"").
+	// State is the agent's session liveness: "running", "stopped" (no tmux
+	// session), "exited" (session alive but the agent process died and only a
+	// shell prompt remains), or "" (not probed). Detail endpoint only.
 	State      string          `json:"state,omitempty"`
 	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
 	Attached   []PresenceEntry `json:"attached,omitempty"`

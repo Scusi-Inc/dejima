@@ -1475,6 +1475,40 @@ func (s *Server) tmuxHasSession(ctx context.Context, p *project.Project, session
 	return err == nil && code == 0, err
 }
 
+// agentLiveness classifies an attachable agent's session: "stopped" (no tmux
+// session), "exited" (session alive but its foreground process fell back to a
+// bare shell — the agent process died while start.sh kept the container up), or
+// "running". The "exited" verdict never applies to the shell agent type, whose
+// foreground IS a shell. Best-effort heuristic via the tmux pane command.
+func (s *Server) agentLiveness(ctx context.Context, p *project.Project, session, agentType string) string {
+	ok, _ := s.tmuxHasSession(ctx, p, session)
+	if !ok {
+		return "stopped"
+	}
+	if agentType == handlers.Shell {
+		return "running" // a shell prompt is the healthy state here
+	}
+	out, _, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"tmux", "display-message", "-p", "-t", session, "#{pane_current_command}"})
+	if err != nil || code != 0 {
+		return "running" // can't tell; don't cry wolf
+	}
+	if isLoginShell(strings.TrimSpace(out)) {
+		return "exited"
+	}
+	return "running"
+}
+
+// isLoginShell reports whether a tmux pane_current_command names a bare shell —
+// i.e. the agent's foreground process is gone and only a prompt remains.
+func isLoginShell(cmd string) bool {
+	switch strings.TrimPrefix(cmd, "-") {
+	case "bash", "sh", "zsh", "dash", "ash", "fish":
+		return true
+	}
+	return false
+}
+
 // teardown removes the container, volumes, network, and on-host config dir.
 func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) error {
 	if p == nil {
@@ -1778,11 +1812,7 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 			CreatedAt:  a.CreatedAt,
 		}
 		if live && a.Tmux != "" {
-			if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
-				ai.State = "running"
-			} else {
-				ai.State = "stopped"
-			}
+			ai.State = s.agentLiveness(ctx, p, a.Tmux, a.Type)
 		}
 		ai.Attached = s.presenceSnapshot(p.Name, a.ID)
 		ai.AgentState = s.agentStateOf(p.Name, a.ID)

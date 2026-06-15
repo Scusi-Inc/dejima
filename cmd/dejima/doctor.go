@@ -151,6 +151,19 @@ func runDoctor(ctx context.Context) *doctorReport {
 							detail, humanBytes(info.Stats.MemoryUsageBytes), info.Stats.CPUPercent)
 					}
 					r.add("Projects", info.Name, "OK", detail, "")
+					// The list view doesn't probe agent liveness; fetch detail for
+					// running islands so a dead agent in a live container is flagged.
+					if info.Container == "running" {
+						if d, err := c.GetIsland(ctx, info.Name); err == nil {
+							for _, a := range d.Agents {
+								if a.State == "exited" {
+									r.add("Projects", info.Name+"/"+a.ID, "WARN",
+										"agent process died (session alive on a shell prompt)",
+										fmt.Sprintf("dejima connect %s/%s to inspect, or restart the agent", info.Name, a.ID))
+								}
+							}
+						}
+					}
 				}
 			}
 		} else {

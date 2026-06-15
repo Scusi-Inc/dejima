@@ -1421,6 +1421,8 @@ func agentGlyph(a api.AgentInfo) string {
 	switch {
 	case a.Error != "":
 		style = styleErrored
+	case a.State == "exited":
+		style = styleErrored // session alive but the agent process died
 	case a.AgentState != nil && a.AgentState.Latest == "waiting-for-input":
 		style = styleWaiting
 	case a.State == "running":
@@ -1624,8 +1626,11 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 	}
 	b.WriteString(fmt.Sprintf("kind:      %s %s\n", agentGlyph(a), styleMuted.Render(kind)))
 	state := a.State
-	if state == "" {
+	switch a.State {
+	case "":
 		state = "—"
+	case "exited":
+		state = styleErrored.Render("exited — agent process died (shell prompt remains)")
 	}
 	b.WriteString(fmt.Sprintf("session:   %s\n", state))
 	if !a.CreatedAt.IsZero() {
