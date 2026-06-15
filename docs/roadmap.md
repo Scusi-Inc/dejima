@@ -1,6 +1,6 @@
 # Dejima Roadmap
 
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-15
 
 This is the living roadmap for Dejima. Items are grouped by phase and sized roughly. Status legend: `[x]` = built, `[~]` = in progress, `[ ]` = pending.
 
@@ -13,15 +13,19 @@ This is the living roadmap for Dejima. Items are grouped by phase and sized roug
 These shipped to `master` with unit/security review but can't be exercised from the
 build island (no live Docker/macOS host here). Run them on Minion and feed findings back.
 
-- [ ] **OpenClaw `--allow-unconfigured` idles, not crash-loops.** Create a Home Island
-  (`--agent openclaw`) with an empty `/workspace` config; confirm the gateway waits
-  instead of exiting nonzero / restart-looping in `dejima logs`. If OpenClaw rejects the
-  flag, report the correct one. (commit `30d898c`, `internal/handlers/handlers.go`)
-- [ ] **#8 macOS TCP autonomy reachability probe** (`runbook-openclaw-home-island.md §5.2`).
-  `dejimad --token-tcp 127.0.0.1:7274`; from inside an island confirm
-  `host.docker.internal:7274/v1/healthz` reaches the loopback-bound daemon and that an
-  in-island `dejima port intake …` authenticates (200, not 401/403). Decides whether
-  `host.docker.internal` is the right `--autonomy-dial` on Minion's Docker runtime.
+- [x] **OpenClaw idles in a Home Island, not crash-loops.** Verified on Minion 2026-06-15:
+  `dejima home create --agent openclaw` self-installs openclaw (`2026.6.6`) and the gateway
+  reaches `ready` and idles (no zombie, no restart-loop). `--allow-unconfigured` alone was
+  *not* enough — inside a container OpenClaw defaults to `bind=auto` (0.0.0.0) and refuses
+  to start without auth, so the launch also needs `--bind loopback` (`d20e5f9`). Also wired
+  `home create --agent openclaw` to reuse the baked handler with `role=home` + `DEJIMA_HOME`
+  (`f188031`; server home-role gate now keys on attachability, not the literal "headless"
+  type). `internal/handlers/handlers.go`, `cmd/dejima/home.go`.
+- [x] **#8 macOS TCP autonomy reachability** — verified on Minion 2026-06-15. From inside an
+  island, `host.docker.internal:7274/v1/healthz` with the daemon-injected bearer token → 200;
+  own-island routes → 200, another island's → 403 (scoping holds). Confirmed live in the
+  OpenClaw Home Island test, so `DEJIMA_HOST=host.docker.internal:7274` is the correct
+  autonomy dial on Minion's Docker. (`runbook-openclaw-home-island.md §5.2`)
 - [ ] **#9 SSH-façade live + VS Code Remote-SSH.** `dejimad --ssh :2222` (prefer a tailnet
   bind), `dejima ssh authorize <island> --key …`, then `ssh <island>@host -p 2222` (lands
   in the container, PTY/resize/exit-codes work) and point VS Code/Cursor Remote-SSH at it
