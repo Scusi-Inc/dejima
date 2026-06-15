@@ -20,6 +20,22 @@ func Root() (string, error) {
 	return root, nil
 }
 
+// CapabilitiesDir returns ~/.dejima/capabilities, creating it (0700). It holds
+// the user-authored executables the capability broker's script adapter runs
+// (docs/capability-broker-spec.md §2.2). Owned by the daemon user and not
+// island-writable — that is the curation boundary.
+func CapabilitiesDir() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, "capabilities")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // SocketPath returns the Unix socket the daemon listens on.
 func SocketPath() (string, error) {
 	root, err := Root()

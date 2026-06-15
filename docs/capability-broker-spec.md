@@ -223,8 +223,14 @@ is the named target's published behavior — tractable and complete.
    `…/capability/grants` (`internal/api/capability.go`), `dejima cap
    grant/revoke/ls` (`cmd/dejima/capability.go`), `capability.grant/revoke`
    ledger entries. No execution yet — a grant is a recorded, ledgered permission.
-2. **Adapter registry + Linux `script` adapter** — fully testable in CI without
-   macOS (exec a temp script dir; assert stdin JSON, env, mode gates, timeout).
+2. **Adapter registry + Linux `script` adapter** — ✅ done.
+   `internal/capability`: `Adapter` interface + `ScriptAdapter` (JSON args on
+   stdin, fixed env, no shell), trust gates (regular / owner-owned / not group-
+   world-writable / +x; symlinks + traversal rejected), bounded output, timeout
+   with `WaitDelay` so a hung child can't block. `DefaultAdapter()` selects by
+   host OS (macOS errs until phase 4). Owner check split `owner_unix`/
+   `owner_other` so the non-Unix client still builds. Tested: stdin/env, non-zero
+   exit, not-found/traversal, trust gates, timeout, output cap. No endpoint yet.
 3. **`POST /v1/capabilities/execute` + `accessTokenOwn`** in `tokenauth.go`;
    `capability.execute/deny` ledgering; bounds + timeout.
 4. **macOS `shortcuts` adapter** — behind host-OS selection; live-verified on
