@@ -72,9 +72,10 @@ out-of-band (see §5).
 
 ## 3. Grant surface (operator)
 
-Mirrors `dejima port`. Grants live host-side under
-`~/.dejima/projects/<island>/capabilities` (outside any container), deny-all
-default, and every grant/revoke is ledgered.
+Mirrors `dejima port`. Grants live host-side in the island's
+`~/.dejima/projects/<island>/config.toml` (`[[capabilities]]`, alongside
+`[[ports]]` — outside any container), deny-all default, every grant/revoke
+ledgered.
 
 ```
 dejima cap grant  <island> <target>     # allow island to invoke target
@@ -217,8 +218,11 @@ is the named target's published behavior — tractable and complete.
 
 ## 9. Implementation phasing
 
-1. **Storage + grants** — per-island grant store; `dejima cap grant/revoke/ls`;
-   `capability.grant/revoke` ledger types. (no execution yet)
+1. **Storage + grants** — ✅ done. Per-island grants in `config.toml`
+   (`internal/project/capabilities.go`), operator-only routes
+   `…/capability/grants` (`internal/api/capability.go`), `dejima cap
+   grant/revoke/ls` (`cmd/dejima/capability.go`), `capability.grant/revoke`
+   ledger entries. No execution yet — a grant is a recorded, ledgered permission.
 2. **Adapter registry + Linux `script` adapter** — fully testable in CI without
    macOS (exec a temp script dir; assert stdin JSON, env, mode gates, timeout).
 3. **`POST /v1/capabilities/execute` + `accessTokenOwn`** in `tokenauth.go`;

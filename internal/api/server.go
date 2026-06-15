@@ -414,6 +414,12 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/islands/{name}/port/scopes", s.handleListPortScopes)
 	mux.HandleFunc("POST /v1/islands/{name}/port/scopes", s.handleGrantPortScope)
 	mux.HandleFunc("DELETE /v1/islands/{name}/port/scopes/{scope}", s.handleRevokePortScope)
+	// Capability broker — grant surface (operator-only; absent from
+	// tokenRouteAccess, so a contained brain can never self-grant). Execution
+	// lands in a later phase. See internal/api/capability.go.
+	mux.HandleFunc("GET /v1/islands/{name}/capability/grants", s.handleListCapabilityGrants)
+	mux.HandleFunc("POST /v1/islands/{name}/capability/grants", s.handleGrantCapability)
+	mux.HandleFunc("DELETE /v1/islands/{name}/capability/grants/{target}", s.handleRevokeCapability)
 	mux.HandleFunc("POST /v1/islands/{name}/port/intake", s.handlePortIntake)
 	mux.HandleFunc("POST /v1/islands/{name}/port/export", s.handlePortExport)
 	mux.HandleFunc("POST /v1/islands/{name}/port/write", s.handlePortWrite)

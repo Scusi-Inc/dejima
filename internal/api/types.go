@@ -349,6 +349,23 @@ type PortScopesResponse struct {
 	Scopes []PortScopeView `json:"scopes"`
 }
 
+// CapabilityGrantRequest is the body of POST /v1/islands/:name/capability/grants
+// — grant the island permission to invoke a named host capability target.
+type CapabilityGrantRequest struct {
+	Target string `json:"target"`
+}
+
+// CapabilityGrantView is one capability grant as returned by the API.
+type CapabilityGrantView struct {
+	Target    string    `json:"target"`
+	GrantedAt time.Time `json:"granted_at"`
+}
+
+// CapabilityGrantsResponse is the body of GET /v1/islands/:name/capability/grants.
+type CapabilityGrantsResponse struct {
+	Grants []CapabilityGrantView `json:"grants"`
+}
+
 // PortIntakeRequest is the body of POST /v1/islands/:name/port/intake — a
 // brokered, read-only copy of a host file (within a granted scope) into the
 // island.

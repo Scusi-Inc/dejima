@@ -99,6 +99,10 @@ type Project struct {
 	// Ports are brokered host-filesystem grants for this island (see ports.go).
 	// Empty means deny-all: the island reaches no host content outside its repo.
 	Ports []PortScope `toml:"ports,omitempty"`
+	// Capabilities are brokered host-action grants for this island (see
+	// capabilities.go and docs/capability-broker-spec.md). Empty means deny-all:
+	// the island may invoke no host capabilities.
+	Capabilities []CapabilityGrant `toml:"capabilities,omitempty"`
 	// Owner is a free-form creator label (e.g. "alice@laptop"), captured at
 	// create time. Purely informational — there is no auth model yet — but it
 	// lets wrapper dashboards attribute islands per person/team. Empty for

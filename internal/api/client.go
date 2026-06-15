@@ -222,6 +222,30 @@ func (c *Client) RevokePortScope(ctx context.Context, name, scope string) error 
 	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/port/scopes/"+url.PathEscape(scope), nil, nil)
 }
 
+// ListCapabilityGrants returns the capability targets an island may invoke.
+func (c *Client) ListCapabilityGrants(ctx context.Context, name string) (*CapabilityGrantsResponse, error) {
+	var out CapabilityGrantsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+name+"/capability/grants", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GrantCapability grants an island permission to invoke a named host capability.
+func (c *Client) GrantCapability(ctx context.Context, name, target string) (*CapabilityGrantView, error) {
+	var out CapabilityGrantView
+	req := CapabilityGrantRequest{Target: target}
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/capability/grants", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RevokeCapability drops a capability grant by target name.
+func (c *Client) RevokeCapability(ctx context.Context, name, target string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/capability/grants/"+url.PathEscape(target), nil, nil)
+}
+
 // PortIntake brokers a host file (within a granted scope) into the island.
 func (c *Client) PortIntake(ctx context.Context, name, scope, srcRel, dest string) (*PortIntakeResponse, error) {
 	var out PortIntakeResponse
