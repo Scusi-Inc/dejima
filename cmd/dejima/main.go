@@ -755,8 +755,17 @@ func client() (*api.Client, error) {
 // DEJIMA_HOST), the TCP client authenticates with it; remote-device (tailnet)
 // access leaves it unset and relies on the tailnet-pinned listener.
 func clientForHost(host string) (*api.Client, error) {
-	if strings.TrimSpace(host) == "" {
+	host = strings.TrimSpace(host)
+	if host == "" {
 		return api.NewUnixClient()
+	}
+	// Guard the choke point: a host carrying a control character (e.g. a stray
+	// NUL that slipped through an input field) would otherwise be spliced into a
+	// request URL and surface far downstream as an opaque
+	// `parse "http://\x00host/...": invalid control character in URL`. Reject it
+	// here with a message that names the real problem.
+	if i := strings.IndexFunc(host, func(r rune) bool { return r < 0x20 || r == 0x7f }); i >= 0 {
+		return nil, fmt.Errorf("invalid host %q: contains a control character at position %d", host, i)
 	}
 	if token := strings.TrimSpace(os.Getenv("DEJIMA_TOKEN")); token != "" {
 		return api.NewTCPClientWithToken(host, token)

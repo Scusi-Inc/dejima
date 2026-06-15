@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -116,13 +117,38 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 		}
 	}
 	cfg.Profiles = kept
+
+	// If we just deleted the profile we're connected through, the live client
+	// still points at the now-gone host — and that host may be exactly why the
+	// user is deleting it (e.g. a corrupt entry that won't dial). Fall back to
+	// the local socket so deleting a broken profile actually recovers the
+	// session instead of leaving it wedged on a dead connection.
+	var cmd tea.Cmd
+	if target.Host == m.activeHost {
+		if cfg.ActiveProfile == target.Name {
+			cfg.ActiveProfile = ""
+		}
+		if c, err := clientForHost(""); err == nil {
+			m.client = c
+			m.activeHost = ""
+			m.activeLabel = "local"
+			m.islands = nil
+			m.detail = nil
+			m.overview = nil
+			m.events_ = nil
+			m.selected = 0
+			m.lastError = ""
+			cmd = tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+		}
+	}
+
 	_ = clientcfg.Save(cfg)
 	// Rebuild the displayed list (keep synthetic local at 0).
 	s.profiles = append([]clientcfg.Profile{{Name: "local", Host: ""}}, kept...)
 	if s.cursor >= len(s.profiles) {
 		s.cursor = len(s.profiles) - 1
 	}
-	return m, nil
+	return m, cmd
 }
 
 func (m tuiModel) switcherAddLabelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -140,9 +166,7 @@ func (m tuiModel) switcherAddLabelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			s.label = s.label[:len(s.label)-1]
 		}
 	default:
-		if len(msg.String()) == 1 {
-			s.label += msg.String()
-		}
+		s.label += printableInput(msg)
 	}
 	return m, nil
 }
@@ -169,11 +193,24 @@ func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			s.host = s.host[:len(s.host)-1]
 		}
 	default:
-		if len(msg.String()) == 1 {
-			s.host += msg.String()
-		}
+		s.host += printableInput(msg)
 	}
 	return m, nil
+}
+
+// printableInput returns the text a key event should contribute to a text field,
+// or "" for anything that isn't a single printable character. Filtering here
+// keeps control characters (NUL, etc.) and multi-rune editing keys out of saved
+// labels and hosts — a stray control byte in a host string later splices into a
+// request URL and fails to parse (see clientForHost).
+func printableInput(msg tea.KeyMsg) string {
+	// Both KeyRunes and KeySpace carry the typed rune in Runes; editing/control
+	// keys (enter, backspace, ctrl+*, arrows) carry none. Keying off Runes — not
+	// Type — accepts space while rejecting control characters and pastes.
+	if len(msg.Runes) != 1 || !unicode.IsPrint(msg.Runes[0]) {
+		return ""
+	}
+	return string(msg.Runes[0])
 }
 
 func (s *switcherModel) view() string {
