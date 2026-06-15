@@ -32,22 +32,38 @@ func newHomeCmd() *cobra.Command {
 
 func newHomeCreateCmd() *cobra.Command {
 	var (
-		repo, name, image, cmdStr string
-		memory, cpus, disk        string
-		localCopy, explainNative  bool
+		repo, name, image, cmdStr, agent string
+		memory, cpus, disk               string
+		localCopy, explainNative         bool
 	)
 	cmd := &cobra.Command{
-		Use:   "create --cmd \"<brain launch>\" --repo <url>",
+		Use:   "create (--agent openclaw | --cmd \"<brain launch>\") --repo <url>",
 		Short: "Create a Home Island running an assistant brain (headless).",
-		Long: "Provisions a persistent, headless island whose command is the assistant brain's " +
-			"launch (e.g. \"openclaw gateway\"). Grant it host files with `dejima port grant`.",
+		Long: "Provisions a persistent, headless island that runs an assistant brain. Pick the " +
+			"brain with --agent (e.g. \"openclaw\", which self-installs and runs its gateway), or " +
+			"give a raw launch with --agent headless --cmd \"…\". Grant it host files with " +
+			"`dejima port grant`.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if explainNative {
 				printNativeGuidance()
 				return nil
 			}
-			if strings.TrimSpace(cmdStr) == "" {
-				return fmt.Errorf(`--cmd is required: the brain's launch command (e.g. "openclaw gateway")`)
+			// Resolve the brain: a named agent (baked launch, e.g. openclaw) or the
+			// reserved headless type with an explicit --cmd. --cmd alone (no --agent)
+			// stays shorthand for "headless with this cmd".
+			agent = strings.TrimSpace(agent)
+			cmdStr = strings.TrimSpace(cmdStr)
+			if agent == "" {
+				if cmdStr == "" {
+					return fmt.Errorf("specify the brain: --agent openclaw, or --agent headless --cmd \"<launch>\"")
+				}
+				agent = api.AgentHeadless
+			}
+			if agent == api.AgentHeadless && cmdStr == "" {
+				return fmt.Errorf("--agent headless needs --cmd (the brain's launch command)")
+			}
+			if agent != api.AgentHeadless && cmdStr != "" {
+				return fmt.Errorf("--cmd can't be combined with --agent %s (it has its own launch); use --agent headless for a raw command", agent)
 			}
 			if repo == "" {
 				return fmt.Errorf("--repo is required (the brain's config/workspace repo); repo-less home islands are a follow-up")
@@ -75,7 +91,7 @@ func newHomeCreateCmd() *cobra.Command {
 				Name:      name,
 				Repo:      res.Repo,
 				SeedPath:  res.SeedPath,
-				Agent:     api.AgentHeadless,
+				Agent:     agent,
 				Image:     image,
 				Cmd:       cmdStr,
 				Role:      project.RoleHome,
@@ -93,7 +109,8 @@ func newHomeCreateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&cmdStr, "cmd", "", `the brain's launch command (e.g. "openclaw gateway") (required)`)
+	cmd.Flags().StringVar(&agent, "agent", "", `the brain to run: a headless agent like "openclaw" (self-installs), or "headless" with --cmd`)
+	cmd.Flags().StringVar(&cmdStr, "cmd", "", `raw launch command for --agent headless (e.g. "openclaw gateway")`)
 	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL or local path for the brain's config/workspace (required)")
 	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk instead of cloning from origin")
 	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")

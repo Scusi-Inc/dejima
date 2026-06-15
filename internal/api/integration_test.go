@@ -711,6 +711,24 @@ func TestHomeIslandRole(t *testing.T) {
 	if f.lastCreate.Env["DEJIMA_HOME"] != "1" {
 		t.Errorf("home island missing DEJIMA_HOME=1 env; got %q", f.lastCreate.Env["DEJIMA_HOME"])
 	}
+
+	// A baked-launch headless agent (openclaw) qualifies as a home brain with no
+	// cmd — it's non-attachable, so the role gate (attachability, not the literal
+	// "headless" type) lets it through. This backs `dejima home create --agent
+	// openclaw`.
+	rr = do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"oc","agent":"openclaw","role":"home"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("home+openclaw: got %d, want 201 (%s)", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Role != "home" {
+		t.Errorf("openclaw home role = %q, want home", info.Role)
+	}
+	if f.lastCreate.Env["DEJIMA_HOME"] != "1" {
+		t.Errorf("openclaw home island missing DEJIMA_HOME=1 env")
+	}
 }
 
 // TestIslandTitle covers the cosmetic display title: it's editable in place,

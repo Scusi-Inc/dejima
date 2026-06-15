@@ -989,9 +989,14 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid role %q (want %q or %q)", req.Role, project.RoleProject, project.RoleHome))
 		return
 	}
-	if req.Role == project.RoleHome && agent != AgentHeadless {
+	// A home island runs an always-on assistant brain, so it must be a headless
+	// (non-attachable) agent — either the reserved "headless" type with a cmd, or
+	// a baked-launch headless handler like "openclaw". Gate on attachability, not
+	// the literal "headless" type, so first-class headless agents qualify; an
+	// interactive agent (claude-code, codex) is rejected.
+	if req.Role == project.RoleHome && handlers.Attachable(agent) {
 		writeError(w, http.StatusBadRequest,
-			fmt.Errorf("a home island runs an assistant brain — it must be headless (agent=%q with a cmd)", AgentHeadless))
+			fmt.Errorf("a home island runs an assistant brain — it must be a headless agent (e.g. %q, or %q with a cmd)", "openclaw", AgentHeadless))
 		return
 	}
 	// A named GitHub identity must already exist on the daemon (an empty value
