@@ -82,6 +82,7 @@ type tuiModel struct {
 	events_  []events.Event
 
 	selected       int
+	grouped        bool // group the island list by repo (toggled with `p`)
 	width          int
 	height         int
 	lastError      string
@@ -602,6 +603,20 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.expanded[isl.Name] = expand
 		}
 		return m, nil
+	case "p":
+		// Toggle grouping the island list by repo (sibling/project view). Reorders
+		// rows, so re-anchor the cursor on the island it was on.
+		anchor := m.selectedName()
+		m.grouped = !m.grouped
+		if anchor != "" {
+			for i, row := range m.visibleRows() {
+				if row.kind == rowIsland && row.island == anchor {
+					m.selected = i
+					break
+				}
+			}
+		}
+		return m, nil
 	case "a":
 		// Explicit "attach in this terminal" — replaces the dashboard. Useful
 		// when the user actually wants the old behavior even though a
@@ -939,7 +954,7 @@ func (m tuiModel) islandExpandedByName(name string) bool {
 // new-island row.
 func (m tuiModel) visibleRows() []treeRow {
 	rows := make([]treeRow, 0, len(m.islands)+1)
-	for _, isl := range m.islands {
+	for _, isl := range m.orderedIslands() {
 		rows = append(rows, treeRow{kind: rowIsland, island: isl.Name})
 		if m.islandExpanded(isl) {
 			for _, a := range isl.Agents {
@@ -958,6 +973,32 @@ func (m tuiModel) visibleRows() []treeRow {
 		rows = append(rows, treeRow{kind: rowNewTerminal})
 	}
 	return rows
+}
+
+// orderedIslands returns the islands in display order: m.islands as-is, or —
+// when grouped — reordered so islands sharing a repo are contiguous (first-seen
+// repo order, original order within each repo). Drives both the row list and the
+// rendered group headers, so navigation indices and headers stay consistent.
+func (m tuiModel) orderedIslands() []api.IslandInfo {
+	if !m.grouped {
+		return m.islands
+	}
+	idx := map[string]int{}
+	var groups [][]api.IslandInfo
+	for _, isl := range m.islands {
+		i, ok := idx[isl.Repo]
+		if !ok {
+			i = len(groups)
+			idx[isl.Repo] = i
+			groups = append(groups, nil)
+		}
+		groups[i] = append(groups[i], isl)
+	}
+	out := make([]api.IslandInfo, 0, len(m.islands))
+	for _, g := range groups {
+		out = append(out, g...)
+	}
+	return out
 }
 
 // terminalByID finds a loaded host terminal by id.
@@ -1337,11 +1378,25 @@ func (m tuiModel) renderList(_ int) string {
 	b.WriteString(styleHeader.Render("Islands"))
 	b.WriteString("\n\n")
 	hostHeaderDone := false
+	lastRepo := "\x00" // sentinel so the first group always prints its header
 	for i, row := range m.visibleRows() {
 		// The Host section gets its own (cautionary) header before its first row.
 		if (row.kind == rowTerminal || row.kind == rowNewTerminal) && !hostHeaderDone {
 			b.WriteString("\n" + styleHeader.Render("Host") + " " + styleMuted.Render("· not contained") + "\n\n")
 			hostHeaderDone = true
+		}
+		// Grouped view: a muted repo header before each repo group's first island.
+		// Injected like the Host header — an extra line that doesn't consume a row
+		// index, so the cursor mapping is unaffected.
+		if m.grouped && row.kind == rowIsland {
+			if isl, ok := byName[row.island]; ok && isl.Repo != lastRepo {
+				label := isl.Repo
+				if label == "" {
+					label = "(no repo)"
+				}
+				b.WriteString(styleMuted.Render("◇ "+shortenRepo(label)) + "\n")
+				lastRepo = isl.Repo
+			}
 		}
 		var line string
 		switch row.kind {
@@ -1754,6 +1809,7 @@ func (m tuiModel) renderHelp() string {
 		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
+		{"p", "group the island list by repo — multi-agent projects read as one"},
 		{"+", "add an agent — Claude Code, Codex, a terminal, or a headless command"},
 		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
