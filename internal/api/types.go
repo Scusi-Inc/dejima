@@ -140,6 +140,30 @@ type AdminUpdateResponse struct {
 	Applying        bool   `json:"applying"`
 }
 
+// AuthorizeSSHKeyRequest authorizes a public key fleet-wide via the operator
+// API, so any operator device can enroll its own key without copying it to the
+// daemon host (and the daemon — which owns the file — performs the write).
+type AuthorizeSSHKeyRequest struct {
+	PublicKey string `json:"public_key"` // an OpenSSH "ssh-… AAAA… [comment]" line
+}
+
+// AuthorizeSSHKeyResponse returns the enrolled key's fingerprint.
+type AuthorizeSSHKeyResponse struct {
+	Fingerprint string `json:"fingerprint"`
+}
+
+// SSHKeyInfo is one authorized key, for listing.
+type SSHKeyInfo struct {
+	Fingerprint string `json:"fingerprint"`
+	Type        string `json:"type"`
+	Comment     string `json:"comment"`
+}
+
+// ListSSHKeysResponse is the set of fleet-wide authorized keys.
+type ListSSHKeysResponse struct {
+	Keys []SSHKeyInfo `json:"keys"`
+}
+
 // CreateIslandRequest is the body of POST /v1/islands.
 type CreateIslandRequest struct {
 	Name      string    `json:"name,omitempty"`  // optional; derived from repo if empty

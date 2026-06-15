@@ -33,8 +33,94 @@ func newSSHCmd() *cobra.Command {
 			"                           dejima ssh config <island> --install\n" +
 			"then in VS Code / Cursor:  Remote-SSH: Connect to Host… → dejima-<island>",
 	}
-	cmd.AddCommand(newSSHAuthorizeCmd(), newSSHListCmd(), newSSHRevokeCmd(), newSSHInfoCmd(), newSSHConfigCmd())
+	cmd.AddCommand(newSSHEnrollCmd(), newSSHAuthorizeCmd(), newSSHListCmd(), newSSHRevokeCmd(), newSSHInfoCmd(), newSSHConfigCmd())
 	return cmd
+}
+
+// newSSHEnrollCmd is the dead-simple, no-copy-paste path: register THIS device's
+// key with the daemon over the API (works local or remote — the daemon performs
+// the write, so there's no copying keys to the daemon host and no user-vs-root
+// file-ownership snag), then write the local ~/.ssh/config for every island.
+func newSSHEnrollCmd() *cobra.Command {
+	var keyFile string
+	cmd := &cobra.Command{
+		Use:   "enroll",
+		Short: "Authorize THIS device with the daemon and set up your editor (no copy-paste)",
+		Long: "Registers this machine's SSH public key with the daemon via the API — from any\n" +
+			"operator device, local or remote, without copying keys to the daemon host — then writes\n" +
+			"~/.ssh/config entries for every island. After this: VS Code/Cursor Remote-SSH → dejima-<island>.\n" +
+			"Generates an ed25519 key if this machine has none.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pub := keyFile
+			if pub == "" {
+				p, err := ensureLocalKey()
+				if err != nil {
+					return err
+				}
+				pub = p
+			}
+			line, err := os.ReadFile(pub)
+			if err != nil {
+				return err
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			fp, err := c.AuthorizeAccountKey(cmd.Context(), strings.TrimSpace(string(line)))
+			if err != nil {
+				return fmt.Errorf("enroll key with daemon: %w", err)
+			}
+			fmt.Printf("enrolled this device (%s) — authorized for every island\n", fp)
+
+			// Write local ssh config for all islands so the editor list is ready.
+			host, port, enabled, rerr := resolveSSHEndpoint(cmd.Context())
+			if rerr != nil || !enabled {
+				fmt.Println("key authorized; SSH façade not enabled on the daemon yet (dejimad --ssh <addr>) — config skipped")
+				return nil
+			}
+			islands, lerr := c.ListIslands(cmd.Context())
+			if lerr != nil {
+				return lerr
+			}
+			for _, isl := range islands {
+				if err := installSSHConfig(isl.Name, sshConfigBlock(isl.Name, host, port)); err != nil {
+					return err
+				}
+			}
+			if len(islands) == 0 {
+				fmt.Println("(no islands yet — create one, then `dejima ssh config <name> --install`)")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&keyFile, "key", "", "enroll this public-key file instead of the default ~/.ssh/id_ed25519.pub")
+	return cmd
+}
+
+// ensureLocalKey returns this machine's default SSH public key path, generating
+// an ed25519 keypair if none exists.
+func ensureLocalKey() (string, error) {
+	if p, err := defaultPublicKey(); err == nil {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	priv := filepath.Join(dir, "id_ed25519")
+	fmt.Println("no SSH key on this machine — generating an ed25519 keypair…")
+	gen := exec.Command("ssh-keygen", "-t", "ed25519", "-f", priv, "-N", "", "-q")
+	gen.Stdout, gen.Stderr = os.Stdout, os.Stderr
+	if err := gen.Run(); err != nil {
+		return "", fmt.Errorf("ssh-keygen: %w", err)
+	}
+	return priv + ".pub", nil
 }
 
 func newSSHAuthorizeCmd() *cobra.Command {

@@ -134,6 +134,12 @@ func TestAuthorizeTokenMatrix(t *testing.T) {
 		{"daemon update denied", "proj", "POST /v1/admin/update", "/v1/admin/update", true},
 		{"daemon update denied (home)", "home", "POST /v1/admin/update", "/v1/admin/update", true},
 
+		// SSH key enrollment is operator-only — a contained agent must never be
+		// able to authorize an SSH key into the fleet (would grant itself or an
+		// attacker shell access to islands).
+		{"ssh key add denied", "proj", "POST /v1/ssh/account-keys", "/v1/ssh/account-keys", true},
+		{"ssh key list denied", "proj", "GET /v1/ssh/account-keys", "/v1/ssh/account-keys", true},
+
 		// Unmatched pattern (non-canonical path / unknown route) → denied.
 		{"empty pattern denied", "proj", "", "/v1/islands/proj/../home/exec", true},
 	}

@@ -18,7 +18,6 @@ import (
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/selfupdate"
-	"github.com/aoos/dejima/internal/sshfacade"
 	"github.com/aoos/dejima/internal/version"
 )
 
@@ -764,8 +763,13 @@ func (m tuiModel) setupAccountSSH() (tea.Model, tea.Cmd) {
 		m.lastError = "read " + pub + ": " + err.Error()
 		return m, nil
 	}
-	if _, err := sshfacade.AddAccountKey(strings.TrimSpace(string(line))); err != nil {
-		m.lastError = "authorize account key: " + err.Error()
+	// Enroll via the daemon API (not a local file write): the daemon owns the
+	// authorized_keys file, so this works whether the daemon is local or remote
+	// and avoids the user-vs-root ~/.dejima ownership snag on a system service.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err := m.client.AuthorizeAccountKey(ctx, strings.TrimSpace(string(line))); err != nil {
+		m.lastError = "enroll device key: " + err.Error()
 		return m, nil
 	}
 	host, port, err := endpointFromAddr(m.overview.SSHAddr, m.client.DaemonHost())

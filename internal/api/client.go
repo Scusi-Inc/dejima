@@ -521,6 +521,26 @@ func (c *Client) Overview(ctx context.Context) (*OverviewResponse, error) {
 	return &out, nil
 }
 
+// AuthorizeAccountKey enrolls a public key fleet-wide via the daemon (which
+// performs the write). Lets any operator device self-enroll without copying its
+// key to the daemon host. Returns the key's fingerprint.
+func (c *Client) AuthorizeAccountKey(ctx context.Context, publicKey string) (string, error) {
+	var out AuthorizeSSHKeyResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/ssh/account-keys", AuthorizeSSHKeyRequest{PublicKey: publicKey}, &out); err != nil {
+		return "", err
+	}
+	return out.Fingerprint, nil
+}
+
+// ListAccountKeys returns the fleet-wide authorized SSH keys.
+func (c *Client) ListAccountKeys(ctx context.Context) ([]SSHKeyInfo, error) {
+	var out ListSSHKeysResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/ssh/account-keys", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Keys, nil
+}
+
 // DaemonUpdate asks the daemon to update itself. execute=false reports the plan;
 // execute=true applies it (the daemon then restarts, so the connection may drop
 // right after this returns — the Applying flag is the confirmation it began).
