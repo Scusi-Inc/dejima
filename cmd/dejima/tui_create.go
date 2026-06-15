@@ -125,7 +125,7 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 	cfg, _ := clientcfg.Load()
 	c := &creatorModel{
 		client:      m.client,
-		daemonLocal: os.Getenv("DEJIMA_HOST") == "",
+		daemonLocal: resolveHost() == "",
 		existing:    m.islands,
 		statusCache: map[string]reposrc.Status{},
 	}

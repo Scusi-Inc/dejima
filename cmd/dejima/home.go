@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -53,7 +52,7 @@ func newHomeCreateCmd() *cobra.Command {
 			if repo == "" {
 				return fmt.Errorf("--repo is required (the brain's config/workspace repo); repo-less home islands are a follow-up")
 			}
-			res, err := reposrc.Resolve(repo, os.Getenv("DEJIMA_HOST") == "", localCopy)
+			res, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
 			if err != nil {
 				return err
 			}

@@ -123,11 +123,13 @@ type confirmPrompt struct {
 }
 
 func initialTUIModel(c *api.Client) tuiModel {
+	host, label := resolveTarget()
 	return tuiModel{
-		client:     c,
-		dirtyOps:   map[string]string{},
-		expanded:   map[string]bool{},
-		activeHost: os.Getenv("DEJIMA_HOST"),
+		client:      c,
+		dirtyOps:    map[string]string{},
+		expanded:    map[string]bool{},
+		activeHost:  host,
+		activeLabel: label,
 	}
 }
 

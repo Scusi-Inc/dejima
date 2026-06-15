@@ -5,7 +5,37 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/aoos/dejima/internal/clientcfg"
 )
+
+// resolveTarget is the single source of truth for the connection target. It must
+// honor DEJIMA_HOST first (override + in-island path), then the saved active
+// profile (so a remote target survives restarts), then the local socket.
+func TestResolveTargetPrecedence(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // redirect ~/.dejima for clientcfg
+	if err := clientcfg.Save(clientcfg.Config{
+		Profiles:      []clientcfg.Profile{{Name: "minion", Host: "100.77.85.107:7273"}},
+		ActiveProfile: "minion",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("env wins over saved profile", func(t *testing.T) {
+		t.Setenv("DEJIMA_HOST", "host.docker.internal:7274")
+		if host, _ := resolveTarget(); host != "host.docker.internal:7274" {
+			t.Fatalf("env should win, got %q", host)
+		}
+	})
+
+	t.Run("saved active profile when env unset", func(t *testing.T) {
+		t.Setenv("DEJIMA_HOST", "")
+		host, label := resolveTarget()
+		if host != "100.77.85.107:7273" || label != "minion" {
+			t.Fatalf("want (100.77.85.107:7273, minion), got (%q, %q)", host, label)
+		}
+	})
+}
 
 // A NUL delivered as a single rune is exactly what wedged a saved host into
 // `http://\x00minion/...`; printableInput must drop it while keeping ordinary

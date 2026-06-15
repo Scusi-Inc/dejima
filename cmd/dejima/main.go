@@ -22,6 +22,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/project"
@@ -745,7 +746,36 @@ func newCloneCmd() *cobra.Command {
 }
 
 func client() (*api.Client, error) {
-	return clientForHost(os.Getenv("DEJIMA_HOST"))
+	return clientForHost(resolveHost())
+}
+
+// resolveTarget picks the daemon connection target and a human label for it.
+// Precedence:
+//  1. DEJIMA_HOST env — an explicit override, and the in-island autonomy path
+//     (the daemon injects it per-container), so it must win.
+//  2. the saved active profile — what the TUI connection switcher persists, so a
+//     remote target survives restarts without re-exporting an env var.
+//  3. the local Unix socket ("").
+//
+// This is the single source of truth for "where do we connect": before, every
+// call site read DEJIMA_HOST directly, so a saved profile never became the
+// persistent default and a dangling active_profile silently broke the client.
+func resolveTarget() (host, label string) {
+	if h := strings.TrimSpace(os.Getenv("DEJIMA_HOST")); h != "" {
+		return h, h
+	}
+	cfg, _ := clientcfg.Load()
+	if h, ok := cfg.ActiveHost(); ok {
+		return h, cfg.ActiveProfile
+	}
+	return "", "local"
+}
+
+// resolveHost is resolveTarget without the label, for call sites that only need
+// the connection string (the CLI client and the local-vs-remote decision).
+func resolveHost() string {
+	h, _ := resolveTarget()
+	return h
 }
 
 // clientForHost builds an API client for a connection target: the local Unix
@@ -920,7 +950,7 @@ func newInitCmd() *cobra.Command {
 			// Resolve the repo client-side: a URL clones directly; a local path
 			// clones from its origin by default, or seeds a read-only local copy
 			// (--local-copy, or when there's no remote) against a local daemon.
-			res, err := reposrc.Resolve(repo, os.Getenv("DEJIMA_HOST") == "", localCopy)
+			res, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
 			if err != nil {
 				return err
 			}

@@ -30,6 +30,23 @@ type Config struct {
 	ActiveProfile string    `json:"active_profile,omitempty"`
 }
 
+// ActiveHost resolves the currently-active profile to its daemon host. ok is
+// false when the active profile is the local socket, unset, or *dangling* — i.e.
+// ActiveProfile names a profile that no longer exists (e.g. it was deleted while
+// still selected). A dangling reference resolves to local rather than wedging
+// the client on a target it can't look up.
+func (c Config) ActiveHost() (host string, ok bool) {
+	if c.ActiveProfile == "" || c.ActiveProfile == "local" {
+		return "", false
+	}
+	for _, p := range c.Profiles {
+		if p.Name == c.ActiveProfile {
+			return p.Host, true
+		}
+	}
+	return "", false
+}
+
 func configPath() (string, error) {
 	root, err := paths.Root()
 	if err != nil {
