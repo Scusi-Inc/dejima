@@ -4,12 +4,13 @@ package paths
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 )
 
 // Root returns ~/.dejima, creating it if necessary.
 func Root() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := userHome()
 	if err != nil {
 		return "", fmt.Errorf("locate home dir: %w", err)
 	}
@@ -18,6 +19,24 @@ func Root() (string, error) {
 		return "", fmt.Errorf("create %s: %w", root, err)
 	}
 	return root, nil
+}
+
+// userHome resolves the invoking user's home directory. Under sudo (running as
+// root with SUDO_USER set) it returns the *real* user's home, not /var/root:
+// Dejima's per-user state (config, ledger, tokens, the daemon install-meta)
+// belongs to the human who ran the command, and a privileged subcommand like
+// `dejima service install --system` must not strand that state in root's home
+// where the daemon — which runs as the user — can never read it. Off Unix and
+// for a genuine root login (no SUDO_USER) it falls back to os.UserHomeDir.
+func userHome() (string, error) {
+	if os.Geteuid() == 0 {
+		if su := os.Getenv("SUDO_USER"); su != "" && su != "root" {
+			if u, err := user.Lookup(su); err == nil && u.HomeDir != "" {
+				return u.HomeDir, nil
+			}
+		}
+	}
+	return os.UserHomeDir()
 }
 
 // CapabilitiesDir returns ~/.dejima/capabilities, creating it (0700). It holds
