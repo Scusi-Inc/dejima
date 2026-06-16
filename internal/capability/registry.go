@@ -1,7 +1,6 @@
 package capability
 
 import (
-	"fmt"
 	"runtime"
 
 	"github.com/aoos/dejima/internal/paths"
@@ -16,7 +15,7 @@ import (
 func DefaultAdapter() (Adapter, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		return nil, fmt.Errorf("capability execution on macOS uses Apple Shortcuts, not yet implemented (capability-broker-spec.md phase 4)")
+		return &ShortcutsAdapter{}, nil
 	default:
 		dir, err := paths.CapabilitiesDir()
 		if err != nil {

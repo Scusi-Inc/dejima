@@ -47,12 +47,21 @@ out-of-band (see §5).
 
 ### 2.1 macOS — Apple Shortcuts (`adapter=shortcuts`)
 - **Target** = a Shortcut name. The user's Shortcuts library *is* the allowlist.
-- **Invocation:** `exec("/usr/bin/shortcuts", "run", <target>, "--input-path", "-")`
-  with the JSON-encoded args map on **stdin** (Shortcuts receives it as the
-  shortcut input; the shortcut author parses it). Output is the shortcut's result
-  on stdout, captured and returned.
-- **Existence check:** target must appear in `shortcuts list` (cached, refreshed
-  on miss) — an ungranted *or* nonexistent target fails closed.
+- **Invocation:** `exec("/usr/bin/shortcuts", "run", <target>, "--input-path",
+  <tmpfile>)` with the JSON-encoded args written to a temp file (the CLI's
+  `--input-path` takes a path, not stdin); the shortcut's result is captured from
+  stdout.
+- **Existence:** a missing target makes `shortcuts run` exit non-zero with
+  "Couldn't find shortcut" → mapped to `ErrTargetNotFound` (fail closed). We do
+  **not** pre-check with `shortcuts list`: that subcommand can't reach the helper
+  from a non-GUI (background/daemon) session, whereas `run`'s lookup can.
+- **⚠ Unverified — GUI-session execution.** The `shortcuts` CLI talks to a
+  GUI-session helper. Confirmed on Minion: from a background context a *missing*
+  shortcut looks up fine (so the adapter + error classification work), but whether
+  a **system LaunchDaemon** can actually **execute** a real shortcut — vs. needing
+  the user's logged-in aqua session, possibly via `launchctl asuser <uid>` and a
+  TCC grant — is an open operator-verification item. If execution from the daemon
+  context fails, the fix is a session bridge or a per-user companion, decided then.
 
 ### 2.2 Linux — capability scripts (`adapter=script`)
 - **Target** = a basename in `~/.dejima/capabilities/` (no path separators).
@@ -240,8 +249,11 @@ is the named target's published behavior — tractable and complete.
    until the Shortcuts adapter (phase 4). Tested end-to-end via the script
    adapter (grant→execute→ledger, deny-all, not-found fail-closed, token-path
    authz). Also fixed ledger test isolation (`ledger.ResetDefault`).
-4. **macOS `shortcuts` adapter** — behind host-OS selection; live-verified on
-   Minion (mirrors how #8/OpenClaw were validated).
+4. **macOS `shortcuts` adapter** — ✅ built (`internal/capability/shortcuts.go`),
+   wired as `DefaultAdapter` on darwin. `shortcuts run <name> --input-path <args>`,
+   not-found classified to `ErrTargetNotFound` (live-tested on Minion). ⚠ The
+   happy path — a daemon actually executing a real Shortcut — is an open
+   operator-verification item (GUI-session helper; see §2.1).
 5. **Docs** — fold the resolved decision into `port-island-spec.md §3.4/§10.4`;
    add a brain-facing "calling a capability" note to the runbook.
 
