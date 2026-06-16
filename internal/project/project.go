@@ -325,6 +325,13 @@ func (p *Project) Save() error {
 
 // Load reads an existing project by name.
 func Load(name string) (*Project, error) {
+	// Defense in depth: never resolve a name with a separator or traversal into a
+	// config path (filepath.Join/Clean would silently retarget another island).
+	// All real island names pass ValidateName at creation, so this only rejects
+	// malformed input — e.g. an encoded-slash bypass attempt. See tokenauth.go.
+	if err := ValidateName(name); err != nil {
+		return nil, fmt.Errorf("invalid island name %q: %w", name, err)
+	}
 	path, err := paths.ProjectConfigPath(name)
 	if err != nil {
 		return nil, err

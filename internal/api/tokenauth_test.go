@@ -53,18 +53,40 @@ func TestBearerToken(t *testing.T) {
 }
 
 func TestIslandFromPath(t *testing.T) {
-	cases := map[string]string{
-		"/v1/islands/foo":              "foo",
-		"/v1/islands/foo/port/intake":  "foo",
-		"/v1/islands/foo/files/a/b.md": "foo",
-		"/v1/healthz":                  "",
-		"/v1/islands":                  "",
-		"/":                            "",
+	cases := map[string]struct {
+		name string
+		ok   bool
+	}{
+		"/v1/islands/foo":              {"foo", true},
+		"/v1/islands/foo/port/intake":  {"foo", true},
+		"/v1/islands/foo/files/a/b.md": {"foo", true},
+		"/v1/healthz":                  {"", false},
+		"/v1/islands":                  {"", false},
+		"/":                            {"", false},
+		// Encoded-slash bypass: ServeMux binds {name}="a/../b" (→ island "b" in the
+		// handler), but a decoded-path split would see "a". Parsing the escaped
+		// segment + ValidateName rejects it outright. (Security regression guard.)
+		"/v1/islands/a%2F..%2Fb/port/intake": {"", false},
+		"/v1/islands/..%2Fother":             {"", false},
 	}
 	for path, want := range cases {
-		if got := islandFromPath(path); got != want {
-			t.Errorf("islandFromPath(%q) = %q, want %q", path, got, want)
+		got, ok := islandFromPath(path)
+		if got != want.name || ok != want.ok {
+			t.Errorf("islandFromPath(%q) = (%q, %v), want (%q, %v)", path, got, ok, want.name, want.ok)
 		}
+	}
+}
+
+// TestTokenCrossIslandBypass is the end-to-end guard: a token for island A must
+// not reach island B via an encoded-slash {name}, at the authorize layer.
+func TestTokenCrossIslandBypass(t *testing.T) {
+	// token island "a"; request escaped path targets "a/../b" → must be denied.
+	if err := authorizeToken("a", "POST /v1/islands/{name}/port/intake", "/v1/islands/a%2F..%2Fb/port/intake"); err == nil {
+		t.Fatal("encoded-slash cross-island request must be denied")
+	}
+	// the honest same-island request still passes
+	if err := authorizeToken("a", "POST /v1/islands/{name}/port/intake", "/v1/islands/a/port/intake"); err != nil {
+		t.Fatalf("same-island request should pass: %v", err)
 	}
 }
 
