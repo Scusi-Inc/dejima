@@ -89,7 +89,7 @@ func ApplySource(ctx context.Context, dir string, execute bool, out io.Writer, r
 		}
 	}
 	if !execute {
-		fmt.Fprintln(out, "\n(dry run — re-run with --apply --yes to execute)")
+		fmt.Fprintln(out, "\n(dry run — run `dejima update` to apply)")
 	}
 	return nil
 }

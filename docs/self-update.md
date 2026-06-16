@@ -1,53 +1,56 @@
-# `dejima update` — dual-mode self-update (design)
+# `dejima update` — dual-mode self-update
 
 Dejima installs two ways, so it updates two ways:
 
 - **source mode** — a dev box or a self-hosted server with the repo checked out,
   installed via `make install`. Build version is `dev` or a git-describe string
-  (`v0.1.9-6-gHASH`, `…-dirty`).
+  (`v0.1.13-6-gHASH`, `…-dirty`).
 - **release mode** — a client that installed a tagged binary (install.sh / a
-  release asset). Build version is a clean semver tag (`v0.1.9`).
+  release asset). Build version is a clean semver tag (`v0.1.13`).
 
 The mode is inferred from the build version (`selfupdate.DetectMode`): a clean
 `vX.Y.Z` with no suffix ⇒ release; anything else ⇒ source. (`version.IsRelease`
 alone isn't enough — it ignores the `-N-gHASH`/`-dirty` suffix a checkout build
 carries, so `DetectMode` also rejects any suffix.)
 
-## Shipped (read-only foundation)
+## `dejima update` applies by default
 
-`internal/selfupdate` + `dejima update`:
+**`dejima update` updates in place.** "Update means update" — the bare command
+upgrades; `--check` is the look-don't-touch escape hatch. (There is no
+`--apply`/`--yes`; those were removed.)
 
-- `DetectMode()` — source vs release.
-- `LatestRelease(ctx)` — newest tag from the GitHub releases API.
-- `Check(ctx)` / `Evaluate()` — compare current vs latest (via `version.Compare`).
-- `dejima update [--check]` — reports `current` / `latest` / `mode` / whether an
-  update is available, and (without `--check`) prints the manual steps for the
-  detected mode. **No mutation.** This is the honest, safe surface today.
+- **`dejima update`** — checks for a newer release and, if one exists, applies it.
+- **`dejima update --check`** — reports `current` / `latest` / `mode` / whether an
+  update is available, and does nothing else.
 
-## Shipped (source-mode apply)
+### Release-mode apply (`selfupdate.ApplyReleaseSelf`)
+Resolves the asset for this `GOOS/GOARCH` from the latest release, downloads it,
+**verifies it against the release `SHA256SUMS`** (a self-replacing binary must
+verify provenance — an unverified fetch would be RCE by design), and atomically
+replaces the on-disk binary (`ReplaceExecutable`: stage a temp file, rename the
+running binary aside, rename the new one into place, roll back on failure — this
+also handles Windows, where a running `.exe` can be renamed but not overwritten).
+`client.json` and all other config are never touched.
 
-`dejima update --apply` on a **source** install (dry run unless `--yes`):
-`git pull --ff-only` in the checkout → `make install` → `dejima service restart`
-(`internal/selfupdate.ApplySource`). The checkout is found from the cwd (walk up
-for the dejima `go.mod`) or `--source <dir>`. Safety: a dirty tree is refused
-(no clobbering local work) and `--ff-only` refuses a diverged history (no
-auto-merge). Tested with real temp git repos + a fake runner.
+### Source-mode apply (`selfupdate.ApplySource`)
+`git pull --ff-only` in the checkout → `make install` → `dejima service restart`.
+The checkout is found from the cwd (walk up for the dejima `go.mod`) or
+`--source <dir>`. Safety: a dirty tree is refused (no clobbering local work) and
+`--ff-only` refuses a diverged history (no auto-merge).
 
-## Deferred (still to build — review-gated)
+### Daemon self-update (`POST /v1/admin/update`, `internal/api/admin_update.go`)
+`dejima` and `dejimad` are two binaries that must move together. The daemon
+updates *itself* on request (operator-only; reachable from the TUI's `U` key,
+including against a remote daemon): it runs the same source/release apply, then
+restarts in the right launchd/systemd domain so `api_version`
+(`version.APIVersion`) skew can't strand a new client against an old daemon. On a
+headless macOS **system** install the privileged steps go through a scoped
+`/etc/sudoers.d/dejima` drop-in installed by `dejima service install --system`,
+so the restart needs no TTY.
 
-These replace running software, so they ship behind explicit review:
-2. **Release-mode apply.** Resolve the right asset for `GOOS/GOARCH` from the
-   latest release, download, **verify** (checksum/signature — a self-replacing
-   binary MUST verify provenance), atomically replace the on-disk binary
-   (write-tmp + rename, handle the running-binary-busy case), then
-   `dejima service restart`. Decisions: checksum vs signature; where `dejimad`'s
-   binary lives vs `dejima`'s; privilege (a `--system` install may need sudo).
-3. **Daemon coordination.** `dejima` and `dejimad` are two binaries; an update
-   must move them together and restart the service so `api_version` skew
-   (`version.APIVersion`) doesn't strand a new client against an old daemon.
-4. **`--apply` / `--yes` flags** on `dejima update` to opt into the above once
-   built, with a dry-run default.
+## Bootstrapping note
 
-Security note: slice 2's download-and-replace is the highest-risk surface in the
-product — an unverified fetch is remote code execution by design. It must not
-ship without provenance verification and should go through `/security-review`.
+The apply-by-default behavior shipped in **v0.1.13**. Updating *from* an earlier
+release (≤ v0.1.12), whose `dejima update` was check-only, uses that older
+binary's syntax for the one-time hop — after which plain `dejima update` is the
+only command you need.
