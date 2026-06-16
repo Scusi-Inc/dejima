@@ -23,20 +23,26 @@ import (
 // Each check returns (passed, message). The command exits non-zero if any
 // FAIL row is present so it composes with CI / status scripts.
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fix bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Diagnose the host: daemon, Docker, image, projects, networks, webhooks.",
+		Short: "Diagnose the host: daemon, Docker, image, connection, projects. `--fix` repairs what it safely can.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 			report := runDoctor(ctx)
 			report.write(cmd.OutOrStdout())
+			if fix {
+				report.applyFixes(cmd.OutOrStdout())
+			}
 			if report.hasFailures() {
 				return fmt.Errorf("dejima doctor: %d check(s) failed", report.failures())
 			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "apply the safe, local repairs doctor knows how to make")
+	return cmd
 }
 
 type doctorRow struct {
@@ -45,6 +51,11 @@ type doctorRow struct {
 	status  string // OK | WARN | FAIL | INFO
 	detail  string
 	fix     string
+	// repair, when non-nil, is a safe self-heal `--fix` runs for this row. It
+	// returns a one-line outcome. Only attached to rows whose fix is local and
+	// low-risk (rewrite our own state, normalize a saved profile) — never
+	// anything that edits the user's shell or needs a judgment call.
+	repair func() (string, error)
 }
 
 type doctorReport struct {
@@ -52,7 +63,34 @@ type doctorReport struct {
 }
 
 func (r *doctorReport) add(section, check, status, detail, fix string) {
-	r.rows = append(r.rows, doctorRow{section, check, status, detail, fix})
+	r.rows = append(r.rows, doctorRow{section: section, check: check, status: status, detail: detail, fix: fix})
+}
+
+// addRepair adds a row carrying a self-heal `--fix` can run.
+func (r *doctorReport) addRepair(section, check, status, detail, fix string, repair func() (string, error)) {
+	r.rows = append(r.rows, doctorRow{section: section, check: check, status: status, detail: detail, fix: fix, repair: repair})
+}
+
+// applyFixes runs every row's repair (for `--fix`), reporting each outcome.
+func (r *doctorReport) applyFixes(w io.Writer) {
+	any := false
+	for _, row := range r.rows {
+		if row.repair == nil {
+			continue
+		}
+		if !any {
+			fmt.Fprintln(w, "\nApplying fixes:")
+			any = true
+		}
+		if msg, err := row.repair(); err != nil {
+			fmt.Fprintf(w, "  ✗ %s — %v\n", row.check, err)
+		} else {
+			fmt.Fprintf(w, "  ✓ %s — %s\n", row.check, msg)
+		}
+	}
+	if !any {
+		fmt.Fprintln(w, "\nNothing to auto-fix.")
+	}
 }
 
 func (r *doctorReport) hasFailures() bool {
@@ -128,6 +166,12 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkTailscale(ctx, r)
 	checkClaudeCreds(ctx, r)
 	checkSSHFacade(r)
+
+	// --- Connection & self-heal -----------------------------------------
+	checkConnection(r)
+	checkInstallMeta(r)
+	checkStateOwnership(r)
+	checkListenerExposure(r)
 
 	// --- Projects -------------------------------------------------------
 	c, err := client()
