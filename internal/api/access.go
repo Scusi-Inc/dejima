@@ -201,6 +201,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		DaemonVersion:        version.Version,
 		APIVersion:           version.APIVersion,
 		Panicked:             panicEngaged(),
+		AutonomyEnabled:      s.autonomyDial != "",
+		AutonomyDial:         s.autonomyDial,
 	}
 	if s.events != nil {
 		out.WebhookCount = len(s.events.List())

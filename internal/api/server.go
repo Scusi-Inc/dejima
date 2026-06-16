@@ -126,6 +126,11 @@ func (s *Server) HostTerminalsEnabled() bool { return s.hostTerminals }
 // empty dial is a no-op.
 func (s *Server) EnableAutonomy(dial string) { s.autonomyDial = dial }
 
+// AutonomyDial returns the in-island dial address when the autonomy path is
+// live, or "" when it's off. /v1/overview reports it so clients (and
+// `dejima home doctor`) can confirm a brain can actually drive the Port/spawn.
+func (s *Server) AutonomyDial() string { return s.autonomyDial }
+
 // EnableSSH records the SSH-façade listen addr so clients (the TUI,
 // `dejima ssh config/info`) can surface the connection target. Reporting only —
 // the listener itself is owned by dejimad/main; this never opens a port.

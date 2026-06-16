@@ -129,6 +129,16 @@ type OverviewResponse struct {
 	// Panicked is true while the ~/.dejima/PANIC flag is set: every island is
 	// stopped and the daemon won't auto-start them until panic is cleared.
 	Panicked bool `json:"panicked,omitempty"`
+	// AutonomyEnabled reports whether the daemon's token-authenticated in-island
+	// path is live (the listener bound and EnableAutonomy was called). When true,
+	// every container is provisioned with DEJIMA_HOST + its own DEJIMA_TOKEN so a
+	// brain inside the island can drive the Port and spawn islands. False means
+	// brain-driven autonomy is unavailable on this host (start dejimad with
+	// --token-tcp on a macOS host; the unix-socket path covers Linux).
+	AutonomyEnabled bool `json:"autonomy_enabled,omitempty"`
+	// AutonomyDial is the host:port the in-island CLI dials when autonomy is on
+	// (e.g. "host.docker.internal:7274"). Empty when autonomy is off.
+	AutonomyDial string `json:"autonomy_dial,omitempty"`
 }
 
 // AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the

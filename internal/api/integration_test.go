@@ -801,4 +801,36 @@ func TestAutonomyEnvAndExtraHosts(t *testing.T) {
 	if !found {
 		t.Errorf("expected host.docker.internal:host-gateway in ExtraHosts; got %v", cr.ExtraHosts)
 	}
+
+	// /v1/overview must surface that autonomy is live so clients and
+	// `dejima home doctor` can confirm a brain can drive the Port/spawn.
+	rr := do(t, h, http.MethodGet, "/v1/overview", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("overview: %d %s", rr.Code, rr.Body.String())
+	}
+	var ov OverviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &ov); err != nil {
+		t.Fatal(err)
+	}
+	if !ov.AutonomyEnabled || ov.AutonomyDial != "host.docker.internal:7274" {
+		t.Errorf("overview autonomy = (%v, %q), want (true, host.docker.internal:7274)", ov.AutonomyEnabled, ov.AutonomyDial)
+	}
+}
+
+// TestAutonomyDisabledOverview confirms a daemon without the token listener
+// reports autonomy off — the signal `dejima home doctor` uses to tell the
+// operator brain-driven Port/spawn won't work yet.
+func TestAutonomyDisabledOverview(t *testing.T) {
+	h, _ := newTestServer(t)
+	rr := do(t, h, http.MethodGet, "/v1/overview", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("overview: %d %s", rr.Code, rr.Body.String())
+	}
+	var ov OverviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &ov); err != nil {
+		t.Fatal(err)
+	}
+	if ov.AutonomyEnabled || ov.AutonomyDial != "" {
+		t.Errorf("overview autonomy = (%v, %q), want (false, \"\")", ov.AutonomyEnabled, ov.AutonomyDial)
+	}
 }
