@@ -113,6 +113,7 @@ type tuiModel struct {
 	activeHost   string // current target: "" = local socket, else host:port
 	activeLabel  string // profile name for the active target, if known
 	activeSource string // where the target came from: "env" | "profile" | "local"
+	detailScroll int    // scroll offset (lines) for the detail panel; reset on selection change
 	skew         string // client/daemon version-skew warning, or ""
 }
 
@@ -588,19 +589,27 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "j", "down":
 		if m.selected < m.rowCount()-1 {
 			m.selected++
+			m.detailScroll = 0
 			return m, m.fetchDetailCmd(m.selectedName())
 		}
 	case "k", "up":
 		if m.selected > 0 {
 			m.selected--
+			m.detailScroll = 0
 			return m, m.fetchDetailCmd(m.selectedName())
 		}
 	case "g", "home":
 		m.selected = 0
+		m.detailScroll = 0
 		return m, m.fetchDetailCmd(m.selectedName())
 	case "G", "end":
 		m.selected = m.rowCount() - 1
+		m.detailScroll = 0
 		return m, m.fetchDetailCmd(m.selectedName())
+	case "pgdown", "ctrl+d":
+		return m.scrollDetail(1), nil
+	case "pgup", "ctrl+u":
+		return m.scrollDetail(-1), nil
 	case "enter", "o":
 		// Dispatch on the row kind: the affordance rows open the creator /
 		// add-agent flow; island and agent rows open a workspace (or, for a
@@ -1406,9 +1415,18 @@ func (m tuiModel) renderBody(headerHeight int) string {
 	if bodyHeight < 5 {
 		bodyHeight = 5
 	}
+	innerH := bodyHeight - 2 // pane content area, minus the top+bottom border
 
-	left := stylePane.Width(leftW).Height(bodyHeight).Render(m.renderList(leftW - 4))
-	right := stylePane.Width(rightW).Height(bodyHeight).Render(m.renderDetail(rightW - 4))
+	// Both panes are windowed to innerH lines so they can never grow taller than
+	// the screen and push the header above the fold. The list follows the cursor;
+	// the detail panel scrolls with PgUp/PgDn (m.detailScroll). MaxHeight is a
+	// belt-and-suspenders clip in case a content line wraps.
+	listContent, selLine := m.renderList(leftW - 4)
+	listView := followWindow(listContent, innerH, selLine)
+	detailView, _ := scrollWindow(m.renderDetail(rightW-4), innerH, m.detailScroll)
+
+	left := stylePane.Width(leftW).Height(bodyHeight).MaxHeight(bodyHeight).Render(listView)
+	right := stylePane.Width(rightW).Height(bodyHeight).MaxHeight(bodyHeight).Render(detailView)
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
@@ -1418,12 +1436,92 @@ func (m tuiModel) renderBody(headerHeight int) string {
 	return body
 }
 
-func (m tuiModel) renderList(_ int) string {
+// scrollWindow returns the innerH-line slice of content at the given offset,
+// plus the maximum offset. When content fits, it's returned unchanged (maxOff 0).
+// When it doesn't, one line is reserved for a "↕ a–b of n" position hint.
+func scrollWindow(content string, innerH, offset int) (string, int) {
+	if innerH <= 0 {
+		return "", 0
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) <= innerH {
+		return content, 0
+	}
+	visN := innerH - 1 // reserve the last line for the position hint
+	if visN < 1 {
+		visN = 1
+	}
+	maxOff := len(lines) - visN
+	if offset > maxOff {
+		offset = maxOff
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	hint := fmt.Sprintf("  ↕ %d–%d of %d (PgUp/PgDn)", offset+1, offset+visN, len(lines))
+	return strings.Join(lines[offset:offset+visN], "\n") + "\n" + styleMuted.Render(hint), maxOff
+}
+
+// followWindow windows content to innerH lines, scrolled so selLine stays
+// visible — the list viewport that follows the cursor (no scroll keys needed).
+func followWindow(content string, innerH, selLine int) string {
+	if innerH <= 0 {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) <= innerH {
+		return content
+	}
+	visN := innerH - 1
+	if visN < 1 {
+		visN = 1
+	}
+	offset := 0
+	if selLine >= visN { // keep the selection on the last visible row
+		offset = selLine - visN + 1
+	}
+	if maxOff := len(lines) - visN; offset > maxOff {
+		offset = maxOff
+	}
+	hint := fmt.Sprintf("  ↕ %d–%d of %d", offset+1, offset+visN, len(lines))
+	return strings.Join(lines[offset:offset+visN], "\n") + "\n" + styleMuted.Render(hint)
+}
+
+// bodyInnerHeight is the per-pane content height — what scrollWindow/followWindow
+// window to. Mirrors the arithmetic in renderBody so the scroll-key handler can
+// clamp against the same bound the renderer uses.
+func (m tuiModel) bodyInnerHeight() int {
+	bodyHeight := m.height - lipgloss.Height(m.renderHeader()) - 5
+	if bodyHeight < 5 {
+		bodyHeight = 5
+	}
+	return bodyHeight - 2
+}
+
+// scrollDetail moves the detail panel by `pages` (±1), clamped to content.
+func (m tuiModel) scrollDetail(pages int) tuiModel {
+	innerH := m.bodyInnerHeight()
+	_, maxOff := scrollWindow(m.renderDetail(0), innerH, 0)
+	step := innerH - 1
+	if step < 1 {
+		step = 1
+	}
+	m.detailScroll += pages * step
+	if m.detailScroll > maxOff {
+		m.detailScroll = maxOff
+	}
+	if m.detailScroll < 0 {
+		m.detailScroll = 0
+	}
+	return m
+}
+
+func (m tuiModel) renderList(_ int) (string, int) {
 	if len(m.islands) == 0 {
 		if m.lastError != "" {
-			return styleErrored.Render("error: "+m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)")
+			return styleErrored.Render("error: "+m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)"), -1
 		}
-		return styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`")
+		return styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`"), -1
 	}
 
 	byName := make(map[string]api.IslandInfo, len(m.islands))
@@ -1434,6 +1532,7 @@ func (m tuiModel) renderList(_ int) string {
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("Islands"))
 	b.WriteString("\n\n")
+	selLine := -1
 	hostHeaderDone := false
 	lastRepo := "\x00" // sentinel so the first group always prints its header
 	for i, row := range m.visibleRows() {
@@ -1486,6 +1585,7 @@ func (m tuiModel) renderList(_ int) string {
 			line = fmt.Sprintf("%s %s  %-16s  %s", caret, glyphFor(isl), label, shortStatus(isl, m.dirtyOps[isl.Name]))
 		}
 		if i == m.selected {
+			selLine = strings.Count(b.String(), "\n") // line index this row will occupy
 			line = styleSelected.Render("▶ " + line)
 		} else {
 			line = "  " + line
@@ -1493,7 +1593,7 @@ func (m tuiModel) renderList(_ int) string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	return b.String()
+	return b.String(), selLine
 }
 
 // agentByID finds an agent within an island, or returns a zero value.
@@ -1871,6 +1971,7 @@ func (m tuiModel) renderHelp() string {
 		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
+		{"PgUp/PgDn", "scroll the detail panel (events, agents) — Ctrl-u/Ctrl-d also work"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
 		{"q", "quit the dashboard"},
 	}

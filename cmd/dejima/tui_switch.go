@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"unicode"
 
@@ -9,6 +10,20 @@ import (
 
 	"github.com/aoos/dejima/internal/clientcfg"
 )
+
+// normalizeHost trims the entered daemon address and appends the default port
+// (7273) when the operator gave a bare host with no :port — the #1 connection
+// mistake, since a port-less host otherwise dials :80 and is refused.
+func normalizeHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		return net.JoinHostPort(host, "7273")
+	}
+	return host
+}
 
 // switcherModel drives the connection-target overlay: pick a saved profile
 // (local socket or a remote daemon), add one, or delete one. Activating a
@@ -185,9 +200,9 @@ func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		s.step = swAddLabel
 	case "enter":
-		host := strings.TrimSpace(s.host)
+		host := normalizeHost(s.host)
 		if host == "" {
-			s.err = "host is required (e.g. minion.tailnet:7273)"
+			s.err = "host is required (e.g. 100.77.85.107:7273)"
 			return m, nil
 		}
 		cfg, _ := clientcfg.Load()
@@ -232,8 +247,11 @@ func (s *switcherModel) view() string {
 		b.WriteString("\n\nname: " + styleAccent.Render(s.label+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] next   [esc] back"))
 	case swAddHost:
-		b.WriteString(styleMuted.Render("Daemon address, host:port (the DEJIMA_HOST value)."))
+		b.WriteString(styleMuted.Render("Daemon address as ") + styleAccent.Render("host:port") + styleMuted.Render(" — the port is required (default ") + styleAccent.Render("7273") + styleMuted.Render(")."))
+		b.WriteString("\n" + styleMuted.Render("  e.g.  ") + styleAccent.Render("100.77.85.107:7273") + styleMuted.Render("  (a Tailscale IP)    or    ") + styleAccent.Render("minion:7273"))
 		b.WriteString("\n\nhost: " + styleAccent.Render(s.host+"_"))
+		b.WriteString("\n\n" + styleMuted.Render("How to find it: on the machine running dejimad, run ") + styleAccent.Render("tailscale ip") + styleMuted.Render(" → use that address with ") + styleAccent.Render(":7273") + styleMuted.Render("."))
+		b.WriteString("\n" + styleMuted.Render("(a bare host with no :port gets :7273 added automatically.)"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] save   [esc] back"))
 	default:
 		b.WriteString(styleMuted.Render("Pick a target. Switching reconnects in place."))

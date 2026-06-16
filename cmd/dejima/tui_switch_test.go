@@ -9,6 +9,58 @@ import (
 	"github.com/aoos/dejima/internal/clientcfg"
 )
 
+// The pane viewports must never exceed innerH lines — that bound is what keeps
+// the header from being pushed off the top of the screen.
+func TestPaneWindows(t *testing.T) {
+	content := strings.Join([]string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}, "\n") // 10 lines
+
+	// Fits → unchanged, no scroll.
+	if got, max := scrollWindow(content, 20, 0); got != content || max != 0 {
+		t.Errorf("fit: unexpected window/max (%d)", max)
+	}
+
+	// Overflows → exactly innerH lines (visN content + 1 hint), correct maxOff.
+	got, max := scrollWindow(content, 5, 0)
+	if n := strings.Count(got, "\n") + 1; n != 5 {
+		t.Errorf("scrollWindow height = %d, want 5", n)
+	}
+	if max != 6 { // len(10) - visN(4)
+		t.Errorf("maxOff = %d, want 6", max)
+	}
+	// Offset past the end clamps to the last window.
+	if got, _ := scrollWindow(content, 5, 999); !strings.HasPrefix(strings.Split(got, "\n")[0], "6") {
+		t.Errorf("clamped window should start at line 6, got %q", strings.Split(got, "\n")[0])
+	}
+
+	// followWindow keeps the selected line visible, still bounded to innerH.
+	fw := followWindow(content, 5, 8)
+	if n := strings.Count(fw, "\n") + 1; n != 5 {
+		t.Errorf("followWindow height = %d, want 5", n)
+	}
+	if !strings.Contains(fw, "8") {
+		t.Errorf("selected line 8 not in window: %q", fw)
+	}
+}
+
+// A bare host (no :port) must get the default daemon port — a port-less host
+// otherwise dials :80 and is refused (the connection bug operators hit).
+func TestNormalizeHost(t *testing.T) {
+	cases := map[string]string{
+		"100.77.85.107":      "100.77.85.107:7273",
+		"100.77.85.107:7273": "100.77.85.107:7273",
+		"minion":             "minion:7273",
+		"minion:7273":        "minion:7273",
+		"  100.77.85.107  ":  "100.77.85.107:7273",
+		"minion:9999":        "minion:9999", // a non-default port is preserved
+		"":                   "",
+	}
+	for in, want := range cases {
+		if got := normalizeHost(in); got != want {
+			t.Errorf("normalizeHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // The header announcement bar shows only when there's something to broadcast,
 // and an available update is its first source.
 func TestAnnouncement(t *testing.T) {

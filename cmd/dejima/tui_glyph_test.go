@@ -85,7 +85,7 @@ func TestAgentRowDisambiguatesDuplicateLabels(t *testing.T) {
 // rendered output is logged so the visual can be eyeballed with `go test -v`.
 func TestRenderListGlyphs(t *testing.T) {
 	m := sampleModel()
-	out := m.renderList(60)
+	out, _ := m.renderList(60)
 	t.Logf("\n%s", out) // visible under -v
 
 	bare := plain(out)
