@@ -62,24 +62,37 @@ func New(path string, hmacKey []byte) *Log {
 }
 
 var (
-	defaultOnce sync.Once
-	defaultLog  *Log
-	defaultErr  error
+	defaultMu  sync.Mutex
+	defaultLog *Log
+	defaultErr error
+	defaultSet bool
 )
 
 // Default returns the process-wide ledger at ~/.dejima/ledger.jsonl. A single
 // daemon owns the file, so one shared Log keeps the in-memory chain head
-// consistent across concurrent appends.
+// consistent across concurrent appends. The path is resolved (from $HOME) on
+// first use and cached; ResetDefault drops the cache.
 func Default() (*Log, error) {
-	defaultOnce.Do(func() {
-		p, err := paths.LedgerPath()
-		if err != nil {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if !defaultSet {
+		if p, err := paths.LedgerPath(); err != nil {
 			defaultErr = err
-			return
+		} else {
+			defaultLog = New(p, nil)
 		}
-		defaultLog = New(p, nil)
-	})
+		defaultSet = true
+	}
 	return defaultLog, defaultErr
+}
+
+// ResetDefault drops the cached process-wide ledger so the next Default()
+// re-resolves its path from $HOME. For tests that redirect HOME between cases;
+// not for production use (the daemon's HOME is fixed for its lifetime).
+func ResetDefault() {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	defaultLog, defaultErr, defaultSet = nil, nil, false
 }
 
 // Append seals e onto the chain and writes it as one JSONL line. It assigns

@@ -45,11 +45,14 @@ const (
 	// which spawns Project Islands and receives the child's token (no
 	// god-token; see porttoken).
 	accessHomeCreate
-	// accessEmitOwn is reachable by any valid token; the handler attributes the
-	// event to the token's island (TokenIslandFromContext), so a token can emit
-	// telemetry only for its own island — never spoof another's. Used for the
-	// agent-event endpoint, whose path carries no {name} to pin against.
-	accessEmitOwn
+	// accessTokenOwn is reachable by any valid token and acts only on the token's
+	// OWN island, taken from the token (TokenIslandFromContext), not the path —
+	// for routes with no {name} segment to pin against. The handler authorizes the
+	// specific action against that island (e.g. attributes an emitted event to it,
+	// or checks its capability grant); the token alone is never sufficient, so a
+	// token can never reach another island. Used for agent-event and capability
+	// execution.
+	accessTokenOwn
 )
 
 // tokenRouteAccess maps the exact ServeMux pattern (as registered in routes())
@@ -59,7 +62,8 @@ const (
 var tokenRouteAccess = map[string]tokenAccess{
 	"GET /v1/healthz":               accessAny,
 	"POST /v1/islands":              accessHomeCreate,
-	"POST /v1/internal/agent-event": accessEmitOwn,
+	"POST /v1/internal/agent-event": accessTokenOwn,
+	"POST /v1/capabilities/execute": accessTokenOwn,
 
 	"GET /v1/islands/{name}":                 accessOwnIsland, // status
 	"GET /v1/islands/{name}/events":          accessOwnIsland,
@@ -133,9 +137,11 @@ func authorizeToken(island, pattern, path string) error {
 	case accessAny:
 		return nil
 
-	case accessEmitOwn:
-		// Any valid token may emit; handleAgentEvent pins the event to the
-		// token's island, so cross-island spoofing is impossible.
+	case accessTokenOwn:
+		// Any valid token may reach the route; the handler acts only on the
+		// token's own island (TokenIslandFromContext) and authorizes the specific
+		// action there (event attribution / capability grant), so cross-island use
+		// is impossible.
 		return nil
 
 	case accessOwnIsland:

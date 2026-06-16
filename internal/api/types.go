@@ -366,6 +366,23 @@ type CapabilityGrantsResponse struct {
 	Grants []CapabilityGrantView `json:"grants"`
 }
 
+// CapabilityExecuteRequest is the body of POST /v1/capabilities/execute. Island
+// is supplied by an operator caller; a token-authenticated in-island caller is
+// pinned to its own island by its bearer token and Island is ignored.
+type CapabilityExecuteRequest struct {
+	Island string            `json:"island,omitempty"`
+	Target string            `json:"target"`
+	Args   map[string]string `json:"args,omitempty"`
+}
+
+// CapabilityExecuteResponse is the result of a capability invocation.
+type CapabilityExecuteResponse struct {
+	OK        bool   `json:"ok"`
+	Output    string `json:"output,omitempty"`
+	ExitCode  int    `json:"exit_code"`
+	LedgerSeq uint64 `json:"ledger_seq,omitempty"`
+}
+
 // PortIntakeRequest is the body of POST /v1/islands/:name/port/intake — a
 // brokered, read-only copy of a host file (within a granted scope) into the
 // island.

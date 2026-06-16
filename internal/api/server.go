@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/agentcreds"
+	"github.com/aoos/dejima/internal/capability"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/handlers"
@@ -108,7 +109,20 @@ type Server struct {
 	// can be covered without reaching GitHub.
 	reposFetch func(ctx context.Context, id githubid.Identity, limit int) (githubid.RepoList, error)
 
+	// capAdapter runs capability targets (the broker's execution half). nil ⇒
+	// resolve per host OS via capability.DefaultAdapter on demand; tests inject one.
+	capAdapter capability.Adapter
+
 	startedAt time.Time
+}
+
+// capabilityAdapter returns the host's capability execution adapter, or an error
+// when this host has none yet (e.g. macOS until the Shortcuts adapter ships).
+func (s *Server) capabilityAdapter() (capability.Adapter, error) {
+	if s.capAdapter != nil {
+		return s.capAdapter, nil
+	}
+	return capability.DefaultAdapter()
 }
 
 // EnableHostTerminals turns on the operator host-terminal feature. It exposes
@@ -420,6 +434,10 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/islands/{name}/capability/grants", s.handleListCapabilityGrants)
 	mux.HandleFunc("POST /v1/islands/{name}/capability/grants", s.handleGrantCapability)
 	mux.HandleFunc("DELETE /v1/islands/{name}/capability/grants/{target}", s.handleRevokeCapability)
+	// Capability execution — the in-island brain invokes a granted target. Unlike
+	// the grant routes (operator-only), this one IS token-reachable (accessTokenOwn
+	// in tokenauth.go): pinned to the token's own island, authorized by its grant.
+	mux.HandleFunc("POST /v1/capabilities/execute", s.handleCapabilityExecute)
 	mux.HandleFunc("POST /v1/islands/{name}/port/intake", s.handlePortIntake)
 	mux.HandleFunc("POST /v1/islands/{name}/port/export", s.handlePortExport)
 	mux.HandleFunc("POST /v1/islands/{name}/port/write", s.handlePortWrite)

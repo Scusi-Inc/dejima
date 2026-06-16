@@ -231,8 +231,15 @@ is the named target's published behavior — tractable and complete.
    host OS (macOS errs until phase 4). Owner check split `owner_unix`/
    `owner_other` so the non-Unix client still builds. Tested: stdin/env, non-zero
    exit, not-found/traversal, trust gates, timeout, output cap. No endpoint yet.
-3. **`POST /v1/capabilities/execute` + `accessTokenOwn`** in `tokenauth.go`;
-   `capability.execute/deny` ledgering; bounds + timeout.
+3. **`POST /v1/capabilities/execute` + `accessTokenOwn`** — ✅ done.
+   `internal/api/capability.go`: token-pinned island (operator names it in the
+   body), deny-all grant check, adapter execute, `capability.execute/deny`
+   ledger entries (args hashed, exit in detail), arg bounds. `accessTokenOwn` in
+   `tokenauth.go` (generalized from the agent-event class) makes the route
+   token-reachable while the grant routes stay operator-only. macOS returns 503
+   until the Shortcuts adapter (phase 4). Tested end-to-end via the script
+   adapter (grant→execute→ledger, deny-all, not-found fail-closed, token-path
+   authz). Also fixed ledger test isolation (`ledger.ResetDefault`).
 4. **macOS `shortcuts` adapter** — behind host-OS selection; live-verified on
    Minion (mirrors how #8/OpenClaw were validated).
 5. **Docs** — fold the resolved decision into `port-island-spec.md §3.4/§10.4`;
