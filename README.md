@@ -36,6 +36,7 @@ A note on "API": throughout the docs, *the Dejima API* refers to Dejima's own HT
 - **Direct push to GitHub** — the daemon holds one or more GitHub identities (e.g. `work` and `personal`); each island clones and pushes as the one it picks, so `git push` just works from any device. See [`docs/github-identities.md`](docs/github-identities.md).
 - **API-first** — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.
 - **Host terminals (opt-in)** — resumable, separately-instanced operator shells on the daemon host itself, for server navigation/repair — the tmux+ssh painkiller. Uncontained and operator-only (`dejimad --host-terminals`); agents stay contained. See [`docs/host-terminals.md`](docs/host-terminals.md).
+- **Contained assistant brains** — run an always-on OpenClaw / Hermes / Letta-style orchestrator as a *Home Island* instead of native on the host. It reads untrusted channels (chat, email) inside containment, reaches your files only through the scoped + ledgered Port, and spawns work islands via the API. `dejima home create` → `home configure` → `port grant` → `home doctor`. See [`docs/using-openclaw.md`](docs/using-openclaw.md).
 
 ## Setup at a glance
 
