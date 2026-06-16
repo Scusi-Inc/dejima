@@ -190,7 +190,9 @@ row above and/or an open task. Tick the row when the step passes.
 1. `dejima auth push --github --name work --default` from a host that has `gh`
    logged in (seeds the daemon identity store).
 2. Create an island selecting that identity (TUI GitHub browser, or
-   `dejima init <repo> --github-identity work`).
+   `dejima init --repo <url> --github-identity work` — `--repo` is a flag and
+   wants a full clone URL, e.g. `https://github.com/<owner>/<repo>`; there is no
+   `owner/repo` shorthand, and a local path won't seed against a remote daemon).
 3. Inside the island: `gh auth status` → authenticated as the expected login;
    `cat /opt/host/gh-config/hosts.yml` present and single-identity.
 4. Make a trivial commit and `git push` → succeeds, authored/authenticated as the
