@@ -8,6 +8,8 @@ package selfupdate
 import (
 	"encoding/json"
 	"os"
+	"os/user"
+	"strconv"
 
 	"github.com/aoos/dejima/internal/paths"
 )
@@ -32,7 +34,36 @@ func SaveInstallMeta(m InstallMeta) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o600)
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		return err
+	}
+	// `service install --system` runs under sudo, so this file is written as root.
+	// The daemon runs as the user and must READ it on self-update — a root-owned
+	// 0600 file is unreadable to it. Hand it back to the invoking user.
+	chownToInvokingUser(p)
+	return nil
+}
+
+// chownToInvokingUser gives path to the real user when running under sudo (root
+// + SUDO_USER), so user-owned state written by a privileged subcommand isn't
+// stranded as root. No-op when not under sudo, or off Unix.
+func chownToInvokingUser(path string) {
+	if os.Geteuid() != 0 {
+		return
+	}
+	su := os.Getenv("SUDO_USER")
+	if su == "" || su == "root" {
+		return
+	}
+	u, err := user.Lookup(su)
+	if err != nil {
+		return
+	}
+	uid, err1 := strconv.Atoi(u.Uid)
+	gid, err2 := strconv.Atoi(u.Gid)
+	if err1 == nil && err2 == nil {
+		_ = os.Chown(path, uid, gid)
+	}
 }
 
 // LoadInstallMeta reads the install context. A missing file yields a zero
