@@ -2,6 +2,9 @@ package githubid
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -120,9 +123,85 @@ func TestHostsYAML(t *testing.T) {
 			t.Errorf("HostsYAML missing %q in:\n%s", want, got)
 		}
 	}
+	// Must emit the modern multi-account schema (a per-user `users:` map), not
+	// just the legacy top-level form. Without it gh migrates on first use and
+	// writes to the read-only mount, which fails. See TestSetupGitOnReadOnlyDir.
+	for _, want := range []string{"    users:\n", "        austin:\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("HostsYAML missing modern users block %q in:\n%s", want, got)
+		}
+	}
 	// Enterprise host leads the document.
 	ent := HostsYAML(Identity{Login: "alockwood", Token: "t", Host: "github.example.com"})
 	if !strings.HasPrefix(ent, "github.example.com:\n") {
 		t.Errorf("enterprise host should lead the yaml; got:\n%s", ent)
+	}
+}
+
+// TestSetupGitOnReadOnlyDir is the regression test for the GitHub-identity
+// crash-loop: the daemon mounts the materialized gh config read-only, so the
+// config must already be in gh's migrated schema or `gh auth setup-git` tries to
+// write back, fails, and the island ends up with no git credential helper.
+//
+// It writes HostsYAML+ConfigYAML into a dir, makes it read-only, and runs the
+// real `gh auth setup-git` against it — asserting success and that the credential
+// helper lands. Skipped when gh isn't installed (e.g. minimal CI).
+func TestSetupGitOnReadOnlyDir(t *testing.T) {
+	gh, err := exec.LookPath("gh")
+	if err != nil {
+		t.Skip("gh not installed; skipping read-only setup-git regression test")
+	}
+
+	cfgDir := t.TempDir()
+	id := Identity{Login: "aoos", Token: "gho_dummyDummyDummyDummyDummyDummy0000", Host: ""}
+	mustWrite(t, filepath.Join(cfgDir, "hosts.yml"), HostsYAML(id))
+	mustWrite(t, filepath.Join(cfgDir, "config.yml"), ConfigYAML())
+
+	// Mimic the daemon's read-only bind mount: no writes permitted in the dir.
+	// Restore perms in cleanup so t.TempDir can remove the tree.
+	for _, p := range []string{
+		filepath.Join(cfgDir, "hosts.yml"),
+		filepath.Join(cfgDir, "config.yml"),
+		cfgDir,
+	} {
+		if err := os.Chmod(p, 0o500); err != nil {
+			t.Fatalf("chmod %s: %v", p, err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(cfgDir, 0o700)
+		_ = os.Chmod(filepath.Join(cfgDir, "hosts.yml"), 0o600)
+		_ = os.Chmod(filepath.Join(cfgDir, "config.yml"), 0o600)
+	})
+
+	// Isolate gh/git writes to a throwaway HOME so the dev box's global
+	// gitconfig is never touched; the credential helper lands in GIT_CONFIG_GLOBAL.
+	home := t.TempDir()
+	gitConfig := filepath.Join(home, ".gitconfig")
+	env := append(os.Environ(),
+		"GH_CONFIG_DIR="+cfgDir,
+		"HOME="+home,
+		"GIT_CONFIG_GLOBAL="+gitConfig,
+	)
+
+	cmd := exec.Command(gh, "auth", "setup-git")
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("gh auth setup-git failed on read-only config dir: %v\n%s", err, out)
+	}
+
+	helpers, err := os.ReadFile(gitConfig)
+	if err != nil {
+		t.Fatalf("read git config: %v", err)
+	}
+	if !strings.Contains(string(helpers), "gh auth git-credential") {
+		t.Errorf("setup-git did not install the gh credential helper; gitconfig:\n%s", helpers)
+	}
+}
+
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }

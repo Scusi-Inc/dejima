@@ -210,7 +210,16 @@ func (s *Store) List() []Meta {
 
 // HostsYAML renders the gh hosts.yml for a single identity — what gh reads from
 // GH_CONFIG_DIR to authenticate git over HTTPS inside an island. Only ever one
-// identity per file, so the simple top-level form is sufficient.
+// identity per file.
+//
+// It MUST emit the modern multi-account schema (the per-user `users:` map), not
+// just the legacy top-level form. gh migrates a legacy-only hosts.yml to this
+// schema on first use, which means writing back to GH_CONFIG_DIR — but the
+// daemon mounts that dir read-only, so the migration fails and `gh auth
+// setup-git` errors out, leaving the island with no git credential helper (the
+// clone then can't authenticate). Materializing the already-migrated form means
+// gh has nothing to write. See also ConfigYAML, which supplies the version
+// marker gh checks before deciding to migrate.
 func HostsYAML(id Identity) string {
 	host := strings.TrimSpace(id.Host)
 	if host == "" {
@@ -218,8 +227,22 @@ func HostsYAML(id Identity) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s:\n", host)
+	// Modern per-user entry (what gh 2.x keys off for multi-account).
+	b.WriteString("    users:\n")
+	fmt.Fprintf(&b, "        %s:\n", id.Login)
+	fmt.Fprintf(&b, "            oauth_token: %s\n", id.Token)
+	// Legacy top-level keys, kept for backward compatibility with older gh.
 	fmt.Fprintf(&b, "    oauth_token: %s\n", id.Token)
 	fmt.Fprintf(&b, "    user: %s\n", id.Login)
 	b.WriteString("    git_protocol: https\n")
 	return b.String()
+}
+
+// ConfigYAML renders the gh config.yml that accompanies HostsYAML. Its only job
+// is to carry the schema version marker: with it present, gh treats the
+// materialized config as already-migrated and never tries to write to the
+// read-only GH_CONFIG_DIR mount. Without it, gh runs a migration on first use
+// and fails on the read-only dir (see HostsYAML).
+func ConfigYAML() string {
+	return "version: \"1\"\n"
 }

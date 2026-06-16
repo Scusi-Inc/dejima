@@ -2013,6 +2013,11 @@ func islandGHConfigDir(p *project.Project) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "hosts.yml"), []byte(githubid.HostsYAML(id)), 0o600); err != nil {
 		return "", fmt.Errorf("write island gh config: %w", err)
 	}
+	// config.yml carries the schema version marker so gh treats the config as
+	// already-migrated and never writes to the read-only mount (see HostsYAML).
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(githubid.ConfigYAML()), 0o600); err != nil {
+		return "", fmt.Errorf("write island gh config.yml: %w", err)
+	}
 	return dir, nil
 }
 
