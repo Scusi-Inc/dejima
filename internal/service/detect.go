@@ -34,6 +34,36 @@ func Detect() Supervision {
 	}
 }
 
+// FixArgv returns the command `dejima doctor --fix` should run to remediate this
+// supervision Concern, or nil if there's nothing to auto-fix. selfBin is the path
+// to the dejima binary, used for fixes that re-run a dejima subcommand (so all the
+// install/sudo logic is reused rather than reimplemented). The mapping is kept
+// here, next to the classification, so the report layer stays declarative.
+func (s Supervision) FixArgv(selfBin string) []string {
+	if s.Concern == "" {
+		return nil
+	}
+	switch s.Mode {
+	case "systemd-user":
+		// enabled-but-no-linger and active-but-not-enabled both surface here;
+		// distinguish by the Concern text the classifier set.
+		if strings.Contains(s.Concern, "enable-linger") && !strings.Contains(s.Concern, "systemctl --user enable") {
+			return []string{"loginctl", "enable-linger", currentUser()}
+		}
+		// active but not enabled: enable first; a re-run then flags linger.
+		return []string{"systemctl", "--user", "enable", systemdUnitName}
+	case "launchd-system":
+		// plist present but not loaded — just (re)load the system daemon.
+		return []string{selfBin, "service", "restart", "--system"}
+	case "launchd-gui", "launchd-user":
+		// login-gated/per-boot supervisor on a headless Mac — reinstall as the
+		// boot-durable system LaunchDaemon (reuses service install's sudo path).
+		return []string{selfBin, "service", "install", "--system"}
+	default:
+		return nil
+	}
+}
+
 func detectSystemd() Supervision {
 	isActive := svcRun("systemctl", "--user", "is-active", systemdUnitName)
 	isEnabled := svcRun("systemctl", "--user", "is-enabled", systemdUnitName)
