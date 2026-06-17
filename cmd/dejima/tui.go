@@ -100,6 +100,7 @@ type tuiModel struct {
 	connectTerminal string
 	terminals       []hostterm.Terminal // host terminals (empty unless the daemon enables them)
 	confirm         *confirmPrompt
+	menu            *actionMenu       // non-nil while the per-row action menu is open
 	dirtyOps        map[string]string // name → "hibernating" etc. (transient hint)
 	building        bool              // island image build in flight
 
@@ -122,6 +123,25 @@ type confirmPrompt struct {
 	island string
 	agent  string // for "remove-agent"
 	answer string
+}
+
+// actionMenu is the per-row context menu (opened with ⏎ on an island/agent/
+// terminal row). It's a discoverability + decluttering layer, NOT a new code
+// path: every item carries the single-key accelerator it maps to, and choosing
+// it simply re-dispatches that key through handleKey — so the menu and the
+// hotkeys can never drift, and power users keep pressing h/w/r/d directly while
+// the footer no longer has to advertise all of them.
+type actionMenu struct {
+	title string
+	items []actionMenuItem
+	sel   int
+	row   treeRow // the row the menu was opened on; re-anchored to on dispatch
+}
+
+type actionMenuItem struct {
+	label  string // human label, e.g. "Hibernate"
+	key    string // the accelerator this dispatches, e.g. "h"
+	danger bool   // destructive — rendered in alarm color
 }
 
 func initialTUIModel(c *api.Client) tuiModel {
@@ -548,6 +568,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// The per-row action menu owns keys while open.
+	if m.menu != nil {
+		return m.actionMenuKey(msg)
+	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
 		switch msg.String() {
@@ -610,11 +634,24 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.scrollDetail(1), nil
 	case "pgup", "ctrl+u":
 		return m.scrollDetail(-1), nil
-	case "enter", "o":
-		// Dispatch on the row kind: the affordance rows open the creator /
-		// add-agent flow; island and agent rows open a workspace (or, for a
-		// headless agent, its logs).
+	case "o":
+		// Direct open — the primary action, no menu (kept as a fast path so
+		// muscle memory still jumps straight into a workspace).
 		return m.activateRow()
+	case "enter":
+		// ⏎ on a real object row opens its context menu (open/attach/lifecycle,
+		// all hanging off the thing they act on). Affordance rows (+ new island /
+		// + add agent / + terminal) have a single obvious action, so ⏎ just runs
+		// it rather than popping a one-item menu.
+		switch m.currentRow().kind {
+		case rowIsland, rowAgent, rowTerminal:
+			if mm, ok := m.openActionMenu(); ok {
+				return mm, nil
+			}
+			return m, nil
+		default:
+			return m.activateRow()
+		}
 	case " ", "right", "left":
 		// Expand/collapse an island to reveal its agents + the add-agent row.
 		if r := m.currentRow(); r.kind == rowIsland {
@@ -1086,6 +1123,131 @@ func (m tuiModel) isHeadlessAgent(island, agentID string) bool {
 // activateRow handles Enter/o on the selected row: affordance rows open the
 // creator or add-agent flow; island and agent rows open a workspace, except
 // headless agents, which open their logs (they have no attach surface).
+// openActionMenu builds the context menu for the highlighted row, gated on the
+// row kind and (for islands) running/hibernated state so it only ever offers
+// actions that make sense right now. Returns ok=false for rows that have no
+// menu (affordances), so ⏎ falls through to activateRow.
+func (m tuiModel) openActionMenu() (tuiModel, bool) {
+	row := m.currentRow()
+	var (
+		title string
+		items []actionMenuItem
+	)
+	switch row.kind {
+	case rowIsland:
+		isl, ok := m.islandByName(row.island)
+		if !ok {
+			return m, false
+		}
+		title = "island · " + isl.Name + "  (" + isl.Container + ")"
+		if isl.Container == "running" {
+			items = append(items,
+				actionMenuItem{label: "Open in a new window", key: "o"},
+				actionMenuItem{label: "Attach in this terminal", key: "a"},
+				actionMenuItem{label: "Add an agent", key: "+"},
+				actionMenuItem{label: "Hibernate", key: "h"},
+			)
+		} else {
+			items = append(items, actionMenuItem{label: "Wake", key: "w"})
+		}
+		items = append(items, actionMenuItem{label: "Rename", key: "e"})
+		if m.overview != nil && m.overview.SSHAddr != "" {
+			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", key: "S"})
+		}
+		if isl.Container == "running" {
+			items = append(items,
+				actionMenuItem{label: "Reset agent state", key: "r", danger: true},
+				actionMenuItem{label: "Upgrade to the current image", key: "u"},
+			)
+		}
+		items = append(items, actionMenuItem{label: "Purge island", key: "d", danger: true})
+	case rowAgent:
+		isl, _ := m.islandByName(row.island)
+		label := agentByID(isl, row.agentID).Label
+		if label == "" {
+			label = row.agentID
+		}
+		title = "agent · " + label
+		if m.isHeadlessAgent(row.island, row.agentID) {
+			items = append(items, actionMenuItem{label: "View logs", key: "o"})
+		} else {
+			items = append(items,
+				actionMenuItem{label: "Open in a new window", key: "o"},
+				actionMenuItem{label: "Attach in this terminal", key: "a"},
+			)
+		}
+		items = append(items,
+			actionMenuItem{label: "Rename (relabel)", key: "e"},
+			actionMenuItem{label: "Remove agent", key: "X", danger: true},
+		)
+	case rowTerminal:
+		title = "host terminal"
+		items = append(items,
+			actionMenuItem{label: "Attach", key: "o"},
+			actionMenuItem{label: "Close terminal", key: "d", danger: true},
+		)
+	default:
+		return m, false
+	}
+	m.menu = &actionMenu{title: title, items: items, row: row}
+	return m, true
+}
+
+// actionMenuKey drives the open menu: navigate, select (re-dispatching the
+// chosen item's accelerator through handleKey), or close. Pressing an item's
+// own accelerator key selects it directly.
+func (m tuiModel) actionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "ctrl+c":
+		m.menu = nil
+		return m, nil
+	case "j", "down":
+		if m.menu.sel < len(m.menu.items)-1 {
+			m.menu.sel++
+		}
+		return m, nil
+	case "k", "up":
+		if m.menu.sel > 0 {
+			m.menu.sel--
+		}
+		return m, nil
+	case "enter", "right", "l":
+		return m.chooseMenuItem(m.menu.items[m.menu.sel].key)
+	}
+	// A direct accelerator press jumps straight to that item.
+	for _, it := range m.menu.items {
+		if it.key == msg.String() {
+			return m.chooseMenuItem(it.key)
+		}
+	}
+	return m, nil
+}
+
+// chooseMenuItem closes the menu and replays the item's accelerator through the
+// normal key path — the single dispatch point, so menu and hotkeys never drift.
+// It first re-anchors the cursor to the row the menu was opened on: a background
+// list refresh can reorder rows (islands sort running-first, so a state flip
+// shifts selection), and the accelerator handlers act on currentRow — without
+// this, a destructive action like purge could land on the wrong island.
+func (m tuiModel) chooseMenuItem(key string) (tea.Model, tea.Cmd) {
+	target := m.menu.row
+	m.menu = nil
+	idx := -1
+	for i, r := range m.visibleRows() {
+		if r == target {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		// The row vanished while the menu was open (purged/closed elsewhere).
+		m.lastError = "selection changed — reopen the menu"
+		return m, nil
+	}
+	m.selected = idx
+	return m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+}
+
 func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 	row := m.currentRow()
 	switch row.kind {
@@ -1197,6 +1359,9 @@ var (
 	// background, near-black bold text. Amber, not red — an update is attention,
 	// not danger; red stays reserved for PANIC/errors so the two never blur.
 	styleBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#0b1220")).Background(lipgloss.Color("#fbbf24")).Bold(true)
+	// styleMenuBox frames the per-row action popup — a brighter border than the
+	// panes so it reads as a modal floating above them.
+	styleMenuBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3b5b8f")).Padding(0, 2)
 )
 
 func (m tuiModel) View() string {
@@ -1228,6 +1393,13 @@ func (m tuiModel) View() string {
 	}
 	if m.help {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderHelp())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.menu != nil {
+		// Centered popup over an empty field — same modal treatment as the other
+		// overlays, but compact (a bordered box centered in the body area).
+		box := styleMenuBox.Render(m.renderActionMenu())
+		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 
@@ -1896,8 +2068,16 @@ func (m tuiModel) renderFooter() string {
 	if m.allIslandsExpanded() {
 		expandAll = "[E] collapse all"
 	}
-	keys1 := "[n] new   [⏎] open   [space] expand   " + expandAll + "   [+] add agent   [s] server   [?] help   [q] quit"
-	keys2 := "[a] attach here   [e] rename   [X] rm agent   [h] hibernate   [w] wake   [r] reset   [d] purge   [S] ssh setup"
+	// Row 1: globals. Row 2: navigation + the ⏎ action menu, which now holds the
+	// per-row lifecycle/setup actions (hibernate, reset, purge, rename, ssh setup,
+	// …) instead of crowding the bar. Those keys still work directly; they're
+	// listed in the ⏎ menu and in [?] help.
+	term := ""
+	if m.hostTerminalsEnabled() {
+		term = "[t] terminal   "
+	}
+	keys1 := "[n] new   " + term + "[s] server   [?] help   [q] quit"
+	keys2 := "[⏎] actions   [space] expand   " + expandAll + "   [p] group"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -1963,7 +2143,8 @@ func (m tuiModel) renderHelp() string {
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
 		{"t", "new host terminal — an uncontained shell on the daemon host (if enabled)"},
-		{"⏎", "open the highlighted row — island/agent in a new window, or run the affordance"},
+		{"⏎", "actions menu for the highlighted island/agent (open, attach, hibernate, rename, ssh setup, purge…)"},
+		{"o", "open directly — island/agent in a new window, skipping the menu"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
 		{"p", "group the island list by repo — multi-agent projects read as one"},
@@ -2086,6 +2267,33 @@ func (m tuiModel) renderConfirm() string {
 			m.latestRelease, c.answer)
 	}
 	return styleErrored.Render("┌── ") + prompt + styleErrored.Render(" ──┐")
+}
+
+// renderActionMenu draws the inner content of the per-row context popup: a
+// title, the gated items (selected row highlighted, destructive ones in alarm
+// color), and a key hint. styleMenuBox supplies the border.
+func (m tuiModel) renderActionMenu() string {
+	am := m.menu
+	var b strings.Builder
+	b.WriteString(styleHeader.Render(am.title))
+	b.WriteString("\n\n")
+	for i, it := range am.items {
+		mark := "   "
+		if i == am.sel {
+			mark = styleAccent.Render(" ▸ ")
+		}
+		st := lipgloss.NewStyle()
+		switch {
+		case i == am.sel:
+			st = styleSelected
+		case it.danger:
+			st = styleErrored
+		}
+		b.WriteString(mark + st.Render(it.label) + styleMuted.Render("  ["+it.key+"]") + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------
