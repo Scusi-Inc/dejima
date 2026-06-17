@@ -309,6 +309,7 @@ type GitHubIdentitiesResponse struct {
 // how a client (e.g. `dejima auth push --github`) seeds or updates an identity.
 type PutGitHubIdentityRequest struct {
 	Login   string `json:"login"`
+	ID      int64  `json:"id,omitempty"`   // GitHub numeric user id, for the canonical noreply commit email
 	Host    string `json:"host,omitempty"` // defaults to github.com
 	Token   string `json:"token"`
 	Default bool   `json:"default,omitempty"` // make this the default identity

@@ -199,6 +199,39 @@ func TestSetupGitOnReadOnlyDir(t *testing.T) {
 	}
 }
 
+func TestGitAuthor(t *testing.T) {
+	// With a numeric id: the canonical ID-prefixed noreply email.
+	name, email := GitAuthor(Identity{Login: "aoos", ID: 583231, Host: ""})
+	if name != "aoos" {
+		t.Errorf("name = %q, want aoos", name)
+	}
+	if email != "583231+aoos@users.noreply.github.com" {
+		t.Errorf("email = %q, want 583231+aoos@users.noreply.github.com", email)
+	}
+
+	// Without a numeric id (identity stored before id capture): the older
+	// login-only noreply form, still account-linked.
+	_, email = GitAuthor(Identity{Login: "aoos"})
+	if email != "aoos@users.noreply.github.com" {
+		t.Errorf("fallback email = %q, want aoos@users.noreply.github.com", email)
+	}
+
+	// Enterprise host derives its own noreply domain.
+	_, email = GitAuthor(Identity{Login: "alockwood", ID: 7, Host: "github.example.com"})
+	if email != "7+alockwood@users.noreply.github.example.com" {
+		t.Errorf("enterprise email = %q, want 7+alockwood@users.noreply.github.example.com", email)
+	}
+}
+
+func TestGitConfig(t *testing.T) {
+	got := GitConfig(Identity{Login: "aoos", ID: 583231})
+	for _, want := range []string{"[user]", "name = aoos", "email = 583231+aoos@users.noreply.github.com"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("GitConfig missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {

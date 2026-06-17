@@ -25,10 +25,11 @@ const DefaultHost = "github.com"
 
 // Identity is one GitHub login the daemon can act as.
 type Identity struct {
-	Name  string `json:"name"`  // dejima-local handle: "work", "personal", …
-	Login string `json:"login"` // GitHub username
-	Host  string `json:"host"`  // "github.com" or an enterprise host
-	Token string `json:"token"` // OAuth/PAT token — secret, never returned to clients
+	Name  string `json:"name"`         // dejima-local handle: "work", "personal", …
+	Login string `json:"login"`        // GitHub username
+	ID    int64  `json:"id,omitempty"` // GitHub numeric user id (for the canonical noreply commit email); 0 if unknown
+	Host  string `json:"host"`         // "github.com" or an enterprise host
+	Token string `json:"token"`        // OAuth/PAT token — secret, never returned to clients
 }
 
 // Meta is an identity without its token: the safe view to hand back to clients.
@@ -236,6 +237,39 @@ func HostsYAML(id Identity) string {
 	fmt.Fprintf(&b, "    user: %s\n", id.Login)
 	b.WriteString("    git_protocol: https\n")
 	return b.String()
+}
+
+// GitAuthor derives the git commit author (name, email) for an island that acts
+// as this identity. Without it, commits inherit the host's gitconfig user.* —
+// so a push authenticated as "work" gets authored with whatever email the
+// daemon host happens to have, which GitHub then misattributes (it keys
+// attribution off the email). We use GitHub's privacy-preserving noreply email
+// so commits attribute to the right account without exposing a real address:
+//   - canonical form (preferred): "<id>+<login>@users.noreply.<host>"
+//   - fallback when the numeric id is unknown (identity stored before id capture):
+//     "<login>@users.noreply.<host>" — still account-linked, just the older form.
+func GitAuthor(id Identity) (name, email string) {
+	login := strings.TrimSpace(id.Login)
+	host := strings.TrimSpace(id.Host)
+	if host == "" {
+		host = DefaultHost
+	}
+	domain := "users.noreply." + host
+	if id.ID > 0 {
+		email = fmt.Sprintf("%d+%s@%s", id.ID, login, domain)
+	} else {
+		email = fmt.Sprintf("%s@%s", login, domain)
+	}
+	return login, email
+}
+
+// GitConfig renders a minimal gitconfig carrying just the identity's commit
+// author. The daemon mounts this at /opt/host/gitconfig for identity-scoped
+// islands (in place of the host's own gitconfig), and the entrypoint applies
+// user.name/user.email from it — so authorship matches the push credential.
+func GitConfig(id Identity) string {
+	name, email := GitAuthor(id)
+	return fmt.Sprintf("[user]\n\tname = %s\n\temail = %s\n", name, email)
 }
 
 // ConfigYAML renders the gh config.yml that accompanies HostsYAML. Its only job

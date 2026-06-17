@@ -48,37 +48,39 @@ func ListRepos(ctx context.Context, id Identity, limit int) (RepoList, error) {
 }
 
 // VerifyToken confirms a token authenticates against host and returns the login
-// it belongs to. Called before storing an identity so a bad or expired token
-// fails fast at `auth push` time instead of silently at clone/push time inside
-// an island.
-func VerifyToken(ctx context.Context, host, token string) (login string, err error) {
+// and numeric user id it belongs to. Called before storing an identity so a bad
+// or expired token fails fast at `auth push` time instead of silently at
+// clone/push time inside an island. The id feeds the canonical noreply commit
+// email (see GitAuthor).
+func VerifyToken(ctx context.Context, host, token string) (login string, id int64, err error) {
 	return verifyToken(ctx, apiBase(host), token)
 }
 
-func verifyToken(ctx context.Context, base, token string) (string, error) {
+func verifyToken(ctx context.Context, base, token string) (login string, id int64, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/user", nil)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("github api %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return "", 0, fmt.Errorf("github api %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var u struct {
 		Login string `json:"login"`
+		ID    int64  `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
-		return "", fmt.Errorf("decode github user: %w", err)
+		return "", 0, fmt.Errorf("decode github user: %w", err)
 	}
-	return u.Login, nil
+	return u.Login, u.ID, nil
 }
 
 func listRepos(ctx context.Context, base, token string, limit int) (RepoList, error) {

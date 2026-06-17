@@ -51,7 +51,7 @@ func newAuthPushCmd() *cobra.Command {
 				// Verify before storing so a bad/expired token fails here, not
 				// later inside an island. The verified login wins if gh and the
 				// token disagree (e.g. a token minted for another account).
-				verified, err := githubid.VerifyToken(cmd.Context(), host, token)
+				verified, ghUserID, err := githubid.VerifyToken(cmd.Context(), host, token)
 				if err != nil {
 					return fmt.Errorf("token verification failed (nothing stored): %w", err)
 				}
@@ -63,7 +63,7 @@ func newAuthPushCmd() *cobra.Command {
 					id = login
 				}
 				if _, err := c.PutGitHubIdentity(cmd.Context(), id, api.PutGitHubIdentityRequest{
-					Login: login, Host: host, Token: token, Default: makeDefault,
+					Login: login, ID: ghUserID, Host: host, Token: token, Default: makeDefault,
 				}); err != nil {
 					return err
 				}

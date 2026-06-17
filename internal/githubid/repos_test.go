@@ -79,15 +79,18 @@ func TestVerifyToken(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer good" {
 				t.Errorf("auth header = %q", r.Header.Get("Authorization"))
 			}
-			_, _ = w.Write([]byte(`{"login":"octocat"}`))
+			_, _ = w.Write([]byte(`{"login":"octocat","id":583231}`))
 		}))
 		defer srv.Close()
-		login, err := verifyToken(context.Background(), srv.URL, "good")
+		login, id, err := verifyToken(context.Background(), srv.URL, "good")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if login != "octocat" {
 			t.Errorf("login = %q, want octocat", login)
+		}
+		if id != 583231 {
+			t.Errorf("id = %d, want 583231", id)
 		}
 	})
 
@@ -97,7 +100,7 @@ func TestVerifyToken(t *testing.T) {
 			_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
 		}))
 		defer srv.Close()
-		if _, err := verifyToken(context.Background(), srv.URL, "bad"); err == nil {
+		if _, _, err := verifyToken(context.Background(), srv.URL, "bad"); err == nil {
 			t.Fatal("expected an error on 401")
 		}
 	})

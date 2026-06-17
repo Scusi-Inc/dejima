@@ -573,7 +573,7 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	store, err := githubid.Update(func(s *githubid.Store) error {
-		s.Put(githubid.Identity{Name: name, Login: req.Login, Host: req.Host, Token: req.Token})
+		s.Put(githubid.Identity{Name: name, Login: req.Login, ID: req.ID, Host: req.Host, Token: req.Token})
 		if req.Default {
 			_ = s.SetDefault(name)
 		}
@@ -2039,6 +2039,34 @@ func islandGHConfigDir(p *project.Project) (string, error) {
 	return dir, nil
 }
 
+// islandGitConfig materializes the per-island commit-author gitconfig for the
+// island's selected GitHub identity and returns the file to mount at
+// /opt/host/gitconfig. Returns "" (no error) when the island resolves no
+// identity, so the caller falls back to the host's own gitconfig. Authoring
+// commits as the identity (its noreply email) is what makes GitHub attribute
+// them to the right account — otherwise the push authenticates as the identity
+// but the commit carries the daemon host's gitconfig user.*. Co-located with the
+// gh config so island teardown (GitHubIslandConfigPath) removes it too.
+func islandGitConfig(p *project.Project) (string, error) {
+	store, err := githubid.Load()
+	if err != nil {
+		return "", fmt.Errorf("load github identities: %w", err)
+	}
+	id, ok := store.Resolve(p.GitHubIdentity)
+	if !ok {
+		return "", nil
+	}
+	dir, err := paths.GitHubIslandConfigDir(p.Name)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(path, []byte(githubid.GitConfig(id)), 0o600); err != nil {
+		return "", fmt.Errorf("write island gitconfig: %w", err)
+	}
+	return path, nil
+}
+
 func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 	var binds []runtime.BindMount
 
@@ -2095,8 +2123,17 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		}
 	}
 
-	gitConfig, err := paths.HostGitConfig()
-	if err == nil {
+	// Git author: an island bound to a GitHub identity authors commits as that
+	// identity (its noreply email) so GitHub attributes them correctly. The
+	// materialized gitconfig overrides the host gitconfig at the same mount point;
+	// only when no identity is selected do we fall back to the host's own.
+	if gc, err := islandGitConfig(p); err != nil {
+		return nil, err
+	} else if gc != "" {
+		binds = append(binds, runtime.BindMount{
+			HostPath: gc, ContainerPath: "/opt/host/gitconfig", ReadOnly: true,
+		})
+	} else if gitConfig, err := paths.HostGitConfig(); err == nil {
 		if _, statErr := os.Stat(gitConfig); statErr == nil {
 			binds = append(binds, runtime.BindMount{
 				HostPath: gitConfig, ContainerPath: "/opt/host/gitconfig", ReadOnly: true,
