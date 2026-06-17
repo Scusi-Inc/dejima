@@ -458,13 +458,15 @@ type daemonUpdatedMsg struct {
 	err  error
 }
 
-// updateDaemonCmd asks the daemon to update + restart itself. The daemon restarts
-// after responding, so the connection may drop right after — the Applying flag
-// in the response is the confirmation it began.
+// updateDaemonCmd asks the daemon to update + restart itself. The daemon now
+// builds/installs the new binary synchronously (so failures come back as real
+// errors) and only restarts afterward — so this can take as long as a `make
+// install`; the timeout is generous. The Applying flag confirms the install
+// succeeded and the restart has begun.
 func (m tuiModel) updateDaemonCmd() tea.Cmd {
 	c := m.client
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
 		resp, err := c.DaemonUpdate(ctx, true)
 		return daemonUpdatedMsg{resp: resp, err: err}
@@ -568,12 +570,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case daemonUpdatedMsg:
 		switch {
 		case msg.err != nil:
-			// The daemon restarts right after responding, so a dropped
-			// connection here often means it *did* start — say so, don't alarm.
-			m.lastError = "daemon update: " + msg.err.Error() + " (if it restarted, this is expected)"
+			// The install now runs synchronously, so an error here is a real
+			// failure (git pull / make install / missing sudoers) — surface it.
+			// The restart happens only after a successful install, so this isn't
+			// just an expected connection drop.
+			m.lastError = "daemon update failed: " + msg.err.Error()
 		case msg.resp != nil && msg.resp.Applying:
 			m.daemonUpdate = false
-			m.lastNotice = "daemon updating to " + msg.resp.Latest + " + restarting — it'll reconnect shortly"
+			m.lastNotice = "daemon installed " + msg.resp.Latest + ", restarting — it'll reconnect shortly"
 		default:
 			m.lastNotice = "daemon already up to date"
 		}

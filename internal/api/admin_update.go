@@ -15,7 +15,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/aoos/dejima/internal/selfupdate"
 )
@@ -54,55 +57,86 @@ func (s *Server) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
-	resp.Applying = true
-	writeJSON(w, http.StatusOK, resp)
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush() // get the response to the client before the restart drops the conn
-	}
-
-	// Apply off the request path: the restart terminates this process, so the
-	// response above is the client's confirmation that it began.
-	go s.applyDaemonUpdate(st, meta)
-}
-
-// applyDaemonUpdate performs the update and restarts the service. It runs in its
-// own goroutine because the final restart kills this process; the new binary is
-// brought up by the service manager (launchd/systemd).
-func (s *Server) applyDaemonUpdate(st selfupdate.Status, meta selfupdate.InstallMeta) {
-	ctx := context.Background()
-	out := &slogWriter{log: s.log}
-	run := selfupdate.ExecRunner(out)
-
-	switch st.Mode {
-	case selfupdate.ModeSource:
-		s.log.Info("daemon self-update (source)", "dir", meta.SourceDir, "to", st.Latest)
-		if err := run(ctx, meta.SourceDir, "git", "pull", "--ff-only"); err != nil {
-			s.log.Error("daemon self-update: git pull failed", "err", err)
-			return
-		}
-		if err := run(ctx, meta.SourceDir, "make", "install"); err != nil {
-			s.log.Error("daemon self-update: make install failed", "err", err)
-			return
-		}
-	case selfupdate.ModeRelease:
-		s.log.Info("daemon self-update (release)", "to", st.Latest)
-		if err := selfupdate.ApplyReleaseSelf(ctx, st.Latest, out); err != nil {
-			s.log.Error("daemon self-update: binary replace failed", "err", err)
-			return
-		}
-	default:
-		s.log.Error("daemon self-update: unknown mode", "mode", st.Mode)
+	// A system install reinstalls + restarts via sudo with no TTY, which only
+	// works with the scoped /etc/sudoers.d/dejima drop-in. If it's missing (an
+	// install predating that feature — the exact trap hit in dogfooding), every
+	// step would hit a password prompt and fail. Catch it now with an actionable
+	// message instead of a cryptic mid-build error.
+	if err := preflightPrivileged(meta); err != nil {
+		writeError(w, http.StatusPreconditionFailed, err)
 		return
 	}
 
-	// Restart in the right domain (system installs need --system). This kills us;
-	// the service manager starts the freshly-installed binary.
+	// Build/install the new binary SYNCHRONOUSLY, on a context detached from the
+	// request (a flaky client connection mustn't abort a half-done install).
+	// Doing the work here — rather than in a detached goroutine that returns
+	// Applying=true unconditionally — means git pull / make install / download
+	// failures come back to the caller as real errors, instead of vanishing into
+	// the daemon log while the TUI cheerfully reports "updating…".
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	out := &slogWriter{log: s.log}
+	if err := s.prepareDaemonUpdate(ctx, st, meta, out); err != nil {
+		s.log.Error("daemon self-update: prepare failed", "err", err)
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// New binary is in place. Acknowledge, then restart asynchronously — the
+	// restart kills this process, so it can't be part of the response.
+	resp.Applying = true
+	writeJSON(w, http.StatusOK, resp)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush() // get the ack out before the restart drops the conn
+	}
+	go s.restartDaemon(meta)
+}
+
+// prepareDaemonUpdate brings the new binary into place WITHOUT restarting — the
+// part that can fail and must be reported. Source installs git-pull + make
+// install; release installs download + verify + replace.
+func (s *Server) prepareDaemonUpdate(ctx context.Context, st selfupdate.Status, meta selfupdate.InstallMeta, out *slogWriter) error {
+	switch st.Mode {
+	case selfupdate.ModeSource:
+		s.log.Info("daemon self-update (source): building", "dir", meta.SourceDir, "to", st.Latest)
+		return selfupdate.PrepareSource(ctx, meta.SourceDir, out, selfupdate.ExecRunner(out))
+	case selfupdate.ModeRelease:
+		s.log.Info("daemon self-update (release): downloading", "to", st.Latest)
+		return selfupdate.ApplyReleaseSelf(ctx, st.Latest, out)
+	default:
+		return fmt.Errorf("unknown update mode %q", st.Mode)
+	}
+}
+
+// restartDaemon restarts the service in the right domain (system installs need
+// --system). It runs in its own goroutine because the restart kills this
+// process; the service manager brings up the freshly-installed binary.
+func (s *Server) restartDaemon(meta selfupdate.InstallMeta) {
+	out := &slogWriter{log: s.log}
 	args := meta.RestartArgs()
 	s.log.Info("daemon self-update: restarting", "cmd", "dejima "+strings.Join(args, " "))
-	if err := run(ctx, "", "dejima", args...); err != nil {
-		s.log.Error("daemon self-update: restart failed — restart manually", "err", err)
+	if err := selfupdate.ExecRunner(out)(context.Background(), "", "dejima", args...); err != nil {
+		// The new binary is already installed; a failed restart just means the old
+		// process keeps running until the next restart/boot picks it up.
+		s.log.Error("daemon self-update: restart failed — new binary installed, restart manually (e.g. sudo launchctl kickstart -k system/<label>)", "err", err)
 	}
+}
+
+// preflightPrivileged fails fast when a privileged (system) self-update can't
+// possibly succeed non-interactively. Today that's the macOS sudoers drop-in
+// that `dejima service install --system` writes; without it, sudo prompts for a
+// password the headless daemon can't supply.
+func preflightPrivileged(meta selfupdate.InstallMeta) error {
+	if !meta.System || runtime.GOOS != "darwin" {
+		return nil
+	}
+	const sudoers = "/etc/sudoers.d/dejima" // mirrors internal/service.launchdSystemSudoers
+	if _, err := os.Stat(sudoers); err != nil {
+		return fmt.Errorf(
+			"self-update needs passwordless sudo (%s is missing) — re-run `sudo dejima service install --system` to add it, then retry",
+			sudoers)
+	}
+	return nil
 }
 
 // slogWriter adapts a slog.Logger to io.Writer so command output from the update

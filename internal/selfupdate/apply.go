@@ -94,6 +94,28 @@ func ApplySource(ctx context.Context, dir string, execute bool, out io.Writer, r
 	return nil
 }
 
+// PrepareSource runs every source-update step EXCEPT the final restart:
+// preflight, fast-forward the checkout, reinstall both binaries. The restart is
+// deliberately left to the caller because it kills the running daemon — so the
+// daemon's self-update can do this part synchronously (and report failures to
+// the client) and only background the restart. Returns a wrapped error naming
+// the step that failed.
+func PrepareSource(ctx context.Context, dir string, out io.Writer, run Runner) error {
+	if err := SourcePreflight(ctx, dir); err != nil {
+		return err
+	}
+	for _, s := range sourcePlan(dir) {
+		if s.name == "dejima" { // the restart step — caller's responsibility
+			continue
+		}
+		fmt.Fprintf(out, "→ %s\n", s)
+		if err := run(ctx, s.dir, s.name, s.args...); err != nil {
+			return fmt.Errorf("%s failed: %w", s.name, err)
+		}
+	}
+	return nil
+}
+
 // FindCheckout walks up from start looking for the dejima source tree (a go.mod
 // declaring this module). Returns an error with guidance if none is found.
 func FindCheckout(start string) (string, error) {
