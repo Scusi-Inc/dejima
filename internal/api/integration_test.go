@@ -330,6 +330,55 @@ func do(t *testing.T, h http.Handler, method, path, body string) *httptest.Respo
 	return rr
 }
 
+// TestWorkspaceReadyEndpoint asserts the readiness probe reflects whether
+// /workspace/.git exists — the signal `dejima connect` waits on so it doesn't
+// attach into a still-cloning, empty workspace.
+func TestWorkspaceReadyEndpoint(t *testing.T) {
+	h, f := newTestServer(t)
+
+	rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"git@github.com:me/proj.git","name":"proj","agent":"claude-code"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create island: got %d, body %s", rr.Code, rr.Body.String())
+	}
+
+	// Drive the /workspace/.git probe: absent first (still cloning), then present.
+	gitPresent := false
+	f.execHook = func(cmd []string) (string, string, int, bool) {
+		if len(cmd) == 3 && cmd[0] == "test" && cmd[1] == "-e" && cmd[2] == "/workspace/.git" {
+			if gitPresent {
+				return "", "", 0, true
+			}
+			return "", "", 1, true
+		}
+		return "", "", 0, false
+	}
+
+	probe := func() bool {
+		rr := do(t, h, http.MethodGet, "/v1/islands/proj/workspace-ready", "")
+		if rr.Code != http.StatusOK {
+			t.Fatalf("workspace-ready: got %d, body %s", rr.Code, rr.Body.String())
+		}
+		var out WorkspaceReadyResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Ready
+	}
+
+	if probe() {
+		t.Error("ready=true while /workspace/.git absent; want false")
+	}
+	gitPresent = true
+	if !probe() {
+		t.Error("ready=false after /workspace/.git appeared; want true")
+	}
+
+	// Unknown island → 404, not a misleading ready=false.
+	if rr := do(t, h, http.MethodGet, "/v1/islands/nope/workspace-ready", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("unknown island: got %d, want 404", rr.Code)
+	}
+}
+
 // TestMultiAgentLifecycle drives create → add → list → logs → remove through the
 // real HTTP handlers, asserting the daemon issues the right container env and
 // exec commands for the multi-agent machinery.

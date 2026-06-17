@@ -305,6 +305,13 @@ type GitHubIdentitiesResponse struct {
 	Identities []githubid.Meta `json:"identities"`
 }
 
+// WorkspaceReadyResponse reports whether an island's repo clone has landed in
+// /workspace yet (GET /v1/islands/:name/workspace-ready). `dejima connect` polls
+// it to avoid attaching into a still-provisioning, empty workspace.
+type WorkspaceReadyResponse struct {
+	Ready bool `json:"ready"`
+}
+
 // PutGitHubIdentityRequest is the body of PUT /v1/credentials/github/:name —
 // how a client (e.g. `dejima auth push --github`) seeds or updates an identity.
 type PutGitHubIdentityRequest struct {

@@ -307,6 +307,16 @@ func (c *Client) GetIsland(ctx context.Context, name string) (*IslandInfo, error
 	return &out, nil
 }
 
+// WorkspaceReady reports whether the island's repo clone has landed in
+// /workspace yet. Used by `dejima connect` to wait out provisioning.
+func (c *Client) WorkspaceReady(ctx context.Context, name string) (bool, error) {
+	var out WorkspaceReadyResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+name+"/workspace-ready", nil, &out); err != nil {
+		return false, err
+	}
+	return out.Ready, nil
+}
+
 // CreateIsland provisions a new island. The returned CreateIslandResponse
 // embeds the IslandInfo; on a token-authenticated create by a Home Island it
 // also carries the child's bearer Token (the parent-child spawn model).

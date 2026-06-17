@@ -378,6 +378,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/islands", s.listIslands)
 	mux.HandleFunc("POST /v1/islands", s.createIsland)
 	mux.HandleFunc("GET /v1/islands/{name}", s.getIsland)
+	mux.HandleFunc("GET /v1/islands/{name}/workspace-ready", s.workspaceReady)
 	mux.HandleFunc("DELETE /v1/islands/{name}", s.deleteIsland)
 	mux.HandleFunc("PATCH /v1/islands/{name}", s.updateIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/hibernate", s.hibernateIsland)
@@ -691,6 +692,24 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, info)
+}
+
+// workspaceReady reports whether the island's repo clone has landed in
+// /workspace (i.e. /workspace/.git exists). `dejima connect` polls this so it
+// doesn't drop the operator into an empty /workspace while the entrypoint is
+// still cloning. One cheap exec; safe to call repeatedly.
+func (s *Server) workspaceReady(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	ready := false
+	if _, _, code, err := s.rt.Exec(r.Context(), p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); err == nil && code == 0 {
+		ready = true
+	}
+	writeJSON(w, http.StatusOK, WorkspaceReadyResponse{Ready: ready})
 }
 
 // agentsLive reports whether the island container is running (so callers know

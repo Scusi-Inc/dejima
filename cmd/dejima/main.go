@@ -1073,6 +1073,12 @@ func newConnectCmd() *cobra.Command {
 			if info.Container != "running" {
 				return fmt.Errorf("island %q is not running (container: %s); `dejima wake %s` first", name, info.Container, name)
 			}
+			// Just after create, the entrypoint may still be cloning the repo into
+			// /workspace. Don't drop the operator into an empty dir: if a repo is
+			// expected, wait (bounded) for the clone to land before attaching.
+			if info.Repo != "" {
+				waitForWorkspaceReady(cmd.Context(), c, name)
+			}
 			return runSession(cmd.Context(), c, name, agent, label)
 		},
 	}
@@ -1096,6 +1102,31 @@ func defaultLabel() string {
 		return h
 	}
 	return "cli"
+}
+
+// waitForWorkspaceReady polls the daemon until the island's repo clone has
+// landed in /workspace, or a bounded deadline passes. Best-effort: any API error
+// (older daemon without the endpoint, transient failure) just proceeds to
+// attach. It prints a one-time notice so a multi-second clone doesn't look like
+// a hang. Cancellable via ctx (Ctrl-C).
+func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) {
+	deadline := time.Now().Add(2 * time.Minute)
+	notified := false
+	for {
+		ready, err := c.WorkspaceReady(ctx, name)
+		if err != nil || ready || time.Now().After(deadline) {
+			return
+		}
+		if !notified {
+			fmt.Printf("waiting for workspace to finish provisioning (cloning)…\n")
+			notified = true
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 // runSession is the websocket ↔ local-stdio bridge driving `dejima connect`.
