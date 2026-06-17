@@ -57,6 +57,11 @@ type AgentInfo struct {
 	State      string          `json:"state,omitempty"`
 	AgentState *AgentStateInfo `json:"agent_state,omitempty"`
 	Attached   []PresenceEntry `json:"attached,omitempty"`
+	// Restarts is how many times a supervised (Restart) headless agent has
+	// crashed and been respawned by its supervisor loop — counted from the
+	// per-agent log. A climbing count is how a crash-loop (e.g. OOM) shows up,
+	// since a supervised agent's session stays "running". Detail endpoint only.
+	Restarts int `json:"restarts,omitempty"`
 	// Error is the last orchestration failure for this agent — e.g. its worktree
 	// or tmux session couldn't be created. Empty when the agent came up cleanly.
 	Error   string    `json:"error,omitempty"`

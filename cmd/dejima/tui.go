@@ -1956,6 +1956,8 @@ func agentGlyph(a api.AgentInfo) string {
 		style = styleErrored // session alive but the agent process died
 	case a.AgentState != nil && a.AgentState.Latest == "waiting-for-input":
 		style = styleWaiting
+	case a.State == "running" && a.Restarts >= 3:
+		style = styleWaiting // supervised but crash-looping (e.g. OOM) — flag it
 	case a.State == "running":
 		style = styleRunning
 	}
@@ -2170,6 +2172,13 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		state = styleErrored.Render("exited — agent process died (shell prompt remains)")
 	}
 	b.WriteString(fmt.Sprintf("session:   %s\n", state))
+	if a.Restarts > 0 {
+		note := fmt.Sprintf("%d (supervised — auto-restarts on crash)", a.Restarts)
+		if a.Restarts >= 3 {
+			note = styleWaiting.Render(fmt.Sprintf("%d ⚠ crash-looping — check logs (likely OOM)", a.Restarts))
+		}
+		b.WriteString(fmt.Sprintf("restarts:  %s\n", note))
+	}
 	if !a.CreatedAt.IsZero() {
 		b.WriteString(fmt.Sprintf("uptime:    %s\n", humanDuration(time.Since(a.CreatedAt))))
 	}

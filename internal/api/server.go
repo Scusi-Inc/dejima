@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1630,7 +1631,18 @@ func agentLaunchScript(a *project.AgentSpec) string {
 	}
 	log := headlessLogPath(a.ID)
 	if a.Restart {
-		return fmt.Sprintf("exec >> %s 2>&1; while true; do %s%s; echo \"[dejima] agent %s exited ($?); restarting in 3s\"; sleep 3; done",
+		// Supervise-and-respawn with bounded exponential backoff (2s→…→60s) so a
+		// crash-looping agent (e.g. repeatedly OOM-killed) doesn't hammer the host
+		// every few seconds. Backoff resets once the process has run a healthy
+		// while (≥30s), so a long-lived agent that finally dies restarts promptly.
+		// The exit marker is headlessRestartMarker(id) — counted by the daemon to
+		// surface Restarts in the TUI. POSIX sh ($((…)), $(date +%s), [ ]).
+		return fmt.Sprintf(
+			"exec >> %s 2>&1; n=0; delay=2; "+
+				"while true; do start=$(date +%%s); %s%s; code=$?; end=$(date +%%s); n=$((n+1)); "+
+				"if [ $((end-start)) -ge 30 ]; then delay=2; fi; "+
+				"echo \"[dejima] agent %s exited ($code); restart #$n in ${delay}s\"; "+
+				"sleep \"$delay\"; delay=$((delay*2)); if [ \"$delay\" -gt 60 ]; then delay=60; fi; done",
 			log, idEnv, cmd, a.ID)
 	}
 	return fmt.Sprintf("exec >> %s 2>&1; %s%s", log, idEnv, cmd)
@@ -1672,21 +1684,25 @@ func (s *Server) tmuxHasSession(ctx context.Context, p *project.Project, session
 	return err == nil && code == 0, err
 }
 
-// agentLiveness classifies an attachable agent's session: "stopped" (no tmux
-// session), "exited" (session alive but its foreground process fell back to a
-// bare shell — the agent process died while start.sh kept the container up), or
-// "running". The "exited" verdict never applies to the shell agent type, whose
-// foreground IS a shell. Best-effort heuristic via the tmux pane command.
-func (s *Server) agentLiveness(ctx context.Context, p *project.Project, session, agentType string) string {
-	ok, _ := s.tmuxHasSession(ctx, p, session)
+// agentLiveness classifies an agent's session: "stopped" (no tmux session),
+// "exited" (session alive but its foreground fell back to a bare shell — the
+// agent process died while start.sh kept the container up), or "running". The
+// "exited" verdict never applies to the shell agent type (whose foreground IS a
+// shell), nor to a supervised (Restart) agent: its supervisor loop legitimately
+// cycles the pane through a shell and `sleep` backoff between respawns, so a
+// momentary shell foreground is normal, not death. A supervised agent that's
+// actually crash-looping shows up via its climbing Restarts count, not a false
+// "exited". Best-effort heuristic via the tmux pane command.
+func (s *Server) agentLiveness(ctx context.Context, p *project.Project, a *project.AgentSpec) string {
+	ok, _ := s.tmuxHasSession(ctx, p, a.Tmux)
 	if !ok {
 		return "stopped"
 	}
-	if agentType == handlers.Shell {
-		return "running" // a shell prompt is the healthy state here
+	if a.Type == handlers.Shell || a.Restart {
+		return "running" // shell prompt / supervised loop are both the healthy state
 	}
 	out, _, code, err := s.rt.Exec(ctx, p.ContainerName(),
-		[]string{"tmux", "display-message", "-p", "-t", session, "#{pane_current_command}"})
+		[]string{"tmux", "display-message", "-p", "-t", a.Tmux, "#{pane_current_command}"})
 	if err != nil || code != 0 {
 		return "running" // can't tell; don't cry wolf
 	}
@@ -1695,6 +1711,25 @@ func (s *Server) agentLiveness(ctx context.Context, p *project.Project, session,
 	}
 	return "running"
 }
+
+// headlessRestartCount counts how many times a supervised headless agent has
+// crashed and respawned, by counting the supervisor's exit markers in the
+// per-agent log (grep -F: the marker contains regex metacharacters). 0 on any
+// error — a missing count must never read as a problem.
+func (s *Server) headlessRestartCount(ctx context.Context, p *project.Project, id string) int {
+	out, _, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"grep", "-cF", headlessRestartMarker(id), headlessLogPath(id)})
+	if err != nil || code != 0 {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// headlessRestartMarker is the literal prefix the supervisor loop logs on each
+// crash — the single source of truth for both writing (agentLaunchScript) and
+// counting (headlessRestartCount).
+func headlessRestartMarker(id string) string { return "[dejima] agent " + id + " exited" }
 
 // isLoginShell reports whether a tmux pane_current_command names a bare shell —
 // i.e. the agent's foreground process is gone and only a prompt remains.
@@ -2011,7 +2046,10 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 			CreatedAt:  a.CreatedAt,
 		}
 		if live && a.Tmux != "" {
-			ai.State = s.agentLiveness(ctx, p, a.Tmux, a.Type)
+			ai.State = s.agentLiveness(ctx, p, a)
+			if a.Restart && !handlers.Attachable(a.Type) {
+				ai.Restarts = s.headlessRestartCount(ctx, p, a.ID)
+			}
 		}
 		ai.Attached = s.presenceSnapshot(p.Name, a.ID)
 		ai.AgentState = s.agentStateOf(p.Name, a.ID)
