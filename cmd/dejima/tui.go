@@ -649,6 +649,22 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return mm, nil
 		}
 		return m, nil
+	case "c":
+		// Open the island's repo in VS Code / Cursor over Remote-SSH, straight at
+		// /workspace — no folder-browsing. Needs the SSH façade (so the dejima-<island>
+		// host exists) and a local editor CLI.
+		if name := m.selectedName(); name != "" {
+			if m.overview == nil || m.overview.SSHAddr == "" {
+				m.lastError = "ssh façade is off — press m → SSH setup, or start dejimad with --ssh"
+				return m, nil
+			}
+			if err := openInEditor("dejima-" + name); err != nil {
+				m.lastError = err.Error()
+			} else {
+				m.lastNotice = "opening " + name + " in your editor at /workspace…"
+			}
+		}
+		return m, nil
 	case " ", "right", "left":
 		// Expand/collapse an island to reveal its agents + the add-agent row.
 		if r := m.currentRow(); r.kind == rowIsland {
@@ -1144,6 +1160,9 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 				actionMenuItem{label: "Add an agent", key: "+"},
 				actionMenuItem{label: "Hibernate", key: "h"},
 			)
+			if m.overview != nil && m.overview.SSHAddr != "" {
+				items = append(items, actionMenuItem{label: "Open in VS Code / Cursor (/workspace)", key: "c"})
+			}
 		} else {
 			items = append(items, actionMenuItem{label: "Wake", key: "w"})
 		}
@@ -2186,6 +2205,7 @@ func (m tuiModel) renderHelp() string {
 		{"u", "upgrade — recreate on the current island image, all state kept — confirms first"},
 		{"b", "build the island image on the daemon host — confirms first"},
 		{"d", "purge — destroy the island and its volumes — confirms first"},
+		{"c", "open the island in VS Code / Cursor over SSH, straight at /workspace"},
 		{"s", "switch connection target (local / saved remote daemons)"},
 		{"R", "refresh now"},
 	}

@@ -100,6 +100,25 @@ func openWindowsTerminal(exe, verb, name, agentID string, extra []string, host s
 	return exec.Command("cmd", "/c", "start", name, "cmd", "/c", inner).Run()
 }
 
+// editorWorkspace is where every island mounts its working tree — the folder we
+// open editors into, instead of the SSH login home (which holds only dotfiles).
+const editorWorkspace = "/workspace"
+
+// openInEditor launches VS Code (or Cursor / VS Code Insiders, whichever is on
+// PATH) connected to the island over Remote-SSH and opened straight at
+// /workspace — so the user never has to browse to the repo. The alias matches
+// the `dejima-<island>` Host that `ssh config`/`enroll` writes; VS Code's remote
+// authority for an ssh-config host is `ssh-remote+<alias>`.
+func openInEditor(alias string) error {
+	remote := "ssh-remote+" + alias
+	for _, bin := range []string{"code", "cursor", "code-insiders"} {
+		if exe, err := exec.LookPath(bin); err == nil {
+			return exec.Command(exe, "--remote", remote, editorWorkspace).Run()
+		}
+	}
+	return fmt.Errorf("no VS Code / Cursor CLI found on PATH — connect manually: Remote-SSH → %s, then open %s", alias, editorWorkspace)
+}
+
 // openMacTerminal opens the command in a new iTerm tab (in the current window,
 // matching the new-tab behavior of tmux and Windows Terminal) or, on
 // Terminal.app — whose AppleScript has no first-class tab support — a new window.

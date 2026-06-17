@@ -428,6 +428,10 @@ func installSSHConfig(island, block string) error {
 		fmt.Printf("added Host dejima-%s to %s\n", island, path)
 	}
 	fmt.Printf("VS Code / Cursor → Remote-SSH: Connect to Host… → dejima-%s\n", island)
+	// The dead-simple path: open straight into the repo, no folder-browsing (the
+	// SSH home is /home/<island>, which only holds dotfiles — the working tree is
+	// /workspace). VS Code remembers the folder per host after the first open.
+	fmt.Printf("   or open the repo directly:  code --remote ssh-remote+dejima-%s /workspace\n", island)
 	return nil
 }
 
