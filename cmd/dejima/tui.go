@@ -161,13 +161,21 @@ func initialTUIModel(c *api.Client) tuiModel {
 	}
 }
 
-// settingsModel is the general-settings overlay (opened with ','). Today it
-// holds the preferred Remote-SSH editor; new client-side preferences slot in as
-// more rows.
+// settingsModel is the general-settings overlay (opened with 's'). It's a small
+// two-level menu: a top page of preferences (editor, group-by-repo, connection
+// target) and an editor sub-page. Global, infrequent controls live here instead
+// of each owning a footer hotkey.
 type settingsModel struct {
-	editors []editorChoice
-	sel     int
+	page settingsPage
+	sel  int
 }
+
+type settingsPage int
+
+const (
+	settingsTop    settingsPage = iota // the preferences list
+	settingsEditor                     // the editor radio sub-page
+)
 
 type editorChoice struct {
 	label string // shown to the user
@@ -183,40 +191,64 @@ var editorChoices = []editorChoice{
 	{"VS Code Insiders", "code-insiders"},
 }
 
-// openSettings builds the settings overlay with the current editor preselected.
+// settingsTopLen is the number of rows on the top preferences page.
+const settingsTopLen = 3 // editor · group-by-repo · connection target
+
 func (m tuiModel) openSettings() tuiModel {
-	sel := 0
-	for i, c := range editorChoices {
-		if c.cmd == m.editor {
-			sel = i
-			break
-		}
-	}
-	m.settings = &settingsModel{editors: editorChoices, sel: sel}
+	m.settings = &settingsModel{page: settingsTop}
 	return m
 }
 
-// settingsKey drives the settings overlay: pick an editor (persisted to
-// clientcfg) or close.
+func editorIndex(cmd string) int {
+	for i, c := range editorChoices {
+		if c.cmd == cmd {
+			return i
+		}
+	}
+	return 0
+}
+
+// settingsKey drives the settings overlay.
 func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := m.settings
+	rows := settingsTopLen
+	if s.page == settingsEditor {
+		rows = len(editorChoices)
+	}
 	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	case "esc", "q", "ctrl+c", "left", "h":
+		if s.page == settingsEditor { // back to the top page, don't close
+			s.page, s.sel = settingsTop, 0
+			return m, nil
+		}
 		m.settings = nil
 		return m, nil
 	case "j", "down":
-		if m.settings.sel < len(m.settings.editors)-1 {
-			m.settings.sel++
+		if s.sel < rows-1 {
+			s.sel++
 		}
 		return m, nil
 	case "k", "up":
-		if m.settings.sel > 0 {
-			m.settings.sel--
+		if s.sel > 0 {
+			s.sel--
 		}
 		return m, nil
 	case "enter", "right", "l", " ":
-		choice := m.settings.editors[m.settings.sel]
+		if s.page == settingsTop {
+			switch s.sel {
+			case 0: // Preferred editor → sub-page
+				s.page, s.sel = settingsEditor, editorIndex(m.editor)
+				return m, nil
+			case 1: // Toggle group-by-repo (stays open)
+				return m.toggleGrouped(), nil
+			case 2: // Connection target → reuse the existing switcher overlay
+				m.settings = nil
+				return m.openSwitcher()
+			}
+		}
+		// Editor sub-page: choose + persist, then back to the top page.
+		choice := editorChoices[s.sel]
 		m.editor = choice.cmd
-		m.settings = nil
 		cfg, _ := clientcfg.Load()
 		cfg.Editor = choice.cmd
 		if err := clientcfg.Save(cfg); err != nil {
@@ -226,9 +258,26 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.lastNotice = "editor set to " + choice.label
 		}
+		s.page, s.sel = settingsTop, 0
 		return m, nil
 	}
 	return m, nil
+}
+
+// toggleGrouped flips repo-grouping and re-anchors the cursor on the island it
+// was on (rows reorder). Shared by the settings toggle and the `p` accelerator.
+func (m tuiModel) toggleGrouped() tuiModel {
+	anchor := m.selectedName()
+	m.grouped = !m.grouped
+	if anchor != "" {
+		for i, row := range m.visibleRows() {
+			if row.kind == rowIsland && row.island == anchor {
+				m.selected = i
+				break
+			}
+		}
+	}
+	return m
 }
 
 // ---------------------------------------------------------------------------
@@ -687,8 +736,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.hostTerminalsEnabled() {
 			return m, m.createTerminalCmd("")
 		}
-	case "s":
-		return m.openSwitcher()
+	case "s", ",":
+		// General settings (editor · group-by-repo · connection target). Server
+		// switching now lives inside here rather than owning its own hotkey.
+		return m.openSettings(), nil
 	case "j", "down":
 		if m.selected < m.rowCount()-1 {
 			m.selected++
@@ -766,19 +817,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "p":
-		// Toggle grouping the island list by repo (sibling/project view). Reorders
-		// rows, so re-anchor the cursor on the island it was on.
-		anchor := m.selectedName()
-		m.grouped = !m.grouped
-		if anchor != "" {
-			for i, row := range m.visibleRows() {
-				if row.kind == rowIsland && row.island == anchor {
-					m.selected = i
-					break
-				}
-			}
-		}
-		return m, nil
+		// Toggle grouping the island list by repo (sibling/project view). Also
+		// reachable from Settings; kept as a power-user accelerator.
+		return m.toggleGrouped(), nil
 	case "a":
 		// Explicit "attach in this terminal" — replaces the dashboard. Useful
 		// when the user actually wants the old behavior even though a
@@ -873,9 +914,6 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "R":
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd())
-	case ",":
-		// General settings (preferred editor, …).
-		return m.openSettings(), nil
 	}
 	return m, nil
 }
@@ -1612,7 +1650,7 @@ func (m tuiModel) renderHeader() string {
 	// info line is 69 cols; small logo + chrome is 21 + 9 = 30).
 	if m.height < 24 || m.width < 99 {
 		title := styleTitle.Render("Dejima")
-		right := styleMuted.Render(label + envNote + " ⇄ [s]")
+		right := styleMuted.Render(label + envNote + " ⚙ [s]")
 		if _, short, style, ok := m.announcement(); ok {
 			// No room for the full bar; a highlighted chip still draws the eye.
 			right = style.Render(short) + " " + right
@@ -1648,7 +1686,7 @@ func (m tuiModel) renderHeader() string {
 	if m.overview != nil && m.overview.SSHAddr != "" {
 		serverLine += styleMuted.Render("  ·  ssh ") + styleAccent.Render(m.overview.SSHAddr)
 	}
-	serverLine += styleMuted.Render("  ·  [s] switch  ·  [?] all keys")
+	serverLine += styleMuted.Render("  ·  [s] settings  ·  [?] all keys")
 
 	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
 
@@ -2179,8 +2217,8 @@ func (m tuiModel) renderFooter() string {
 	if m.hostTerminalsEnabled() {
 		term = "[t] terminal   "
 	}
-	keys1 := "[n] new   " + term + "[s] server   [,] settings   [?] help   [q] quit"
-	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll + "   [p] group"
+	keys1 := "[n] new   " + term + "[s] settings   [?] help   [q] quit"
+	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -2293,8 +2331,8 @@ func (m tuiModel) renderHelp() string {
 		{"b", "build the island image on the daemon host — confirms first"},
 		{"d", "purge — destroy the island and its volumes — confirms first"},
 		{"c", "open the island in your editor over SSH, straight at /workspace"},
-		{",", "settings — pick your editor (VS Code / Cursor / Windsurf / Antigravity)"},
-		{"s", "switch connection target (local / saved remote daemons)"},
+		{"s", "settings — editor · group-by-repo · connection target (server)"},
+		{"p", "toggle group-by-repo (also in settings)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
@@ -2401,30 +2439,54 @@ func (m tuiModel) renderActionMenu() string {
 	return b.String()
 }
 
-// renderSettings draws the general-settings overlay: the preferred Remote-SSH
-// editor as a radio list (used by 'c' / the action menu's open-in-editor item).
+// renderSettings draws the general-settings overlay — either the top
+// preferences list or the editor radio sub-page.
 func (m tuiModel) renderSettings() string {
 	st := m.settings
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Settings · preferred editor"))
-	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("which editor 'c' opens an island in (over Remote-SSH, at /workspace)"))
-	b.WriteString("\n\n")
-	for i, c := range st.editors {
-		dot := "○ "
-		if c.cmd == m.editor {
-			dot = "● "
-		}
-		mark := "   "
+	row := func(i int, mark, text string) {
+		lead := "   "
 		style := lipgloss.NewStyle()
 		if i == st.sel {
-			mark = styleAccent.Render(" ▸ ")
+			lead = styleAccent.Render(" ▸ ")
 			style = styleSelected
 		}
-		b.WriteString(mark + style.Render(dot+c.label) + "\n")
+		b.WriteString(lead + mark + style.Render(text) + "\n")
 	}
+
+	if st.page == settingsEditor {
+		b.WriteString(styleHeader.Render("Settings · preferred editor"))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("which editor 'c' opens an island in (Remote-SSH, at /workspace)"))
+		b.WriteString("\n\n")
+		for i, c := range editorChoices {
+			dot := "○ "
+			if c.cmd == m.editor {
+				dot = "● "
+			}
+			row(i, dot, c.label)
+		}
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("↑/↓ move · ⏎ choose · esc back"))
+		return b.String()
+	}
+
+	b.WriteString(styleHeader.Render("Settings"))
+	b.WriteString("\n\n")
+	editorLabel := editorChoices[editorIndex(m.editor)].label
+	groupState := "off"
+	if m.grouped {
+		groupState = "on"
+	}
+	target := m.activeLabel
+	if target == "" {
+		target = "local"
+	}
+	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
+	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))
+	row(2, "", "Connection target         "+styleMuted.Render(target)+styleMuted.Render("  →"))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ choose · esc close"))
+	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()
 }
 
