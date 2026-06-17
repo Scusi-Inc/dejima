@@ -198,7 +198,7 @@ var editorChoices = []editorChoice{
 }
 
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 3 // editor · group-by-repo · connection target
+const settingsTopLen = 5 // editor · group-by-repo · connection target · check-for-updates · update
 
 func (m tuiModel) openSettings() tuiModel {
 	m.settings = &settingsModel{page: settingsTop}
@@ -250,6 +250,21 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 2: // Connection target → reuse the existing switcher overlay
 				m.settings = nil
 				return m.openSwitcher()
+			case 3: // Check for updates (re-poll GitHub) — stays open; line refreshes
+				m.lastNotice = "checking for updates…"
+				return m, tea.Batch(fetchLatestReleaseCmd(), m.fetchOverviewCmd())
+			case 4: // Update — same flow as 'U' (confirm, then client/daemon apply)
+				m.settings = nil
+				m.updateError = ""
+				switch {
+				case m.clientUpdate:
+					m.confirm = &confirmPrompt{verb: "update-client"}
+				case m.daemonUpdate:
+					m.confirm = &confirmPrompt{verb: "update-daemon"}
+				default:
+					m.lastNotice = "already up to date"
+				}
+				return m, nil
 			}
 		}
 		// Editor sub-page: choose + persist, then back to the top page.
@@ -2507,7 +2522,22 @@ func (m tuiModel) renderSettings() string {
 	}
 
 	b.WriteString(styleHeader.Render("Settings"))
+	b.WriteString("\n")
+	// Version line: this client, the connected daemon (when it differs), and
+	// whether anything's behind the latest release.
+	ver := "dejima " + version.Version
+	if m.overview != nil && m.overview.DaemonVersion != "" && m.overview.DaemonVersion != version.Version {
+		ver += " · daemon " + m.overview.DaemonVersion
+	}
+	switch {
+	case m.clientUpdate || m.daemonUpdate:
+		ver += "  ·  " + styleWaiting.Render("update available → "+m.updateParts())
+	case m.latestRelease != "":
+		ver += "  ·  " + styleRunning.Render("up to date")
+	}
+	b.WriteString(styleMuted.Render(ver))
 	b.WriteString("\n\n")
+
 	editorLabel := editorChoices[editorIndex(m.editor)].label
 	groupState := "off"
 	if m.grouped {
@@ -2517,9 +2547,15 @@ func (m tuiModel) renderSettings() string {
 	if target == "" {
 		target = "local"
 	}
+	updateRow := "Update                    " + styleMuted.Render("up to date")
+	if m.clientUpdate || m.daemonUpdate {
+		updateRow = "Update                    " + styleWaiting.Render("→ "+m.latestRelease)
+	}
 	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
 	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))
 	row(2, "", "Connection target         "+styleMuted.Render(target)+styleMuted.Render("  →"))
+	row(3, "", "Check for updates")
+	row(4, "", updateRow)
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()
