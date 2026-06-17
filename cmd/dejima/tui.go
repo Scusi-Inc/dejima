@@ -119,6 +119,12 @@ type tuiModel struct {
 	skew         string // client/daemon version-skew warning, or ""
 	editor       string // preferred Remote-SSH editor CLI ("" = auto-detect); from clientcfg
 	settings     *settingsModel // non-nil while the settings overlay is open
+	// updateError is a STICKY client/daemon self-update failure, shown in the
+	// header announcement until the next update attempt or an explicit dismiss
+	// (esc). Distinct from lastError, which routine 2s polls clear — an update
+	// failure that vanished in 2s is exactly the bug #22's reporting was meant to
+	// kill, so it gets its own non-transient slot.
+	updateError string
 }
 
 type confirmPrompt struct {
@@ -562,7 +568,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case clientUpdatedMsg:
 		if msg.err != nil {
-			m.lastError = "client update failed: " + msg.err.Error()
+			m.updateError = "client update failed: " + msg.err.Error()
 		} else {
 			m.clientUpdate = false
 			m.lastNotice = "updated client to " + msg.version + " — restart dejima to run the new version"
@@ -573,10 +579,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.err != nil:
 			// The install now runs synchronously, so an error here is a real
-			// failure (git pull / make install / missing sudoers) — surface it.
-			// The restart happens only after a successful install, so this isn't
-			// just an expected connection drop.
-			m.lastError = "daemon update failed: " + msg.err.Error()
+			// failure (git pull / make install / missing sudoers) — surface it
+			// stickily (updateError), since the transient lastError would be
+			// wiped by the next 2s poll before it could be read.
+			m.updateError = "daemon update failed: " + msg.err.Error()
 		case msg.resp != nil && msg.resp.Applying:
 			m.daemonUpdate = false
 			m.lastNotice = "daemon installed " + msg.resp.Latest + ", restarting — it'll reconnect shortly"
@@ -907,8 +913,13 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.confirm = &confirmPrompt{verb: "setup-ssh"}
 		return m, nil
+	case "esc":
+		// Dismiss a sticky update-error banner (no overlay is active here).
+		m.updateError = ""
+		return m, nil
 	case "U":
 		// Update Dejima itself (distinct from lowercase 'u' = upgrade an island).
+		m.updateError = "" // clear a prior failure when retrying
 		switch {
 		case m.clientUpdate:
 			m.confirm = &confirmPrompt{verb: "update-client"}
@@ -1501,6 +1512,10 @@ var (
 	// background, near-black bold text. Amber, not red — an update is attention,
 	// not danger; red stays reserved for PANIC/errors so the two never blur.
 	styleBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#0b1220")).Background(lipgloss.Color("#fbbf24")).Bold(true)
+	// styleErrorBroadcast is the attention bar for a failed action (e.g. a
+	// self-update that errored) — red where styleBroadcast is amber, so a failure
+	// reads as a failure, not just news.
+	styleErrorBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#fef2f2")).Background(lipgloss.Color("#b91c1c")).Bold(true)
 	// styleMenuBox frames the per-row action popup — a brighter border than the
 	// panes so it reads as a modal floating above them.
 	styleMenuBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3b5b8f")).Padding(0, 2)
@@ -1596,6 +1611,11 @@ func (m tuiModel) updateParts() string {
 // PANIC stays its own override (renderPanicBanner) since it supersedes the UI.
 func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok bool) {
 	switch {
+	case m.updateError != "":
+		// A failed self-update outranks the "update available" prompt and stays
+		// put (red) until retried [U] or dismissed [esc] — never wiped by a poll.
+		return " ⚠ " + m.updateError + "   ·   [U] retry · [esc] dismiss",
+			" ⚠ update failed ", styleErrorBroadcast, true
 	case m.clientUpdate || m.daemonUpdate:
 		return " ⬆ update available: " + m.updateParts() + "   ·   [U] update",
 			" ⬆ [U] update ", styleBroadcast, true
