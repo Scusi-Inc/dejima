@@ -619,7 +619,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.resEditor = nil
 			if msg.restartRequired {
-				m.lastNotice = "resources updated — memory applied live; OOM priority applies on next restart"
+				// OOM priority is create-time, so it only takes effect on a
+				// container recreate — offer to do that now, for this island only.
+				m.confirm = &confirmPrompt{verb: "recreate-island", island: msg.island}
 			} else {
 				m.lastNotice = "resources updated"
 			}
@@ -984,6 +986,14 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	case "upgrade":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			m.dirtyOps[c.island] = "upgrading"
+			return m, m.opCmd(c.island, "upgrade")
+		}
+	case "recreate-island":
+		// Recreate the container so a create-time setting (OOM priority) applies.
+		// Same mechanism as upgrade (recreate on the current image; workspace and
+		// agent state preserved) — just a different prompt.
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			m.dirtyOps[c.island] = "restarting"
 			return m, m.opCmd(c.island, "upgrade")
 		}
 	case "build-image":
@@ -2314,12 +2324,13 @@ func (m tuiModel) renderDetail(_ int) string {
 			humanBytes(uint64(d.Disk.HomeBytes))))
 	}
 	if r := d.Resources; r != nil {
-		limit := "unlimited"
+		// Lead with OOM priority (the meaningful knob); show a memory cap only when
+		// one is actually set — "unlimited" is the default and just adds noise.
+		line := "priority " + oomTierLabel(r.OOMPriority)
 		if r.Memory != "" {
-			limit = r.Memory
+			line += " · mem cap " + r.Memory
 		}
-		b.WriteString(fmt.Sprintf("limits:    mem %s · priority %s   %s\n",
-			limit, oomTierLabel(r.OOMPriority), styleMuted.Render("(m → Resources…)")))
+		b.WriteString(fmt.Sprintf("limits:    %s   %s\n", line, styleMuted.Render("(m → Resources…)")))
 	}
 	if d.AgentState != nil {
 		b.WriteString(fmt.Sprintf("agent:     %s (%s ago)\n",
@@ -2631,6 +2642,9 @@ func (m tuiModel) renderConfirm() string {
 			c.island, c.answer)
 	case "upgrade":
 		prompt = fmt.Sprintf("Recreate %q on the current island image (all state preserved)? Type 'y' and press Enter: %s",
+			c.island, c.answer)
+	case "recreate-island":
+		prompt = fmt.Sprintf("OOM priority changed — restart %q now to apply? (recreates the container; workspace + agents preserved) Type 'y' and Enter: %s",
 			c.island, c.answer)
 	case "build-image":
 		prompt = fmt.Sprintf("Rebuild the island image? Takes a few minutes; islands pick it up on upgrade. Type 'y' and press Enter: %s",
