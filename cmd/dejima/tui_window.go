@@ -48,9 +48,12 @@ func (m tuiModel) openAgentWindow(verb, name, agentID string, extra []string) er
 	if err != nil || exe == "" {
 		exe = "dejima"
 	}
+	// Session tabs are titled "<island>-<agent>" (just "<island>" when it's the
+	// primary/only agent) so each opened session is identifiable. The dashboard's
+	// own tab is titled "dejima" (set via tea.SetWindowTitle at startup).
 	winLabel := name
 	if agentID != "" {
-		winLabel = name + "/" + agentID
+		winLabel = name + "-" + agentID
 	}
 	// A shell command string: pin DEJIMA_HOST, then exec the verb.
 	inner := fmt.Sprintf("DEJIMA_HOST=%s exec %s %s %s",
@@ -87,8 +90,10 @@ func openWindowsTerminal(exe, verb, name, agentID string, extra []string, host s
 		}
 	}
 	run := `"` + exe + `" ` + verb + ` ` + name
+	title := name // "<island>-<agent>" (just "<island>" for the primary agent)
 	if agentID != "" {
 		run += " --agent " + agentID
+		title = name + "-" + agentID
 	}
 	for _, e := range extra {
 		run += " " + e
@@ -98,9 +103,9 @@ func openWindowsTerminal(exe, verb, name, agentID string, extra []string, host s
 		// -w 0 targets the CURRENT Windows Terminal window (a new tab in it).
 		// -w -1 / "new" would force a separate window every time — which is the
 		// opposite of what we want here.
-		return exec.Command(wt, "-w", "0", "new-tab", "--title", name, "cmd", "/c", inner).Run()
+		return exec.Command(wt, "-w", "0", "new-tab", "--title", title, "cmd", "/c", inner).Run()
 	}
-	return exec.Command("cmd", "/c", "start", name, "cmd", "/c", inner).Run()
+	return exec.Command("cmd", "/c", "start", title, "cmd", "/c", inner).Run()
 }
 
 // editorWorkspace is where every island mounts its working tree — the folder we

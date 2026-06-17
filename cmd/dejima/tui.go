@@ -405,7 +405,9 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 // ---------------------------------------------------------------------------
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
+	// Title the dashboard's own terminal tab "dejima" (session tabs it spawns are
+	// titled "<island>-<agent>"); see openAgentWindow.
+	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
 // latestReleaseMsg carries the newest published release tag (or "" on any
