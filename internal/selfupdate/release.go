@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // releaseDownloadBase is the GitHub release-asset base URL, overridable in tests.
@@ -97,8 +98,17 @@ func ReplaceExecutable(newPath, target string) error {
 		return err
 	}
 	if runtime.GOOS == "windows" {
-		old := target + ".old"
-		_ = os.Remove(old)
+		// Windows can't unlink/overwrite a running image, but it CAN rename it
+		// aside. Use a UNIQUE sidecar per attempt: a fixed ".old" breaks when a
+		// prior same-session update already set the running TUI's image aside as
+		// ".old" — that file is the live process image, so it's locked, os.Remove
+		// can't clear it, and the rename collides with "Access is denied". A
+		// timestamped name never collides. Sweep stale sidecars best-effort (the
+		// still-locked running one stays and is harmless; cleaned a future run).
+		for _, f := range oldSidecars(target) {
+			_ = os.Remove(f)
+		}
+		old := fmt.Sprintf("%s.old-%d", target, time.Now().UnixNano())
 		if err := os.Rename(target, old); err != nil {
 			return fmt.Errorf("set aside running exe: %w", err)
 		}
@@ -106,12 +116,20 @@ func ReplaceExecutable(newPath, target string) error {
 			_ = os.Rename(old, target) // roll back
 			return err
 		}
-		_ = os.Remove(old) // best-effort; may fail while in use, cleaned next run
+		_ = os.Remove(old) // best-effort; locked while this build keeps running, swept next run
 		return nil
 	}
 	// Unix: rename within the same directory is atomic and works even while the
 	// old inode is still executing.
 	return os.Rename(newPath, target)
+}
+
+// oldSidecars returns the set-aside "<target>.old*" files from prior Windows
+// updates, so they can be swept best-effort (the one that's still a running
+// image stays locked and is skipped harmlessly).
+func oldSidecars(target string) []string {
+	matches, _ := filepath.Glob(target + ".old*")
+	return matches
 }
 
 // verifySHA256 confirms data's SHA-256 matches the entry for asset in a
