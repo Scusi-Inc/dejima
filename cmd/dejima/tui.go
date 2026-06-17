@@ -112,13 +112,14 @@ type tuiModel struct {
 	agentAdder   *agentAdder     // non-nil while the add-agent flow is active
 	expanded     map[string]bool // island name → agents-revealed (default: all expanded)
 
-	activeHost   string // current target: "" = local socket, else host:port
-	activeLabel  string // profile name for the active target, if known
-	activeSource string // where the target came from: "env" | "profile" | "local"
-	detailScroll int    // scroll offset (lines) for the detail panel; reset on selection change
-	skew         string // client/daemon version-skew warning, or ""
-	editor       string // preferred Remote-SSH editor CLI ("" = auto-detect); from clientcfg
-	settings     *settingsModel // non-nil while the settings overlay is open
+	activeHost   string          // current target: "" = local socket, else host:port
+	activeLabel  string          // profile name for the active target, if known
+	activeSource string          // where the target came from: "env" | "profile" | "local"
+	detailScroll int             // scroll offset (lines) for the detail panel; reset on selection change
+	skew         string          // client/daemon version-skew warning, or ""
+	editor       string          // preferred Remote-SSH editor CLI ("" = auto-detect); from clientcfg
+	settings     *settingsModel  // non-nil while the settings overlay is open
+	resEditor    *resourceEditor // non-nil while the per-island resources overlay is open
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -149,8 +150,11 @@ type actionMenu struct {
 
 type actionMenuItem struct {
 	label  string // human label, e.g. "Hibernate"
-	key    string // the accelerator this dispatches, e.g. "h"
+	key    string // the accelerator this dispatches, e.g. "h" (empty when open is set)
 	danger bool   // destructive — rendered in alarm color
+	// open, when set, is a menu-only action with no global hotkey — chooseMenuItem
+	// calls it directly (after re-anchoring) instead of re-dispatching a key.
+	open func(tuiModel) (tea.Model, tea.Cmd)
 }
 
 func initialTUIModel(c *api.Client) tuiModel {
@@ -606,6 +610,22 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case resourcesUpdatedMsg:
+		if m.resEditor != nil {
+			m.resEditor.busy = false
+		}
+		if msg.err != nil {
+			m.lastError = "resources: " + msg.err.Error()
+		} else {
+			m.resEditor = nil
+			if msg.restartRequired {
+				m.lastNotice = "resources updated — memory applied live; OOM priority applies on next restart"
+			} else {
+				m.lastNotice = "resources updated"
+			}
+		}
+		return m, tea.Batch(m.fetchListCmd(), m.fetchDetailCmd(msg.island))
+
 	case detailMsg:
 		if name := m.selectedName(); msg.info != nil && msg.info.Name == name {
 			m.detail = msg.info
@@ -726,6 +746,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The settings overlay owns keys while open.
 	if m.settings != nil {
 		return m.settingsKey(msg)
+	}
+	// The per-island resources overlay owns keys while open.
+	if m.resEditor != nil {
+		return m.resEditorKey(msg)
 	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
@@ -1319,6 +1343,10 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 			items = append(items, actionMenuItem{label: "Wake", key: "w"})
 		}
 		items = append(items, actionMenuItem{label: "Rename", key: "e"})
+		islandName := isl.Name
+		items = append(items, actionMenuItem{label: "Resources… (memory · OOM priority)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openResourceEditor(islandName)
+		}})
 		if m.overview != nil && m.overview.SSHAddr != "" {
 			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", key: "S"})
 		}
@@ -1380,12 +1408,12 @@ func (m tuiModel) actionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter", "right", "l":
-		return m.chooseMenuItem(m.menu.items[m.menu.sel].key)
+		return m.chooseMenuItem(m.menu.items[m.menu.sel])
 	}
 	// A direct accelerator press jumps straight to that item.
 	for _, it := range m.menu.items {
-		if it.key == msg.String() {
-			return m.chooseMenuItem(it.key)
+		if it.key != "" && it.key == msg.String() {
+			return m.chooseMenuItem(it)
 		}
 	}
 	return m, nil
@@ -1397,7 +1425,7 @@ func (m tuiModel) actionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // list refresh can reorder rows (islands sort running-first, so a state flip
 // shifts selection), and the accelerator handlers act on currentRow — without
 // this, a destructive action like purge could land on the wrong island.
-func (m tuiModel) chooseMenuItem(key string) (tea.Model, tea.Cmd) {
+func (m tuiModel) chooseMenuItem(it actionMenuItem) (tea.Model, tea.Cmd) {
 	target := m.menu.row
 	m.menu = nil
 	idx := -1
@@ -1413,7 +1441,167 @@ func (m tuiModel) chooseMenuItem(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.selected = idx
-	return m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	if it.open != nil {
+		return it.open(m)
+	}
+	return m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(it.key)})
+}
+
+// resourceEditor is the per-island Resources overlay (memory limit + OOM
+// priority). Memory applies live; an OOM-priority change takes effect on the
+// island's next restart (the daemon flags restart_required).
+type resourceEditor struct {
+	island  string
+	field   int // 0 = memory, 1 = priority
+	memSel  int
+	prioSel int
+	busy    bool
+}
+
+var memPresets = []struct{ label, value string }{
+	{"unlimited", ""}, {"2G", "2G"}, {"4G", "4G"}, {"8G", "8G"}, {"16G", "16G"},
+}
+
+// prioPresets are ordered most→least protected; values match the api presets
+// (critical +100 / normal 0 / expendable −100).
+var prioPresets = []struct {
+	label string
+	value int
+}{
+	{"critical — killed last", 100},
+	{"normal", 0},
+	{"expendable — killed first (self-restarting brains)", -100},
+}
+
+// prioPresetIndex maps a stored priority to the nearest preset row (exact values
+// land exactly; a custom stack-rank value buckets by sign).
+func prioPresetIndex(v int) int {
+	switch {
+	case v > 0:
+		return 0
+	case v < 0:
+		return 2
+	default:
+		return 1
+	}
+}
+
+// oomTierLabel names a stored priority for display (nil = unset/default).
+func oomTierLabel(v *int) string {
+	if v == nil {
+		return "normal"
+	}
+	switch {
+	case *v > 0:
+		return fmt.Sprintf("critical (%d)", *v)
+	case *v < 0:
+		return fmt.Sprintf("expendable (%d)", *v)
+	default:
+		return "normal"
+	}
+}
+
+func (m tuiModel) openResourceEditor(island string) (tea.Model, tea.Cmd) {
+	ed := &resourceEditor{island: island, memSel: 0, prioSel: 1} // unlimited · normal
+	if m.detail != nil && m.detail.Name == island && m.detail.Resources != nil {
+		r := m.detail.Resources
+		for i, p := range memPresets {
+			if p.value == r.Memory {
+				ed.memSel = i
+				break
+			}
+		}
+		if r.OOMPriority != nil {
+			ed.prioSel = prioPresetIndex(*r.OOMPriority)
+		}
+	}
+	m.resEditor = ed
+	return m, nil
+}
+
+func (m tuiModel) resEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	ed := m.resEditor
+	if ed.busy {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "q", "ctrl+c":
+		m.resEditor = nil
+		return m, nil
+	case "down", "j":
+		if ed.field < 1 {
+			ed.field++
+		}
+		return m, nil
+	case "up", "k":
+		if ed.field > 0 {
+			ed.field--
+		}
+		return m, nil
+	case "left", "h":
+		if ed.field == 0 {
+			ed.memSel = (ed.memSel - 1 + len(memPresets)) % len(memPresets)
+		} else {
+			ed.prioSel = (ed.prioSel - 1 + len(prioPresets)) % len(prioPresets)
+		}
+		return m, nil
+	case "right", "l", " ":
+		if ed.field == 0 {
+			ed.memSel = (ed.memSel + 1) % len(memPresets)
+		} else {
+			ed.prioSel = (ed.prioSel + 1) % len(prioPresets)
+		}
+		return m, nil
+	case "enter":
+		ed.busy = true
+		return m, m.applyResourcesCmd(ed.island, memPresets[ed.memSel].value, prioPresets[ed.prioSel].value)
+	}
+	return m, nil
+}
+
+type resourcesUpdatedMsg struct {
+	island          string
+	err             error
+	restartRequired bool
+}
+
+func (m tuiModel) applyResourcesCmd(island, mem string, prio int) tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		resp, err := c.UpdateIslandResources(ctx, island, api.UpdateResourcesRequest{Memory: &mem, OOMPriority: &prio})
+		return resourcesUpdatedMsg{island: island, err: err, restartRequired: resp != nil && resp.RestartRequired}
+	}
+}
+
+func (m tuiModel) renderResourceEditor() string {
+	ed := m.resEditor
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Resources — " + ed.island))
+	b.WriteString("\n\n")
+	rows := [2]struct{ label, val string }{
+		{"Memory limit", memPresets[ed.memSel].label},
+		{"OOM priority", prioPresets[ed.prioSel].label},
+	}
+	for i, r := range rows {
+		lead := "   "
+		val := styleMuted.Render("‹ ") + r.val + styleMuted.Render(" ›")
+		if i == ed.field {
+			lead = styleAccent.Render(" ▸ ")
+			val = styleSelected.Render(" ‹ " + r.val + " › ")
+		}
+		b.WriteString(fmt.Sprintf("%s%-14s %s\n", lead, r.label, val))
+	}
+	b.WriteString("\n")
+	if ed.busy {
+		b.WriteString(styleAccent.Render("applying…"))
+		return b.String()
+	}
+	b.WriteString(styleMuted.Render("↑/↓ field · ←/→ change · ⏎ apply · esc cancel"))
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("memory applies live; OOM priority on next restart"))
+	return b.String()
 }
 
 func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
@@ -1576,6 +1764,11 @@ func (m tuiModel) View() string {
 	}
 	if m.settings != nil {
 		box := styleMenuBox.Render(m.renderSettings())
+		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.resEditor != nil {
+		box := styleMenuBox.Render(m.renderResourceEditor())
 		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
@@ -2119,6 +2312,14 @@ func (m tuiModel) renderDetail(_ int) string {
 		b.WriteString(fmt.Sprintf("disk:      %s (ws %s · home %s)\n",
 			humanBytes(uint64(d.Disk.TotalBytes)), humanBytes(uint64(d.Disk.WorkspaceBytes)),
 			humanBytes(uint64(d.Disk.HomeBytes))))
+	}
+	if r := d.Resources; r != nil {
+		limit := "unlimited"
+		if r.Memory != "" {
+			limit = r.Memory
+		}
+		b.WriteString(fmt.Sprintf("limits:    mem %s · priority %s   %s\n",
+			limit, oomTierLabel(r.OOMPriority), styleMuted.Render("(m → Resources…)")))
 	}
 	if d.AgentState != nil {
 		b.WriteString(fmt.Sprintf("agent:     %s (%s ago)\n",
