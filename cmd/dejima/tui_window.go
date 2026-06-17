@@ -100,13 +100,15 @@ func openWindowsTerminal(exe, verb, name, agentID string, extra []string, host s
 	return exec.Command("cmd", "/c", "start", name, "cmd", "/c", inner).Run()
 }
 
-// openMacTerminal opens the command in a new iTerm or Terminal.app window.
+// openMacTerminal opens the command in a new iTerm tab (in the current window,
+// matching the new-tab behavior of tmux and Windows Terminal) or, on
+// Terminal.app — whose AppleScript has no first-class tab support — a new window.
 func openMacTerminal(inner string) error {
 	var script string
 	if os.Getenv("TERM_PROGRAM") == "iTerm.app" {
 		script = fmt.Sprintf(`tell application "iTerm"
-  set w to (create window with default profile)
-  tell current session of w to write text %s
+  tell current window to set t to (create tab with default profile)
+  tell current session of t to write text %s
   activate
 end tell`, appleStr(inner))
 	} else {

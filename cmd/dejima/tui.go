@@ -634,24 +634,21 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.scrollDetail(1), nil
 	case "pgup", "ctrl+u":
 		return m.scrollDetail(-1), nil
-	case "o":
-		// Direct open — the primary action, no menu (kept as a fast path so
-		// muscle memory still jumps straight into a workspace).
+	case "enter", "o":
+		// ⏎ opens the highlighted row — the primary, frequent action. For an
+		// island/agent that means its session in a new TAB (tmux window / Windows
+		// Terminal tab / a new terminal), keeping this dashboard up; for an
+		// affordance row it runs the creator / add-agent flow. The per-row action
+		// menu lives on `m`, not here, so opening never costs an extra keystroke.
 		return m.activateRow()
-	case "enter":
-		// ⏎ on a real object row opens its context menu (open/attach/lifecycle,
-		// all hanging off the thing they act on). Affordance rows (+ new island /
-		// + add agent / + terminal) have a single obvious action, so ⏎ just runs
-		// it rather than popping a one-item menu.
-		switch m.currentRow().kind {
-		case rowIsland, rowAgent, rowTerminal:
-			if mm, ok := m.openActionMenu(); ok {
-				return mm, nil
-			}
-			return m, nil
-		default:
-			return m.activateRow()
+	case "m":
+		// Per-row action menu — the lifecycle/setup actions (hibernate, reset,
+		// rename, ssh setup, purge…) that used to crowd the footer, now hanging
+		// off the highlighted island/agent/terminal row.
+		if mm, ok := m.openActionMenu(); ok {
+			return mm, nil
 		}
+		return m, nil
 	case " ", "right", "left":
 		// Expand/collapse an island to reveal its agents + the add-agent row.
 		if r := m.currentRow(); r.kind == rowIsland {
@@ -1142,7 +1139,7 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		title = "island · " + isl.Name + "  (" + isl.Container + ")"
 		if isl.Container == "running" {
 			items = append(items,
-				actionMenuItem{label: "Open in a new window", key: "o"},
+				actionMenuItem{label: "Open (new tab)", key: "o"},
 				actionMenuItem{label: "Attach in this terminal", key: "a"},
 				actionMenuItem{label: "Add an agent", key: "+"},
 				actionMenuItem{label: "Hibernate", key: "h"},
@@ -1172,7 +1169,7 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 			items = append(items, actionMenuItem{label: "View logs", key: "o"})
 		} else {
 			items = append(items,
-				actionMenuItem{label: "Open in a new window", key: "o"},
+				actionMenuItem{label: "Open (new tab)", key: "o"},
 				actionMenuItem{label: "Attach in this terminal", key: "a"},
 			)
 		}
@@ -1562,7 +1559,7 @@ func (m tuiModel) renderHeader() string {
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
 		styleMuted.Render("Each island is one repo + one agent in its own container."),
-		styleAccent.Render("↑/↓") + styleMuted.Render(" pick an island  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open in a new window  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
+		styleAccent.Render("↑/↓") + styleMuted.Render(" pick an island  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open in a new tab  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		serverLine,
 	}, "\n")
@@ -2077,7 +2074,7 @@ func (m tuiModel) renderFooter() string {
 		term = "[t] terminal   "
 	}
 	keys1 := "[n] new   " + term + "[s] server   [?] help   [q] quit"
-	keys2 := "[⏎] actions   [space] expand   " + expandAll + "   [p] group"
+	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll + "   [p] group"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -2143,8 +2140,8 @@ func (m tuiModel) renderHelp() string {
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
 		{"t", "new host terminal — an uncontained shell on the daemon host (if enabled)"},
-		{"⏎", "actions menu for the highlighted island/agent (open, attach, hibernate, rename, ssh setup, purge…)"},
-		{"o", "open directly — island/agent in a new window, skipping the menu"},
+		{"⏎ / o", "open the highlighted island/agent — its session in a new tab (or run the affordance)"},
+		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh setup, purge…)"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
 		{"p", "group the island list by repo — multi-agent projects read as one"},
