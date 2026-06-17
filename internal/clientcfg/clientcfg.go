@@ -28,6 +28,11 @@ type Config struct {
 	// from the TUI. ActiveProfile records the last one selected.
 	Profiles      []Profile `json:"profiles,omitempty"`
 	ActiveProfile string    `json:"active_profile,omitempty"`
+
+	// Editor is the CLI command for the user's preferred Remote-SSH editor
+	// (e.g. "code", "cursor", "windsurf", "antigravity"). Empty means auto-detect
+	// the first one on PATH. Set from the TUI settings (',').
+	Editor string `json:"editor,omitempty"`
 }
 
 // ActiveHost resolves the currently-active profile to its daemon host. ok is

@@ -95,7 +95,10 @@ func openWindowsTerminal(exe, verb, name, agentID string, extra []string, host s
 	}
 	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& %s`, host, run)
 	if wt, err := exec.LookPath("wt.exe"); err == nil {
-		return exec.Command(wt, "-w", "-1", "new-tab", "--title", name, "cmd", "/c", inner).Run()
+		// -w 0 targets the CURRENT Windows Terminal window (a new tab in it).
+		// -w -1 / "new" would force a separate window every time — which is the
+		// opposite of what we want here.
+		return exec.Command(wt, "-w", "0", "new-tab", "--title", name, "cmd", "/c", inner).Run()
 	}
 	return exec.Command("cmd", "/c", "start", name, "cmd", "/c", inner).Run()
 }
@@ -104,19 +107,32 @@ func openWindowsTerminal(exe, verb, name, agentID string, extra []string, host s
 // open editors into, instead of the SSH login home (which holds only dotfiles).
 const editorWorkspace = "/workspace"
 
-// openInEditor launches VS Code (or Cursor / VS Code Insiders, whichever is on
-// PATH) connected to the island over Remote-SSH and opened straight at
-// /workspace — so the user never has to browse to the repo. The alias matches
-// the `dejima-<island>` Host that `ssh config`/`enroll` writes; VS Code's remote
-// authority for an ssh-config host is `ssh-remote+<alias>`.
-func openInEditor(alias string) error {
+// editorCandidates is the auto-detect order when the user hasn't picked an
+// editor: VS Code first, then its popular forks. All of them are VS Code
+// derivatives that accept `--remote ssh-remote+<host> <path>`.
+var editorCandidates = []string{"code", "cursor", "windsurf", "antigravity", "code-insiders"}
+
+// openInEditor launches the user's Remote-SSH editor connected to the island and
+// opened straight at /workspace — so they never browse to the repo. `preferred`
+// is the configured CLI command (clientcfg.Editor); empty means auto-detect the
+// first candidate on PATH. The alias matches the `dejima-<island>` Host that
+// `ssh config`/`enroll` writes; the remote authority for an ssh-config host is
+// `ssh-remote+<alias>`. Forks (Cursor/Windsurf/Antigravity) share VS Code's flag.
+func openInEditor(alias, preferred string) error {
 	remote := "ssh-remote+" + alias
-	for _, bin := range []string{"code", "cursor", "code-insiders"} {
+	if preferred != "" {
+		exe, err := exec.LookPath(preferred)
+		if err != nil {
+			return fmt.Errorf("editor %q not found on PATH — change it in settings (,) or install its CLI", preferred)
+		}
+		return exec.Command(exe, "--remote", remote, editorWorkspace).Run()
+	}
+	for _, bin := range editorCandidates {
 		if exe, err := exec.LookPath(bin); err == nil {
 			return exec.Command(exe, "--remote", remote, editorWorkspace).Run()
 		}
 	}
-	return fmt.Errorf("no VS Code / Cursor CLI found on PATH — connect manually: Remote-SSH → %s, then open %s", alias, editorWorkspace)
+	return fmt.Errorf("no editor CLI found on PATH — set one in settings (,) or install code/cursor; or connect manually: Remote-SSH → %s, open %s", alias, editorWorkspace)
 }
 
 // openMacTerminal opens the command in a new iTerm tab (in the current window,

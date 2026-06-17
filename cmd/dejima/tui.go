@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/selfupdate"
@@ -116,6 +117,8 @@ type tuiModel struct {
 	activeSource string // where the target came from: "env" | "profile" | "local"
 	detailScroll int    // scroll offset (lines) for the detail panel; reset on selection change
 	skew         string // client/daemon version-skew warning, or ""
+	editor       string // preferred Remote-SSH editor CLI ("" = auto-detect); from clientcfg
+	settings     *settingsModel // non-nil while the settings overlay is open
 }
 
 type confirmPrompt struct {
@@ -146,6 +149,7 @@ type actionMenuItem struct {
 
 func initialTUIModel(c *api.Client) tuiModel {
 	host, label, source := resolveTarget()
+	cfg, _ := clientcfg.Load()
 	return tuiModel{
 		client:       c,
 		dirtyOps:     map[string]string{},
@@ -153,7 +157,78 @@ func initialTUIModel(c *api.Client) tuiModel {
 		activeHost:   host,
 		activeLabel:  label,
 		activeSource: source,
+		editor:       cfg.Editor,
 	}
+}
+
+// settingsModel is the general-settings overlay (opened with ','). Today it
+// holds the preferred Remote-SSH editor; new client-side preferences slot in as
+// more rows.
+type settingsModel struct {
+	editors []editorChoice
+	sel     int
+}
+
+type editorChoice struct {
+	label string // shown to the user
+	cmd   string // CLI command stored in clientcfg.Editor ("" = auto-detect)
+}
+
+var editorChoices = []editorChoice{
+	{"Auto-detect (first found)", ""},
+	{"VS Code", "code"},
+	{"Cursor", "cursor"},
+	{"Windsurf", "windsurf"},
+	{"Antigravity", "antigravity"},
+	{"VS Code Insiders", "code-insiders"},
+}
+
+// openSettings builds the settings overlay with the current editor preselected.
+func (m tuiModel) openSettings() tuiModel {
+	sel := 0
+	for i, c := range editorChoices {
+		if c.cmd == m.editor {
+			sel = i
+			break
+		}
+	}
+	m.settings = &settingsModel{editors: editorChoices, sel: sel}
+	return m
+}
+
+// settingsKey drives the settings overlay: pick an editor (persisted to
+// clientcfg) or close.
+func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "ctrl+c":
+		m.settings = nil
+		return m, nil
+	case "j", "down":
+		if m.settings.sel < len(m.settings.editors)-1 {
+			m.settings.sel++
+		}
+		return m, nil
+	case "k", "up":
+		if m.settings.sel > 0 {
+			m.settings.sel--
+		}
+		return m, nil
+	case "enter", "right", "l", " ":
+		choice := m.settings.editors[m.settings.sel]
+		m.editor = choice.cmd
+		m.settings = nil
+		cfg, _ := clientcfg.Load()
+		cfg.Editor = choice.cmd
+		if err := clientcfg.Save(cfg); err != nil {
+			m.lastError = "couldn't save settings: " + err.Error()
+		} else if choice.cmd == "" {
+			m.lastNotice = "editor: auto-detect"
+		} else {
+			m.lastNotice = "editor set to " + choice.label
+		}
+		return m, nil
+	}
+	return m, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -572,6 +647,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.menu != nil {
 		return m.actionMenuKey(msg)
 	}
+	// The settings overlay owns keys while open.
+	if m.settings != nil {
+		return m.settingsKey(msg)
+	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
 		switch msg.String() {
@@ -658,7 +737,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.lastError = "ssh façade is off — press m → SSH setup, or start dejimad with --ssh"
 				return m, nil
 			}
-			if err := openInEditor("dejima-" + name); err != nil {
+			if err := openInEditor("dejima-"+name, m.editor); err != nil {
 				m.lastError = err.Error()
 			} else {
 				m.lastNotice = "opening " + name + " in your editor at /workspace…"
@@ -794,6 +873,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "R":
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd())
+	case ",":
+		// General settings (preferred editor, …).
+		return m.openSettings(), nil
 	}
 	return m, nil
 }
@@ -1415,6 +1497,11 @@ func (m tuiModel) View() string {
 		// Centered popup over an empty field — same modal treatment as the other
 		// overlays, but compact (a bordered box centered in the body area).
 		box := styleMenuBox.Render(m.renderActionMenu())
+		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.settings != nil {
+		box := styleMenuBox.Render(m.renderSettings())
 		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
@@ -2092,7 +2179,7 @@ func (m tuiModel) renderFooter() string {
 	if m.hostTerminalsEnabled() {
 		term = "[t] terminal   "
 	}
-	keys1 := "[n] new   " + term + "[s] server   [?] help   [q] quit"
+	keys1 := "[n] new   " + term + "[s] server   [,] settings   [?] help   [q] quit"
 	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll + "   [p] group"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
@@ -2205,7 +2292,8 @@ func (m tuiModel) renderHelp() string {
 		{"u", "upgrade — recreate on the current island image, all state kept — confirms first"},
 		{"b", "build the island image on the daemon host — confirms first"},
 		{"d", "purge — destroy the island and its volumes — confirms first"},
-		{"c", "open the island in VS Code / Cursor over SSH, straight at /workspace"},
+		{"c", "open the island in your editor over SSH, straight at /workspace"},
+		{",", "settings — pick your editor (VS Code / Cursor / Windsurf / Antigravity)"},
 		{"s", "switch connection target (local / saved remote daemons)"},
 		{"R", "refresh now"},
 	}
@@ -2310,6 +2398,33 @@ func (m tuiModel) renderActionMenu() string {
 	}
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
+	return b.String()
+}
+
+// renderSettings draws the general-settings overlay: the preferred Remote-SSH
+// editor as a radio list (used by 'c' / the action menu's open-in-editor item).
+func (m tuiModel) renderSettings() string {
+	st := m.settings
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Settings · preferred editor"))
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("which editor 'c' opens an island in (over Remote-SSH, at /workspace)"))
+	b.WriteString("\n\n")
+	for i, c := range st.editors {
+		dot := "○ "
+		if c.cmd == m.editor {
+			dot = "● "
+		}
+		mark := "   "
+		style := lipgloss.NewStyle()
+		if i == st.sel {
+			mark = styleAccent.Render(" ▸ ")
+			style = styleSelected
+		}
+		b.WriteString(mark + style.Render(dot+c.label) + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ choose · esc close"))
 	return b.String()
 }
 
