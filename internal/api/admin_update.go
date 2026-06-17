@@ -32,6 +32,16 @@ func (s *Server) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, fmt.Errorf("check for updates: %w", err))
 		return
 	}
+	// InstallMeta authoritatively records how THIS daemon was installed; trust it
+	// over selfupdate.DetectMode's version-string heuristic. A source build sitting
+	// exactly on a release tag (e.g. v0.1.24, no -gHASH suffix) has a clean version
+	// and would otherwise be misdetected as a release install — then fail trying to
+	// replace its root-owned /usr/local/bin binary in place instead of git-pull +
+	// make install. (DetectMode is still right for the client, which has no meta.)
+	meta, _ := selfupdate.LoadInstallMeta()
+	if meta.SourceDir != "" {
+		st.Mode = selfupdate.ModeSource
+	}
 	resp := AdminUpdateResponse{
 		Current:         st.Current,
 		Latest:          st.Latest,
@@ -45,7 +55,6 @@ func (s *Server) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Validate we can actually apply *before* promising to, so the client gets a
 	// real error instead of a silent background failure.
-	meta, _ := selfupdate.LoadInstallMeta()
 	if st.Mode == selfupdate.ModeSource && meta.SourceDir == "" {
 		writeError(w, http.StatusPreconditionFailed, errors.New(
 			"source install but no recorded checkout — re-run `dejima service install` to record it, or update manually"))
