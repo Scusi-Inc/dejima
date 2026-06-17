@@ -26,11 +26,47 @@ build island (no live Docker/macOS host here). Run them on Minion and feed findi
   own-island routes → 200, another island's → 403 (scoping holds). Confirmed live in the
   OpenClaw Home Island test, so `DEJIMA_HOST=host.docker.internal:7274` is the correct
   autonomy dial on Minion's Docker. (`runbook-openclaw-home-island.md §5.2`)
-- [ ] **#9 SSH-façade live + VS Code Remote-SSH.** `dejimad --ssh :2222` (prefer a tailnet
-  bind), `dejima ssh authorize <island> --key …`, then `ssh <island>@host -p 2222` (lands
-  in the container, PTY/resize/exit-codes work) and point VS Code/Cursor Remote-SSH at it
-  (server bootstraps over the exec channel; can edit `/workspace`). Note whether sftp is
-  needed for your editor flow.
+- [x] **#9 SSH-façade live + VS Code Remote-SSH — verified on Minion↔GIZMO 2026-06-17.**
+  Shell, sftp, and VS Code Remote-SSH all land in `/workspace`. Flushed out two real
+  daemon bugs: (1) the no-PTY exec path set `c.Stdin = ch`, so `cmd.Wait` blocked until the
+  SSH channel EOF'd — which an interactive client never sends — hanging exec and stalling VS
+  Code at "checking for existing agent host"; fixed by closing the channel when the command
+  exits, not on stdin EOF. (2) The façade rejected every non-`session` channel, so VS Code's
+  dynamic port-forward (`direct-tcpip`) to its in-container server failed; added `direct-tcpip`
+  bridging via `docker exec` + bash `/dev/tcp`. Onboarding is now one command per device
+  (`dejima ssh enroll`: account-wide key + `~/.ssh/config` entries), and `c` / the printed
+  `code --remote ssh-remote+dejima-<island> /workspace` one-liner open straight at the repo.
+
+---
+
+## 🛠️ Dogfood session 2026-06-17 (v0.1.11→v0.1.26)
+
+A live Minion↔GIZMO (macOS host ↔ Windows client) session that took the
+SSH-façade and self-update paths from "built" to "verified", plus a TUI overhaul.
+All on `master`, unit-tested; the self-update surface was `/security-review`d clean.
+
+- **SSH-façade end-to-end (#9/#14 verified):** exec-channel stdin-deadlock fix +
+  `direct-tcpip` port forwarding (so VS Code/Cursor Remote-SSH connect and edit
+  `/workspace`); see the operator-verification note above.
+- **Frictionless onboarding:** `dejima ssh enroll` (account-wide key + `~/.ssh/config`
+  entries, daemon writes its own `authorized_keys` so there's no user-vs-root mismatch);
+  open-in-editor (`c` / `code --remote ssh-remote+dejima-<island> /workspace`).
+- **TUI overhaul:** `⏎` opens in a new tab; `m` per-row action menu; `s` Settings
+  (preferred editor · group-by-repo · connection target); configurable editor
+  (VS Code/Cursor/Windsurf/Antigravity); tab titles (`dejima` / `<island>-<agent>`);
+  decluttered footer.
+- **Self-update made trustworthy (#18/#22):** the apply runs synchronously so real
+  failures are reported (no more silent "updating…" no-op); preflights passwordless
+  sudo for system installs; the daemon trusts `InstallMeta` for source-vs-release mode
+  (a source build on a clean tag was misdetected as release and failed replacing its
+  root-owned binary).
+- **Supervised headless agents (#23 partial):** honest liveness (a self-restarting
+  agent reads "running", not "died"), exponential backoff (2s→60s) replacing the flat
+  3s respawn, and a visible `restarts: N` count (amber "crash-looping — likely OOM" at ≥3).
+- **Capability-brokering memo ratified** (2026-06-15) and built through the macOS
+  Apple Shortcuts adapter.
+- **Still open:** **#23** — the OpenClaw OOM root cause (host/Docker memory; now
+  self-heals via backoff + restart count, but the OOM itself is unaddressed).
 
 ---
 
