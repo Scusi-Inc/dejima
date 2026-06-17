@@ -222,11 +222,37 @@ func (s *Server) run(ch ssh.Channel, container string, cmd []string, wantPTY boo
 	// three standard streams and relay the real exit code.
 	args := append([]string{"exec", "-i", container}, cmd...)
 	c := exec.CommandContext(ctx, s.dockerBin, args...)
-	c.Stdin = ch
 	c.Stdout = ch
 	c.Stderr = ch.Stderr()
+	// Stdin goes through a pipe WE copy into — never `c.Stdin = ch`. If stdin is
+	// not an *os.File, os/exec spawns an internal copier that cmd.Wait() blocks
+	// on until stdin hits EOF. But an interactive client (`ssh host cmd`, VS Code
+	// Remote-SSH's exec bootstrap) holds its stdin channel open for the whole
+	// session, so that EOF never arrives: the command finishes and its output
+	// flushes, yet Wait() — and thus exit-status + channel close — would hang
+	// forever (the "checking for existing agent host" stall). Owning the copy
+	// keeps it off Wait()'s critical path.
+	stdin, err := c.StdinPipe()
+	if err != nil {
+		fmt.Fprintf(ch.Stderr(), "dejima: %v\r\n", err)
+		sendExit(ch, 1)
+		_ = ch.Close()
+		return nil
+	}
+	if err := c.Start(); err != nil {
+		fmt.Fprintf(ch.Stderr(), "dejima: %v\r\n", err)
+		sendExit(ch, exitCode(err))
+		_ = ch.Close()
+		return nil
+	}
 	go func() {
-		sendExit(ch, exitCode(c.Run()))
+		_, _ = io.Copy(stdin, ch) // client → container; ends when the client EOFs stdin
+		_ = stdin.Close()
+	}()
+	go func() {
+		err := c.Wait()   // returns once the process exits and stdout/stderr drain
+		_ = stdin.Close() // stop the stdin copier if it's still pending
+		sendExit(ch, exitCode(err))
 		_ = ch.Close()
 	}()
 	return nil
