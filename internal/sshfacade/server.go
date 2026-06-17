@@ -91,12 +91,66 @@ func (s *Server) handleConn(nConn net.Conn) {
 	s.log.Info("ssh session opened", "island", island, "remote", nConn.RemoteAddr().String())
 	go ssh.DiscardRequests(reqs) // global requests (keepalive etc.) — ignore
 	for newCh := range chans {
-		if newCh.ChannelType() != "session" {
-			_ = newCh.Reject(ssh.UnknownChannelType, "only session channels are supported")
-			continue
+		switch newCh.ChannelType() {
+		case "session":
+			go s.handleSession(newCh, island)
+		case "direct-tcpip":
+			// Client→server port forwarding (ssh -L / -D). VS Code Remote-SSH
+			// reaches its in-container server over a dynamic forward, so without
+			// this the connection dies right after the server starts ("Failed to
+			// set up socket for dynamic port forward"). The target is dialed
+			// inside the island, same containment as the shell path.
+			go s.handleDirectTCPIP(newCh, island)
+		default:
+			_ = newCh.Reject(ssh.UnknownChannelType, "unsupported channel type")
 		}
-		go s.handleSession(newCh, island)
 	}
+}
+
+// handleDirectTCPIP bridges a forwarded TCP channel to its destination *inside
+// the island* — the VS Code server listens on the container's loopback, which is
+// only reachable from within the container's network namespace. We pipe the
+// channel through `docker exec … bash` using bash's /dev/tcp, so no extra binary
+// (nc/socat) is required in the image. The destination host/port are passed as
+// argv ($1/$2), never interpolated into the script text, so a hostile request
+// can't inject a shell command. An SSH client here is already an authorized
+// operator with full shell in the island, so forwarding to a container-reachable
+// address grants nothing they don't already have.
+func (s *Server) handleDirectTCPIP(newCh ssh.NewChannel, island string) {
+	var p struct {
+		DestAddr string
+		DestPort uint32
+		SrcAddr  string
+		SrcPort  uint32
+	}
+	if err := ssh.Unmarshal(newCh.ExtraData(), &p); err != nil || p.DestAddr == "" {
+		_ = newCh.Reject(ssh.ConnectionFailed, "bad direct-tcpip request")
+		return
+	}
+	proj, err := project.Load(island)
+	if err != nil {
+		_ = newCh.Reject(ssh.ConnectionFailed, "unknown island")
+		return
+	}
+	ch, reqs, err := newCh.Accept()
+	if err != nil {
+		return
+	}
+	go ssh.DiscardRequests(reqs)
+
+	// Bidirectional pump: open fd 3 to the target, stream it back to the channel
+	// in the background, stream the channel into it in the foreground, and tear
+	// the background reader down once the channel's input side closes.
+	const fwd = `exec 3<>/dev/tcp/"$1"/"$2" || exit 1; cat <&3 & p=$!; cat >&3; kill "$p" 2>/dev/null`
+	args := []string{"exec", "-i", proj.ContainerName(), "bash", "-c", fwd,
+		"dejima-forward", p.DestAddr, fmt.Sprintf("%d", p.DestPort)}
+	c := exec.CommandContext(context.Background(), s.dockerBin, args...)
+	c.Stdin = ch
+	c.Stdout = ch
+	go func() {
+		_ = c.Run() // returns when either end closes the connection
+		_ = ch.Close()
+	}()
 }
 
 // handleSession services one SSH "session" channel: it collects pty/env/window
