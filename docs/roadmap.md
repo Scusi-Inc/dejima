@@ -1,6 +1,6 @@
 # Dejima Roadmap
 
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-17
 
 This is the living roadmap for Dejima. Items are grouped by phase and sized roughly. Status legend: `[x]` = built, `[~]` = in progress, `[ ]` = pending.
 
@@ -47,17 +47,19 @@ none blocking.
 - Island-letter agent ids (`p1`,`p2`…; primary via `SetPrimaryID`; legacy keeps `a1`). Agent rows lead with name (id when unlabeled).
 - Add-island repo picker: paste-URL row + daemon-backed "Browse GitHub" (pick identity → repo).
 - **Per-daemon GitHub identities** end-to-end: `internal/githubid` (atomic+locked store), `GET/PUT/DELETE /v1/credentials/github[/repos]`, per-island `hosts.yml` mounted at `/opt/host/gh-config` (fallback to host `~/.config/gh`; removed on island delete), `dejima auth push --github` / `auth status` / `dejima init --github-identity`. Docs: `docs/github-identities.md`.
-- [ ] Open: live in-container `git push` test · warn on dangling identity ref · verify token on push · `handleGitHubRepos` handler test (base-URL seam) · `SetPrimaryID` unit test · Enterprise host in auth push · "N of M" repo-cap indicator · disambiguate duplicate-label rows.
+- [x] All polish items shipped + unit-tested: warn on dangling identity ref · verify token on push · `handleGitHubRepos` handler test · `SetPrimaryID` unit test · Enterprise host in auth push · "N of M" repo-cap indicator · disambiguate duplicate-label rows.
+- [x] **Live `git push` verified on Minion (2026-06-17)** — and it flushed out a real launch-blocker: the daemon materialized gh's *legacy* config into the read-only `/opt/host/gh-config` mount, so gh's first-use migration write failed → no credential helper → clone crash-looped the island. Fixed by emitting gh's already-migrated schema (`users:` map + `config.yml` version marker); regression test runs the real `gh auth setup-git` on a read-only dir.
+- [x] **Commit authorship now derives from the identity** (#19): the push authenticated as the identity but authored commits with the host gitconfig's email (GitHub misattributes by email). Daemon materializes a per-island gitconfig (login + GitHub noreply email) over `/opt/host/gitconfig`; numeric id captured at `auth push` for the canonical `<id>+<login>@users.noreply` form. **Live-verify pending** (re-`auth push` to capture id; recreate identity islands).
 
 ### `feat/secure-island-routing` (merged `57ecb32`) — close the in-island control-plane hole
 - Fixes a critical pre-existing containment hole: the operator unix socket was bind-mounted into every Linux island. Now the control socket is **not** mounted; islands reach the daemon only over the token-authenticated, island-scoped TCP path; `agent-event` moved onto it (authenticated, anti-spoof); `host.docker.internal:host-gateway` added. Docs: `docs/secure-island-routing.md`.
 - [ ] Live-verify: in-island telemetry/autonomy over the token path on Minion (macOS).
-- [ ] Open: native-Linux token-listener reachability (loopback bind unreachable via the bridge gateway).
+- [ ] Open (**parked — no native-Linux host in the fleet**): native-Linux token-listener reachability (loopback bind unreachable via the bridge gateway). Repro + fix pre-scoped in `docs/launch-checklist.md` §L4 (bind the token listener to the bridge gateway); revisit if a Linux daemon host appears.
 
 ### `feat/host-terminals` (merged `d991bc4`) — operator host terminals
 - Uncontained operator shells in tmux on the daemon host (humans, **not** agents — "agent ⇒ always a container"). `internal/hostterm` + `internal/bridge` host PTY; `/v1/terminals*` operator-only (`dejimad --host-terminals`, off by default, audited, island-token-denied by test); TUI "Host · not contained" section (`t` to create+attach). Docs: `docs/host-terminals.md`.
 - [ ] Live-verify: interactive attach on a daemon with `--host-terminals` + tmux installed.
-- [ ] Roadmap: `dejima term` CLI intentionally deferred (kept TUI-only to bound the most-privileged surface).
+- [x] **`dejima term` CLI built** (#16, `afb436a`): `ls`/`new`/`attach`/`rm`/`relabel`, mirroring the TUI section. Thin client of the same gated API — the `--host-terminals` capability + operator-only auth (island tokens 403) apply identically, so it widens convenience, not the security boundary. (Reverses the earlier TUI-only deferral, which on review didn't actually move the boundary.)
 
 ---
 
