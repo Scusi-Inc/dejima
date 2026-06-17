@@ -147,12 +147,43 @@ const (
 // agentAdder wraps the shared picker with a target island, an optional label,
 // and an in-flight / error state. Owned by tuiModel as a pointer (nil = inactive).
 type agentAdder struct {
-	island string
-	picker agentPicker
-	phase  agentAdderPhase
-	label  string
-	adding bool
-	err    string
+	island  string
+	picker  agentPicker
+	phase   agentAdderPhase
+	label   string
+	adding  bool
+	err     string
+	memWarn string // non-empty when the host is low on memory (OOM caution)
+}
+
+// memPressureWarning returns an amber caution when the Docker host is low on
+// memory, so the operator thinks twice before adding another agent — especially
+// a heavy one (openclaw npm-installs + runs a model). This is the guard for the
+// OOM that killed OpenClaw *and* a sibling agent during dogfooding (#23): adding
+// a process to an already-full host is what tips it over. "" when there's
+// comfortable headroom or stats aren't available.
+//
+// On Docker Desktop / colima no per-container memory limit is set, so each
+// island's reported MemoryLimitBytes is the VM's total RAM; comparing the
+// across-island total (overview) against it gives real headroom.
+func memPressureWarning(isl api.IslandInfo, ov *api.OverviewResponse) string {
+	if isl.Stats == nil || isl.Stats.MemoryLimitBytes == 0 || ov == nil {
+		return ""
+	}
+	vmTotal := isl.Stats.MemoryLimitBytes
+	used := ov.MemoryUsageBytes // sum across running islands
+	if used == 0 {
+		used = isl.Stats.MemoryUsageBytes
+	}
+	pct := float64(used) / float64(vmTotal)
+	if pct < 0.75 {
+		return ""
+	}
+	return fmt.Sprintf("⚠ host memory is tight — %s of %s used across islands (%.0f%%). "+
+		"A heavy agent (e.g. openclaw, which npm-installs and runs a model) may trigger an "+
+		"out-of-memory kill that can take sibling agents down with it. Consider hibernating an "+
+		"idle island first; otherwise proceed with care.",
+		humanBytes(used), humanBytes(vmTotal), pct*100)
 }
 
 type agentAddedMsg struct {
@@ -168,6 +199,9 @@ func (m tuiModel) openAgentAdder(island string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.agentAdder = &agentAdder{island: island, picker: newAgentPicker()}
+	if isl, ok := m.islandByName(island); ok {
+		m.agentAdder.memWarn = memPressureWarning(isl, m.overview)
+	}
 	return m, nil
 }
 
@@ -222,6 +256,10 @@ func (a *agentAdder) view() string {
 	var b strings.Builder
 	b.WriteString(styleTitle.Render("Add agent — " + a.island))
 	b.WriteString("\n\n")
+	if a.memWarn != "" {
+		b.WriteString(styleWaiting.Render(a.memWarn))
+		b.WriteString("\n\n")
+	}
 	if a.adding {
 		b.WriteString(styleAccent.Render("adding " + a.picker.typ() + "…"))
 		return b.String()

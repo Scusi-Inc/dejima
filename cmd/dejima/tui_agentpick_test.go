@@ -8,6 +8,32 @@ import (
 	"github.com/aoos/dejima/internal/api"
 )
 
+func TestMemPressureWarning(t *testing.T) {
+	const vm = uint64(8) << 30 // 8 GiB VM
+	isl := func(limit, usage uint64) api.IslandInfo {
+		return api.IslandInfo{Stats: &api.IslandStats{MemoryLimitBytes: limit, MemoryUsageBytes: usage}}
+	}
+	ov := func(total uint64) *api.OverviewResponse {
+		return &api.OverviewResponse{MemoryUsageBytes: total}
+	}
+
+	// Comfortable headroom (25%) → no warning.
+	if w := memPressureWarning(isl(vm, 1<<30), ov(2<<30)); w != "" {
+		t.Errorf("expected no warning at 25%% usage, got %q", w)
+	}
+	// Tight (87.5%) → warns.
+	if w := memPressureWarning(isl(vm, 1<<30), ov(7<<30)); w == "" {
+		t.Error("expected a warning at ~88% usage, got none")
+	}
+	// No stats / no overview → no warning (never cry wolf without data).
+	if w := memPressureWarning(api.IslandInfo{}, ov(7<<30)); w != "" {
+		t.Errorf("expected no warning without stats, got %q", w)
+	}
+	if w := memPressureWarning(isl(vm, 7<<30), nil); w != "" {
+		t.Errorf("expected no warning without overview, got %q", w)
+	}
+}
+
 func key(s string) tea.KeyMsg {
 	if s == " " {
 		return tea.KeyMsg{Type: tea.KeySpace}
