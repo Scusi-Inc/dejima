@@ -115,7 +115,8 @@ area. Keep it honest: update the status as coverage changes.
 - [ ] Identity store is atomic + locked (no lost updates / torn reads under concurrency). **A**
 - [x] Repo browse via daemon (`/repos`) works from a device with no gh; Enterprise host via `/api/v3`. **A** (handler + client) / **M** (live)
 - [ ] Create with `--github-identity` / TUI picker; unknown identity → 400; empty → default → host gh fallback. **A**
-- [ ] Chosen identity materializes one `hosts.yml` mounted at `/opt/host/gh-config`; **git push inside the container actually authenticates as it**. **!** (task #3, live — see §L2)
+- [x] Chosen identity materializes the gh config mounted at `/opt/host/gh-config`; **git push inside the container actually authenticates as it**. **M** (task #3, verified live on Minion 2026-06-17: clone + push to aoos/kiloton authed as `work`). Required a fix — the materialized config must be in gh's already-migrated schema (`users:` map + `config.yml` version marker), else gh's first-use migration write fails on the read-only mount and `gh auth setup-git` leaves no credential helper (commit `fix(github): materialize gh config in migrated schema`).
+- [ ] Commit **authorship** matches the selected identity, not the host gitconfig. **GAP** (task #19): live push authored as `arachlin@gmail.com` (from `/opt/host/gitconfig`) while authenticated as `work`/aoos — git author should derive from the identity.
 - [ ] Per-island token removed on island delete. **A**
 - [x] Deleting an identity an island uses warns rather than silently changing/losing auth (`affected_islands`). **A** (task #4)
 - [x] `auth push --github` token is validated before storing (GET /user). **A** (task #5)
