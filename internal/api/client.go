@@ -631,6 +631,17 @@ func (c *Client) DaemonUpdate(ctx context.Context, execute bool) (*AdminUpdateRe
 	return &out, nil
 }
 
+// UpdateIslandResources sets an island's memory limit and/or OOM priority.
+// Memory applies live; an OOM-priority change reports RestartRequired (it takes
+// effect on the next container recreate).
+func (c *Client) UpdateIslandResources(ctx context.Context, name string, req UpdateResourcesRequest) (*UpdateResourcesResponse, error) {
+	var out UpdateResourcesResponse
+	if err := c.do(ctx, http.MethodPut, "/v1/islands/"+name+"/resources", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // IslandEvents returns the recent event log for one island.
 func (c *Client) IslandEvents(ctx context.Context, name string) ([]events.Event, error) {
 	var out []events.Event

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -279,6 +280,9 @@ func (d *Docker) CreateContainer(ctx context.Context, req CreateRequest) (string
 	if req.StorageSize != "" {
 		args = append(args, "--storage-opt", "size="+req.StorageSize)
 	}
+	if req.OOMScoreAdj != nil {
+		args = append(args, "--oom-score-adj", strconv.Itoa(*req.OOMScoreAdj))
+	}
 	args = append(args, req.Image)
 	args = append(args, req.Command...)
 
@@ -287,6 +291,17 @@ func (d *Docker) CreateContainer(ctx context.Context, req CreateRequest) (string
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// UpdateResources applies a live memory-limit change via `docker update`. Empty
+// memory is a no-op (nothing to change). oom-score-adj has no live equivalent —
+// callers recreate the container to apply a priority change.
+func (d *Docker) UpdateResources(ctx context.Context, name, memory string) error {
+	if memory == "" {
+		return nil
+	}
+	_, err := d.runOK(ctx, "update", "--memory", memory, name)
+	return err
 }
 
 func (d *Docker) CopyToContainer(ctx context.Context, name, hostPath, containerPath string) error {

@@ -34,6 +34,9 @@ type IslandInfo struct {
 	Git        *GitInfo          `json:"git,omitempty"`
 	Health     *IslandHealth     `json:"health,omitempty"`
 	Disk       *IslandDisk       `json:"disk,omitempty"`
+	// Resources are the island's configured caps + OOM priority (nil OOMPriority
+	// means the smart default applies). Detail endpoint only.
+	Resources  *Resources        `json:"resources,omitempty"`
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
@@ -242,6 +245,26 @@ type Resources struct {
 	Memory string `json:"memory,omitempty"`
 	CPUs   string `json:"cpus,omitempty"`
 	Disk   string `json:"disk,omitempty"`
+	// OOMPriority stack-ranks islands for the OOM killer: higher = more protected
+	// (killed later). nil = unset → smart default at create (headless brains start
+	// expendable). Maps to docker --oom-score-adj (inverted) in the daemon.
+	OOMPriority *int `json:"oom_priority,omitempty"`
+}
+
+// UpdateResourcesRequest is the body of PUT /v1/islands/:name/resources. Pointer
+// fields distinguish "leave unchanged" (nil) from an explicit value (incl. ""
+// for Memory → unlimited).
+type UpdateResourcesRequest struct {
+	Memory      *string `json:"memory,omitempty"`
+	OOMPriority *int    `json:"oom_priority,omitempty"`
+}
+
+// UpdateResourcesResponse echoes the stored resources and flags whether a change
+// needs a container recreate to take effect (true when OOMPriority changed —
+// --oom-score-adj is set at create only; Memory applies live via docker update).
+type UpdateResourcesResponse struct {
+	Resources       Resources `json:"resources"`
+	RestartRequired bool      `json:"restart_required"`
 }
 
 // ExecRequest is the body of POST /v1/islands/:name/exec.

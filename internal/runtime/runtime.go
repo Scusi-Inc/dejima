@@ -29,6 +29,9 @@ type CreateRequest struct {
 	Memory      string // e.g. "4G" → --memory
 	CPUs        string // e.g. "2.0" → --cpus
 	StorageSize string // e.g. "20G" → --storage-opt size=
+	// OOMScoreAdj biases the kernel OOM killer (−1000…+1000, higher = killed
+	// first) → --oom-score-adj. nil = don't pass the flag (kernel default).
+	OOMScoreAdj *int
 	Network     string // user-defined bridge network name (empty = default)
 	// ExtraHosts are "host:ip" entries added with --add-host. Used to give the
 	// container a route to the daemon's host-internal listener (the in-island
@@ -104,6 +107,12 @@ type Runtime interface {
 
 	// CreateContainer creates and starts a container. Returns the container ID.
 	CreateContainer(ctx context.Context, req CreateRequest) (string, error)
+
+	// UpdateResources applies resource changes to a running container without
+	// recreating it. Currently the memory limit ("" = leave unchanged), which
+	// `docker update` supports live. (OOM-score-adj has no live update — it's
+	// set at create, so a priority change needs a recreate.)
+	UpdateResources(ctx context.Context, name, memory string) error
 
 	// StopContainer gracefully stops a running container.
 	StopContainer(ctx context.Context, name string) error

@@ -382,6 +382,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/islands/{name}/workspace-ready", s.workspaceReady)
 	mux.HandleFunc("DELETE /v1/islands/{name}", s.deleteIsland)
 	mux.HandleFunc("PATCH /v1/islands/{name}", s.updateIsland)
+	mux.HandleFunc("PUT /v1/islands/{name}/resources", s.updateIslandResources)
 	mux.HandleFunc("POST /v1/islands/{name}/hibernate", s.hibernateIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/wake", s.wakeIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/reset", s.resetIsland)
@@ -673,6 +674,13 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	info := s.toInfo(r.Context(), p)
 	// Per-agent session liveness is detail-only (one exec per agent).
 	info.Agents = s.agentInfos(r.Context(), p, info.Container == string(runtime.StatusRunning))
+	// Configured resource caps + OOM priority (detail-only).
+	info.Resources = &Resources{
+		Memory:      p.Resources.Memory,
+		CPUs:        p.Resources.CPUs,
+		Disk:        p.Resources.Disk,
+		OOMPriority: p.Resources.OOMPriority,
+	}
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
 	info.Git = s.gitStatusOf(r.Context(), p.ContainerName())
@@ -917,6 +925,61 @@ func (s *Server) updateIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
+}
+
+// updateIslandResources changes an island's memory limit and/or OOM priority
+// (the per-island stack-rank knob). Memory applies live via `docker update`;
+// OOM priority is set at container create, so a change is persisted and flagged
+// restart_required (it takes effect on the next recreate/upgrade). Operator-only:
+// absent from tokenRouteAccess, so an in-island token is default-denied.
+func (s *Server) updateIslandResources(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	var req UpdateResourcesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+
+	memChanged, prioChanged := false, false
+	if req.Memory != nil && *req.Memory != p.Resources.Memory {
+		p.Resources.Memory = strings.TrimSpace(*req.Memory) // "" → unlimited
+		memChanged = true
+	}
+	if req.OOMPriority != nil && (p.Resources.OOMPriority == nil || *req.OOMPriority != *p.Resources.OOMPriority) {
+		v := *req.OOMPriority
+		p.Resources.OOMPriority = &v
+		prioChanged = true
+	}
+	if err := p.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	// Apply the memory limit live (no-op if the container isn't running or memory
+	// didn't change). OOM priority can't be changed live — it needs a recreate.
+	if memChanged {
+		if err := s.rt.UpdateResources(r.Context(), p.ContainerName(), p.Resources.Memory); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("apply memory limit: %w", err))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, UpdateResourcesResponse{
+		Resources: Resources{
+			Memory:      p.Resources.Memory,
+			CPUs:        p.Resources.CPUs,
+			Disk:        p.Resources.Disk,
+			OOMPriority: p.Resources.OOMPriority,
+		},
+		RestartRequired: prioChanged,
+	})
 }
 
 // updateAgent changes an agent's cosmetic label. Everything else (id, type,
@@ -1334,6 +1397,49 @@ func countNoun(n int, singular string) string {
 // seedAgents, when non-empty, describes the island's agents (element 0 is the
 // primary, already synthesized from the scalar agent/cmd); the rest are added
 // as co-located agents before the container is reconciled.
+// oomPriorityExpendable is the smart default for a headless "brain" island
+// (openclaw/Home): it self-restarts, so the OOM killer should sacrifice it before
+// interactive work. Interactive islands default to 0 (normal).
+const oomPriorityExpendable = -100
+
+// oomScoreAdj maps an island's stack-rank priority (higher = more protected) to a
+// docker --oom-score-adj (higher = killed first) — inverted and clamped to the
+// kernel's −1000…+1000. The presets critical/+100, normal/0, expendable/−100 land
+// at −500 / 0 / +500.
+func oomScoreAdj(priority int) int {
+	adj := -priority * 5
+	if adj > 1000 {
+		adj = 1000
+	}
+	if adj < -1000 {
+		adj = -1000
+	}
+	return adj
+}
+
+// resolveOOMPriority is the effective priority for a new island: the explicit
+// value when set, else expendable for a headless primary, else 0 (normal).
+func resolveOOMPriority(explicit *int, primaryType string) int {
+	if explicit != nil {
+		return *explicit
+	}
+	if !handlers.Attachable(primaryType) {
+		return oomPriorityExpendable
+	}
+	return 0
+}
+
+func ptrInt(i int) *int { return &i }
+
+// oomScoreAdjPtr maps a stored priority to a CreateRequest.OOMScoreAdj: nil
+// priority → nil (let the kernel default stand, no flag), else the mapped adj.
+func oomScoreAdjPtr(priority *int) *int {
+	if priority == nil {
+		return nil
+	}
+	return ptrInt(oomScoreAdj(*priority))
+}
+
 func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role, ghIdentity string, res Resources, seedPath string, seedAgents []AgentSpecRequest) (*project.Project, error) {
 	exists, err := s.rt.ImageExists(ctx, image)
 	if err != nil {
@@ -1353,9 +1459,10 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		Role:           role,
 		GitHubIdentity: ghIdentity,
 		Resources: project.Resources{
-			Memory: res.Memory,
-			CPUs:   res.CPUs,
-			Disk:   res.Disk,
+			Memory:      res.Memory,
+			CPUs:        res.CPUs,
+			Disk:        res.Disk,
+			OOMPriority: ptrInt(resolveOOMPriority(res.OOMPriority, agent)),
 		},
 		DesiredState: project.StateRunning,
 		CreatedAt:    now,
@@ -1490,6 +1597,7 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		Memory:      p.Resources.Memory,
 		CPUs:        p.Resources.CPUs,
 		StorageSize: p.Resources.Disk,
+		OOMScoreAdj: oomScoreAdjPtr(p.Resources.OOMPriority),
 		Network:     p.NetworkName(),
 		Labels: map[string]string{
 			"dejima.project": p.Name,

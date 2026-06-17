@@ -179,16 +179,17 @@ func TestGitHubReposHandler(t *testing.T) {
 // the daemon issues and the last CreateContainer request, so a test can assert
 // the multi-agent orchestration without a real container engine.
 type fakeRuntime struct {
-	mu             sync.Mutex
-	execs          [][]string
-	lastCreate     runtime.CreateRequest
-	status         runtime.ContainerStatus
-	health         runtime.Health
-	volumeSizes    map[string]int64
-	volumeCopies   [][2]string
-	startCalls     int
-	stopCalls      int
-	failNewSession bool // when true, `tmux new-session` exits non-zero
+	mu               sync.Mutex
+	execs            [][]string
+	lastCreate       runtime.CreateRequest
+	lastMemoryUpdate [2]string // {container, memory} from UpdateResources
+	status           runtime.ContainerStatus
+	health           runtime.Health
+	volumeSizes      map[string]int64
+	volumeCopies     [][2]string
+	startCalls       int
+	stopCalls        int
+	failNewSession   bool // when true, `tmux new-session` exits non-zero
 	// execHook, when set, can intercept an Exec call and return a canned
 	// (stdout, stderr, exitCode); returning handled=false falls through to the
 	// default behavior. Lets a test drive e.g. git-status output.
@@ -259,6 +260,12 @@ func (f *fakeRuntime) CreateContainer(_ context.Context, req runtime.CreateReque
 	f.lastCreate = req
 	f.mu.Unlock()
 	return "cid", nil
+}
+func (f *fakeRuntime) UpdateResources(_ context.Context, name, memory string) error {
+	f.mu.Lock()
+	f.lastMemoryUpdate = [2]string{name, memory}
+	f.mu.Unlock()
+	return nil
 }
 func (f *fakeRuntime) Exec(_ context.Context, _ string, cmd []string) (string, string, int, error) {
 	f.record(cmd)

@@ -42,6 +42,11 @@ type Resources struct {
 	Memory string `toml:"memory,omitempty"` // e.g. "4G"
 	CPUs   string `toml:"cpus,omitempty"`   // e.g. "2.0"
 	Disk   string `toml:"disk,omitempty"`   // e.g. "20G" — maps to --storage-opt size=
+	// OOMPriority stack-ranks islands for the kernel OOM killer: higher = more
+	// protected (killed later). nil = unset → resolved to a smart default at
+	// create (headless brains start expendable). Mapped to docker --oom-score-adj
+	// (inverted) in the api layer. Set-at-create only; a change needs a recreate.
+	OOMPriority *int `toml:"oom_priority,omitempty"`
 }
 
 // AgentSpec is one agent running inside an island. An island hosts one or more

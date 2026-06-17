@@ -137,6 +137,9 @@ func TestAuthorizeTokenMatrix(t *testing.T) {
 		{"delete denied", "proj", "DELETE /v1/islands/{name}", "/v1/islands/proj", true},
 		{"reset denied", "proj", "POST /v1/islands/{name}/reset", "/v1/islands/proj/reset", true},
 		{"session denied", "proj", "GET /v1/islands/{name}/session", "/v1/islands/proj/session", true},
+		// Resource caps / OOM priority are operator-only — a contained agent must
+		// not lift its own memory limit or re-rank itself.
+		{"resources denied", "proj", "PUT /v1/islands/{name}/resources", "/v1/islands/proj/resources", true},
 
 		// Host terminals are the most privileged surface — operator-only, never
 		// reachable by an island token (absent from the allow-list → default-deny).
