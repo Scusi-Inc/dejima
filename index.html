@@ -88,8 +88,13 @@
   .pillar { display: flex; }
   .pillar .usecase { flex: 1; }
   .pillar .usecase h3 { font-size: 1.12rem; margin: 0 0 0.7rem; }
-  .usecase .pain { margin: 0 0 0.85rem; padding: 0.7rem 0.9rem;
+  .usecase .pain { margin: 0 0 1rem; padding: 0.7rem 0.9rem;
     font-size: 0.85rem; line-height: 1.5; }
+  /* CTA reads as a filled button: dark text on the near-white accent,
+     left-aligned pill, brightening to pure white on card hover. */
+  .pillar .usecase .cta { align-self: flex-start; background: var(--accent);
+    color: var(--bg); padding: 0.45rem 0.95rem; border-radius: 6px; }
+  .pillar .usecase:hover .cta { background: var(--hover); }
   /* Top anchor nav --------------------------------------------------- */
   .topnav { display: flex; flex-wrap: wrap; align-items: center; margin: 0.6rem 0 0;
     padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
@@ -198,16 +203,16 @@
   <div class="pillar">
     <a class="usecase" href="#home-server">
       <h3>Running agents on a Mac mini or server?</h3>
-      <div class="pain">Six agents in tmux you can't tell apart, context bleeding between projects — one bad command from the wrong repo.</div>
       <p><strong>Dejima is your own agent server.</strong> Run several Claude Code / Codex agents per project, each sandboxed in its own container — no context bleed, no agent trashing your host or another repo. Each on its own git worktree; agents in the same project share one set of credentials, so you permission them once. See every agent's state at a glance and manage them with simple controls.</p>
+      <div class="pain">Six agents in tmux you can't tell apart, context bleeding between projects — one bad command from the wrong repo.</div>
       <span class="cta">Run it yourself →</span>
     </a>
   </div>
   <div class="pillar">
     <a class="usecase" href="#api-builder">
       <h3>Building a product on top of agents?</h3>
-      <div class="pain">Reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth — all from scratch.</div>
       <p><strong>Dejima is your agent backend.</strong> Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools — target one HTTP/WebSocket API and get isolated containers, multi-attach sessions, lifecycle, credential injection, agent-state events &amp; analytics, and management controllers, instead of reinventing them.</p>
+      <div class="pain">Reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth — all from scratch.</div>
       <span class="cta">For builders →</span>
     </a>
   </div>
