@@ -1346,7 +1346,17 @@ func (s *Server) purgeRiskError(ctx context.Context, p *project.Project) error {
 			"uncommitted or unpushed work; wake it (`dejima wake %s`) to let the guard verify, "+
 			"or re-run with --force to purge anyway", p.Name, p.Name)
 	}
-	git := s.gitStatusOf(ctx, p.ContainerName())
+	// Bound the in-container inspection: a wedged container (e.g. an OOM'd or
+	// hung agent) can make `docker exec git …` block indefinitely, which would
+	// hang the purge call and freeze a TUI waiting on it. Cap it and, on timeout,
+	// fail fast with a clear "use --force" rather than hanging forever.
+	ictx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	git := s.gitStatusOf(ictx, p.ContainerName())
+	if ictx.Err() != nil {
+		return fmt.Errorf("island %q didn't respond to a workspace check within 5s "+
+			"(the container may be wedged) — re-run with --force to purge anyway", p.Name)
+	}
 	if git == nil {
 		// /workspace isn't a git repo (or the check failed) — nothing git-tracked
 		// to lose. Allow the purge.
