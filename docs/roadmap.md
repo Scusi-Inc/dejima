@@ -1,6 +1,6 @@
 # Dejima Roadmap
 
-**Last updated:** 2026-06-17
+**Last updated:** 2026-06-18
 
 This is the living roadmap for Dejima. Items are grouped by phase and sized roughly. Status legend: `[x]` = built, `[~]` = in progress, `[ ]` = pending.
 
@@ -39,10 +39,11 @@ build island (no live Docker/macOS host here). Run them on Minion and feed findi
 
 ---
 
-## 🛠️ Dogfood session 2026-06-17 (v0.1.11→v0.1.26)
+## 🛠️ Dogfood session 2026-06-17–18 (v0.1.11→v0.1.34)
 
 A live Minion↔GIZMO (macOS host ↔ Windows client) session that took the
-SSH-façade and self-update paths from "built" to "verified", plus a TUI overhaul.
+SSH-façade and self-update paths from "built" to "verified", plus a TUI overhaul
+and the substrate-level fix for the OpenClaw OOM (#23).
 All on `master`, unit-tested; the self-update surface was `/security-review`d clean.
 
 - **SSH-façade end-to-end (#9/#14 verified):** exec-channel stdin-deadlock fix +
@@ -63,10 +64,24 @@ All on `master`, unit-tested; the self-update surface was `/security-review`d cl
 - **Supervised headless agents (#23 partial):** honest liveness (a self-restarting
   agent reads "running", not "died"), exponential backoff (2s→60s) replacing the flat
   3s respawn, and a visible `restarts: N` count (amber "crash-looping — likely OOM" at ≥3).
+- **Per-island resource controls (#23):** OOM priority (stack-rank which island the
+  kernel sacrifices first, via `--oom-score-adj`; create-time, so a change prompts
+  "recreate to apply?") + an optional memory limit (`docker update --memory`, live),
+  API-first (`PUT /v1/islands/{name}/resources`, surfaced in `GET /v1/islands/{name}`)
+  with a TUI Resources overlay. Default is unlimited (overcommit) — no artificial cap.
+- **Substrate VM-memory detection + fix (#23 root cause):** the real cause of the OOMs
+  was the Docker VM itself — colima defaults to ~2 GB on a 24 GB host, and that VM is the
+  pool *all* islands share, so no per-island knob helps. New `internal/vmmem` reads host
+  RAM, recommends a size (¾·host, leaving the host ≥4 GiB), and judges undersizing;
+  surfaced as `host/vm/vm_recommended_bytes` on `GET /v1/overview`, an amber TUI banner,
+  a `dejima doctor --fix` that scripts the `colima stop && colima start --memory N` resize,
+  and an onboard env-summary line.
 - **Capability-brokering memo ratified** (2026-06-15) and built through the macOS
   Apple Shortcuts adapter.
-- **Still open:** **#23** — the OpenClaw OOM root cause (host/Docker memory; now
-  self-heals via backoff + restart count, but the OOM itself is unaddressed).
+- **#23 now addressed end-to-end** — prevented (right-sized VM), survivable (per-island
+  memory limits + OOM priority), self-healing (backoff + restart count), and visible
+  (TUI banner + doctor check). Remaining: a live Minion run to confirm the resized VM
+  ends the OOMs.
 
 ---
 
