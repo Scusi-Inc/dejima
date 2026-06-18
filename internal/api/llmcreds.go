@@ -175,7 +175,7 @@ func (s *Server) configureAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Model != nil {
-		if v := strings.TrimSpace(*req.Model); v != a.Model {
+		if v := normalizeModel(a.Provider, *req.Model); v != a.Model {
 			a.Model = v
 			changed = true
 		}

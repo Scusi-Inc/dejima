@@ -677,9 +677,15 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	info := s.toInfo(r.Context(), p)
+	// Bound the in-container inspection: a busy (first-boot npm install) or wedged
+	// container can make `docker exec`/`inspect` slow or hang, and detail is polled
+	// continuously by the TUI — an unbounded poll would make the UI look frozen.
+	// Cap it; on timeout the slow fields just come back empty/degraded.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	info := s.toInfo(ctx, p)
 	// Per-agent session liveness is detail-only (one exec per agent).
-	info.Agents = s.agentInfos(r.Context(), p, info.Container == string(runtime.StatusRunning))
+	info.Agents = s.agentInfos(ctx, p, info.Container == string(runtime.StatusRunning))
 	// Configured resource caps + OOM priority (detail-only).
 	info.Resources = &Resources{
 		Memory:      p.Resources.Memory,
@@ -689,9 +695,9 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
-	info.Git = s.gitStatusOf(r.Context(), p.ContainerName())
+	info.Git = s.gitStatusOf(ctx, p.ContainerName())
 	// Crash health is one extra inspect; detail-only to keep list refreshes cheap.
-	if h, err := s.rt.Inspect(r.Context(), p.ContainerName()); err == nil {
+	if h, err := s.rt.Inspect(ctx, p.ContainerName()); err == nil {
 		info.Health = &IslandHealth{
 			OOMKilled:    h.OOMKilled,
 			RestartCount: h.RestartCount,
@@ -700,7 +706,7 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	// Per-island disk usage (workspace + home volumes). Detail-only and cached
 	// because `docker system df -v` is slow; 0 means the driver didn't report it.
-	if sizes := s.volumeSizes(r.Context()); sizes != nil {
+	if sizes := s.volumeSizes(ctx); sizes != nil {
 		ws, home := sizes[p.WorkspaceVolume()], sizes[p.HomeVolume()]
 		if ws > 0 || home > 0 {
 			info.Disk = &IslandDisk{WorkspaceBytes: ws, HomeBytes: home, TotalBytes: ws + home}
@@ -720,8 +726,11 @@ func (s *Server) workspaceReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	// Bounded: this is polled in a loop and a busy container shouldn't stall it.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	ready := false
-	if _, _, code, err := s.rt.Exec(r.Context(), p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); err == nil && code == 0 {
+	if _, _, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); err == nil && code == 0 {
 		ready = true
 	}
 	writeJSON(w, http.StatusOK, WorkspaceReadyResponse{Ready: ready})
@@ -798,7 +807,7 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 		Branch:    "agent/" + id,
 		Worktree:  agentsWorktreeRoot + "/" + id,
 		Provider:  strings.TrimSpace(req.Provider),
-		Model:     strings.TrimSpace(req.Model),
+		Model:     normalizeModel(req.Provider, req.Model),
 		CreatedAt: time.Now().UTC(),
 	}
 	// A plain terminal pokes at the island's workspace directly — no isolated
@@ -1381,6 +1390,23 @@ func (s *Server) purgeRiskError(ctx context.Context, p *project.Project) error {
 		p.Name, strings.Join(risks, " and "), branch)
 }
 
+// normalizeModel makes the model string forgiving: a bare model with no
+// "provider/" prefix (e.g. "opus") gets the agent's provider prepended
+// ("anthropic/opus"), so users don't have to repeat the provider. It does NOT
+// validate or rewrite the model name itself — dejima keeps no model catalog (that
+// would need constant updates); whatever survives is passed to the framework,
+// which owns its own model vocabulary/aliases.
+func normalizeModel(provider, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" || strings.Contains(model, "/") {
+		return model
+	}
+	if provider = strings.TrimSpace(provider); provider != "" {
+		return provider + "/" + model
+	}
+	return model
+}
+
 // sanitizeTags trims keys/values and drops entries with an empty key, so a
 // malformed --tag can't persist a blank-keyed label. Returns nil when nothing
 // survives (so an empty map isn't written to config).
@@ -1498,7 +1524,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		// The primary's LLM provider/model (key-requiring frameworks) — Agents[0]
 		// is synthesized from the scalar type, so carry the seed's choice across.
 		p.Agents[0].Provider = strings.TrimSpace(seedAgents[0].Provider)
-		p.Agents[0].Model = strings.TrimSpace(seedAgents[0].Model)
+		p.Agents[0].Model = normalizeModel(seedAgents[0].Provider, seedAgents[0].Model)
 		for _, ar := range seedAgents[1:] {
 			spec, err := s.newAgentSpec(p, ar)
 			if err != nil {

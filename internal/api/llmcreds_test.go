@@ -7,6 +7,21 @@ import (
 	"github.com/aoos/dejima/internal/providercreds"
 )
 
+func TestNormalizeModel(t *testing.T) {
+	cases := []struct{ provider, model, want string }{
+		{"anthropic", "opus", "anthropic/opus"},                   // bare model gets the provider prefix
+		{"anthropic", "anthropic/claude-x", "anthropic/claude-x"}, // already-qualified: untouched
+		{"anthropic", "  opus  ", "anthropic/opus"},               // trimmed
+		{"", "opus", "opus"},                                      // no provider: leave as-is
+		{"anthropic", "", ""},                                     // empty model stays empty
+	}
+	for _, c := range cases {
+		if got := normalizeModel(c.provider, c.model); got != c.want {
+			t.Errorf("normalizeModel(%q,%q) = %q, want %q", c.provider, c.model, got, c.want)
+		}
+	}
+}
+
 // TestAgentProviderStatus checks the proactive missing-provider-auth computation
 // against the handler registry + provider store (no logs involved).
 func TestAgentProviderStatus(t *testing.T) {
