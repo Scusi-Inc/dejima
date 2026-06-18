@@ -1370,7 +1370,7 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Manage the agents within an island.",
 	}
-	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd())
+	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd())
 	return cmd
 }
 
