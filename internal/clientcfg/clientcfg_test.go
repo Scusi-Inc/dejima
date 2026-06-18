@@ -8,10 +8,10 @@ func TestActiveHost(t *testing.T) {
 		{Name: "work", Host: "work.tailnet:7273"},
 	}
 	cases := []struct {
-		name      string
-		cfg       Config
-		wantHost  string
-		wantOK    bool
+		name     string
+		cfg      Config
+		wantHost string
+		wantOK   bool
 	}{
 		{
 			name:     "resolves active profile to its host",

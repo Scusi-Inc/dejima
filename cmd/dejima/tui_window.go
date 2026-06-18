@@ -19,20 +19,50 @@ func canOpenNewWindow() bool {
 // openInNewWindow launches `dejima connect <name>` in a separate window so the
 // TUI can stay up as an overview. tmux is the portable path (a sibling window);
 // macOS can script Terminal/iTerm directly. Elsewhere we point the user at the
-// manual fallback.
+// manual fallback. agentLabel, when non-empty, is the agent's user-set label used
+// for the tab title (the freshly-added-agent case, where the model list is still
+// stale); pass "" to resolve the title from current state.
 //
 // Critically, the child inherits the TUI's *current* connection target via
 // DEJIMA_HOST — which may differ from the env that launched the TUI if the user
 // switched profiles — so the new window hits the same daemon.
-func (m tuiModel) openInNewWindow(name, agentID string) error {
-	return m.openAgentWindow("connect", name, agentID, nil)
+func (m tuiModel) openInNewWindow(name, agentID, agentLabel string) error {
+	return m.openAgentWindow("connect", name, agentID, agentLabel, nil)
 }
 
 // openAgentLogsWindow opens `dejima logs <name> [--agent id] --follow` in a
 // separate window — the open path for headless agents, which have no attach
 // surface.
-func (m tuiModel) openAgentLogsWindow(name, agentID string) error {
-	return m.openAgentWindow("logs", name, agentID, []string{"--follow"})
+func (m tuiModel) openAgentLogsWindow(name, agentID, agentLabel string) error {
+	return m.openAgentWindow("logs", name, agentID, agentLabel, []string{"--follow"})
+}
+
+// windowLabel builds a new tab's title from the user's *manually-set* names: the
+// island's Title (falling back to its slug Name) and the agent's Label (falling
+// back to its id). A primary/only agent renders as the island alone. agentLabel
+// overrides the model lookup for the agent part — needed right after adding an
+// agent, when m.islands hasn't refreshed to include it yet.
+func (m tuiModel) windowLabel(name, agentID, agentLabel string) string {
+	island := name
+	if isl, ok := m.islandByName(name); ok {
+		island = islandDisplay(isl)
+		if agentLabel == "" && agentID != "" {
+			for _, a := range isl.Agents {
+				if a.ID == agentID {
+					agentLabel = a.Label
+					break
+				}
+			}
+		}
+	}
+	suffix := agentLabel
+	if suffix == "" {
+		suffix = agentID
+	}
+	if suffix == "" {
+		return island
+	}
+	return island + "-" + suffix
 }
 
 // openAgentWindow launches `dejima <verb> <name> [--agent id] [extra…]` in a
@@ -43,18 +73,16 @@ func (m tuiModel) openAgentLogsWindow(name, agentID string) error {
 // DEJIMA_HOST — which may differ from the env that launched the TUI if the user
 // switched profiles — so the new window hits the same daemon. extra args are
 // trusted constants (e.g. "--follow"), so they're appended without quoting.
-func (m tuiModel) openAgentWindow(verb, name, agentID string, extra []string) error {
+func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra []string) error {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
 		exe = "dejima"
 	}
-	// Session tabs are titled "<island>-<agent>" (just "<island>" when it's the
-	// primary/only agent) so each opened session is identifiable. The dashboard's
-	// own tab is titled "dejima" (set via tea.SetWindowTitle at startup).
-	winLabel := name
-	if agentID != "" {
-		winLabel = name + "-" + agentID
-	}
+	// Session tabs are titled by the user's manually-set names ("<island Title>-
+	// <agent Label>", just the island when it's the primary/only agent), falling
+	// back to the durable handles when none is set. The dashboard's own tab is
+	// titled "dejima" (set via tea.SetWindowTitle at startup).
+	winLabel := m.windowLabel(name, agentID, agentLabel)
 	// A shell command string: pin DEJIMA_HOST, then exec the verb.
 	inner := fmt.Sprintf("DEJIMA_HOST=%s exec %s %s %s",
 		shquote(m.activeHost), shquote(exe), verb, shquote(name))
@@ -71,7 +99,7 @@ func (m tuiModel) openAgentWindow(verb, name, agentID string, extra []string) er
 	case goruntime.GOOS == "darwin":
 		return openMacTerminal(inner)
 	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, verb, name, agentID, extra, m.activeHost)
+		return openWindowsTerminal(exe, verb, name, agentID, winLabel, extra, m.activeHost)
 	default:
 		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run the TUI inside tmux, or `dejima %s %s` in another terminal", verb, name)
 	}
@@ -81,19 +109,19 @@ func (m tuiModel) openAgentWindow(verb, name, agentID string, extra []string) er
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the
 // caller's environment.
-func openWindowsTerminal(exe, verb, name, agentID string, extra []string, host string) error {
+func openWindowsTerminal(exe, verb, name, agentID, title string, extra []string, host string) error {
 	// Island names, agent ids, and hosts feed a cmd.exe command line, which has
-	// no sane quoting — refuse anything beyond the characters they legitimately use.
+	// no sane quoting — refuse anything beyond the characters they legitimately
+	// use. (title is passed as a discrete exec arg, not interpolated, so it's not
+	// part of this check — it can carry spaces from a Title/Label.)
 	for _, s := range []string{name, agentID, host} {
 		if strings.ContainsAny(s, `"&|<>^%!`) {
 			return fmt.Errorf("can't open a window for %q — run `dejima %s %s` manually", s, verb, name)
 		}
 	}
 	run := `"` + exe + `" ` + verb + ` ` + name
-	title := name // "<island>-<agent>" (just "<island>" for the primary agent)
 	if agentID != "" {
 		run += " --agent " + agentID
-		title = name + "-" + agentID
 	}
 	for _, e := range extra {
 		run += " " + e

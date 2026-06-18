@@ -150,6 +150,23 @@
     header h1 { font-size: 2rem; }
     .pick-label { min-width: 0; }
   }
+
+  /* "Is Dejima right for you?" copy-paste prompt — zero-backend; the visitor
+     pastes it into their own LLM. No model runs here. */
+  .fitcheck { border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card-hover-bg); padding: 1.25rem 1.4rem; }
+  .fit-prompt { width: 100%; box-sizing: border-box; margin-top: 0.9rem;
+    background: var(--code-bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.9rem 1rem; resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 0.85rem; line-height: 1.55; }
+  .fit-actions { display: flex; align-items: center; gap: 0.9rem; margin-top: 0.7rem;
+    flex-wrap: wrap; }
+  .copy-btn { background: var(--accent); color: var(--bg); border: 0;
+    border-radius: 6px; padding: 0.5rem 1.15rem; font-weight: 600; cursor: pointer;
+    font-size: 0.9rem; transition: opacity 0.12s; }
+  .copy-btn:hover { opacity: 0.85; }
+  .fit-hint { color: var(--muted); font-size: 0.85rem; }
 </style>
 </head>
 <body>
@@ -199,6 +216,18 @@
       <p>Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools. Target one HTTP/WebSocket API and get isolated containers, multi-attach sessions, lifecycle, credential injection, agent-state events &amp; analytics, and management controllers — instead of reinventing them.</p>
       <span class="cta">For builders →</span>
     </a>
+  </div>
+</section>
+
+<section id="is-it-for-me">
+  <h2>Is Dejima right for you?</h2>
+  <div class="fitcheck">
+    <p class="plain">Not sure it fits? Copy this prompt, fill in your situation, and paste it into your own Claude or ChatGPT for a candid take. Nothing is sent to us — we don't run a model here.</p>
+    <textarea id="fit-prompt" class="fit-prompt" rows="13" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
+    <div class="fit-actions">
+      <button type="button" id="fit-copy" class="copy-btn">Copy prompt</button>
+      <span class="fit-hint">Then paste into <a href="https://claude.ai" target="_blank" rel="noopener">Claude</a> or <a href="https://chatgpt.com" target="_blank" rel="noopener">ChatGPT</a>.</span>
+    </div>
   </div>
 </section>
 
@@ -577,6 +606,55 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
 
   state.os = detectOS();
   update();
+})();
+</script>
+
+<script>
+// "Is Dejima right for you?" — build the prompt (pointing at THIS site + its API
+// docs, wherever it's hosted) and copy it to the clipboard. No network call.
+(function () {
+  var ta = document.getElementById('fit-prompt');
+  var btn = document.getElementById('fit-copy');
+  if (!ta || !btn) return;
+
+  var base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  var apiURL = base + 'api.html';
+
+  ta.value = [
+    "I'm deciding whether to use Dejima. Help me figure out if it fits my situation.",
+    "",
+    "What Dejima is: a self-hosted, open-source runtime for running AI coding agents",
+    "(Claude Code, Codex, and others) on hardware you own. Each project's agents run",
+    "in isolated containers (\"islands\") — sandboxed from your machine and from each",
+    "other — with shared per-project credentials, persistent multi-attach sessions,",
+    "lifecycle controls, and one HTTP/WebSocket API. It is self-hosted only (no managed",
+    "cloud) and bundles no LLM weights — you bring your own agents and credentials.",
+    "",
+    "Details to consult before answering:",
+    "- Overview: " + base,
+    "- API & architecture: " + apiURL,
+    "",
+    "My situation: <describe what you're trying to do, your hardware/OS, how many",
+    "agents and projects, and any privacy or team constraints>",
+    "",
+    "Question: given what Dejima does, is it a good fit for me? Be candid about where",
+    "it isn't, and suggest alternatives if it's not a match."
+  ].join("\n");
+
+  btn.addEventListener('click', function () {
+    var done = function () {
+      var prev = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(function () { btn.textContent = prev; }, 1600);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(done, function () {
+        ta.select(); document.execCommand('copy'); done();
+      });
+    } else {
+      ta.select(); document.execCommand('copy'); done();
+    }
+  });
 })();
 </script>
 

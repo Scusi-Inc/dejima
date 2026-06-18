@@ -187,8 +187,11 @@ func memPressureWarning(isl api.IslandInfo, ov *api.OverviewResponse) string {
 }
 
 type agentAddedMsg struct {
-	island string
-	err    error
+	island     string
+	agentID    string // the new agent's id, for opening it in a new tab
+	agentLabel string // its user-set label (the model list hasn't refreshed yet)
+	attachable bool   // interactive (connect) vs headless (logs)
+	err        error
 }
 
 // openAgentAdder starts the add-agent flow for an island, unless the island is
@@ -247,8 +250,16 @@ func (m tuiModel) addAgentSpecCmd(name string, req api.AgentSpecRequest) tea.Cmd
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		_, err := m.client.AddAgent(ctx, name, req)
-		return agentAddedMsg{island: name, err: err}
+		ag, err := m.client.AddAgent(ctx, name, req)
+		if err != nil {
+			return agentAddedMsg{island: name, err: err}
+		}
+		return agentAddedMsg{
+			island:     name,
+			agentID:    ag.ID,
+			agentLabel: ag.Label,
+			attachable: ag.Attachable,
+		}
 	}
 }
 

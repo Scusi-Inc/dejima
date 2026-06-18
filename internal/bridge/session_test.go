@@ -33,7 +33,12 @@ func TestParseMaxClientSize(t *testing.T) {
 func TestHostPTYRunsCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	s, err := HostPTY(ctx, []string{"echo", "dejima-host-ok"}, 24, 80)
+	// `sleep 1` keeps the pty slave open briefly after the echo so the master can
+	// drain the buffered output before the child exits. On macOS, once the last
+	// slave closes the master read returns EIO and any un-drained bytes are lost —
+	// a bare `echo` exits too fast and the test reads "" (the read loop breaks as
+	// soon as it sees the marker, so the sleep adds no real delay).
+	s, err := HostPTY(ctx, []string{"sh", "-c", "echo dejima-host-ok; sleep 1"}, 24, 80)
 	if err != nil {
 		t.Skipf("no PTY available in this environment: %v", err)
 	}

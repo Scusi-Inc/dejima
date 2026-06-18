@@ -27,6 +27,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      - uses: golangci/golangci-lint-action@v6
+      # action v7 drives golangci-lint v2 (v6 drove v1). The version is PINNED, not
+      # "latest": a floating latest silently jumped to v2 while the config was still
+      # v1-format, failing every CI run since May 2026. Bump deliberately alongside
+      # the .golangci.yml schema.
+      - uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.12.2

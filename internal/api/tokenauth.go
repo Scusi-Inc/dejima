@@ -168,7 +168,12 @@ func authorizeToken(island, pattern, escapedPath string) error {
 		}
 		return nil
 
-	default: // accessDeny — unlisted route, control plane, lifecycle, or grant.
+	case accessDeny:
+		// accessDeny is the map's zero value, so this also covers every unlisted
+		// route — the control plane, lifecycle ops, and grant/revoke.
+		return errors.New("route not permitted for an island token")
+
+	default:
 		return errors.New("route not permitted for an island token")
 	}
 }

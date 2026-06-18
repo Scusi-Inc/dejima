@@ -36,7 +36,7 @@ type IslandInfo struct {
 	Disk       *IslandDisk       `json:"disk,omitempty"`
 	// Resources are the island's configured caps + OOM priority (nil OOMPriority
 	// means the smart default applies). Detail endpoint only.
-	Resources  *Resources        `json:"resources,omitempty"`
+	Resources *Resources `json:"resources,omitempty"`
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`

@@ -731,7 +731,7 @@ func (c *creatorModel) view(width int) string {
 		b.WriteString("\n\n")
 		b.WriteString(styleMuted.Render(c.resolution.Note))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("cloning the repo and starting the agent; you'll attach automatically."))
+		b.WriteString(styleMuted.Render("cloning the repo and starting the agent; it opens when ready."))
 	}
 
 	if c.err != "" {

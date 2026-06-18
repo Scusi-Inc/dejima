@@ -697,6 +697,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.agentAdder = nil
 		}
 		m.expanded[msg.island] = true // reveal the island so the new agent shows
+		// Launch the freshly-added agent in a new tab, leaving the dashboard up.
+		// agentLabel is passed through because the list refresh below is async, so
+		// m.islands doesn't yet carry the new agent for the title lookup.
+		if canOpenNewWindow() {
+			var err error
+			if msg.attachable {
+				err = m.openInNewWindow(msg.island, msg.agentID, msg.agentLabel)
+			} else {
+				err = m.openAgentLogsWindow(msg.island, msg.agentID, msg.agentLabel)
+			}
+			if err != nil {
+				m.lastError = err.Error()
+			}
+		}
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
 
 	case islandCreatedMsg:
@@ -707,6 +721,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.creator = nil
+			// Open the new island in a new tab so the dashboard stays up; fall back
+			// to attaching in this terminal when there's no new-window backend.
+			if canOpenNewWindow() {
+				if err := m.openInNewWindow(msg.name, "", ""); err != nil {
+					m.lastError = err.Error()
+				} else {
+					m.lastNotice = "created " + msg.name + " — opened in a new tab"
+				}
+				return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+			}
 			m.connectTo = msg.name // drop straight into the new island's session
 			return m, tea.Quit
 		}
@@ -1639,7 +1663,7 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 		return m.openAgentLogs(name, row.agentID)
 	}
 	if canOpenNewWindow() {
-		if err := m.openInNewWindow(name, row.agentID); err != nil {
+		if err := m.openInNewWindow(name, row.agentID, ""); err != nil {
 			m.lastError = err.Error()
 		}
 		return m, nil
@@ -1652,7 +1676,7 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 // user at the CLI when no new-window backend is available.
 func (m tuiModel) openAgentLogs(name, agentID string) (tea.Model, tea.Cmd) {
 	if canOpenNewWindow() {
-		if err := m.openAgentLogsWindow(name, agentID); err != nil {
+		if err := m.openAgentLogsWindow(name, agentID, ""); err != nil {
 			m.lastError = err.Error()
 		}
 		return m, nil
@@ -1907,7 +1931,9 @@ func (m tuiModel) renderHeader() string {
 	}
 
 	// Always use the small mark, regardless of width. The responsive larger logo
-	// is kept (commented out) so it's trivially recoverable if we want it back.
+	// is kept (commented out) so it's trivially recoverable if we want it back;
+	// the blank reference keeps it from reading as dead code to the linter.
+	var _ = asciiLogo
 	logoArt := asciiLogoSmall
 	// logoArt := asciiLogo
 	// if m.width < 113 {

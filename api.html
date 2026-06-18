@@ -69,6 +69,7 @@
   .m-post   { color: var(--method-post);   border: 1px solid var(--method-post); }
   .m-delete { color: var(--method-delete); border: 1px solid var(--method-delete); }
   .m-put    { color: var(--method-put);    border: 1px solid var(--method-put); }
+  .m-patch  { color: var(--method-put);    border: 1px solid var(--method-put); }
   .endpoint .path { color: var(--accent); }
   .endpoint .desc { color: var(--muted); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin-left: auto; font-size: 0.9rem; }
 
@@ -109,7 +110,15 @@
     <li><a href="#lifecycle">Lifecycle endpoints</a></li>
     <li><a href="#sessions">Sessions (websocket)</a></li>
     <li><a href="#agents">Agents</a></li>
+    <li><a href="#resources">Resources &amp; rename</a></li>
     <li><a href="#access">Lightweight access (exec / cp / logs)</a></li>
+    <li><a href="#remote-dev">Remote dev — SSH façade &amp; editors</a></li>
+    <li><a href="#credentials">Credentials &amp; GitHub identities</a></li>
+    <li><a href="#port">Brokered host files (Port)</a></li>
+    <li><a href="#capabilities">Capability brokering</a></li>
+    <li><a href="#terminals">Host terminals</a></li>
+    <li><a href="#safety">Safety switch (panic)</a></li>
+    <li><a href="#admin">Operator: self-update</a></li>
     <li><a href="#events">Events &amp; webhooks</a></li>
     <li><a href="#overview">Server overview</a></li>
     <li><a href="#agent-events">Agent-event endpoint (shim-only)</a></li>
@@ -139,7 +148,12 @@
   <tr>
     <td>Remote without Tailscale</td>
     <td>SSH-tunnel the socket</td>
-    <td><code>ssh -L /tmp/dejimad.sock:/home/you/.dejima/dejimad.sock host</code>, then point your client at the local tunnel. Token-auth mode is roadmap.</td>
+    <td><code>ssh -L /tmp/dejimad.sock:/home/you/.dejima/dejimad.sock host</code>, then point your client at the local tunnel.</td>
+  </tr>
+  <tr>
+    <td>Into an island (shell / editor)</td>
+    <td>SSH façade — <code>dejimad --ssh &lt;addr&gt;</code></td>
+    <td>Not the JSON API: the daemon is a single SSH front door (username = island name, per-island public-key auth) that bridges into the container. Powers shell, <code>sftp</code>, and VS Code / Cursor Remote-SSH straight into <code>/workspace</code>. See <a href="#remote-dev">Remote dev</a>.</td>
   </tr>
 </table>
 
@@ -154,13 +168,14 @@ curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
 
 <!-- ============================================================ -->
 <h2 id="auth">Authentication</h2>
-<p>Today: <strong>Tailscale identity</strong> (remote) or <strong>filesystem permissions</strong> (local). No per-client tokens. No per-client ACLs. Documented honestly:</p>
+<p><strong>Operator clients</strong> (your CLI, dashboard, bot) authenticate by <strong>Tailscale identity</strong> (remote) or <strong>filesystem permissions</strong> (local). No per-client tokens, no per-client ACLs — documented honestly:</p>
 <ul>
   <li>Any process on the host running as your user can connect to the local socket.</li>
   <li>Any tailnet device can connect to the TCP listener.</li>
-  <li>There is currently no way to scope an API client to a subset of islands.</li>
+  <li>There is currently no way to scope an <em>operator</em> client to a subset of islands.</li>
 </ul>
-<p>Trust-on-first-use device allowlisting and optional API-token auth are on the roadmap; until they ship, treat the API as fully trusted within the tailnet.</p>
+<p>Trust-on-first-use device allowlisting and optional operator API-token auth are on the roadmap; until they ship, treat the operator API as fully trusted within the tailnet.</p>
+<p><strong>In-island tokens (shipped).</strong> An agent <em>inside</em> an island reaches the daemon over a separate, default-deny path: the daemon injects a per-island bearer token (<code>DEJIMA_TOKEN</code>) + host (<code>DEJIMA_HOST</code>). That token is <strong>scoped to its own island</strong> — it can drive the autonomy surface (Port trades, capability execution, child-island spawn that returns the child's token) but is rejected (<code>403</code>) on the control plane and on any other island. This is how a contained "brain" acts without ever holding an operator credential; it's enforced in middleware on the request's escaped path.</p>
 
 <!-- ============================================================ -->
 <h2 id="errors">Errors</h2>
@@ -203,6 +218,7 @@ curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
   "repo": "git@github.com:you/foo.git", // required
   "agent": "claude-code",              // optional; default "claude-code"
   "image": "dejima/island:latest",     // optional; default
+  "github_identity": "work",           // optional; clone/push as this daemon identity
   "resources": {
     "memory": "4G",                    // optional; --memory passthrough
     "cpus": "2.0",                     // optional; --cpus passthrough
@@ -230,6 +246,14 @@ curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
 
 <div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/reset</span><span class="desc">Clear agent state, preserve workspace</span></div>
 <p>Stops container, removes the agent-state volume only, recreates it empty, restarts the container. Workspace and git history are untouched. Use for "fresh conversation, same code."</p>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/upgrade</span><span class="desc">Recreate against a fresher image, keep volumes</span></div>
+<p>Stops + recreates the container on the current island image (rebuilding it first if missing), preserving both volumes and re-assembling all credential mounts. Use after an image change, or to refresh credentials. Returns updated <code>IslandInfo</code>.</p>
+
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/clone</span><span class="desc">Duplicate an island, volumes and all</span></div>
+<pre><code>POST { "name": "foo-2" }   // the new island's name
+→ 201 IslandInfo</code></pre>
+<p>Byte-for-byte copies the workspace <em>and</em> home volumes (so credentials/tool-auth come along) into a fresh island; owner/tags/agents carry over. <strong>Title and Port grants are deliberately dropped</strong> — a clone shows its own name and starts deny-all, never silently inheriting host access.</p>
 
 <!-- ============================================================ -->
 <h2 id="sessions">Sessions (websocket)</h2>
@@ -285,6 +309,21 @@ POST { "type": "headless", "cmd": "python loop.py" } // supervised process
 ]</code></pre>
 
 <!-- ============================================================ -->
+<h2 id="resources">Resources &amp; rename</h2>
+
+<div class="endpoint"><span class="method m-put">PUT</span><span class="path">/v1/islands/{name}/resources</span><span class="desc">Adjust memory + OOM priority</span></div>
+<pre><code>PUT { "memory": "6G",        // optional; applied live via `docker update`
+      "oom_priority": 3 }    // optional; kernel OOM-kill stack-rank
+→ { "resources": { "memory": "6G", "oom_priority": 3 }, "restart_required": true|false }</code></pre>
+<p><strong>Memory changes apply live</strong> — no restart. <strong>OOM priority</strong> is set at container create, so changing it returns <code>restart_required: true</code> and takes effect on the next <code>upgrade</code>/recreate. Pointer fields distinguish "unset" from an explicit value.</p>
+
+<div class="endpoint"><span class="method m-patch">PATCH</span><span class="path">/v1/islands/{name}</span><span class="desc">Set the cosmetic display title</span></div>
+<p>Body <code>{ "title": "My Cool Project" }</code>. <code>name</code> stays the immutable handle the CLI/API address by; <code>title</code> is display-only (empty → show name). Returns updated <code>IslandInfo</code>.</p>
+
+<div class="endpoint"><span class="method m-patch">PATCH</span><span class="path">/v1/islands/{name}/agents/{id}</span><span class="desc">Relabel an agent</span></div>
+<p>Body <code>{ "label": "frontend" }</code>. Cosmetic; the agent <code>id</code> stays the stable handle. Returns updated <code>AgentInfo</code>.</p>
+
+<!-- ============================================================ -->
 <h2 id="access">Lightweight access</h2>
 
 <div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/exec</span><span class="desc">One-shot command in the island</span></div>
@@ -300,6 +339,75 @@ POST { "type": "headless", "cmd": "python loop.py" } // supervised process
 
 <div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/logs?follow=true</span><span class="desc">Stream container / agent logs</span></div>
 <p>Returns a chunked text stream of container stdout + stderr. With <code>?follow=true</code>, the stream stays open until the client disconnects. Add <code>?agent=&lt;id&gt;</code> to tail a headless agent's log file instead (interactive agents return <code>409</code> — attach to their session).</p>
+
+<!-- ============================================================ -->
+<h2 id="remote-dev">Remote dev — SSH façade &amp; editors</h2>
+<p>The daemon can be the single SSH front door to every island (<code>dejimad --ssh &lt;addr&gt;</code>): the username names the island, per-island public-key auth, and the session is bridged into the container via <code>docker exec</code> — no in-island sshd, no published ports, works on macOS + Linux. This is the on-ramp for <strong>VS Code / Cursor / any Remote-SSH editor</strong> (open the island straight at <code>/workspace</code>) and for <code>sftp</code>; <code>direct-tcpip</code> forwarding is bridged so the editor's in-container server connects.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/ssh/account-keys</span><span class="desc">List enrolled SSH public keys</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/ssh/account-keys</span><span class="desc">Enroll a device public key</span></div>
+<p>Account-wide keys authorize a device against the façade for every island the operator owns. <code>dejima ssh enroll</code> wraps this (key + <code>~/.ssh/config</code> entries) so onboarding is one command per device.</p>
+
+<!-- ============================================================ -->
+<h2 id="credentials">Credentials &amp; GitHub identities</h2>
+<p>The daemon holds the agent credentials it injects into islands. <strong>Claude</strong> creds are seeded from the host; <strong>GitHub</strong> identities are first-class and per-daemon, so an island clones/pushes as a chosen identity (correct authorship, per-island <code>gh</code> config).</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/credentials/claude</span><span class="desc">Whether Claude creds are present</span></div>
+<div class="endpoint"><span class="method m-put">PUT</span><span class="path">/v1/credentials/claude</span><span class="desc">Push Claude creds to the daemon</span></div>
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/credentials/github</span><span class="desc">List GitHub identities</span></div>
+<div class="endpoint"><span class="method m-put">PUT</span><span class="path">/v1/credentials/github/{name}</span><span class="desc">Add / update an identity</span></div>
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/credentials/github/{name}</span><span class="desc">Remove an identity</span></div>
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/credentials/github/{name}/repos</span><span class="desc">Browse an identity's repos (daemon-side)</span></div>
+<p>Daemon-side repo browsing means the create flow works from any device. A <code>github_identity</code> on the island-create request binds the new island to that identity.</p>
+
+<!-- ============================================================ -->
+<h2 id="port">Brokered host files (Port)</h2>
+<p>Port lets an island read — and, once granted <code>:rw</code>, write — <strong>specific host folders</strong> the operator authorizes, deny-all by default. Every crossing is appended to a hash-chained, tamper-evident <strong>ledger</strong>. Grants are the operator's act; an in-island token can spend a grant but never widen it.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/port/scopes</span><span class="desc">List an island's host-file grants</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/port/scopes</span><span class="desc">Grant a scope (operator)</span></div>
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/islands/{name}/port/scopes/{scope}</span><span class="desc">Revoke a scope</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/port/intake</span><span class="desc">Copy host files → island (read)</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/port/export</span><span class="desc">Copy island files → a host scope</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/port/write</span><span class="desc">Write into a granted scope (requires :rw, symlink-safe)</span></div>
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/audit</span><span class="desc">Read the ledger (verify with dejima audit --verify)</span></div>
+
+<!-- ============================================================ -->
+<h2 id="capabilities">Capability brokering</h2>
+<p>A narrow, typed broker so function-calling brains can invoke <strong>named host actions</strong> — not arbitrary shell: per-island deny-all grants, fixed string→string args, a fixed-schema <code>capability.*</code> ledger. Adapters: macOS Apple Shortcuts, Linux <code>~/.dejima/capabilities/</code> scripts.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/capability/grants</span><span class="desc">List granted capabilities</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/capability/grants</span><span class="desc">Grant a capability (operator)</span></div>
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/islands/{name}/capability/grants/{target}</span><span class="desc">Revoke</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/capabilities/execute</span><span class="desc">Run a granted capability (in-island token)</span></div>
+<pre><code>POST { "target": "send-imessage", "args": { "to": "...", "body": "..." } }</code></pre>
+<p>Reachable by an island's own token only, against a granted target; deny-all and ledgered. No shell, no free-form commands.</p>
+
+<!-- ============================================================ -->
+<h2 id="terminals">Host terminals</h2>
+<p>Uncontained operator shells in tmux on the daemon host (humans, <strong>not</strong> agents — an agent is always a container). Gated behind <code>dejimad --host-terminals</code> (off by default), operator-only, island tokens denied. Mirrors the <code>dejima term</code> CLI / TUI Host section.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/terminals</span><span class="desc">List host terminals</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/terminals</span><span class="desc">Create one</span></div>
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/terminals/{id}/session</span><span class="desc">Attach (websocket PTY)</span></div>
+<div class="endpoint"><span class="method m-patch">PATCH</span><span class="path">/v1/terminals/{id}</span><span class="desc">Relabel</span></div>
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/terminals/{id}</span><span class="desc">Close</span></div>
+
+<!-- ============================================================ -->
+<h2 id="safety">Safety switch (panic)</h2>
+<p>Stop everything fast and keep it stopped. <code>POST</code> writes a <code>~/.dejima/PANIC</code> flag and stops every island; the daemon refuses to auto-start anything while it's set (survives a daemon restart). Emits <code>daemon.panic-engaged</code> / <code>daemon.panic-cleared</code>.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/panic</span><span class="desc">Panic status</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/panic</span><span class="desc">Engage — stop all, set the flag</span></div>
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/panic</span><span class="desc">Clear — restart islands meant to be running</span></div>
+
+<!-- ============================================================ -->
+<h2 id="admin">Operator: self-update</h2>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/admin/update</span><span class="desc">Update the daemon (source or release)</span></div>
+<pre><code>POST { "execute": false }   // dry-run: reports the plan
+→ { "current": "...", "latest": "...", "mode": "source|release",
+    "update_available": true, "applying": false }</code></pre>
+<p>Operator-only (island tokens can't reach it). With <code>execute: true</code> the apply runs <strong>synchronously</strong> (so real failures surface to the caller), then the daemon restarts <strong>asynchronously</strong>; islands survive via adopt-existing.</p>
 
 <!-- ============================================================ -->
 <h2 id="events">Events &amp; webhooks</h2>
@@ -394,6 +502,12 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
   <tr><td><code>agent_state</code></td><td>AgentStateInfo?</td><td>Latest agent-emitted event (island rollup)</td></tr>
   <tr><td><code>agents</code></td><td>[]AgentInfo</td><td>The agents in the island (≥1); <code>agent</code> mirrors the primary's type</td></tr>
   <tr><td><code>git</code></td><td>GitInfo?</td><td>Detail endpoint only (slow path)</td></tr>
+  <tr><td><code>title</code></td><td>string</td><td>Cosmetic display name; empty → show <code>name</code></td></tr>
+  <tr><td><code>role</code></td><td>string</td><td><code>""</code> (work island) or <code>home</code> (assistant Home Island)</td></tr>
+  <tr><td><code>owner</code> / <code>tags</code></td><td>string / map</td><td>Creator label + free-form tags (for rollups)</td></tr>
+  <tr><td><code>resources</code></td><td>Resources?</td><td>Configured caps + OOM priority; detail endpoint</td></tr>
+  <tr><td><code>health</code></td><td>IslandHealth?</td><td><code>oom_killed</code>, <code>restart_count</code>, <code>exit_code</code>; detail endpoint</td></tr>
+  <tr><td><code>disk</code></td><td>IslandDisk?</td><td>Workspace + home volume sizes; detail endpoint</td></tr>
 </table>
 
 <h3>AgentInfo</h3>
@@ -404,7 +518,8 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
   <tr><td><code>label</code></td><td>string</td><td>Optional, user-set</td></tr>
   <tr><td><code>branch</code> / <code>worktree</code></td><td>string</td><td>The agent's git branch + working directory</td></tr>
   <tr><td><code>attachable</code></td><td>bool</td><td>False for headless (no PTY)</td></tr>
-  <tr><td><code>state</code></td><td>string</td><td><code>running</code> / <code>stopped</code> (detail/list only)</td></tr>
+  <tr><td><code>state</code></td><td>string</td><td><code>running</code> / <code>stopped</code> / <code>exited</code> (session alive but the agent process died) — detail/list only</td></tr>
+  <tr><td><code>restarts</code></td><td>int</td><td>Times a supervised headless agent crash-looped; a climbing count ⇒ likely OOM</td></tr>
   <tr><td><code>agent_state</code></td><td>AgentStateInfo?</td><td>This agent's latest emitted signal</td></tr>
   <tr><td><code>attached</code></td><td>[]PresenceEntry</td><td>Clients on this agent</td></tr>
   <tr><td><code>error</code></td><td>string</td><td>Last orchestration failure, if any</td></tr>
@@ -416,6 +531,15 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
   <tr><td><code>memory_usage_bytes</code></td><td>uint64</td></tr>
   <tr><td><code>memory_limit_bytes</code></td><td>uint64 (0 = unlimited)</td></tr>
   <tr><td><code>cpu_percent</code></td><td>float64</td></tr>
+</table>
+
+<h3>Resources</h3>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+  <tr><td><code>memory</code></td><td>string</td><td>e.g. <code>4G</code>; live-updatable via the resources endpoint</td></tr>
+  <tr><td><code>cpus</code></td><td>string</td><td>e.g. <code>2.0</code></td></tr>
+  <tr><td><code>disk</code></td><td>string</td><td>e.g. <code>20G</code></td></tr>
+  <tr><td><code>oom_priority</code></td><td>int?</td><td>OOM-kill stack-rank; nil = smart default (set at create)</td></tr>
 </table>
 
 <h3>AgentStateInfo</h3>
