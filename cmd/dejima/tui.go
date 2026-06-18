@@ -20,6 +20,7 @@ import (
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
+	"github.com/aoos/dejima/internal/vmmem"
 )
 
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
@@ -1768,6 +1769,11 @@ func (m tuiModel) View() string {
 	if banner := m.renderPanicBanner(); banner != "" {
 		header = lipgloss.JoinVertical(lipgloss.Left, header, banner)
 	}
+	// Substrate warning: the Docker VM is too small for the host, so islands will
+	// OOM no matter what per-island knobs you set (#23). Sits below PANIC.
+	if banner := m.renderVMBanner(); banner != "" {
+		header = lipgloss.JoinVertical(lipgloss.Left, header, banner)
+	}
 	// The update broadcast now lives inside the header (its top line / a compact
 	// chip), so body sizing via header height accounts for it automatically.
 	hh := lipgloss.Height(header)
@@ -1824,6 +1830,23 @@ func (m tuiModel) renderPanicBanner() string {
 		return styleErrored.Width(w).Render(msg)
 	}
 	return styleErrored.Render(msg)
+}
+
+// renderVMBanner warns when the container runtime's VM is far smaller than the
+// host — the substrate-level cause of island OOMs (#23). Amber (attention), not
+// red (PANIC). Uses the daemon-reported host/VM figures so it's correct even
+// when the TUI runs on a different machine than the daemon.
+func (m tuiModel) renderVMBanner() string {
+	o := m.overview
+	if o == nil || !vmmem.Undersized(o.HostMemoryBytes, o.VMMemoryBytes) {
+		return ""
+	}
+	msg := fmt.Sprintf(" ⚠ Docker VM has %s of %s host RAM — islands share this whole pool and will OOM. Fix: dejima doctor --fix   ·   or: colima start --memory %d ",
+		humanBytes(o.VMMemoryBytes), humanBytes(o.HostMemoryBytes), o.VMRecommendedBytes>>30)
+	if w := m.width - 2; w > 0 {
+		return styleBroadcast.Width(w).Render(msg)
+	}
+	return styleBroadcast.Render(msg)
 }
 
 // updateParts returns the "client X→Y · daemon X→Y" fragment naming whatever is

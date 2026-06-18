@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/aoos/dejima/internal/service"
 	"github.com/aoos/dejima/internal/sshfacade"
 	"github.com/aoos/dejima/internal/version"
+	"github.com/aoos/dejima/internal/vmmem"
 )
 
 // newDoctorCmd produces a single-shot health-check for the host's dejima state.
@@ -162,6 +165,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkDaemon(ctx, r)
 	checkSupervision(ctx, r)
 	checkDocker(ctx, r)
+	checkVMMemory(ctx, r)
 	checkIslandImage(ctx, r)
 	checkTailscale(ctx, r)
 	checkClaudeCreds(ctx, r)
@@ -298,6 +302,53 @@ func checkDocker(ctx context.Context, r *doctorReport) {
 		return
 	}
 	r.add("System", "docker", "OK", "server "+strings.TrimSpace(string(out)), "")
+}
+
+// checkVMMemory flags a container-runtime VM that's far smaller than the host —
+// the substrate cause of island OOMs (#23). On colima it offers a `--fix` that
+// resizes the VM; on Docker Desktop (no CLI resize) it points at the GUI slider.
+func checkVMMemory(ctx context.Context, r *doctorReport) {
+	host := vmmem.HostMemoryBytes()
+	if host == 0 {
+		return // host RAM undeterminable — don't guess
+	}
+	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.MemTotal}}").Output()
+	if err != nil {
+		return // docker unreachable — checkDocker already covers that
+	}
+	vm, _ := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
+	if vm == 0 {
+		return
+	}
+	detail := fmt.Sprintf("VM %s of %s host RAM", humanBytes(vm), humanBytes(host))
+	if !vmmem.Undersized(host, vm) {
+		r.add("System", "vm memory", "OK", detail, "")
+		return
+	}
+	recGB := vmmem.RecommendedGB(host)
+	if vmmem.ColimaAvailable() {
+		cpu := runtime.NumCPU() - 2
+		if cpu < 2 {
+			cpu = 2
+		}
+		r.addRepair("System", "vm memory", "WARN",
+			fmt.Sprintf("%s — too small; islands share this pool and will OOM (recommend %dGB)", detail, recGB),
+			fmt.Sprintf("colima stop && colima start --memory %d --cpu %d", recGB, cpu),
+			func() (string, error) {
+				if out, err := exec.CommandContext(ctx, "colima", "stop").CombinedOutput(); err != nil {
+					return "", fmt.Errorf("colima stop: %v: %s", err, strings.TrimSpace(string(out)))
+				}
+				if out, err := exec.CommandContext(ctx, "colima", "start",
+					"--memory", strconv.Itoa(recGB), "--cpu", strconv.Itoa(cpu)).CombinedOutput(); err != nil {
+					return "", fmt.Errorf("colima start: %v: %s", err, strings.TrimSpace(string(out)))
+				}
+				return fmt.Sprintf("VM resized to %dGB / %d CPU — islands auto-restart", recGB, cpu), nil
+			})
+		return
+	}
+	r.add("System", "vm memory", "WARN",
+		fmt.Sprintf("%s — too small; islands will OOM", detail),
+		fmt.Sprintf("Docker Desktop → Settings → Resources → Memory → %dGB → Apply & Restart", recGB))
 }
 
 func checkIslandImage(ctx context.Context, r *doctorReport) {

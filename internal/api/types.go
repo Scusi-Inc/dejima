@@ -137,6 +137,15 @@ type OverviewResponse struct {
 	// Panicked is true while the ~/.dejima/PANIC flag is set: every island is
 	// stopped and the daemon won't auto-start them until panic is cleared.
 	Panicked bool `json:"panicked,omitempty"`
+	// Substrate memory: HostMemoryBytes is the daemon host's physical RAM;
+	// VMMemoryBytes is the container runtime's memory ceiling (the colima/Docker
+	// Desktop VM total on macOS — the pool ALL islands share); VMRecommendedBytes
+	// is the size dejima suggests for this host. When the VM is far below the
+	// recommendation the TUI raises a substrate banner — a too-small VM is the
+	// root cause of island OOMs (#23). All 0 when undeterminable.
+	HostMemoryBytes    uint64 `json:"host_memory_bytes,omitempty"`
+	VMMemoryBytes      uint64 `json:"vm_memory_bytes,omitempty"`
+	VMRecommendedBytes uint64 `json:"vm_recommended_bytes,omitempty"`
 }
 
 // AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the

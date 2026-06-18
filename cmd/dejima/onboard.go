@@ -13,6 +13,7 @@ import (
 	osuser "os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/vmmem"
 )
 
 // newOnboardCmd is the explicit re-entry into the wizard. Always runs,
@@ -251,6 +253,19 @@ func printEnvSummary(e *envProbe) {
 	fmt.Printf("  dejimad:   %s\n", okMark(e.DejimadInstalled))
 	fmt.Printf("  tailscale: %s%s\n", okMark(e.TailscalePresent), withFQDN(e.HostTailnetFQDN))
 	fmt.Printf("  daemon:    %s\n", okMark(e.DaemonReachable))
+	if e.DockerReachable {
+		if host := vmmem.HostMemoryBytes(); host > 0 {
+			if out, err := exec.Command("docker", "info", "--format", "{{.MemTotal}}").Output(); err == nil {
+				if vm, _ := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64); vm > 0 {
+					line := fmt.Sprintf("%s of %s host", humanBytes(vm), humanBytes(host))
+					if vmmem.Undersized(host, vm) {
+						line += fmt.Sprintf("  ⚠ too small — islands will OOM; run: colima start --memory %d", vmmem.RecommendedGB(host))
+					}
+					fmt.Printf("  vm ram:    %s\n", line)
+				}
+			}
+		}
+	}
 }
 
 func okMark(ok bool) string {

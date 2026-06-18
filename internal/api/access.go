@@ -15,6 +15,7 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
 	"github.com/aoos/dejima/internal/version"
+	"github.com/aoos/dejima/internal/vmmem"
 )
 
 // handleExec runs a one-shot command inside an island.
@@ -220,6 +221,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 				out.MemoryUsageBytes += stats.MemoryUsageBytes
 				out.MemoryLimitBytes += stats.MemoryLimitBytes
 				out.CPUPercent += stats.CPUPercent
+				// The runtime's memory ceiling = the largest per-container limit
+				// (an uncapped island reports the whole VM; a capped one is ≤ it),
+				// so the max across running islands ≈ the VM total — with no extra
+				// docker spawn here.
+				if stats.MemoryLimitBytes > out.VMMemoryBytes {
+					out.VMMemoryBytes = stats.MemoryLimitBytes
+				}
 			}
 		case runtime.StatusErrored, runtime.StatusMissing:
 			out.Errored++
@@ -230,6 +238,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		out.AttachedClients += len(s.islandPresence(p.Name))
 	}
+	out.HostMemoryBytes = vmmem.HostMemoryBytes()
+	out.VMRecommendedBytes = vmmem.RecommendedBytes(out.HostMemoryBytes)
 	writeJSON(w, http.StatusOK, out)
 }
 
