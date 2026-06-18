@@ -103,6 +103,7 @@ func newRootCmd() *cobra.Command {
 		newSSHCmd(),
 		newWebhookCmd(),
 		newAuthCmd(),
+		newProviderCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),
 		newOverviewCmd(),
@@ -1369,8 +1370,82 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Manage the agents within an island.",
 	}
-	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRmCmd())
+	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd())
 	return cmd
+}
+
+func newAgentConfigCmd() *cobra.Command {
+	var provider, model string
+	cmd := &cobra.Command{
+		Use:   "config <island> <agent-id>",
+		Short: "Set an agent's LLM provider/model (for key-requiring frameworks).",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if provider == "" && model == "" {
+				return fmt.Errorf("specify --provider and/or --model")
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			var req api.AgentConfigRequest
+			if cmd.Flags().Changed("provider") {
+				req.Provider = &provider
+			}
+			if cmd.Flags().Changed("model") {
+				req.Model = &model
+			}
+			resp, err := c.ConfigureAgent(cmd.Context(), args[0], args[1], req)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("agent %s/%s → provider=%q model=%q\n", args[0], args[1], resp.Provider, resp.Model)
+			if resp.RestartRequired {
+				fmt.Printf("recreate the island to apply: dejima upgrade %s\n", args[0])
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&provider, "provider", "", "provider credential name (see `dejima provider ls`)")
+	cmd.Flags().StringVar(&model, "model", "", "model string, e.g. anthropic/claude-sonnet-4-6")
+	return cmd
+}
+
+func newAgentTypesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "types",
+		Short: "List the built-in agent types and their capabilities.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			types, err := c.ListAgentTypes(cmd.Context())
+			if err != nil {
+				return err
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "TYPE\tKIND\tNEEDS KEY\tPROVIDERS\tGATEWAY")
+			for _, t := range types {
+				kind := "headless"
+				if t.Interactive {
+					kind = "interactive"
+				}
+				needsKey := ""
+				if t.RequiresProviderKey {
+					needsKey = "yes"
+				}
+				gw := ""
+				if t.GatewayPort > 0 {
+					gw = fmt.Sprintf("%d", t.GatewayPort)
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+					t.Type, kind, needsKey, strings.Join(t.SupportedProviders, ","), gw)
+			}
+			return tw.Flush()
+		},
+	}
 }
 
 func newAgentLsCmd() *cobra.Command {
@@ -1412,7 +1487,7 @@ func newAgentLsCmd() *cobra.Command {
 }
 
 func newAgentAddCmd() *cobra.Command {
-	var typ, label string
+	var typ, label, provider, model string
 	cmd := &cobra.Command{
 		Use:   "add <island>",
 		Short: "Add an agent to an island.",
@@ -1422,17 +1497,25 @@ func newAgentAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a, err := c.AddAgent(cmd.Context(), args[0], api.AgentSpecRequest{Type: typ, Label: label})
+			a, err := c.AddAgent(cmd.Context(), args[0], api.AgentSpecRequest{
+				Type: typ, Label: label, Provider: provider, Model: model,
+			})
 			if err != nil {
 				return err
 			}
 			fmt.Printf("added agent %s (%s) to %s — attach with `dejima connect %s/%s`\n",
 				a.ID, a.Type, args[0], args[0], a.ID)
+			if a.AuthState == "missing-provider-auth" {
+				fmt.Printf("note: %s has no model key yet — set one with `dejima provider set %s`\n",
+					a.ID, a.Provider)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&typ, "type", "", "agent type (default: same as the island's primary agent)")
 	cmd.Flags().StringVar(&label, "label", "", "optional label for the agent")
+	cmd.Flags().StringVar(&provider, "provider", "", "LLM provider for key-requiring agent types")
+	cmd.Flags().StringVar(&model, "model", "", "model string, e.g. anthropic/claude-sonnet-4-6")
 	return cmd
 }
 
