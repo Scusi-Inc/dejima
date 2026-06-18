@@ -79,19 +79,17 @@
   .usecase p { margin: 0 0 0.8rem; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
   .usecase .cta { color: var(--accent); font-size: 0.85rem; font-weight: 600;
     letter-spacing: 0.02em; }
-  /* Two-pillar split (operator / builder). Each pillar shares the parent's
-     row tracks via subgrid so lead / in-other-words / gripe / card line up
-     across both columns, regardless of text length. */
+  /* Two-pillar split (operator / builder). Everything lives inside each
+     pillar's card now: question headline -> gripe -> pitch -> CTA. The
+     pillars grid stretches both cards to equal height; the card's flex
+     space-between keeps both CTAs pinned to the bottom edge. */
   .pillars { display: grid; grid-template-columns: repeat(2, 1fr);
-    grid-template-rows: repeat(4, auto); gap: 0.85rem 1.6rem; margin: 1.6rem 0 0; }
-  .pillar { display: grid; grid-template-rows: subgrid; grid-row: span 4;
-    gap: 0.85rem; align-content: start; }
-  .pillar .lead { margin: 0; font-size: 1.15rem; color: var(--hover); }
-  .pillar .plain { margin: 0; }
-  .pillar .pain { margin: 0; font-size: 0.9rem; align-self: stretch; }
-  /* The card fills its shared-height row; its flex space-between keeps the
-     CTA pinned to the bottom, so both CTAs line up too. */
-  .pillar .usecase { align-self: stretch; }
+    gap: 0.85rem 1.6rem; margin: 1.6rem 0 0; }
+  .pillar { display: flex; }
+  .pillar .usecase { flex: 1; }
+  .pillar .usecase h3 { font-size: 1.12rem; margin: 0 0 0.7rem; }
+  .usecase .pain { margin: 0 0 0.85rem; padding: 0.7rem 0.9rem;
+    font-size: 0.85rem; line-height: 1.5; }
   /* Top anchor nav --------------------------------------------------- */
   .topnav { display: flex; flex-wrap: wrap; align-items: center; margin: 0.6rem 0 0;
     padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
@@ -198,19 +196,17 @@
 
 <section class="pillars">
   <div class="pillar">
-    <h3 class="lead">Running agents on a Mac mini or server?</h3>
-    <div class="pain">Six agents in tmux you can't tell apart, context bleeding between projects, re-authing every one — and one bad command from touching the wrong repo.</div>
     <a class="usecase" href="#home-server">
-      <h3>Run agents securely on your own box</h3>
+      <h3>Running agents on a Mac mini or server?</h3>
+      <div class="pain">Six agents in tmux you can't tell apart, context bleeding between projects — one bad command from the wrong repo.</div>
       <p><strong>Dejima is your own agent server.</strong> Run several Claude Code / Codex agents per project, each sandboxed in its own container — no context bleed, no agent trashing your host or another repo. Each on its own git worktree; agents in the same project share one set of credentials, so you permission them once. See every agent's state at a glance and manage them with simple controls.</p>
       <span class="cta">Run it yourself →</span>
     </a>
   </div>
   <div class="pillar">
-    <h3 class="lead">Building a product on top of agents?</h3>
-    <div class="pain">Shipping on agents shouldn't mean reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth from scratch.</div>
     <a class="usecase" href="#api-builder">
-      <h3>Build services on isolated, secured agents</h3>
+      <h3>Building a product on top of agents?</h3>
+      <div class="pain">Reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth — all from scratch.</div>
       <p><strong>Dejima is your agent backend.</strong> Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools — target one HTTP/WebSocket API and get isolated containers, multi-attach sessions, lifecycle, credential injection, agent-state events &amp; analytics, and management controllers, instead of reinventing them.</p>
       <span class="cta">For builders →</span>
     </a>
