@@ -463,9 +463,13 @@ X-Dejima-Signature: sha256=&lt;hex hmac of body&gt;  (only if you provided a sec
   "webhook_count": 1,
   "docker_reachable": true,
   "island_image_present": true,
-  "island_image": "dejima/island:latest"
+  "island_image": "dejima/island:latest",
+  "host_memory_bytes": 25769803776,
+  "vm_memory_bytes": 18790481920,
+  "vm_recommended_bytes": 19327352832
 }</code></pre>
-<p>Used by the TUI's footer health strip and <code>dejima overview</code>. The two <code>*_reachable</code>/<code>*_present</code> booleans are a cheap "is the substrate healthy?" probe — Scusi (and other clients) can poll this every few seconds and surface a red badge when either turns false.</p>
+<p>Used by the TUI's footer health strip and <code>dejima overview</code>. The two <code>*_reachable</code>/<code>*_present</code> booleans are a cheap "is the substrate healthy?" probe — clients can poll this every few seconds and surface a red badge when either turns false.</p>
+<p>The substrate-memory triplet diagnoses the most common cause of island OOMs: on macOS, Docker runs a Linux VM (colima/Docker Desktop) given a <em>fixed</em> slice of host RAM, and that slice is the ceiling <em>all</em> islands share. <code>host_memory_bytes</code> is the daemon host's physical RAM; <code>vm_memory_bytes</code> is the runtime's memory ceiling (the VM total — measured as the largest per-container limit across running islands); <code>vm_recommended_bytes</code> is the size to suggest (¾·host, leaving the host ≥4&nbsp;GiB). All three are omitted when undeterminable. When <code>vm_memory_bytes</code> is well under <code>vm_recommended_bytes</code>, the TUI shows a resize banner and <code>dejima doctor --fix</code> offers the <code>colima</code> resize.</p>
 
 <div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/healthz</span><span class="desc">Liveness</span></div>
 <p><code>{ "status": "ok" }</code> when the daemon is reachable. Use to check whether <code>dejimad</code> is up before issuing real calls.</p>
