@@ -243,6 +243,46 @@ func GitHubIslandConfigDir(name string) (string, error) {
 	return dir, nil
 }
 
+// LLMSecretsDir returns ~/.dejima/secrets/llm — the daemon's store of LLM
+// provider credentials (provider→api_key) and the per-island provider configs
+// materialized from them. Created 0700.
+func LLMSecretsDir() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, "secrets", "llm")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// LLMIslandConfigPath returns the per-island LLM config dir path WITHOUT
+// creating it — for cleanup when an island is torn down (it holds plaintext
+// provider keys, so it lives under secrets/ and must be removed on teardown).
+func LLMIslandConfigPath(name string) (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "secrets", "llm", "islands", name), nil
+}
+
+// LLMIslandConfigDir returns the per-island LLM config dir the daemon
+// materializes (containing one <provider>.env per referenced provider) and
+// mounts read-only at /opt/host/llm. Created 0700.
+func LLMIslandConfigDir(name string) (string, error) {
+	dir, err := LLMIslandConfigPath(name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // HostGHConfigDir returns the user's ~/.config/gh dir (may not exist).
 func HostGHConfigDir() (string, error) {
 	home, err := os.UserHomeDir()

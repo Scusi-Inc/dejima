@@ -68,7 +68,15 @@ type AgentSpec struct {
 	// primary, "/workspace/.agents/<id>" for the rest.
 	Worktree string `toml:"worktree,omitempty"`
 	// Restart enables supervise-and-restart-on-crash for co-located headless agents.
-	Restart   bool      `toml:"restart,omitempty"`
+	Restart bool `toml:"restart,omitempty"`
+	// Provider names which daemon LLM-provider credential this agent uses (see
+	// internal/providercreds), e.g. "anthropic". Empty → the store default. Only
+	// meaningful when the handler RequiresProviderKey.
+	Provider string `toml:"provider,omitempty"`
+	// Model is the "provider/model" string handed to the framework (via the
+	// DEJIMA_MODEL env the per-agent shim translates). Empty → unset (the user
+	// picks explicitly; there is no baked-in default).
+	Model     string    `toml:"model,omitempty"`
 	CreatedAt time.Time `toml:"created_at,omitempty"`
 }
 

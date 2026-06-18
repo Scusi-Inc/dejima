@@ -40,10 +40,30 @@ type Handler struct {
 	// StateDir is the home-dir state path persisted across restarts (e.g.
 	// ~/.claude). Informational now that the whole /home/dejima is persisted.
 	StateDir string
+	// RequiresProviderKey reports that this framework reaches an LLM over a
+	// provider API key (vs OAuth-seeded agents like claude-code/codex). It drives
+	// the provider/model picker, credential injection, and the proactive
+	// "missing-provider-auth" health state. The LLM-credential subsystem is
+	// opt-in per handler: false leaves an agent on its existing auth path.
+	RequiresProviderKey bool
+	// SupportedProviders is an advisory allow-list of provider ids this framework
+	// understands (empty = any), used to populate the picker — not enforced.
+	SupportedProviders []string
+	// SuggestedModels are example "provider/model" strings shown as picker hints.
+	// They are NOT applied as a default: the user must pick explicitly.
+	SuggestedModels []string
+	// GatewayPort is the in-container loopback port a channel framework serves a
+	// web UI / HTTP API on (0 = none). Used by `dejima agent open` to forward and
+	// open it. 0 means there is no localhost UI to open (e.g. a messaging-only
+	// gateway).
+	GatewayPort int
 }
 
 // Attachable reports whether clients can attach to this handler's agents.
 func (h Handler) Attachable() bool { return h.Kind == KindInteractive }
+
+// NeedsProviderKey reports whether this handler requires an LLM provider key.
+func (h Handler) NeedsProviderKey() bool { return h.RequiresProviderKey }
 
 // registry is the built-in handler set. Custom agents not listed here are
 // treated as generic interactive agents (the image's start.sh `*)` fallback
@@ -66,8 +86,12 @@ var registry = map[string]Handler{
 	//     loopback makes it self-generate a runtime token and come up `ready`;
 	//     widening the bind is the operator's job once auth/config is in place.
 	"openclaw": {ID: "openclaw", Kind: KindHeadless,
-		Launch:   "bash -lc 'command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; openclaw gateway --allow-unconfigured --bind loopback'",
-		StateDir: "/home/dejima/.openclaw"},
+		Launch:              "bash -lc 'command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; openclaw gateway --allow-unconfigured --bind loopback'",
+		StateDir:            "/home/dejima/.openclaw",
+		RequiresProviderKey: true,
+		SupportedProviders:  []string{"anthropic", "openai", "google"},
+		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6", "openai/gpt-5.5"},
+		GatewayPort:         18789},
 	Headless: {ID: Headless, Kind: KindHeadless, Launch: "", StateDir: "/home/dejima/.agent-state"},
 }
 

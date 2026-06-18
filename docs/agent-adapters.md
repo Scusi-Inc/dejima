@@ -143,6 +143,47 @@ image/agents/<name>/hooks/notify.sh      # event-emitting helper
 See `image/agents/claude-code/init.sh` and `image/agents/codex/init.sh` for
 worked examples.
 
+### LLM provider credentials (framework-agnostic contract)
+
+For frameworks that reach a model over a **provider API key** (OpenClaw, Letta,
+Goose, aider, …) — as opposed to OAuth-seeded CLIs like Claude Code / Codex —
+dejima supplies the key and the model choice through a generic, secret-safe
+contract your shim translates into the framework's native config. Declare it by
+setting `RequiresProviderKey: true` (and, optionally, `SupportedProviders`,
+`SuggestedModels`, `GatewayPort`) on the handler's registry entry in
+`internal/handlers`.
+
+Provider keys are **account-wide, keyed by provider** (one `anthropic` key serves
+every island whose agents target Anthropic), stored by the daemon and supplied
+with `dejima provider set <provider>`. An agent picks a provider+model
+(`dejima agent config <island>/<id> --provider … --model …`, or at create). The
+daemon then, at container build:
+
+- materializes the chosen provider's key into a **read-only** mount at
+  `/opt/host/llm/<provider>.env` (mode 0600) — the key is **never** a container
+  env var, so it never appears in `docker inspect` or logs;
+- injects three non-secret env vars for the primary agent:
+
+| Var | Value | Notes |
+|-----|-------|-------|
+| `DEJIMA_PROVIDER` | provider id, e.g. `anthropic` | empty when no key is configured yet |
+| `DEJIMA_PROVIDER_KEY_FILE` | `/opt/host/llm/<provider>.env` | the file to source; absent when no key |
+| `DEJIMA_MODEL` | the `provider/model` string the user chose | empty when unset |
+
+Your `init.sh` reads these and writes them into the framework's own config,
+**only into the writable home** so a restart re-applies (key rotation needs only
+a restart, not a recreate). It must no-op cleanly when they're unset (the gateway
+should still boot idle; dejima surfaces the missing key via proactive agent
+health, `AuthState: "missing-provider-auth"`). See `image/agents/openclaw/init.sh`
+for the worked example (merge the key file into `~/.openclaw/.env`, set the
+default model). `/opt/host/llm/providers.json` lists the materialized providers
+(name/env-var/base-url, no keys) if your shim needs to enumerate them.
+
+`GatewayPort` (when non-zero) is the in-container loopback port your framework
+serves a web UI / HTTP API on; `dejima agent open <island>/<id>` forwards it to
+localhost and opens it. Leave it 0 for frameworks with no localhost UI (e.g. a
+messaging-only gateway).
+
 ### Wiring the command
 
 Add the agent's launch command to the `case` block in `image/start.sh`:
@@ -250,10 +291,12 @@ Then: `dejima init --repo … --agent aider`.
 - **Restart-on-crash.** Headless agents that exit take the container with
   them. Re-launch with `dejima wake`. A supervisor mode is on the roadmap
   and will land when there's demand for it.
-- **Per-agent credential scopes.** All host credentials mounted into the
-  image are visible to every agent that runs in any island. Granular
-  scoping (per-island `gh` token, per-island OpenAI key) is a future
-  surface.
+- **Per-agent credential scopes.** Host OAuth credentials (`~/.claude`,
+  `~/.codex`) mounted into the image are visible to every agent in the island.
+  GitHub identities and **LLM provider keys** are already scoped per island
+  (each island materializes only its selected identity / its agents' chosen
+  providers), but a provider key is still account-wide-per-provider, not
+  per-agent. Finer per-agent key scoping is a future surface.
 - **A task model.** Today, an island has one current agent process. There's
   no concept of queued tasks, retries, parents/children, etc. By design — see
   the v1 spec for why.

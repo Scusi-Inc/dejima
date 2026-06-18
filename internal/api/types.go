@@ -69,6 +69,18 @@ type AgentInfo struct {
 	// or tmux session couldn't be created. Empty when the agent came up cleanly.
 	Error   string    `json:"error,omitempty"`
 	ErrorAt time.Time `json:"error_at,omitempty"`
+	// Provider/Model echo the agent's configured LLM target (only meaningful for
+	// frameworks that reach a model over a provider API key; empty otherwise).
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	// ProviderKeySet reports whether the daemon has a provider credential to
+	// inject for this agent's provider.
+	ProviderKeySet bool `json:"provider_key_set,omitempty"`
+	// AuthState is the proactive LLM-credential readiness, computed from the
+	// handler registry + provider store (never from logs): "missing-provider-auth"
+	// when a key-requiring agent has no resolvable key (it will fail at first
+	// task), else "" (ready, or the agent needs no provider key).
+	AuthState string `json:"auth_state,omitempty"`
 }
 
 // IslandHealth surfaces crash-relevant facts that a remote client can't observe

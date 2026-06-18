@@ -24,6 +24,7 @@ import (
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/porttoken"
 	"github.com/aoos/dejima/internal/project"
+	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/runtime"
 )
 
@@ -1558,6 +1559,22 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		}
 		if h, ok := handlers.Lookup(pa.Type); ok {
 			env["DEJIMA_LAUNCH"] = h.Launch // empty for headless → entrypoint runs DEJIMA_AGENT_CMD as PID 1
+			// LLM provider/model selection for frameworks that reach a model over
+			// an API key. The key bytes are NOT injected here — only the path to
+			// the read-only mounted file is (materialized by islandLLMConfigDir),
+			// so the secret never appears in env / `docker inspect`. The per-agent
+			// shim sources the file and translates DEJIMA_MODEL into native config.
+			if h.RequiresProviderKey {
+				if pa.Model != "" {
+					env["DEJIMA_MODEL"] = pa.Model
+				}
+				if store, err := providercreds.Load(); err == nil {
+					if prov, ok := store.Resolve(pa.Provider); ok {
+						env["DEJIMA_PROVIDER"] = prov.Name
+						env["DEJIMA_PROVIDER_KEY_FILE"] = "/opt/host/llm/" + prov.Name + ".env"
+					}
+				}
+			}
 		}
 	}
 	env["DEJIMA_AGENT"] = agentType
@@ -1861,6 +1878,10 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	// Drop the island's materialized GitHub identity (a plaintext token on disk);
 	// it lives outside the project dir, so project.Delete won't catch it.
 	if dir, err := paths.GitHubIslandConfigPath(p.Name); err == nil {
+		_ = os.RemoveAll(dir)
+	}
+	// Same for the materialized LLM provider keys (plaintext .env files).
+	if dir, err := paths.LLMIslandConfigPath(p.Name); err == nil {
 		_ = os.RemoveAll(dir)
 	}
 	return project.Delete(p.Name)
@@ -2168,9 +2189,29 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 		if msg, at, ok := s.agentErrorOf(p.Name, a.ID); ok {
 			ai.Error, ai.ErrorAt = msg, at
 		}
+		ai.Provider, ai.Model, ai.ProviderKeySet, ai.AuthState = agentProviderStatus(a)
 		out = append(out, ai)
 	}
 	return out
+}
+
+// agentProviderStatus reports an agent's LLM provider/model and whether dejima
+// has a key to inject — computed purely from the handler registry + the provider
+// store (no log-scraping). For a key-requiring handler with no resolvable key it
+// returns authState "missing-provider-auth", the proactive signal that the agent
+// will fail at first task; for OAuth-seeded / non-LLM handlers it returns an
+// empty authState (the subsystem doesn't apply).
+func agentProviderStatus(a *project.AgentSpec) (provider, model string, keySet bool, authState string) {
+	h, ok := handlers.Lookup(a.Type)
+	if !ok || !h.RequiresProviderKey {
+		return "", a.Model, false, ""
+	}
+	if store, err := providercreds.Load(); err == nil {
+		if prov, ok := store.Resolve(a.Provider); ok {
+			return prov.Name, a.Model, true, ""
+		}
+	}
+	return strings.TrimSpace(a.Provider), a.Model, false, "missing-provider-auth"
 }
 
 // credentialBindMounts assembles the host paths to mount read-only into the island.
@@ -2230,6 +2271,54 @@ func islandGitConfig(p *project.Project) (string, error) {
 		return "", fmt.Errorf("write island gitconfig: %w", err)
 	}
 	return path, nil
+}
+
+// islandLLMConfigDir materializes the per-island LLM provider .env file(s) and
+// returns the dir to mount read-only at /opt/host/llm. For each distinct
+// provider referenced by the island's key-requiring agents (AgentSpec.Provider,
+// or the store default when blank), it writes a single-provider <name>.env
+// (0600) the per-agent shim sources, plus a key-less providers.json manifest.
+// Returns "" (no error) when no provider resolves — an island that needs no LLM
+// key still boots, and the missing-key state surfaces via agent health. The
+// files hold plaintext keys, so teardown removes the dir (LLMIslandConfigPath).
+func islandLLMConfigDir(p *project.Project) (string, error) {
+	store, err := providercreds.Load()
+	if err != nil {
+		return "", fmt.Errorf("load provider credentials: %w", err)
+	}
+	seen := map[string]providercreds.Provider{}
+	for i := range p.Agents {
+		a := &p.Agents[i]
+		if h, ok := handlers.Lookup(a.Type); !ok || !h.RequiresProviderKey {
+			continue
+		}
+		if prov, ok := store.Resolve(a.Provider); ok {
+			seen[prov.Name] = prov
+		}
+	}
+	if len(seen) == 0 {
+		return "", nil
+	}
+	dir, err := paths.LLMIslandConfigDir(p.Name)
+	if err != nil {
+		return "", err
+	}
+	manifest := make([]providercreds.Meta, 0, len(seen))
+	for _, prov := range seen {
+		if err := os.WriteFile(filepath.Join(dir, prov.Name+".env"), []byte(providercreds.DotEnv(prov)), 0o600); err != nil {
+			return "", fmt.Errorf("write island llm env: %w", err)
+		}
+		// Manifest carries non-secret descriptors only (name/env-var/base-url).
+		manifest = append(manifest, providercreds.Meta{Name: prov.Name, EnvVar: providercreds.EnvVarName(prov), BaseURL: prov.BaseURL})
+	}
+	b, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "providers.json"), b, 0o600); err != nil {
+		return "", fmt.Errorf("write island llm manifest: %w", err)
+	}
+	return dir, nil
 }
 
 func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
@@ -2304,6 +2393,18 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 				HostPath: gitConfig, ContainerPath: "/opt/host/gitconfig", ReadOnly: true,
 			})
 		}
+	}
+
+	// LLM provider keys: materialize the per-island <provider>.env file(s) for
+	// the agents' chosen providers and mount them read-only at /opt/host/llm. The
+	// key bytes live only in this 0600 file — never a container env var, so never
+	// in `docker inspect` or logs. The per-agent shim sources it before launch.
+	if dir, err := islandLLMConfigDir(p); err != nil {
+		return nil, err
+	} else if dir != "" {
+		binds = append(binds, runtime.BindMount{
+			HostPath: dir, ContainerPath: "/opt/host/llm", ReadOnly: true,
+		})
 	}
 	return binds, nil
 }
