@@ -411,6 +411,11 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /v1/credentials/github/{name}", s.handlePutGitHubIdentity)
 	mux.HandleFunc("DELETE /v1/credentials/github/{name}", s.handleDeleteGitHubIdentity)
 	mux.HandleFunc("GET /v1/credentials/github/{name}/repos", s.handleGitHubRepos)
+	mux.HandleFunc("GET /v1/credentials/providers", s.handleListProviderCreds)
+	mux.HandleFunc("PUT /v1/credentials/providers/{provider}", s.handlePutProviderCred)
+	mux.HandleFunc("DELETE /v1/credentials/providers/{provider}", s.handleDeleteProviderCred)
+	mux.HandleFunc("GET /v1/agent-types", s.handleAgentTypes)
+	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}/config", s.configureAgent)
 	mux.HandleFunc("GET /v1/events/subscriptions", s.listSubscriptions)
 	mux.HandleFunc("POST /v1/events/subscribe", s.subscribeWebhook)
 	mux.HandleFunc("DELETE /v1/events/subscriptions/{id}", s.unsubscribeWebhook)
@@ -792,6 +797,8 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 		Tmux:      "agent-" + id,
 		Branch:    "agent/" + id,
 		Worktree:  agentsWorktreeRoot + "/" + id,
+		Provider:  strings.TrimSpace(req.Provider),
+		Model:     strings.TrimSpace(req.Model),
 		CreatedAt: time.Now().UTC(),
 	}
 	// A plain terminal pokes at the island's workspace directly — no isolated
@@ -1478,6 +1485,10 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		if lbl := strings.TrimSpace(seedAgents[0].Label); lbl != "" {
 			p.Agents[0].Label = lbl
 		}
+		// The primary's LLM provider/model (key-requiring frameworks) — Agents[0]
+		// is synthesized from the scalar type, so carry the seed's choice across.
+		p.Agents[0].Provider = strings.TrimSpace(seedAgents[0].Provider)
+		p.Agents[0].Model = strings.TrimSpace(seedAgents[0].Model)
 		for _, ar := range seedAgents[1:] {
 			spec, err := s.newAgentSpec(p, ar)
 			if err != nil {

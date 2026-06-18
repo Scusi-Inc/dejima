@@ -5,6 +5,7 @@ import (
 
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/ledger"
+	"github.com/aoos/dejima/internal/providercreds"
 )
 
 // IslandInfo is the public view of an island returned by the API.
@@ -259,6 +260,12 @@ type AgentSpecRequest struct {
 	Type  string `json:"type,omitempty"`  // defaults to the island/default agent
 	Label string `json:"label,omitempty"` // optional, renamable
 	Cmd   string `json:"cmd,omitempty"`   // required only for headless
+	// Provider/Model select the LLM target for key-requiring frameworks. Provider
+	// names a daemon credential (see /v1/credentials/providers); Model is the
+	// "provider/model" string. Both optional; only meaningful when the agent type
+	// RequiresProviderKey.
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // Resources mirrors project.Resources for API transport.
@@ -377,6 +384,63 @@ type PutGitHubIdentityRequest struct {
 // gh or lose push auth — so the caller should warn about them.
 type DeleteGitHubIdentityResponse struct {
 	AffectedIslands []string `json:"affected_islands,omitempty"`
+}
+
+// ProviderCredentialsResponse is the body of GET /v1/credentials/providers: the
+// daemon's LLM provider credentials WITHOUT their keys (providercreds.Meta
+// carries only a masked hint).
+type ProviderCredentialsResponse struct {
+	Providers []providercreds.Meta `json:"providers"`
+}
+
+// PutProviderCredentialRequest is the body of PUT /v1/credentials/providers/:provider
+// — how a client (`dejima provider set`) seeds or updates a provider key. The
+// key is write-only; it is never echoed back.
+type PutProviderCredentialRequest struct {
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url,omitempty"` // optional endpoint override
+	EnvVar  string `json:"env_var,omitempty"`  // override the derived env-var name
+	Default bool   `json:"default,omitempty"`  // make this the default provider
+}
+
+// DeleteProviderCredentialResponse reports which islands still reference the
+// provider that was just deleted (their agents will read missing-provider-auth
+// until reconfigured or pointed at another provider).
+type DeleteProviderCredentialResponse struct {
+	AffectedIslands []string `json:"affected_islands,omitempty"`
+}
+
+// AgentConfigRequest is the body of PATCH /v1/islands/:name/agents/:id/config.
+// Pointer fields distinguish "leave unchanged" (nil) from an explicit value
+// (incl. "" to clear).
+type AgentConfigRequest struct {
+	Provider *string `json:"provider,omitempty"`
+	Model    *string `json:"model,omitempty"`
+}
+
+// AgentConfigResponse echoes the agent's resulting provider/model and whether
+// the change needs a container recreate to take effect (a Model change rides an
+// immutable env var; a Provider/key change re-materializes on the next restart).
+type AgentConfigResponse struct {
+	Provider        string `json:"provider"`
+	Model           string `json:"model"`
+	RestartRequired bool   `json:"restart_required"`
+}
+
+// AgentTypeCapability describes what a built-in agent type supports — drives the
+// provider/model picker and the channels affordance in clients.
+type AgentTypeCapability struct {
+	Type                string   `json:"type"`
+	Interactive         bool     `json:"interactive"`
+	RequiresProviderKey bool     `json:"requires_provider_key"`
+	SupportedProviders  []string `json:"supported_providers,omitempty"`
+	SuggestedModels     []string `json:"suggested_models,omitempty"`
+	GatewayPort         int      `json:"gateway_port,omitempty"` // 0 = no localhost UI to open
+}
+
+// AgentTypesResponse is the body of GET /v1/agent-types.
+type AgentTypesResponse struct {
+	Types []AgentTypeCapability `json:"types"`
 }
 
 // GitHubReposResponse is the body of GET /v1/credentials/github/:name/repos.

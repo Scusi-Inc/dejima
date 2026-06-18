@@ -62,6 +62,7 @@ const (
 // with the router: a non-canonical path matches no pattern and is denied.
 var tokenRouteAccess = map[string]tokenAccess{
 	"GET /v1/healthz":               accessAny,
+	"GET /v1/agent-types":           accessAny, // capability discovery; carries no secrets
 	"POST /v1/islands":              accessHomeCreate,
 	"POST /v1/internal/agent-event": accessTokenOwn,
 	"POST /v1/capabilities/execute": accessTokenOwn,

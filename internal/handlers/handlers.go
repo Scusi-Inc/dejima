@@ -10,6 +10,8 @@
 // captured informally in docs/agent-adapters.md and folded in over later phases.
 package handlers
 
+import "sort"
+
 // Kind distinguishes how an agent runs inside an island.
 type Kind string
 
@@ -111,4 +113,15 @@ func Attachable(agentType string) bool {
 		return h.Attachable()
 	}
 	return true
+}
+
+// All returns every registered handler, sorted by ID — for capability discovery
+// (GET /v1/agent-types) and clients that populate a provider/model picker.
+func All() []Handler {
+	out := make([]Handler, 0, len(registry))
+	for _, h := range registry {
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/providercreds"
 )
 
 // Client is a thin HTTP client for the Dejima API.
@@ -180,6 +181,54 @@ func (c *Client) DeleteGitHubIdentity(ctx context.Context, name string) (affecte
 		return nil, err
 	}
 	return out.AffectedIslands, nil
+}
+
+// ListProviderCredentials returns the daemon's LLM provider credentials without
+// their keys (masked hint only).
+func (c *Client) ListProviderCredentials(ctx context.Context) ([]providercreds.Meta, error) {
+	var out ProviderCredentialsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/credentials/providers", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Providers, nil
+}
+
+// PutProviderCredential stores or updates a provider key on the daemon.
+func (c *Client) PutProviderCredential(ctx context.Context, provider string, req PutProviderCredentialRequest) ([]providercreds.Meta, error) {
+	var out ProviderCredentialsResponse
+	if err := c.do(ctx, http.MethodPut, "/v1/credentials/providers/"+url.PathEscape(provider), req, &out); err != nil {
+		return nil, err
+	}
+	return out.Providers, nil
+}
+
+// DeleteProviderCredential removes a provider key and returns the names of any
+// islands that still reference it.
+func (c *Client) DeleteProviderCredential(ctx context.Context, provider string) (affected []string, err error) {
+	var out DeleteProviderCredentialResponse
+	if err := c.do(ctx, http.MethodDelete, "/v1/credentials/providers/"+url.PathEscape(provider), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.AffectedIslands, nil
+}
+
+// ListAgentTypes returns the capability descriptors for the built-in agent types.
+func (c *Client) ListAgentTypes(ctx context.Context) ([]AgentTypeCapability, error) {
+	var out AgentTypesResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/agent-types", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Types, nil
+}
+
+// ConfigureAgent sets an agent's LLM provider/model.
+func (c *Client) ConfigureAgent(ctx context.Context, island, id string, req AgentConfigRequest) (*AgentConfigResponse, error) {
+	var out AgentConfigResponse
+	path := "/v1/islands/" + url.PathEscape(island) + "/agents/" + url.PathEscape(id) + "/config"
+	if err := c.do(ctx, http.MethodPatch, path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // ListGitHubRepos lists repositories the identity can access, fetched daemon-side
