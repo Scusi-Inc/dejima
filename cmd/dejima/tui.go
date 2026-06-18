@@ -121,6 +121,7 @@ type tuiModel struct {
 	editor       string          // preferred Remote-SSH editor CLI ("" = auto-detect); from clientcfg
 	settings     *settingsModel  // non-nil while the settings overlay is open
 	resEditor    *resourceEditor // non-nil while the per-island resources overlay is open
+	modelEditor  *modelEditor    // non-nil while the per-agent model/provider/key overlay is open
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -629,6 +630,52 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.fetchListCmd(), m.fetchDetailCmd(msg.island))
 
+	case modelEditorLoadedMsg:
+		if m.modelEditor != nil && m.modelEditor.agentID == msg.agentID {
+			if msg.err != nil {
+				m.lastError = "load agent capabilities: " + msg.err.Error()
+				m.modelEditor = nil
+			} else {
+				m.modelEditor.applyLoaded(msg)
+			}
+		}
+		return m, nil
+
+	case providerKeySetMsg:
+		if m.modelEditor != nil {
+			m.modelEditor.busy = false
+			if msg.err != nil {
+				m.lastError = "set provider key: " + msg.err.Error()
+			} else {
+				m.modelEditor.keySet = true
+				m.modelEditor.enteringKey = false
+				m.modelEditor.keyInput = ""
+				m.lastNotice = "key set for " + msg.provider + " — applies to all " + msg.provider + " agents"
+			}
+		}
+		return m, nil
+
+	case agentConfiguredMsg:
+		if m.modelEditor != nil {
+			m.modelEditor.busy = false
+		}
+		if msg.err != nil {
+			m.lastError = "agent config: " + msg.err.Error()
+		} else {
+			island := ""
+			if m.modelEditor != nil {
+				island = m.modelEditor.island
+			}
+			m.modelEditor = nil
+			if msg.restartRequired {
+				m.confirm = &confirmPrompt{verb: "recreate-island", island: island}
+			} else {
+				m.lastNotice = "agent model updated"
+			}
+			return m, tea.Batch(m.fetchListCmd(), m.fetchDetailCmd(island))
+		}
+		return m, nil
+
 	case detailMsg:
 		if name := m.selectedName(); msg.info != nil && msg.info.Name == name {
 			m.detail = msg.info
@@ -777,6 +824,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The per-island resources overlay owns keys while open.
 	if m.resEditor != nil {
 		return m.resEditorKey(msg)
+	}
+	// The per-agent model/provider/key overlay owns keys while open.
+	if m.modelEditor != nil {
+		return m.modelEditorKey(msg)
 	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
@@ -940,6 +991,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				cur = isl.Title
 			}
 			m.confirm = &confirmPrompt{verb: "rename-island", island: r.island, answer: cur}
+		}
+	case "v":
+		// Configure the agent's LLM provider/model + key (key-requiring types).
+		if r := m.currentRow(); r.kind == rowIsland || r.kind == rowAgent {
+			return m.openModelEditor(r.island, r.agentID)
 		}
 	case "h":
 		if name := m.selectedName(); name != "" {
@@ -1407,7 +1463,11 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 				actionMenuItem{label: "Attach in this terminal", key: "a"},
 			)
 		}
+		agentIsland, agentRowID := row.island, row.agentID
 		items = append(items,
+			actionMenuItem{label: "Model / provider / key…", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+				return mm.openModelEditor(agentIsland, agentRowID)
+			}},
 			actionMenuItem{label: "Rename (relabel)", key: "e"},
 			actionMenuItem{label: "Remove agent", key: "X", danger: true},
 		)
@@ -1809,6 +1869,11 @@ func (m tuiModel) View() string {
 	}
 	if m.resEditor != nil {
 		box := styleMenuBox.Render(m.renderResourceEditor())
+		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.modelEditor != nil {
+		box := styleMenuBox.Render(m.renderModelEditor())
 		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
@@ -2279,9 +2344,12 @@ func terminalRowText(t hostterm.Terminal) string {
 // case the muted id is appended so the two rows aren't indistinguishable.
 func agentRowText(a api.AgentInfo, ambiguous bool) string {
 	sig := ""
-	if a.Error != "" {
+	switch {
+	case a.Error != "":
 		sig = "  " + styleErrored.Render("error")
-	} else if a.AgentState != nil && a.AgentState.Latest != "" {
+	case a.AuthState == "missing-provider-auth":
+		sig = "  " + styleWaiting.Render("⚠ no model key")
+	case a.AgentState != nil && a.AgentState.Latest != "":
 		sig = "  " + a.AgentState.Latest
 	}
 	name := truncate(agentDisplayName(a), 18)
@@ -2487,6 +2555,16 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 	if a.AgentState != nil && a.AgentState.Latest != "" {
 		b.WriteString(fmt.Sprintf("activity:  %s (%s ago)\n",
 			a.AgentState.Latest, time.Since(a.AgentState.UpdatedAt).Round(time.Second)))
+	}
+	if a.Model != "" {
+		b.WriteString(fmt.Sprintf("model:     %s\n", a.Model))
+	}
+	if a.AuthState == "missing-provider-auth" {
+		prov := a.Provider
+		if prov == "" {
+			prov = "a provider"
+		}
+		b.WriteString("auth:      " + styleWaiting.Render("⚠ no API key for "+prov+" — press [v] to set the model + key") + "\n")
 	}
 	if a.Error != "" {
 		b.WriteString("error:     " + styleErrored.Render(truncate(a.Error, 50)) + "\n")
