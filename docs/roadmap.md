@@ -8,6 +8,20 @@ This is the living roadmap for Dejima. Items are grouped by phase and sized roug
 
 ---
 
+## 🎯 Critical path — what's next after 0.1.0 (priority order)
+
+The forward priorities, distilled from the 2026 competitive review (see
+`strategy/competitive-gap-assessment.md`). These cut across the phase buckets below.
+
+1. **Audit log + read/export + viewer** (under v1.x) — the governance moat; decided 2026-06-19 to live in Dejima (a tamper-evident record needs engine-level placement).
+2. **Team rung** — token auth + 3 roles + island scope + an activity feed. The solo→team conversion bridge; **promoted out of "v2, someday"** — it's the next major rung after the solo launch + audit. (Detailed items still filed under v2 auth; this is their priority home.)
+3. **Audited MCP brokering** — table stakes (MCP is the default agent tool layer) *and* a differentiator (deny-by-default, ledgered). Pulled forward from v2.
+4. **Language SDKs (Py/TS)** — **gated to API stability (v1.0).** Until then: example snippets + an OpenAPI spec so builders self-generate. Don't hand-maintain SDKs against a 0.x API.
+
+Correctly deferred: microVM, multi-tenant SaaS, cross-host orchestration, in-Dejima agent orchestration.
+
+---
+
 ## 🧑 Operator verification queue (built, needs a live run)
 
 These shipped to `master` with unit/security review but can't be exercised from the
@@ -260,6 +274,7 @@ Substantial engineering. Defer until v1 dogfood proves the foundation.
 - [ ] **Backup / restore** — `dejima backup <name>` and `dejima restore` with a configurable destination (local path, S3, Backblaze, rsync target). User-configurable. (week)
 - [ ] **microVM backend** — Firecracker/Apple Virtualization framework as an isolation upgrade. Real per-island VM rather than shared kernel. (weeks)
 - [ ] **Audited MCP brokering (pull forward — table stakes).** Deny-by-default grants of specific MCP (Model Context Protocol) servers into an island, declarative per-project, with **every call ledgered** — the Port/file-broker pattern applied to tools. MCP is now the default agent tool layer (Anthropic CMA and most platforms connect to it), so this is *parity* and a *differentiator* (nobody audits MCP access). No longer a v2 nicety — treat as near-term. (weeks)
+- [ ] **Language SDKs (Python / TS) — gated to API stability.** Thin clients over the *existing* HTTP/WS API; they add ergonomics, not capability (the hard part they hide is the WebSocket PTY session stream + reconnection). The CLI is already a Go client. **Don't ship/maintain SDKs against a still-breaking 0.x API** — until `v1.0` ("safe to build on"), provide copy-paste Py/TS snippets in the API docs + an OpenAPI spec for self-generated clients. Real SDKs land with `v1.0`. (week+ each; deferred to API stability)
 - [ ] **Multi-user / RBAC** — team scenario. Auth model, identity, per-user quotas, project ownership. (weeks)
 - [ ] **Manage foreign containers (not just islands)** — extend the daemon from "manage the agents/containers Dejima provisioned" to "be the management layer for arbitrary agent containers already on the host" (adopt/observe/lifecycle containers Dejima didn't create). A real product swing toward Portainer/compose territory that strains the island/containment model; deferred deliberately. The committed direction is the **open-ended handler registry** instead: many first-class agent *types* (claude-code, codex, headless/SDK loops, openclaw, hermes, …) on islands Dejima owns, via a declarative handler descriptor rather than a Go change per agent. (open design, week+)
 - [ ] **Nested containers inside an island (per-island DinD)** — distinct from managing foreign containers: let an agent spawn its *own* containers inside its island (test sandboxes, image builds). Dejima deliberately keeps **no visibility** into these — they live in the island's blast radius and tear down with it. Today an island has no Docker access at all. Enabling it has two doors: mounting the host docker socket (trivial but effectively host-root — a containment break, **rejected**) vs. rootless Docker-in-Docker confined to the island namespace (preserves containment; costs image/privilege plumbing + overhead). If we do it, only the rootless-DinD door. Parked — reconsider on real demand. (open design)
