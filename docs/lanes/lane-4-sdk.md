@@ -21,6 +21,6 @@ independent — no daemon code, safest lane, run flat out.**
 
 **Gates / seams:** none — you have no dependency on the other lanes. Other lanes will ask you to spec new endpoints they add; fold those into `openapi.yaml` + the clients.
 
-**Workflow:** branch `feat/lane4-sdk`, own island/worktree — **not `master`**. Run the Python tests; lint the spec. Commit your own hunks; PR to `master` when green. Ship with a clear "0.x — may change" note; the CLI (Go) is the reference client to mirror behavior.
+**Workflow — worktrees (read this):** You are one of several agents in a **shared island**. You start in **your own git worktree** (`/workspace/.agents/<your-id>`) on your own branch — **stay there.** Never `cd /workspace` (the primary/master worktree — commits there land on `master`) and never enter another agent's `.agents/<id>`. The `.git` is shared across lanes; your files live only in your worktree. Do your work on branch `feat/lane4-sdk`; run the Python tests; lint the spec. Commit **only your own hunks**; rebase if a shared file conflicts; PR to `master` when green. Ship with a clear "0.x — may change" note; the CLI (Go) is the reference client to mirror behavior.
 
 **Done when:** Python + TS clients cover the API; `openapi.yaml` matches `server.go`; example snippets are live on the site; the Python package is publishable to PyPI.

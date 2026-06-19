@@ -22,6 +22,6 @@ read/export API + viewer — build-queue item #1, the governance moat.
 - Coordinate "identity (who/role) on the request" with Lane 2 (they add it; you consume it).
 - Register routes via a `RegisterAudit(mux)` so `server.go` changes are one line; put any config fields in a separate file. Append-only on shared files.
 
-**Workflow:** work on branch `feat/lane1-audit` in your own island/worktree — **do not commit on `master`**. `go test ./...`; run `scripts/integration.sh` for ledger paths. Commit your own hunks only; open a PR to `master` when green. Go 1.26.3; bump `api_version` if the contract changes.
+**Workflow — worktrees (read this):** You are one of several agents in a **shared island**. You start in **your own git worktree** (`/workspace/.agents/<your-id>`) on your own branch — **stay there.** Never `cd /workspace` (that's the primary/master worktree — commits there land on `master`) and never enter another agent's `.agents/<id>`. The repo's `.git` is shared across lanes, so branches are visible to all but your files live only in your worktree. Do your work on branch `feat/lane1-audit`; `go test ./...`; run `scripts/integration.sh` for ledger paths. Commit **only your own hunks**; rebase if a shared file conflicts; open a PR to `master` when green. Go 1.26.3; bump `api_version` if the contract changes.
 
 **Done when:** events are recorded tamper-evidently; `dejima audit` reads/exports + verifies; the TUI viewer works; tests pass; a short doc note lands.

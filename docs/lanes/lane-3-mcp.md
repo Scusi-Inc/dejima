@@ -21,6 +21,6 @@ call ledgered. **Independent of Lanes 1 & 2 — start immediately.**
 - No dependency on Lanes 1/2 — go now.
 - Register routes via `RegisterMCP(mux)` (one line in `server.go`); keep your `project.Project` fields in a separate file (Lane 2 also touches that struct). Append-only.
 
-**Workflow:** branch `feat/lane3-mcp`, own island/worktree — **not `master`**. `go test ./...`; extend `scripts/integration.sh` for the broker path. Commit your own hunks; PR to `master` when green. Go 1.26.3.
+**Workflow — worktrees (read this):** You are one of several agents in a **shared island**. You start in **your own git worktree** (`/workspace/.agents/<your-id>`) on your own branch — **stay there.** Never `cd /workspace` (the primary/master worktree — commits there land on `master`) and never enter another agent's `.agents/<id>`. The `.git` is shared across lanes; your files live only in your worktree. Do your work on branch `feat/lane3-mcp`; `go test ./...`; extend `scripts/integration.sh` for the broker path. Commit **only your own hunks**; rebase if a shared file conflicts; PR to `master` when green. Go 1.26.3.
 
 **Done when:** deny-all MCP grants per island; brokered MCP calls are ledgered (`mcp.*`); `dejima mcp` CLI works; tests + a live-Docker integration check pass.

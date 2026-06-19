@@ -21,6 +21,6 @@ per-island scope — build-queue item #2, the solo→team conversion bridge.
 - The **activity feed** is the shared last item — gated on both your roles and Lane 1's audit log; don't start it until both exist.
 - Register routes via `RegisterAuth(mux)` (one line in `server.go`); config fields in a separate file (Lane 3 also touches `project.Project` — keep your fields isolated). Append-only.
 
-**Workflow:** branch `feat/lane2-team-auth`, own island/worktree — **not `master`**. `go test ./...`; run `/security-review` on the auth surface before PR. Commit your own hunks; PR to `master` when green. Go 1.26.3.
+**Workflow — worktrees (read this):** You are one of several agents in a **shared island**. You start in **your own git worktree** (`/workspace/.agents/<your-id>`) on your own branch — **stay there.** Never `cd /workspace` (the primary/master worktree — commits there land on `master`) and never enter another agent's `.agents/<id>`. The `.git` is shared across lanes; your files live only in your worktree. Do your work on branch `feat/lane2-team-auth`; `go test ./...`; run `/security-review` on the auth surface before PR. Commit **only your own hunks**; rebase if a shared file conflicts; PR to `master` when green. Go 1.26.3.
 
 **Done when:** tokens issue/list/revoke; 3 roles + island scope enforced in middleware; identity is on the request context; security-reviewed; tests pass.
