@@ -8,17 +8,19 @@ This is the living roadmap for Dejima. Items are grouped by phase and sized roug
 
 ---
 
-## 🎯 Critical path — what's next after 0.1.0 (priority order)
+## 🎯 Committed build queue — post-0.1.0 (in order)
 
-The forward priorities, distilled from the 2026 competitive review (see
-`strategy/competitive-gap-assessment.md`). These cut across the phase buckets below.
+The committed forward plan, distilled from the 2026 competitive review (see
+`strategy/competitive-gap-assessment.md`). **We're building all of these**; the
+numbering is priority order. Detail lives in the phase buckets below; the items'
+home is here.
 
-1. **Audit log + read/export + viewer** (under v1.x) — the governance moat; decided 2026-06-19 to live in Dejima (a tamper-evident record needs engine-level placement).
-2. **Team rung** — token auth + 3 roles + island scope + an activity feed. The solo→team conversion bridge; **promoted out of "v2, someday"** — it's the next major rung after the solo launch + audit. (Detailed items still filed under v2 auth; this is their priority home.)
-3. **Audited MCP brokering** — table stakes (MCP is the default agent tool layer) *and* a differentiator (deny-by-default, ledgered). Pulled forward from v2.
-4. **Language SDKs (Py/TS)** — **gated to API stability (v1.0).** Until then: example snippets + an OpenAPI spec so builders self-generate. Don't hand-maintain SDKs against a 0.x API.
+1. **Audit log + read/export + viewer** — the governance moat; lives in Dejima (a tamper-evident record needs engine-level placement). Detail under v1.x. (week+)
+2. **Team rung** — token auth + 3 built-in roles + per-island scope + an activity feed (who, and which agent, did what). The solo→team conversion bridge. (~3 weeks total)
+3. **Audited MCP brokering** — deny-by-default grants of MCP servers into an island, every call ledgered. Table stakes (MCP is the default agent tool layer) *and* a differentiator (nobody audits it). (weeks)
+4. **Language SDKs (Python + TS) + OpenAPI spec** — `pip install dejima` / npm. Thin clients over the existing API; generate the request/response client from an OpenAPI spec (API changes = a regen, not hand-edits), hand-write only the PTY-stream ergonomics. Ship now with a "0.x — may change" note; drops example snippets into the API docs for free. (week+ each)
 
-Correctly deferred: microVM, multi-tenant SaaS, cross-host orchestration, in-Dejima agent orchestration.
+Correctly deferred (NOT in this queue): microVM, multi-tenant SaaS, cross-host orchestration, in-Dejima agent orchestration.
 
 ---
 
@@ -263,18 +265,19 @@ Read-only V1 shipped & **validated on live Docker** (`scripts/integration.sh` 38
 
 ## v2 — heavier features
 
-Substantial engineering. Defer until v1 dogfood proves the foundation.
+Substantial engineering. **Exception:** the team-auth/roles + activity feed, audited MCP brokering, and SDK items in this section are **committed near-term** (see the build queue at top) — only the genuinely heavy rest (microVM, multi-tenant/RBAC, foreign containers, nested DinD, cross-host, NL control, web client, …) waits until the foundation is proven.
 
 - [ ] **Per-agent / per-island ACLs within a shared project** — when multiple islands share a workspace, define which agent can read/write which paths. Useful for delegated work streams ("frontend can write under /web, backend under /api, both read /shared"). Wrapper-product territory mostly; primitives may belong here. (open design, week+)
 - [ ] **Trust-on-first-use for new clients** — unfamiliar attaches blocked until user approves via push notification on an already-trusted device. The 2FA-shaped feature. (week)
-- [ ] **Token-based auth (single `owner` role)** — *(pull forward — the solo→team conversion bridge; with the 3-roles item below, this is the next rung after the solo launch).* `dejima token create --label phone` issues a token; CLI/API consumers carry it via env or header. Doesn't replace Tailscale identity, complements it. Foundation for the wider roles model below. (week)
-- [ ] **Three built-in roles + per-island scope** — `owner` / `operator` (lifecycle but no purge) / `viewer` (read + observe). A token can be limited to specific islands. Lets wrapper products (Scusi, etc.) hold a service token with bounded power. (2 weeks)
+- [ ] **Token-based auth (single `owner` role)** — **committed (team rung — see build queue).** `dejima token create --label phone` issues a token; CLI/API consumers carry it via env or header. Doesn't replace Tailscale identity, complements it. Foundation for the wider roles model below. (week)
+- [ ] **Three built-in roles + per-island scope** — **committed (team rung).** `owner` / `operator` (lifecycle but no purge) / `viewer` (read + observe). A token can be limited to specific islands. Lets wrapper products (Scusi, etc.) hold a service token with bounded power. (2 weeks)
+- [ ] **Activity feed** — **committed (team rung).** "Who launched what, and which agent did what," across the team — the team-facing view built from the operational audit log + ownership tags. (days, once the audit log + roles land)
 - [ ] **Explicit auth non-goals (won't build inside Dejima)** — multi-tenant user UIs, OAuth/SSO, per-verb fine-grained ACLs, time-windowed tokens. Those belong in wrapper apps. Dejima ships **3 roles + island scope** and stops; anything richer is the wrapper's job. *(Same pattern as Postgres roles + Supabase auth.)*
 - [ ] **(moved)** Operational audit ledger — consolidated into "Audit log + read/export + viewer" under v1.x (pulled forward; see above). It's the moat, so it's no longer a v2 deferral.
 - [ ] **Backup / restore** — `dejima backup <name>` and `dejima restore` with a configurable destination (local path, S3, Backblaze, rsync target). User-configurable. (week)
 - [ ] **microVM backend** — Firecracker/Apple Virtualization framework as an isolation upgrade. Real per-island VM rather than shared kernel. (weeks)
-- [ ] **Audited MCP brokering (pull forward — table stakes).** Deny-by-default grants of specific MCP (Model Context Protocol) servers into an island, declarative per-project, with **every call ledgered** — the Port/file-broker pattern applied to tools. MCP is now the default agent tool layer (Anthropic CMA and most platforms connect to it), so this is *parity* and a *differentiator* (nobody audits MCP access). No longer a v2 nicety — treat as near-term. (weeks)
-- [ ] **Language SDKs (Python / TS) — gated to API stability.** Thin clients over the *existing* HTTP/WS API; they add ergonomics, not capability (the hard part they hide is the WebSocket PTY session stream + reconnection). The CLI is already a Go client. **Don't ship/maintain SDKs against a still-breaking 0.x API** — until `v1.0` ("safe to build on"), provide copy-paste Py/TS snippets in the API docs + an OpenAPI spec for self-generated clients. Real SDKs land with `v1.0`. (week+ each; deferred to API stability)
+- [ ] **Audited MCP brokering** — **committed (build queue #3).** Deny-by-default grants of specific MCP (Model Context Protocol) servers into an island, declarative per-project, with **every call ledgered** — the Port/file-broker pattern applied to tools. MCP is now the default agent tool layer (Anthropic CMA and most platforms connect to it), so this is *parity* and a *differentiator* (nobody audits MCP access). (weeks)
+- [ ] **Language SDKs (Python + TS) + OpenAPI spec** — **committed (build queue #4).** `pip install dejima` (and npm). Thin clients over the *existing* HTTP/WS API — they add ergonomics, not capability (the part they hide is the WebSocket PTY session stream + reconnection). Approach: publish an **OpenAPI spec** and generate the request/response client from it (so an API change is a regen, not hand-edits), then hand-write the small ergonomic layer (the PTY-stream helper). Ship now with a "0.x — may change" note; the CLI is already a Go client to mirror. Drops copy-paste snippets into the API docs for free. (week+ each)
 - [ ] **Multi-user / RBAC** — team scenario. Auth model, identity, per-user quotas, project ownership. (weeks)
 - [ ] **Manage foreign containers (not just islands)** — extend the daemon from "manage the agents/containers Dejima provisioned" to "be the management layer for arbitrary agent containers already on the host" (adopt/observe/lifecycle containers Dejima didn't create). A real product swing toward Portainer/compose territory that strains the island/containment model; deferred deliberately. The committed direction is the **open-ended handler registry** instead: many first-class agent *types* (claude-code, codex, headless/SDK loops, openclaw, hermes, …) on islands Dejima owns, via a declarative handler descriptor rather than a Go change per agent. (open design, week+)
 - [ ] **Nested containers inside an island (per-island DinD)** — distinct from managing foreign containers: let an agent spawn its *own* containers inside its island (test sandboxes, image builds). Dejima deliberately keeps **no visibility** into these — they live in the island's blast radius and tear down with it. Today an island has no Docker access at all. Enabling it has two doors: mounting the host docker socket (trivial but effectively host-root — a containment break, **rejected**) vs. rootless Docker-in-Docker confined to the island namespace (preserves containment; costs image/privilege plumbing + overhead). If we do it, only the rootless-DinD door. Parked — reconsider on real demand. (open design)
