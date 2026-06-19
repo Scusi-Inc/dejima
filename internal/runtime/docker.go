@@ -11,7 +11,26 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// defaultDockerTimeout caps any daemon-initiated docker invocation that arrives
+// without its own deadline, so a wedged or unresponsive container/engine can
+// never hang a daemon goroutine forever — which, when the caller holds a
+// per-island lock, would otherwise freeze every client. A generous ceiling
+// (real meta-commands and one-shot execs finish in well under this); streaming
+// calls (Logs, ExecStream) deliberately bypass it.
+const defaultDockerTimeout = 60 * time.Second
+
+// ceilingContext returns ctx unchanged when it already carries a deadline,
+// otherwise a copy bounded by defaultDockerTimeout. The returned cancel must be
+// called.
+func ceilingContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, defaultDockerTimeout)
+}
 
 // Docker shells out to the `docker` CLI. It is intentionally simple: no
 // SDK dependency, easy to debug, easy to swap with `podman` by overriding Bin.
@@ -31,6 +50,8 @@ func (d *Docker) bin() string {
 }
 
 func (d *Docker) run(ctx context.Context, args ...string) (string, string, error) {
+	ctx, cancel := ceilingContext(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, d.bin(), args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -398,6 +419,8 @@ func (d *Docker) RemoveContainer(ctx context.Context, name string, force bool) e
 }
 
 func (d *Docker) Exec(ctx context.Context, name string, cmd []string) (string, string, int, error) {
+	ctx, cancel := ceilingContext(ctx)
+	defer cancel()
 	args := append([]string{"exec", name}, cmd...)
 	command := exec.CommandContext(ctx, d.bin(), args...)
 	var stdout, stderr bytes.Buffer

@@ -901,14 +901,26 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, errors.New("cannot remove the primary agent"))
 		return
 	}
-	if s.agentsLive(r.Context(), p) {
-		s.removeAgentSession(r.Context(), p, a)
-	}
+	// Persist the removal first (the source of truth), then clean up the agent's
+	// tmux session + worktree best-effort. The cleanup execs into the container,
+	// which can be busy or wedged — so it runs detached and bounded rather than
+	// inline: a hung container must never block the removal (which would freeze a
+	// client holding this island's lock). The container ceiling (runtime) is the
+	// backstop; this just keeps the request snappy.
+	live := s.agentsLive(r.Context(), p)
+	agentCopy := *a
 	p.RemoveAgent(id)
 	s.clearAgentError(name, id)
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+	if live {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			s.removeAgentSession(ctx, p, &agentCopy)
+		}()
 	}
 	s.emit(events.Event{
 		Type:   events.TypeIslandAgentRemoved,

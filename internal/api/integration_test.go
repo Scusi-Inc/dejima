@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
@@ -536,12 +537,20 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("remove p2: got %d", rr.Code)
 	}
-	calls = f.calls()
-	if !execContains(calls, "tmux", "kill-session", "agent-p2") {
-		t.Errorf("expected kill-session for p2; execs=%v", calls)
-	}
-	if !execContains(calls, "worktree", "remove", "/workspace/.agents/p2") {
-		t.Errorf("expected worktree remove for p2; execs=%v", calls)
+	// Session cleanup now runs detached (so a wedged/busy container can't block
+	// the removal), so poll briefly for the kill-session + worktree-remove execs.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		calls = f.calls()
+		if execContains(calls, "tmux", "kill-session", "agent-p2") &&
+			execContains(calls, "worktree", "remove", "/workspace/.agents/p2") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("expected detached kill-session + worktree remove for p2; execs=%v", calls)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	// The primary agent cannot be removed.
