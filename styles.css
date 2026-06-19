@@ -109,8 +109,12 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .cta-band p { color: var(--muted); margin: 0 0 1.1rem; }
 
 /* Comparison table emphasis ----------------------------------------- */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0.8rem 0; }
+.table-scroll table { margin: 0; }
+.compare { min-width: 640px; }
 .compare td:last-child { color: var(--fg); }
 .compare th:last-child { color: var(--accent); }
+.compare th:not(:first-child), .compare td:not(:first-child) { text-align: center; }
 
 /* Deep-link buttons -------------------------------------------------- */
 .deeplink { background: transparent; color: var(--accent); border: 1px solid var(--accent);
@@ -186,4 +190,5 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
   main { padding: 2.5rem 1.25rem 5rem; }
   .hero-h { font-size: 1.7rem; }
   .pick-label { min-width: 0; }
+  .compare { font-size: 0.84rem; }
 }
