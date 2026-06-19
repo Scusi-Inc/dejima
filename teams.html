@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dejima for teams — run agents in your perimeter, and prove what they did</title>
+<meta name="description" content="Run AI coding agents on infrastructure you control, with brokered host access and a tamper-evident audit log. Private by default, audited by design — for NDA, regulated, and client-confidential work.">
+<meta property="og:title" content="Dejima for teams">
+<meta property="og:description" content="Run AI coding agents in your own perimeter, with brokered host access and a tamper-evident audit log. Private by default, audited by design.">
+<link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="index.html"><img src="assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">pre-alpha</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="index.html">Home</a>
+  <a href="quickstart.html">Quickstart</a>
+  <a href="teams.html" aria-current="page">Teams</a>
+  <a href="build.html">Build</a>
+  <a href="api.html">API</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</nav>
+
+<section class="hero">
+  <p class="hero-eyebrow">For teams who have to prove what their agents did.</p>
+  <h1 class="hero-h">Agents in your perimeter — audited by design.</h1>
+  <p class="lede">Run AI coding agents on infrastructure your team controls, where every privileged action is brokered and recorded. Nothing — not your code, not your agents — leaves your boundary.</p>
+</section>
+
+<p class="small"><strong>Where this is today:</strong> the containment and audit foundations below are shipped and in use. The multi-user and compliance-reporting surface (roles, an audit viewer, SSO) is on the near-term roadmap — see <a href="#roadmap">what's coming</a>. If you have a regulated or client-confidential use case, we'd like to hear it: <a href="https://github.com/aoos/dejima">reach out on GitHub</a>.</p>
+
+<h2>Private by default</h2>
+<p>The agents' LLM calls go out — but <strong>your source, your files, and your credentials never leave your box</strong>. There's no managed cloud in the loop and no vendor account holding your work:</p>
+<ul>
+  <li><strong>Your hardware, your perimeter.</strong> Run it on a Mac mini, an on-prem server, a VPC, or an air-gapped host. Egress policy is yours to set.</li>
+  <li><strong>Your identity, not a vendor's.</strong> Access is your Tailscale identity over your tailnet — not a third-party login.</li>
+  <li><strong>Attenuated credentials.</strong> Each island gets a scoped, per-island token; your master GitHub and provider credentials are never handed to an agent.</li>
+  <li><strong>Clean teardown.</strong> <code>dejima purge</code> destroys an island and its volumes when the engagement ends.</li>
+</ul>
+
+<h2>Audited by design</h2>
+<p>The thing autonomous agents make hard — trusting a privileged actor with tool access — is exactly what Dejima is built to contain:</p>
+<div class="cards">
+  <div class="card">
+    <h3>Deny-all host access</h3>
+    <p>Islands can't see your host filesystem. You grant scoped, read-only folders explicitly with <code>dejima port grant</code>; an island can never widen its own access.</p>
+  </div>
+  <div class="card">
+    <h3>Brokered crossings</h3>
+    <p>Every file in or out of an island goes through the Port broker — read-only <em>intake</em> from host, append-only <em>trade</em> back out. No silent mounts.</p>
+  </div>
+  <div class="card">
+    <h3>Tamper-evident ledger</h3>
+    <p>Every brokered crossing is written to a hash-chained, append-only log outside any container. Reordered or missing entries break the chain. Verify with <code>dejima audit --verify</code>.</p>
+  </div>
+  <div class="card">
+    <h3>Contained, even when always-on</h3>
+    <p>Run a 24/7 assistant as a Home Island — it reaches host content only through the same brokered, logged path, so a prompt-injected agent still can't escape.</p>
+  </div>
+</div>
+
+<h2 id="roadmap">On the roadmap <span class="coming">in progress</span></h2>
+<p>Dejima is pre-alpha. The single-operator foundations above are shipped; the team and compliance surface is what we're building toward next:</p>
+<ul>
+  <li><strong>Team access &amp; roles</strong> — several people on one daemon, with control over who can create, purge, and grant.</li>
+  <li><strong>Activity feed</strong> — who launched what, and which agent did what, across the team.</li>
+  <li><strong>Audit viewer &amp; export</strong> — read and export the ledger as a compliance-grade record, not just a CLI verify.</li>
+  <li><strong>SSO &amp; retention</strong> — identity integration and retention controls for regulated environments.</li>
+</ul>
+<p class="small">Tracking the order of these against real use cases — if yours would move one up, tell us.</p>
+
+<section class="cta-band">
+  <h2>Have a regulated or confidential use case?</h2>
+  <p>Tell us what you're trying to run and what you need to prove. It shapes what ships next.</p>
+  <a class="btn-primary" href="https://github.com/aoos/dejima">Reach out on GitHub →</a>
+</section>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="index.html">Home</a>
+  <a href="quickstart.html">Quickstart</a>
+  <a href="build.html">Build</a>
+  <a href="api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md">Roadmap</a>
+</footer>
+
+</main>
+</body>
+</html>

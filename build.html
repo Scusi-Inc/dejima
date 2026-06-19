@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build on Dejima — one API for isolated, managed AI agents</title>
+<meta name="description" content="Build multi-agent dashboards, coding bots, web IDEs, and internal tools on one HTTP/WebSocket API: isolated containers, multi-attach sessions, lifecycle, credential injection, and agent-state events — instead of reinventing them.">
+<meta property="og:title" content="Build on Dejima">
+<meta property="og:description" content="One HTTP/WebSocket API for isolated, managed AI agents — containers, sessions, lifecycle, credential injection, and events.">
+<link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="index.html"><img src="assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">pre-alpha</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="index.html">Home</a>
+  <a href="quickstart.html">Quickstart</a>
+  <a href="teams.html">Teams</a>
+  <a href="build.html" aria-current="page">Build</a>
+  <a href="api.html">API</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</nav>
+
+<section class="hero">
+  <p class="hero-eyebrow">Building a product on top of agents?</p>
+  <h1 class="hero-h">One API for isolated, managed agents.</h1>
+  <p class="lede">Your control plane on top, your compute underneath, isolation in between. Target one HTTP/WebSocket API from any language — the same one the CLI uses — instead of reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth.</p>
+  <div class="hero-cta">
+    <a class="btn-primary" href="api.html">Read the API reference →</a>
+    <a class="btn-ghost" href="https://github.com/aoos/dejima">Source on GitHub</a>
+  </div>
+</section>
+
+<h2>What you get</h2>
+<div class="cards">
+  <div class="card"><h3>Isolated containers</h3><p>One island per project, sandboxed from the host and from each other. Provision and destroy on demand.</p></div>
+  <div class="card"><h3>Multi-attach sessions</h3><p>WebSocket PTY streams with tmux semantics — N clients on one screen, surviving disconnects.</p></div>
+  <div class="card"><h3>Lifecycle</h3><p>Create, hibernate, wake, reset, purge — volumes preserved or destroyed on your terms.</p></div>
+  <div class="card"><h3>Credential injection</h3><p>Per-island GitHub identity and provider keys, mounted read-only. Master credentials never reach an agent.</p></div>
+  <div class="card"><h3>Agent-state events</h3><p>Webhooks for lifecycle, presence, and per-agent state (waiting-for-input, task-complete) to drive dashboards and notifications.</p></div>
+  <div class="card"><h3>Headless or terminal</h3><p>Attach to CLI agents (Claude Code, Codex) or run background SDK loops and workers — same API for both.</p></div>
+</div>
+
+<h2 id="api">The API</h2>
+<p>Target one HTTP/WebSocket surface from any language:</p>
+<pre><code>POST   /v1/islands                     { "repo": "...", "agent": "claude-code" }
+GET    /v1/islands                      # list all islands
+GET    /v1/islands/:name                # live detail: agents, presence, cpu/mem, git, health
+POST   /v1/islands/:name/agents         { "type": "codex" }   # add an agent
+GET    /v1/islands/:name/agents/:id/session   # websocket PTY stream, multi-attach
+POST   /v1/islands/:name/exec           # one-shot command
+POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
+</code></pre>
+<p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and open source. Full surface at <a href="api.html">the API reference</a>.</p>
+
+<h2>Webhooks</h2>
+<p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code>) emitted by the per-agent shims — Claude Code and Codex today, headless agents on their own via <code>POST /v1/internal/agent-event</code>. This is how mobile push, Slack notifications, and custom dashboards integrate. See <a href="https://github.com/aoos/dejima/blob/master/docs/agent-adapters.md"><code>docs/agent-adapters.md</code></a> for adding your own.</p>
+<pre><code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code></pre>
+
+<h2 id="architecture">Architecture</h2>
+<pre><code>        your app · dashboard · bot · CLI       (control plane)
+                    │
+                    │  websocket + HTTP API · over Tailscale
+                    ▼
+┌─ Dejima host · Mac mini / VPS / cloud VM ──────────────────────┐
+│                                                                │
+│   ┌─ island: web ──────────┐    ┌─ island: api ──────────┐     │
+│   │ a1  claude-code        │    │ a1  codex              │     │
+│   │ a2  headless           │    │ a2  claude-code        │     │
+│   └────────────────────────┘    └────────────────────────┘     │
+│                                                                │
+│ per island: one container · shared home + credentials          │
+│ per agent:  own git worktree · sandboxed from host & others    │
+└────────────────────────────────────────────────────────────────┘</code></pre>
+<p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your dashboard, bot, or CLI targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
+
+<section class="cta-band">
+  <h2>Build on the substrate</h2>
+  <p>Container lifecycle, sessions, credentials, and events — done, and open source.</p>
+  <a class="btn-primary" href="api.html">Read the API reference →</a>
+</section>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="index.html">Home</a>
+  <a href="quickstart.html">Quickstart</a>
+  <a href="teams.html">Teams</a>
+  <a href="api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</footer>
+
+</main>
+</body>
+</html>
