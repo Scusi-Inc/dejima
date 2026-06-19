@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dejima — the persistent runtime for isolated AI agents, on your own infrastructure</title>
-<meta name="description" content="Run a fleet of AI coding agents on your own server — several per project, each sandboxed in its own container on its own git worktree, sharing one set of credentials. Drive them from any device, or build a product on top of the API.">
+<title>Dejima — safely run a fleet of AI coding agents on hardware you own</title>
+<meta name="description" content="Safely run a fleet of AI coding agents (Claude Code, Codex, and more) on hardware you own — each sandboxed from your machine and the rest, with no infrastructure to build. Self-hosted, open-source, up in minutes.">
 <meta property="og:title" content="Dejima">
 <meta property="og:description" content="OSS substrate for running a fleet of AI coding agents on your own infrastructure. Isolated per-project containers, multiple agents per project, one HTTP/WebSocket API.">
 <meta property="og:image" content="https://raw.githubusercontent.com/aoos/dejima/master/assets/logo.png">
@@ -149,10 +149,11 @@
     font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.85em;
     color: var(--fg); }
   @media (max-width: 720px) {
-    .usecases, .pillars { grid-template-columns: 1fr; grid-template-rows: none; }
+    .usecases, .pillars, .proof { grid-template-columns: 1fr; grid-template-rows: none; }
     .pillar { display: flex; flex-direction: column; gap: 0.85rem; grid-row: auto; }
     main { padding: 3rem 1.25rem 5rem; }
     header h1 { font-size: 2rem; }
+    .hero-h { font-size: 1.7rem; }
     .pick-label { min-width: 0; }
   }
 
@@ -172,6 +173,38 @@
     font-size: 0.9rem; transition: opacity 0.12s; }
   .copy-btn:hover { opacity: 0.85; }
   .fit-hint { color: var(--muted); font-size: 0.85rem; }
+
+  /* Hero + proof + safety (new pitch) -------------------------------- */
+  .hero { margin: 2rem 0 1.4rem; }
+  .hero-eyebrow { color: var(--muted); font-size: 1rem; font-weight: 500;
+    margin: 0 0 0.5rem; }
+  .hero-h { font-size: 2.1rem; line-height: 1.15; letter-spacing: -0.02em;
+    color: var(--hover); margin: 0 0 0.8rem; font-weight: 700;
+    text-transform: none; }
+  .hero-sub { font-size: 1.15rem; color: var(--fg); max-width: 38rem; margin: 0 0 1.4rem; }
+  .hero-cta { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
+  .btn-primary { background: var(--accent); color: var(--bg); text-decoration: none;
+    padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
+  .btn-primary:hover { background: var(--hover); color: var(--bg); }
+  .btn-ghost { color: var(--accent); text-decoration: none; border: 1px solid var(--accent);
+    padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
+  .btn-ghost:hover { background: var(--hover); border-color: var(--hover); color: var(--bg); }
+  .proof { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem;
+    margin: 1.5rem 0 2.2rem; }
+  .proof-tile { border: 1px solid var(--border); border-radius: 8px;
+    padding: 1.1rem; background: transparent; }
+  .proof-tile h3 { margin: 0 0 0.4rem; font-size: 1.0rem; color: var(--hover); }
+  .proof-tile p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
+  .safety { background: var(--card-hover-bg); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 8px;
+    padding: 1.3rem 1.5rem; margin: 0 0 2.6rem; }
+  .safety h2 { margin: 0 0 0.6rem; text-transform: none; letter-spacing: normal;
+    font-size: 1.25rem; color: var(--hover); }
+  .safety p { margin: 0; color: var(--fg); }
+  .deeplink { background: transparent; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 6px; padding: 0.5rem 0.95rem;
+    font-weight: 600; cursor: pointer; font-size: 0.88rem; text-decoration: none; }
+  .deeplink:hover { background: var(--hover); border-color: var(--hover); color: var(--bg); }
 </style>
 </head>
 <body>
@@ -197,28 +230,36 @@
 
 <p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
 
-<section>
-  <p><strong>Dejima</strong> is the secure substrate for running AI agents on hardware you control — it manages the isolated containers, sessions, and credentials, so each project runs <strong>one or more agents together</strong>, sandboxed from your machine and from each other, behind one clean API.</p>
+<section class="hero">
+  <p class="hero-eyebrow">Safely run AI coding agents on hardware you own.</p>
+  <h2 class="hero-h">A fleet of agents. None of the worry.</h2>
+  <div class="hero-cta">
+    <a class="btn-primary" href="#install">Run it yourself →</a>
+    <a class="btn-ghost" href="#self-host">Why self-hosted</a>
+  </div>
 </section>
 
-<section class="pillars">
-  <div class="pillar">
-    <a class="usecase" href="#home-server">
-      <h3>Running agents on a Mac mini or server?</h3>
-      <p><strong>Dejima is your own agent server.</strong> Run several Claude Code / Codex agents per project, each sandboxed in its own container — no context bleed, no agent trashing your host or another repo. Each on its own git worktree; agents in the same project share one set of credentials, so you permission them once. See every agent's state at a glance and manage them with simple controls.</p>
-      <div class="pain"><strong>Without it:</strong> you're standing up a server yourself, babysitting tmux panes and SSH sessions, and squinting to tell which agent is working, idle, or wedged.</div>
-      <span class="cta">Run it yourself →</span>
-    </a>
+<section class="proof" aria-label="What you get">
+  <div class="proof-tile">
+    <h3>Run a fleet</h3>
+    <p>Several Claude Code / Codex agents at once, each on its own git worktree, all on one dashboard — no context bleed, no chaos.</p>
   </div>
-  <div class="pillar">
-    <a class="usecase" href="#api-builder">
-      <h3>Building a product on top of agents?</h3>
-      <p><strong>Dejima is your agent backend.</strong> Multi-agent dashboards, chat-driven coding bots, web IDEs, internal tools — target one HTTP/WebSocket API and get isolated containers, multi-attach sessions, lifecycle, credential injection, agent-state events &amp; analytics, and management controllers, instead of reinventing them.</p>
-      <div class="pain"><strong>Without it:</strong> you're reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth from scratch.</div>
-      <span class="cta">For builders →</span>
-    </a>
+  <div class="proof-tile">
+    <h3>Nothing escapes the box</h3>
+    <p>Each agent is sandboxed from your machine, your files, and the other agents. A runaway can't wipe your drive, leak your keys, or stomp another agent's work.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>Up in minutes</h3>
+    <p>One line installs it; Dejima manages the containers, sessions, and logins for you. No infrastructure to build, no tmux to wrangle.</p>
   </div>
 </section>
+
+<section class="safety">
+  <h2>Let them run</h2>
+  <p>Hand an agent a long, autonomous task and walk away. Each one runs in its own walled-off space — we call it an <strong>island</strong> — sandboxed from your real machine and from every other agent. If one gets confused, prompt-injected, or just goes rogue, the blast radius stops at its island: your laptop, your credentials, and your other projects are untouched. And every time an agent reaches outside its box to touch a host file, Dejima brokers it and writes it to a tamper-proof log. That's the peace of mind — you don't have to babysit.</p>
+</section>
+
+<p class="small">Building a product on top of agents instead? It's all one API — <a href="#api-builder">build on Dejima →</a></p>
 
 <section id="is-it-for-me">
   <h2>Is Dejima right for you?</h2>
@@ -227,7 +268,9 @@
     <textarea id="fit-prompt" class="fit-prompt" rows="13" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
     <div class="fit-actions">
       <button type="button" id="fit-copy" class="copy-btn">Copy prompt</button>
-      <span class="fit-hint">Then paste into <a href="https://claude.ai" target="_blank" rel="noopener">Claude</a> or <a href="https://chatgpt.com" target="_blank" rel="noopener">ChatGPT</a>.</span>
+      <a id="fit-claude" class="deeplink" href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+      <a id="fit-chatgpt" class="deeplink" href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+      <span class="fit-hint">Gemini &amp; other models: copy, then paste.</span>
     </div>
   </div>
 </section>
@@ -526,11 +569,11 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
   <tr><td><code>Island</code></td><td>The container holding one project and one or more agents.</td></tr>
   <tr><td><code>Agent</code></td><td>One CLI (Claude Code, Codex) or headless process inside an island, on its own git worktree.</td></tr>
   <tr><td><code>Bridge</code></td><td>The brokered I/O channel between host and island.</td></tr>
-  <tr><td><code>Trade</code></td><td><em>(planned)</em> A brokered, synced export of changes from island to host.</td></tr>
-  <tr><td><code>Intake</code></td><td><em>(planned)</em> Files brokered into the island from the host.</td></tr>
-  <tr><td><code>Ledger</code></td><td><em>(planned)</em> An audit log of every brokered transaction.</td></tr>
+  <tr><td><code>Trade</code></td><td>A brokered, append-only export of changes from island to host.</td></tr>
+  <tr><td><code>Intake</code></td><td>Read-only files brokered into the island from the host.</td></tr>
+  <tr><td><code>Ledger</code></td><td>A tamper-evident, hash-chained audit log of every brokered transaction.</td></tr>
 </table>
-<p class="small"><code>Intake</code> / <code>Trade</code> / <code>Ledger</code> are the planned brokered-context primitives — the seam a memory or context layer attaches to <em>without</em> breaking island isolation. See the <a href="https://github.com/aoos/dejima/blob/master/docs/positioning.md">positioning note</a>.</p>
+<p class="small"><code>Intake</code> / <code>Trade</code> / <code>Ledger</code> are the brokered-context primitives — the seam a memory or context layer attaches to <em>without</em> breaking island isolation. See the <a href="https://github.com/aoos/dejima/blob/master/docs/positioning.md">positioning note</a>.</p>
 
 <h2>Built with Dejima</h2>
 <p class="small">Projects building on the Dejima API will be listed here. <em>(None yet — it's pre-alpha.)</em></p>
@@ -656,6 +699,19 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
       ta.select(); document.execCommand('copy'); done();
     }
   });
+
+  // Deep links: encode the (possibly user-edited) prompt into the chat URLs.
+  // Claude + ChatGPT support ?q= prefill on the web; Gemini doesn't, so the
+  // copy button stays the universal fallback.
+  var claudeLink = document.getElementById('fit-claude');
+  var chatgptLink = document.getElementById('fit-chatgpt');
+  function syncLinks() {
+    var q = encodeURIComponent(ta.value);
+    if (claudeLink)  claudeLink.href  = 'https://claude.ai/new?q=' + q;
+    if (chatgptLink) chatgptLink.href = 'https://chatgpt.com/?q=' + q;
+  }
+  ta.addEventListener('input', syncLinks);
+  syncLinks();
 })();
 </script>
 
