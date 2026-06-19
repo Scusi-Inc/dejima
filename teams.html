@@ -72,8 +72,8 @@
 <ul>
   <li><strong>Team access &amp; roles</strong> — several people on one daemon, with control over who can create, purge, and grant.</li>
   <li><strong>Activity feed</strong> — who launched what, and which agent did what, across the team.</li>
-  <li><strong>Audit viewer &amp; export</strong> — read and export the ledger as a compliance-grade record, not just a CLI verify.</li>
-  <li><strong>SSO &amp; retention</strong> — identity integration and retention controls for regulated environments.</li>
+  <li><strong>Audit viewer &amp; export</strong> — read and export the ledger as a compliance-grade record, not just a CLI verify. (Lives in Dejima by design — a tamper-evident record has to.)</li>
+  <li><strong>Retention controls</strong> — configurable retention for the audit record. <span class="small">SSO/SAML integrates through your own control plane; Dejima authenticates with your Tailscale identity plus scoped per-island tokens.</span></li>
 </ul>
 <p class="small">Tracking the order of these against real use cases — if yours would move one up, tell us.</p>
 

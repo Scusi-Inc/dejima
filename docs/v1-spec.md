@@ -329,15 +329,25 @@ Not chosen. To decide before public release. Apache 2.0 is the strawman.
 
 JSON-over-HTTP is the v1 default; websocket for PTY streams. Wire format details (envelope schema, error model, versioning headers) settled during implementation.
 
-## 12. Adjacent Tools (reference)
+## 12. Competitors & adjacent tools
 
-For context. None is a direct competitor; each informs design choices.
+Updated 2026-06-19. The market moved; this section is no longer "none is a competitor."
 
+**Direct competitors (engage these):**
+- **Coder** — *the closest competitor now.* Pivoted from remote-dev-environments to "govern AI coding agents on self-hosted infrastructure, with audit logging and air-gapped support" — almost exactly Dejima's intended position. Coder is heavy (K8s-era, top-down, platform-engineering buyer); **our edge is lightweight, solo-dev-first, Mac-mini, up-in-minutes, bottom-up.**
+- **Anthropic Claude Managed Agents** (self-hosted sandboxes, shipped ~May 2026) — runs Claude's agent *loop* on Anthropic's servers but tool execution in a sandbox you point it at (own infra or Cloudflare/Daytona/Modal/Vercel). Most direct threat to "run agents on your own box." **Our edge: multi-vendor (not Claude-only), air-gappable (CMA's loop phones home), deeper/native audit.**
+
+**Cloud sandbox runtimes (the cloud version of our layer):**
 - **E2B**, **Vercel Sandbox**, **Modal Sandboxes** — hosted Firecracker sandboxes for agents.
-- **container-use** (Dagger) — closest direct analogue; agent-per-container with diff-out.
-- **DevPod**, **Daytona**, **Coder**, **Gitpod self-hosted** — remote dev environments.
-- **Devin**, **Replit Agent**, **OpenAI Codex Cloud**, **Cursor background agents** — hosted agent platforms.
-- **Claude Code remote mode** — Anthropic's own multi-device session story for Claude Code; Dejima occupies adjacent ground but at the membrane layer rather than the agent layer.
+- **Daytona** — now persistent/stateful cloud sandboxes (no longer just ephemeral). Edge vs all: *self-hosted, your box, a fleet as a team, audited.*
+
+**Adjacent / design-informing (not direct competitors):**
+- **container-use** (Dagger) — agent-per-container with diff-out; closest *technical* analogue.
+- **DevPod**, **Gitpod self-hosted** — remote dev environments.
+- **Devin**, **Replit Agent**, **OpenAI Codex Cloud**, **Cursor background agents** — hosted agent platforms (different business model).
+- **Claude Code remote mode** — Anthropic's multi-device story for Claude Code; we sit at the membrane layer below the agent.
+
+**Table stakes we must not be behind on:** **MCP** (Model Context Protocol) is now the default tool/data layer; brokered, audited MCP access into islands is a near-term need, not a v2 nicety — see roadmap.
 
 ## 13. Implementation Plan
 
