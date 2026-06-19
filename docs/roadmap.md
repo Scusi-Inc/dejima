@@ -22,6 +22,30 @@ home is here.
 
 Correctly deferred (NOT in this queue): microVM, multi-tenant SaaS, cross-host orchestration, in-Dejima agent orchestration.
 
+### 🛤️ Two parallel lanes — split so two agents don't collide
+
+The queue is divided into two **non-overlapping purviews** so two agents can run
+at once (each in its own island/worktree — dogfood the product) without fighting
+over the same files. Split is by subsystem; shared seams are small and
+**append-only** (add your lines, never reorder the other lane's).
+
+**Lane A — Governance & access** *(audit + team rung)* — one agent owns the whole
+auth/audit surface; they're tightly coupled (the activity feed needs both the
+audit log and roles).
+- Items, in order: audit log + read/export + viewer → token auth → 3 roles + island scope → activity feed.
+- Owns: `internal/ledger` (operational audit log), `internal/api/tokenauth.go` + the request-logging middleware, role/scope fields in `internal/project`, `dejima token` / `dejima audit` CLI verbs, the audit/roles TUI views.
+- Does NOT touch: the MCP broker, `openapi.yaml`, `sdk/`.
+
+**Lane B — Tools & clients** *(MCP brokering + SDK)* — one agent owns the
+tool-broker subsystem and the external client/spec; both sit outside the
+auth/audit internals Lane A owns.
+- Items (independent; can interleave): audited MCP brokering (new `internal/mcpbroker`, modeled on the Port/capability broker) ‖ SDK + OpenAPI (`openapi.yaml`, `sdk/python`, `sdk/ts`).
+- Owns: `internal/mcpbroker`, its API handlers + `dejima mcp` CLI verbs, MCP-grant fields in `internal/project`, `openapi.yaml`, `sdk/`.
+- Writes `mcp.*` entries to the **already-shipped** Port/capability ledger, so it does NOT depend on Lane A's new operational-audit work.
+- Does NOT touch: `internal/ledger` internals, `tokenauth.go`, role/scope code.
+
+**Shared seams (coordinate; append-only):** `internal/api/server.go` router (each appends its own `mux.HandleFunc` lines), the `internal/project` config struct (Lane A adds role/scope fields, Lane B adds MCP-grant fields — different fields), `cmd/dejima` command registration (each adds its own subcommands), and this file (tick your own items). If a shared file does conflict, commit only your own hunks and rebase.
+
 ---
 
 ## 🧑 Operator verification queue (built, needs a live run)
