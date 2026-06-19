@@ -114,9 +114,9 @@ none blocking.
 
 ---
 
-## v1 (current — dogfood phase)
+## v1 (current — alpha, in daily use)
 
-The v1 vertical slice. Buildable, testable. Real-world dogfood pending.
+The v1 vertical slice. Buildable, testable, and in daily use — now in alpha. Rough-edge hardening ongoing.
 
 - [x] M0 — Foundation: Go module, repo skeleton, CI on macOS + Linux
 - [x] M1 — MVP island + daemon (CLI: `init`, `connect`, `ls`, `status`, `purge`; Unix-socket API; Dockerfile)
@@ -125,7 +125,7 @@ The v1 vertical slice. Buildable, testable. Real-world dogfood pending.
 - [x] M4 — Service install (launchd/systemd); Tailscale-pinned TCP listener; webhooks; per-agent shims (Claude Code installed)
 - [x] M5 — Resource caps; `exec` / `cp` / `logs` access verbs; multi-agent disambiguation
 - [x] **Codex CLI as a bundled agent** — second agent shim, per-agent state volume mount, honest "agent-agnostic" claim
-- [~] M6 — Dogfood on Mac mini for one week; document rough edges
+- [x] M6 — Dogfood on Mac mini for one week (met; in daily use). Rough-edge hardening ongoing.
 
 ---
 

@@ -16,7 +16,7 @@ Each project runs in its own *island*: an isolated container with the target rep
 
 ## Status
 
-Pre-alpha. v1 milestones M0–M5 are implemented; M6 (real-world dogfood on a Mac mini) is in progress. See [`docs/v1-spec.md`](docs/v1-spec.md) and [`docs/v1-milestones.md`](docs/v1-milestones.md).
+Alpha — in daily use. v1 milestones M0–M5 are implemented and M6 (a week of real-world dogfood on a Mac mini) is met; rough-edge hardening is ongoing. See [`docs/v1-spec.md`](docs/v1-spec.md) and [`docs/v1-milestones.md`](docs/v1-milestones.md).
 
 ## Who it's for
 
