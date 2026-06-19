@@ -22,29 +22,64 @@ home is here.
 
 Correctly deferred (NOT in this queue): microVM, multi-tenant SaaS, cross-host orchestration, in-Dejima agent orchestration.
 
-### 🛤️ Two parallel lanes — split so two agents don't collide
+### 🛤️ Parallel lanes — up to 4 agents without collisions
 
-The queue is divided into two **non-overlapping purviews** so two agents can run
-at once (each in its own island/worktree — dogfood the product) without fighting
-over the same files. Split is by subsystem; shared seams are small and
-**append-only** (add your lines, never reorder the other lane's).
+The queue splits into up to **four non-overlapping purviews** so several agents
+can run at once (each in its own island/worktree — dogfood the product). Split is
+by subsystem; shared seams are small and **append-only**. Sub-agents within a lane
+are fine.
 
-**Lane A — Governance & access** *(audit + team rung)* — one agent owns the whole
-auth/audit surface; they're tightly coupled (the activity feed needs both the
-audit log and roles).
-- Items, in order: audit log + read/export + viewer → token auth → 3 roles + island scope → activity feed.
-- Owns: `internal/ledger` (operational audit log), `internal/api/tokenauth.go` + the request-logging middleware, role/scope fields in `internal/project`, `dejima token` / `dejima audit` CLI verbs, the audit/roles TUI views.
-- Does NOT touch: the MCP broker, `openapi.yaml`, `sdk/`.
+**Lane 1 — Audit core.** Operational audit log + read/export API + `dejima audit`
++ viewer. Owns `internal/ledger`, the audit endpoints/CLI/TUI, the request-logging
+middleware. **Lands first:** the ledger append-interface + read API (gates the
+activity feed).
 
-**Lane B — Tools & clients** *(MCP brokering + SDK)* — one agent owns the
-tool-broker subsystem and the external client/spec; both sit outside the
-auth/audit internals Lane A owns.
-- Items (independent; can interleave): audited MCP brokering (new `internal/mcpbroker`, modeled on the Port/capability broker) ‖ SDK + OpenAPI (`openapi.yaml`, `sdk/python`, `sdk/ts`).
-- Owns: `internal/mcpbroker`, its API handlers + `dejima mcp` CLI verbs, MCP-grant fields in `internal/project`, `openapi.yaml`, `sdk/`.
-- Writes `mcp.*` entries to the **already-shipped** Port/capability ledger, so it does NOT depend on Lane A's new operational-audit work.
-- Does NOT touch: `internal/ledger` internals, `tokenauth.go`, role/scope code.
+**Lane 2 — Team auth & roles.** Token issuance + 3 roles + per-island scope. Owns
+`internal/api/tokenauth.go`, role/scope fields in `internal/project`, `dejima token`.
+Puts identity (who/role) on the request context — which Lane 1's audit log consumes.
 
-**Shared seams (coordinate; append-only):** `internal/api/server.go` router (each appends its own `mux.HandleFunc` lines), the `internal/project` config struct (Lane A adds role/scope fields, Lane B adds MCP-grant fields — different fields), `cmd/dejima` command registration (each adds its own subcommands), and this file (tick your own items). If a shared file does conflict, commit only your own hunks and rebase.
+**Lane 3 — MCP brokering.** `internal/mcpbroker` (modeled on Port/capability),
+`dejima mcp`, MCP-grant fields in `internal/project`; writes `mcp.*` to the
+**already-shipped** ledger, so it's independent of Lane 1.
+
+**Lane 4 — SDK & clients.** `openapi.yaml`, `sdk/python`, `sdk/ts`, `api.html`.
+No daemon code (read-only against the API) — the most isolated lane; safe to run
+flat-out in parallel.
+
+**Gating / coordination:**
+- *Gate 1 — activity feed:* it's team-facing and needs **both** Lane 1's audit log
+  and Lane 2's roles → it's the last item, gated on both. Lane 2's identity-on-request
+  should land before Lane 1 enriches audit records with who/role.
+- *Gate 2 — shared seams (keep append-only):* register each lane's routes via its own
+  `RegisterX(mux)` so `server.go` changes are one line per lane; add config fields in
+  **separate files**, since `project.Project` is touched by Lanes 2 & 3; each lane adds
+  its own `cmd/dejima` subcommands.
+- **Lanes 3 & 4 have no dependency on 1/2 — start immediately.**
+
+Suggested 4-agent start: 1 = Audit, 2 = Team auth, 3 = MCP, 4 = SDK. Dropping to 2:
+fold Lane 2 into Lane 1 (shared auth/audit surface), keep MCP + SDK separate. If a
+shared file conflicts, commit only your own hunks and rebase.
+
+### 🔀 Inter-agent + inter-island exchange — design now (a conscious thesis revisit)
+
+Requested 2026-06-19: let agents / islands exchange info. **Today:** agents in the
+*same* island already collaborate (shared `/workspace` + home; per-agent worktrees),
+but there's no messaging primitive, and **cross-island is deliberately blind** (the
+containment invariant). Putting this on the roadmap is a conscious revisit of
+`positioning.md` (which lists inter-island comms as out of scope) — it needs a design
+pass before it becomes a build lane.
+
+The on-thesis way (don't punch a hole) — do it the **Port way:**
+- **deny-all by default**; the operator grants a *specific* A→B channel,
+- **scoped** (named topics / typed payloads, not ambient visibility),
+- **brokered + ledgered** — every cross-island message logged, which makes it a
+  governance feature, not just a risk.
+
+Intra-island agent messaging (a lightweight mailbox/blackboard) is lower-risk and
+could land first. **To decide before building:** how far we relax the "no
+cross-island channel" stance, and whether it stays brokered-only (recommended:
+yes — containment stays the default, exchange is an explicit logged grant).
+Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 ---
 
@@ -334,7 +369,7 @@ These don't live in the core dejima repo. They consume the API.
 
 Things worth saying "no" to clearly so they don't keep coming up:
 
-- **Inter-island communication channels** (a "trade" primitive, a message bus, RPC between islands). The whole point of islands is containment; any sanctioned cross-island channel is a context-bleed vector. Multi-agent orchestration belongs in wrapper apps that drive multiple islands via the public API — not inside Dejima.
+- **Inter-island communication channels** — *under active design as of 2026-06-19* (see "Inter-agent + inter-island exchange" above). Was flatly out of scope; the revisit keeps it **brokered / scoped / audited only** (the Port pattern), never an open bus or ambient visibility — containment stays the default, exchange is an explicit, logged grant. *Unconstrained* cross-island channels (open message bus, RPC, ambient mutual visibility) remain out. Free-form multi-agent orchestration still belongs in wrapper apps over the public API.
 - **Hosted/SaaS variant.** Dejima is OSS, self-hosted. No managed offering planned.
 - **Windows host support** (running `dejimad` + Docker on Windows). The client works on Windows; the host doesn't. Out of scope.
 - **Enterprise compliance certifications.** SOC 2 etc. are post-team-product, not v1/v2.
