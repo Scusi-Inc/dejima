@@ -1,0 +1,511 @@
+openapi: 3.1.0
+info:
+  title: Dejima API
+  version: "0.1"
+  x-api-version: 1
+  description: >
+    HTTP/WebSocket control surface for the Dejima daemon (`dejimad`). This is the
+    same API the CLI/TUI use and the contract third-party apps build on.
+
+    Status: Dejima is in alpha (0.x). The `v1/` path prefix is intended to be
+    stable, but fields may change until `v1.0.0`; an integer `api_version`
+    (advertised on `/v1/overview`) tracks the client/daemon contract separately
+    from the semver tag. This spec is hand-maintained from the route table in
+    `internal/api/server.go` and may drift slightly between releases — the source
+    is the source of truth.
+
+    WebSocket endpoints (PTY session streams) are listed for discoverability but
+    cannot be fully modeled in OpenAPI; see the per-path notes.
+servers:
+  - url: http://{host}
+    description: Daemon over the tailnet (DEJIMA_HOST, e.g. 100.84.12.7:7273)
+    variables:
+      host:
+        default: 127.0.0.1:7273
+security:
+  - bearerToken: []
+  - {}   # operator listeners (unix socket / tailnet) carry no per-request token
+tags:
+  - name: islands
+  - name: agents
+  - name: exec-and-files
+  - name: port
+  - name: daemon
+  - name: events
+paths:
+  /v1/islands:
+    get:
+      tags: [islands]
+      summary: List all islands
+      operationId: listIslands
+      responses:
+        "200":
+          description: All islands, most-recently-used first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/IslandInfo" }
+    post:
+      tags: [islands]
+      summary: Create (provision) an island
+      operationId: createIsland
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIslandRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateIslandResponse" }
+  /v1/islands/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      tags: [islands]
+      summary: Island detail (agents, presence, cpu/mem, git, health)
+      operationId: getIsland
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [islands]
+      summary: Update cosmetic fields (title)
+      operationId: updateIsland
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+      responses:
+        "200": { description: OK }
+    delete:
+      tags: [islands]
+      summary: Purge an island (container + volumes)
+      operationId: deleteIsland
+      parameters:
+        - name: force
+          in: query
+          schema: { type: boolean }
+          description: Bypass the unpushed-work guard
+      responses:
+        "204": { description: Purged }
+        "409":
+          description: Refused — unpushed/dirty work (retry with force=true)
+  /v1/islands/{name}/resources:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    put:
+      tags: [islands]
+      summary: Update memory limit / OOM priority
+      operationId: updateIslandResources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                memory: { type: string, description: "e.g. 4g; \"\" = unlimited; null = unchanged", nullable: true }
+                oom_priority: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resources: { $ref: "#/components/schemas/Resources" }
+                  restart_required: { type: boolean }
+  /v1/islands/{name}/hibernate:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [islands]
+      summary: Stop the container, preserve volumes
+      operationId: hibernateIsland
+      responses: { "200": { description: OK } }
+  /v1/islands/{name}/wake:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [islands]
+      summary: Start the container against existing volumes
+      operationId: wakeIsland
+      responses: { "200": { description: OK } }
+  /v1/islands/{name}/reset:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [islands]
+      summary: Clear agent state (preserves workspace)
+      operationId: resetIsland
+      responses: { "200": { description: OK } }
+  /v1/islands/{name}/clone:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [islands]
+      summary: Copy an island (workspace + home volumes, drops Port grants)
+      operationId: cloneIsland
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { name: { type: string, description: new island name } }
+      responses:
+        "201":
+          description: Cloned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+  /v1/islands/{name}/agents:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [agents]
+      summary: List agents in an island
+      operationId: listAgents
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AgentInfo" }
+    post:
+      tags: [agents]
+      summary: Add an agent to an island
+      operationId: addAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentSpecRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentInfo" }
+  /v1/islands/{name}/agents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AgentID"
+    get:
+      tags: [agents]
+      summary: Agent detail
+      operationId: getAgent
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentInfo" }
+    delete:
+      tags: [agents]
+      summary: Remove an agent
+      operationId: removeAgent
+      responses: { "204": { description: Removed } }
+  /v1/islands/{name}/session:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [agents]
+      summary: "WebSocket PTY stream (multi-attach). NOTE: WebSocket upgrade — not modeled by OpenAPI."
+      operationId: sessionWS
+      x-websocket: true
+      responses:
+        "101": { description: Switching Protocols (WebSocket) }
+  /v1/islands/{name}/agents/{id}/session:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AgentID"
+    get:
+      tags: [agents]
+      summary: "Per-agent WebSocket PTY stream. NOTE: WebSocket upgrade."
+      operationId: agentSessionWS
+      x-websocket: true
+      responses:
+        "101": { description: Switching Protocols (WebSocket) }
+  /v1/islands/{name}/exec:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [exec-and-files]
+      summary: Run a one-shot command in an island
+      operationId: exec
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cmd]
+              properties:
+                cmd: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecResponse" }
+  /v1/islands/{name}/files/{path}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+        description: File path within the island (defaults to the primary worktree)
+    get:
+      tags: [exec-and-files]
+      summary: Read a file from an island
+      operationId: readFile
+      responses:
+        "200":
+          description: File contents
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+    put:
+      tags: [exec-and-files]
+      summary: Write a file into an island
+      operationId: writeFile
+      requestBody:
+        required: true
+        content:
+          application/octet-stream: { schema: { type: string, format: binary } }
+      responses: { "204": { description: Written } }
+  /v1/islands/{name}/logs:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: agent
+        in: query
+        schema: { type: string }
+      - name: follow
+        in: query
+        schema: { type: boolean }
+    get:
+      tags: [exec-and-files]
+      summary: Stream container/agent logs
+      operationId: logs
+      responses:
+        "200":
+          description: Log text
+          content:
+            text/plain: { schema: { type: string } }
+  /v1/islands/{name}/port/scopes:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [port]
+      summary: List Port grants (brokered host-folder scopes)
+      operationId: listPortScopes
+      responses: { "200": { description: OK } }
+    post:
+      tags: [port]
+      summary: Grant a scoped host folder (deny-all by default)
+      operationId: grantPortScope
+      responses: { "201": { description: Granted } }
+  /v1/islands/{name}/port/intake:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [port]
+      summary: Brokered read-only file import (host -> island), ledgered
+      operationId: portIntake
+      responses: { "200": { description: OK } }
+  /v1/islands/{name}/port/export:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [port]
+      summary: Brokered export (island -> host staging), append-only ledger
+      operationId: portExport
+      responses: { "200": { description: OK } }
+  /v1/events/subscribe:
+    post:
+      tags: [events]
+      summary: Subscribe a webhook URL to state-change events
+      operationId: subscribeWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubscribeWebhookRequest" }
+      responses:
+        "201": { description: Subscribed }
+  /v1/events/subscriptions:
+    get:
+      tags: [events]
+      summary: List webhook subscriptions
+      operationId: listSubscriptions
+      responses: { "200": { description: OK } }
+  /v1/agent-types:
+    get:
+      tags: [daemon]
+      summary: Handler registry + provider-key hints
+      operationId: agentTypes
+      responses: { "200": { description: OK } }
+  /v1/overview:
+    get:
+      tags: [daemon]
+      summary: Daemon health, VM memory, fleet rollup
+      operationId: overview
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OverviewResponse" }
+  /v1/healthz:
+    get:
+      tags: [daemon]
+      summary: Reachability probe (token-accessible)
+      operationId: healthz
+      responses: { "200": { description: OK } }
+components:
+  securitySchemes:
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: Per-island bearer token (DEJIMA_TOKEN) for the autonomy path.
+  parameters:
+    Name:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+      description: Island name
+    AgentID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Agent id (e.g. p1, p2)
+  responses:
+    NotFound:
+      description: Island or agent not found
+  schemas:
+    CreateIslandRequest:
+      type: object
+      required: [repo]
+      properties:
+        name: { type: string, description: optional; derived from repo if empty }
+        repo: { type: string, description: git URL or local path }
+        agent: { type: string, default: claude-code }
+        image: { type: string, default: "dejima/island:latest" }
+        resources: { $ref: "#/components/schemas/Resources" }
+    CreateIslandResponse:
+      allOf:
+        - $ref: "#/components/schemas/IslandInfo"
+        - type: object
+          properties:
+            token:
+              type: string
+              description: only present on a token-authenticated (Home-Island spawn) create
+    AgentSpecRequest:
+      type: object
+      properties:
+        type: { type: string, description: agent handler (claude-code, codex, shell, openclaw, headless, …) }
+        label: { type: string }
+        cmd: { type: string, description: required for headless }
+        provider: { type: string }
+        model: { type: string }
+    Resources:
+      type: object
+      properties:
+        memory: { type: string }
+        cpus: { type: string }
+        disk: { type: string }
+        oom_priority: { type: integer, nullable: true }
+    ExecResponse:
+      type: object
+      properties:
+        stdout: { type: string }
+        stderr: { type: string }
+        exit_code: { type: integer }
+    IslandInfo:
+      type: object
+      properties:
+        name: { type: string }
+        title: { type: string }
+        repo: { type: string }
+        agent: { type: string }
+        image: { type: string }
+        role: { type: string }
+        owner: { type: string }
+        tags: { type: object, additionalProperties: { type: string } }
+        state: { type: string, description: desired state from config }
+        container: { type: string, description: observed runtime status }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        stats: { $ref: "#/components/schemas/IslandStats" }
+        git: { $ref: "#/components/schemas/GitInfo" }
+        health: { $ref: "#/components/schemas/IslandHealth" }
+        resources: { $ref: "#/components/schemas/Resources" }
+        agents:
+          type: array
+          items: { $ref: "#/components/schemas/AgentInfo" }
+    AgentInfo:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string }
+        label: { type: string }
+        branch: { type: string }
+        worktree: { type: string }
+        attachable: { type: boolean }
+        state: { type: string }
+        restarts: { type: integer }
+        provider: { type: string }
+        model: { type: string }
+    IslandStats:
+      type: object
+      properties:
+        memory_usage_bytes: { type: integer }
+        memory_limit_bytes: { type: integer }
+        cpu_percent: { type: number }
+    GitInfo:
+      type: object
+      properties:
+        branch: { type: string }
+        clean: { type: boolean }
+        ahead: { type: integer }
+        behind: { type: integer }
+        dirty_files: { type: integer }
+    IslandHealth:
+      type: object
+      properties:
+        oom_killed: { type: boolean }
+        restart_count: { type: integer }
+        exit_code: { type: integer }
+    SubscribeWebhookRequest:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string }
+        secret: { type: string }
+        events:
+          type: array
+          items: { type: string }
+    OverviewResponse:
+      type: object
+      properties:
+        total_islands: { type: integer }
+        running: { type: integer }
+        hibernated: { type: integer }
+        errored: { type: integer }
+        attached_clients: { type: integer }
+        memory_usage_bytes: { type: integer }
+        cpu_percent: { type: number }
+        docker_reachable: { type: boolean }
+        island_image_present: { type: boolean }
+        daemon_version: { type: string }
+        api_version: { type: integer }
+        panicked: { type: boolean }
+        host_memory_bytes: { type: integer }
+        vm_memory_bytes: { type: integer }
+        vm_recommended_bytes: { type: integer }

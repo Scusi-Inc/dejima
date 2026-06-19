@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dejima"
+version = "0.1.0"
+description = "Python client for the Dejima API — run a fleet of AI coding agents on hardware you own."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Dejima" }]
+keywords = ["dejima", "ai-agents", "claude-code", "codex", "sandbox", "self-hosted"]
+dependencies = ["requests>=2.28"]
+
+[project.optional-dependencies]
+ws = ["websocket-client>=1.6"]   # for attach() PTY streams
+
+[project.urls]
+Homepage = "https://aoos.github.io/dejima/"
+Source = "https://github.com/aoos/dejima"
+API = "https://aoos.github.io/dejima/api.html"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dejima"]
