@@ -69,6 +69,7 @@ The client covers the full v1 surface:
 - **Credentials** — Claude push/status, GitHub identities + repos, LLM providers.
 - **Operator tokens** — create/list/revoke (owner-only; role + island scope).
 - **Events** — webhook subscribe/list/unsubscribe.
+- **Activity** — team activity feed (`activity`, filterable).
 - **Daemon** — overview, agent-types, healthz, audit (filters + jsonl/csv export),
   clients, sessions-revoke, panic, admin-update, image-build, SSH account keys.
 - **Host terminals** — list/create/delete/relabel + `attach_terminal`.

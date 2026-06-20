@@ -495,6 +495,36 @@ class Client:
             return self._req("GET", "/v1/audit", params=params).text
         return self._json("GET", "/v1/audit", params=params)
 
+    def activity(
+        self,
+        *,
+        actor: Optional[str] = None,
+        island: Optional[str] = None,
+        owner: Optional[str] = None,
+        kind: Optional[str] = None,
+        decision: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """The team activity feed — a curated, human-rendered timeline projected
+        over the audit ledger (who launched what, which agent did what), newest
+        first. ``kind`` is ``lifecycle``/``broker``/``system``; ``decision`` is
+        ``allowed``/``denied``; ``since``/``until`` are RFC3339."""
+        params = _clean(
+            {
+                "actor": actor,
+                "island": island,
+                "owner": owner,
+                "kind": kind,
+                "decision": decision,
+                "since": since,
+                "until": until,
+                "limit": limit,
+            }
+        )
+        return self._json("GET", "/v1/activity", params=params)
+
     def client_history(self) -> List[Dict[str, Any]]:
         """Recent attach/detach events across every island (newest first)."""
         return self._json("GET", "/v1/clients")

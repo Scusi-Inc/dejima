@@ -317,6 +317,18 @@ def test_list_and_revoke_token(server):
     assert rec.method == "DELETE" and rec.path == "/v1/tokens/t1"
 
 
+def test_activity_filters(server):
+    rec, dj = server
+    _set(rec, body={"items": [], "returned": 0, "audit_enabled": True})
+    out = dj.activity(actor="alice", kind="broker", island="web", limit=10)
+    assert rec.path.startswith("/v1/activity?")
+    assert "actor=alice" in rec.path
+    assert "kind=broker" in rec.path
+    assert "island=web" in rec.path
+    assert "limit=10" in rec.path
+    assert out["audit_enabled"] is True
+
+
 def test_overview(server):
     rec, dj = server
     _set(rec, body={"total_islands": 3, "running": 2})

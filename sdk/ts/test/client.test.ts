@@ -220,6 +220,17 @@ test("list / revoke token", async () => {
   assert.equal(cap.url, "http://h:1/v1/tokens/t1");
 });
 
+test("activity filters", async () => {
+  const { dj, cap } = makeClient({ body: { items: [], returned: 0, audit_enabled: true } });
+  const out = await dj.activity({ actor: "alice", kind: "broker", island: "web", limit: 10 });
+  assert.match(cap.url!, /^http:\/\/h:1\/v1\/activity\?/);
+  assert.match(cap.url!, /actor=alice/);
+  assert.match(cap.url!, /kind=broker/);
+  assert.match(cap.url!, /island=web/);
+  assert.match(cap.url!, /limit=10/);
+  assert.equal(out.audit_enabled, true);
+});
+
 test("healthz true / false", async () => {
   let { dj } = makeClient({ status: 200, body: { status: "ok" } });
   assert.equal(await dj.healthz(), true);

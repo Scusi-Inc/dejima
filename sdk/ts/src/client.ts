@@ -466,6 +466,37 @@ export class Client {
     return this.json("GET", "/v1/audit", { query });
   }
 
+  /**
+   * The team activity feed — a curated, human-rendered timeline over the audit
+   * ledger (who launched what, which agent did what), newest first. `kind` is
+   * `lifecycle`/`broker`/`system`; `since`/`until` are RFC3339.
+   */
+  activity(
+    opts: {
+      actor?: string;
+      island?: string;
+      owner?: string;
+      kind?: "lifecycle" | "broker" | "system";
+      decision?: "allowed" | "denied";
+      since?: string;
+      until?: string;
+      limit?: number;
+    } = {},
+  ): Promise<any> {
+    return this.json("GET", "/v1/activity", {
+      query: clean({
+        actor: opts.actor,
+        island: opts.island,
+        owner: opts.owner,
+        kind: opts.kind,
+        decision: opts.decision,
+        since: opts.since,
+        until: opts.until,
+        limit: opts.limit,
+      }),
+    });
+  }
+
   /** Recent attach/detach events across every island (newest first). */
   clientHistory(): Promise<any[]> {
     return this.json("GET", "/v1/clients");

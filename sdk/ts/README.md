@@ -78,7 +78,7 @@ The client covers the full v1 surface: islands (list/create/get/update/delete,
 hibernate/wake/reset/upgrade, clone, resources, workspace-ready, events), agents
 (list/add/get/update/remove, configure), exec & files, Port broker, capability
 broker, MCP broker (grants + `mcpCall`), credentials (Claude/GitHub/providers),
-operator tokens (create/list/revoke), webhooks, daemon (overview/agent-types/
+operator tokens (create/list/revoke), webhooks, team activity feed, daemon (overview/agent-types/
 healthz/audit with filters + jsonl/csv export/clients/sessions-revoke/panic/
 admin-update/image-build/ssh keys), host terminals, and the PTY `Session`.
 

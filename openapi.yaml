@@ -37,6 +37,7 @@ tags:
   - name: credentials
   - name: tokens
   - name: events
+  - name: activity
   - name: terminals
   - name: daemon
 paths:
@@ -902,6 +903,55 @@ paths:
       operationId: unsubscribeWebhook
       responses:
         "204": { description: Removed }
+  /v1/activity:
+    get:
+      tags: [activity]
+      summary: Team activity feed — curated "who launched what, which agent did what"
+      description: >
+        A read-only, human-rendered timeline projected over the audit ledger:
+        operator/account actions (from `api.request` records, when `--audit` is
+        on) plus always-on brokered agent↔host activity (port/capability/MCP),
+        enriched with each island's owner. Newest-first. A scoped token only sees
+        activity for islands in its scope. `audit_enabled` flags whether the
+        operational log is on (when off, only brokered records appear).
+      operationId: activity
+      parameters:
+        - name: actor
+          in: query
+          schema: { type: string }
+          description: Only items by this actor (token label / operator / island:<name>)
+        - name: island
+          in: query
+          schema: { type: string }
+        - name: owner
+          in: query
+          schema: { type: string }
+          description: Only items for islands with this owner label
+        - name: kind
+          in: query
+          schema: { type: string, enum: [lifecycle, broker, system] }
+        - name: decision
+          in: query
+          schema: { type: string, enum: [allowed, denied] }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: Only items at/after this RFC3339 time
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+          description: Only items at/before this RFC3339 time
+        - name: limit
+          in: query
+          schema: { type: integer }
+          description: Cap the number of items returned (after filtering)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivityResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /v1/terminals:
     get:
       tags: [terminals]
@@ -1796,6 +1846,26 @@ components:
         returned: { type: integer, description: entries returned after filter + limit }
         verified: { type: boolean, description: whole-chain hash verification result }
         error: { type: string, description: chain-verification failure detail }
+    ActivityItem:
+      type: object
+      properties:
+        seq: { type: integer }
+        time: { type: string, format: date-time }
+        actor: { type: string, description: "who acted: token label / operator / island:<name>" }
+        role: { type: string }
+        island: { type: string }
+        owner: { type: string, description: that island's owner label (enriched) }
+        kind: { type: string, enum: [lifecycle, broker, system] }
+        summary: { type: string, description: human-readable one-liner }
+        decision: { type: string, description: allowed | denied }
+    ActivityResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ActivityItem" }
+        returned: { type: integer }
+        audit_enabled: { type: boolean, description: false ⇒ feed carries only always-on brokered records }
     OverviewResponse:
       type: object
       properties:
