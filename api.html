@@ -104,6 +104,7 @@
   <strong>Contents</strong>
   <ul>
     <li><a href="#connecting">Connecting</a></li>
+    <li><a href="#sdks">SDKs (Python &amp; TypeScript)</a></li>
     <li><a href="#auth">Authentication</a></li>
     <li><a href="#errors">Errors</a></li>
     <li><a href="#islands">Island endpoints</a></li>
@@ -165,6 +166,42 @@ curl --unix-socket ~/.dejima/dejimad.sock http://dejimad/v1/healthz
 
 # Remote (on tailnet)
 curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="sdks">SDKs (Python &amp; TypeScript)</h2>
+
+<p>Official thin clients wrap every endpoint below plus the websocket PTY stream — you get the REST surface and <code>attach()</code> without hand-rolling the <a href="#sessions">envelope framing</a>. Both read <code>DEJIMA_HOST</code> / <code>DEJIMA_TOKEN</code> from the environment, raise a typed error on non-2xx, and are generated against <a href="https://github.com/aoos/dejima/blob/master/openapi.yaml"><code>openapi.yaml</code></a>. <span class="pill">alpha</span> — 0.x, fields may change until 1.0.</p>
+
+<h3>Python — <code>pip install dejima</code></h3>
+<pre><code>pip install dejima            # REST client
+pip install 'dejima[ws]'      # + attach() PTY streams
+
+from dejima import Client
+
+dj = Client()                 # or Client(host="100.84.12.7:7273", token="…")
+isl = dj.create_island(repo="git@github.com:you/foo.git", agent="claude-code")
+dj.add_agent(isl["name"], type="codex")
+print(dj.exec(isl["name"], ["git", "status", "--short"]))
+
+with dj.attach(isl["name"]) as s:     # websocket PTY, multi-attach
+    s.send(b"ls -la\n")
+    print(s.recv())                   # bytes, or None when closed</code></pre>
+
+<h3>TypeScript / JavaScript — <code>npm install dejima</code></h3>
+<pre><code>npm install dejima            # Node 18+ (ESM)
+
+import { Client } from "dejima";
+
+const dj = new Client();      // or new Client({ host: "…", token: "…" })
+const isl = await dj.createIsland("git@github.com:you/foo.git", { agent: "claude-code" });
+await dj.addAgent(isl.name, { type: "codex" });
+console.log(await dj.exec(isl.name, ["git", "status", "--short"]));
+
+const s = await dj.attach(isl.name);  // websocket PTY, multi-attach
+s.sendText("ls -la\n");
+s.onData(bytes =&gt; process.stdout.write(bytes));</code></pre>
+
+<p class="small">Source &amp; full coverage list: <a href="https://github.com/aoos/dejima/tree/master/sdk/python"><code>sdk/python</code></a> · <a href="https://github.com/aoos/dejima/tree/master/sdk/ts"><code>sdk/ts</code></a>. Another language? Everything below is one HTTP/WebSocket API — generate a client from the spec and hand-write only the PTY helper.</p>
 
 <!-- ============================================================ -->
 <h2 id="auth">Authentication</h2>

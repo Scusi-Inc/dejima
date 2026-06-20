@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+python/dist/
+python/build/
+
+# TypeScript / Node
+node_modules/
+ts/dist/
+*.tsbuildinfo

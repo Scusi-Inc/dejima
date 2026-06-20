@@ -11,15 +11,32 @@ requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Dejima" }]
 keywords = ["dejima", "ai-agents", "claude-code", "codex", "sandbox", "self-hosted"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
 dependencies = ["requests>=2.28"]
 
 [project.optional-dependencies]
-ws = ["websocket-client>=1.6"]   # for attach() PTY streams
+ws = ["websocket-client>=1.6"]            # for attach() PTY streams
+dev = ["pytest>=7", "websocket-client>=1.6"]
 
 [project.urls]
 Homepage = "https://aoos.github.io/dejima/"
 Source = "https://github.com/aoos/dejima"
 API = "https://aoos.github.io/dejima/api.html"
+Issues = "https://github.com/aoos/dejima/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dejima"]
+
+[tool.hatch.build.targets.sdist]
+include = ["dejima", "tests", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,64 @@
+name: sdk-publish
+
+# Tag-driven SDK publish. DORMANT by design: it only fires on a pushed `v*` tag
+# (same trigger as release.yml), and even then the actual upload step is skipped
+# until the matching repo secret exists:
+#   - PYPI_API_TOKEN  → publishes sdk/python to PyPI
+#   - NPM_TOKEN       → publishes sdk/ts to npm
+# The build/test steps run regardless (cheap, and they prove the package is
+# publishable); only the upload is gated, so an early tag never hard-fails.
+# Versions are pinned in pyproject.toml / package.json (kept at 0.1.0,
+# "0.x — may change"); bump them before tagging to publish a new release.
+#
+# NOTE: `secrets` can't be read in a job-level `if:`, so each job maps its secret
+# to a job env var and the upload step guards on that env (which IS allowed in a
+# step `if:`).
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish-python:
+    runs-on: ubuntu-latest
+    env:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - name: Publish to PyPI
+        if: ${{ env.PYPI_API_TOKEN != '' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        # --skip-existing so re-running a tag whose version is already on PyPI is
+        # a no-op rather than a hard failure.
+        run: twine upload --skip-existing dist/*
+
+  publish-ts:
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    defaults:
+      run:
+        working-directory: sdk/ts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
