@@ -41,6 +41,7 @@ func main() {
 		autonomyDial  string
 		sshAddr       string
 		hostTerminals bool
+		requireToken  bool
 
 		audit            bool
 		auditReads       bool
@@ -54,6 +55,7 @@ func main() {
 	flag.StringVar(&autonomyDial, "autonomy-dial", os.Getenv("DEJIMAD_AUTONOMY_DIAL"), "host:port an in-island brain dials to reach this daemon over --token-tcp (default \"host.docker.internal:<token-tcp port>\")")
 	flag.StringVar(&sshAddr, "ssh", os.Getenv("DEJIMAD_SSH"), "SSH-façade listen addr (e.g. \"100.x.y.z:2222\" on the tailnet, or \":2222\"); empty disables. Auth is per-island public key; ssh <island>@<addr>.")
 	flag.BoolVar(&hostTerminals, "host-terminals", os.Getenv("DEJIMAD_HOST_TERMINALS") == "1", "enable operator host terminals — UNCONTAINED shells on the daemon host (operator-only, never reachable by an island). Off by default.")
+	flag.BoolVar(&requireToken, "require-token", os.Getenv("DEJIMAD_REQUIRE_TOKEN") == "1", "require an Authorization: Bearer <token> on the operator API (reject anonymous callers). Off by default — the unix socket and tailnet listener are otherwise trusted. Turn on when the daemon is reached by callers that should hold only an attenuated team-auth token.")
 	flag.BoolVar(&audit, "audit", os.Getenv("DEJIMAD_AUDIT") == "1", "record an operational audit log (API requests + lifecycle events) to the hash-chained ~/.dejima/ledger.jsonl. Off by default; brokered Port/Trade/capability records are written regardless.")
 	flag.BoolVar(&auditReads, "audit-reads", os.Getenv("DEJIMAD_AUDIT_READS") == "1", "with --audit, also record read (GET) requests; default records state-changing requests + lifecycle only.")
 	flag.StringVar(&auditHMACKeyFile, "audit-hmac-key-file", os.Getenv("DEJIMAD_AUDIT_HMAC_KEY_FILE"), "path to a file holding an HMAC key; when set, the ledger chain is keyed (HMAC-SHA-256) so tamper-detection requires the key. Set on a FRESH ledger only.")
@@ -71,7 +73,7 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(log, tcpAddr, tokenAddr, autonomyDial, sshAddr, hostTerminals,
+	if err := run(log, tcpAddr, tokenAddr, autonomyDial, sshAddr, hostTerminals, requireToken,
 		auditConfig{enabled: audit, reads: auditReads, hmacKeyFile: auditHMACKeyFile}); err != nil {
 		log.Error("dejimad fatal", "err", err)
 		os.Exit(1)
@@ -90,7 +92,7 @@ type auditConfig struct {
 // socket is no longer mounted into containers — this is the only in-island path.
 const defaultTokenAddr = "127.0.0.1:7274"
 
-func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hostTerminals bool, audit auditConfig) error {
+func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hostTerminals, requireToken bool, audit auditConfig) error {
 	socketPath, err := paths.SocketPath()
 	if err != nil {
 		return err
@@ -139,6 +141,10 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hos
 	if hostTerminals {
 		server.EnableHostTerminals()
 		log.Warn("host terminals ENABLED — uncontained operator shells on this host are reachable to authenticated operators")
+	}
+	if requireToken {
+		server.RequireToken()
+		log.Info("operator API requires a bearer token — anonymous (no-token) requests will be rejected")
 	}
 	if audit.enabled {
 		server.EnableAudit(api.AuditOptions{Reads: audit.reads})
