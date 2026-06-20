@@ -331,11 +331,13 @@ JSON-over-HTTP is the v1 default; websocket for PTY streams. Wire format details
 
 ## 12. Competitors & adjacent tools
 
-Updated 2026-06-19. The market moved; this section is no longer "none is a competitor."
+Updated 2026-06-20. The market moved; this section is no longer "none is a competitor."
 
 **Direct competitors (engage these):**
 - **Coder** — *the closest competitor now.* Pivoted from remote-dev-environments to "govern AI coding agents on self-hosted infrastructure, with audit logging and air-gapped support" — almost exactly Dejima's intended position. Coder is heavy (K8s-era, top-down, platform-engineering buyer); **our edge is lightweight, solo-dev-first, Mac-mini, up-in-minutes, bottom-up.**
 - **Anthropic Claude Managed Agents** (self-hosted sandboxes, shipped ~May 2026) — runs Claude's agent *loop* on Anthropic's servers but tool execution in a sandbox you point it at (own infra or Cloudflare/Daytona/Modal/Vercel). Most direct threat to "run agents on your own box." **Our edge: multi-vendor (not Claude-only), air-gappable (CMA's loop phones home), deeper/native audit.**
+- **Rivet `sandbox-agent`** (OSS) — a universal HTTP API to drive many agent CLIs (Claude Code/Codex/OpenCode/Amp/Cursor), self-host via Docker or drop into E2B/Daytona/Modal. **Directly attacks our "one API + multi-vendor" pillar** with a polished universal-API story. Lacks our moat: no audit ledger, no brokered host-file layer, no persistent island lifecycle/multi-attach.
+- **OpenBox** (openbox.sh) — one-command Docker container-per-run for an agent against a repo; real CLIs. Closest on the *isolation primitive*, but ephemeral — no persistent islands, shared per-project creds, central API, or audit.
 
 **Cloud sandbox runtimes (the cloud version of our layer):**
 - **E2B**, **Vercel Sandbox**, **Modal Sandboxes** — hosted Firecracker sandboxes for agents.
@@ -346,6 +348,7 @@ Updated 2026-06-19. The market moved; this section is no longer "none is a compe
 - **DevPod**, **Gitpod self-hosted** — remote dev environments.
 - **Devin**, **Replit Agent**, **OpenAI Codex Cloud**, **Cursor background agents** — hosted agent platforms (different business model).
 - **Claude Code remote mode** — Anthropic's multi-device story for Claude Code; we sit at the membrane layer below the agent.
+- **Agent Orchestrator** (ComposioHQ, MIT), **OpenAI Symphony**, **Delegate** — orchestration brains *one layer up* (decompose a backlog, spawn agents in worktrees, auto-fix CI/PRs). Adjacent / potential partners — could run *on* a Dejima island; not runtime competitors.
 
 **Table stakes we must not be behind on:** **MCP** (Model Context Protocol) is now the default tool/data layer; brokered, audited MCP access into islands is a near-term need, not a v2 nicety — see roadmap.
 
