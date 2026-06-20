@@ -547,12 +547,17 @@ type PortExportResponse struct {
 	SHA256 string `json:"sha256"`
 }
 
-// AuditResponse is the body of GET /v1/audit — the brokered-operation Ledger,
-// plus the result of verifying its hash chain.
+// AuditResponse is the body of GET /v1/audit — the Ledger (brokered-operation
+// records plus, when the operational audit log is enabled, api.request and
+// lifecycle records), filtered per the request, plus the result of verifying
+// the hash chain. Verification always runs over the WHOLE chain regardless of
+// any filter or limit: tamper-evidence covers the complete file, not the slice
+// the caller asked to see.
 type AuditResponse struct {
 	Entries  []ledger.Entry `json:"entries"`
-	Total    int            `json:"total"`
-	Verified bool           `json:"verified"`
+	Total    int            `json:"total"`           // entries in the whole ledger (before filtering)
+	Returned int            `json:"returned"`        // entries returned after filter + limit
+	Verified bool           `json:"verified"`        // whole-chain hash verification result
 	Error    string         `json:"error,omitempty"` // chain-verification failure detail
 }
 

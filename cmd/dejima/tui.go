@@ -122,6 +122,7 @@ type tuiModel struct {
 	settings     *settingsModel  // non-nil while the settings overlay is open
 	resEditor    *resourceEditor // non-nil while the per-island resources overlay is open
 	modelEditor  *modelEditor    // non-nil while the per-agent model/provider/key overlay is open
+	audit        *auditView      // non-nil while the audit-ledger viewer is open (opened with `A`)
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -620,6 +621,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case auditLoadedMsg:
+		if m.audit != nil {
+			m.audit.applyLoaded(msg)
+		}
+		return m, nil
+
 	case resourcesUpdatedMsg:
 		if m.resEditor != nil {
 			m.resEditor.busy = false
@@ -837,6 +844,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modelEditor != nil {
 		return m.modelEditorKey(msg)
 	}
+	// The audit-ledger viewer owns keys while open.
+	if m.audit != nil {
+		return m.auditKey(msg)
+	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
 		switch msg.String() {
@@ -866,6 +877,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.help = true
 		return m, nil
+	case "A":
+		// Audit-ledger viewer (chain-verification + recent governance activity).
+		return m.openAuditView()
 	case "n":
 		return m.openCreator()
 	case "t":
@@ -1894,6 +1908,10 @@ func (m tuiModel) View() string {
 		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.audit != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderAuditView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 
 	footer := m.renderFooter()
 	body := m.renderBody(hh)
@@ -2739,6 +2757,7 @@ func (m tuiModel) renderHelp() string {
 		{"c", "open the island in your editor over SSH, straight at /workspace"},
 		{"s", "settings — editor · group-by-repo · connection target (server)"},
 		{"p", "toggle group-by-repo (also in settings)"},
+		{"A", "audit ledger — chain-verification + recent governance activity"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
