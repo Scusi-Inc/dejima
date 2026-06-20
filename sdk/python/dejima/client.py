@@ -322,6 +322,33 @@ class Client:
         body = _clean(dict(target=target, island=island, args=args))
         return self._json("POST", "/v1/capabilities/execute", json=body)
 
+    # ===== MCP broker -----------------------------------------------------
+    def list_mcp_grants(self, name: str) -> Dict[str, Any]:
+        """List the MCP servers an island may call."""
+        return self._json("GET", f"{self._island(name)}/mcp/grants")
+
+    def grant_mcp(self, name: str, server: str) -> Dict[str, Any]:
+        """Grant an island access to a registered MCP server."""
+        return self._json("POST", f"{self._island(name)}/mcp/grants", json={"server": server})
+
+    def revoke_mcp(self, name: str, server: str) -> None:
+        """Revoke an island's MCP-server grant."""
+        self._req("DELETE", f"{self._island(name)}/mcp/grants/{self._seg(server)}")
+
+    def mcp_call(
+        self,
+        server: str,
+        method: str,
+        *,
+        island: Optional[str] = None,
+        params: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Invoke a JSON-RPC ``method`` on a granted MCP server (deny-all; every
+        call is ledgered). Operators name ``island``; a token-authenticated
+        in-island caller is pinned to its own island."""
+        body = _clean(dict(server=server, method=method, island=island, params=params))
+        return self._json("POST", "/v1/mcp/call", json=body)
+
     # ===== credentials ----------------------------------------------------
     def push_claude_credentials(self, credentials_json: str) -> None:
         """Store a Claude Code credentials blob as the seed new islands clone from."""
@@ -380,6 +407,24 @@ class Client:
         """Remove a provider credential; reports islands that still reference it."""
         return self._json("DELETE", f"/v1/credentials/providers/{self._seg(provider)}")
 
+    # ===== operator tokens (owner-only) ----------------------------------
+    def list_tokens(self) -> Dict[str, Any]:
+        """List issued operator tokens (metadata only; never secrets)."""
+        return self._json("GET", "/v1/tokens")
+
+    def create_token(
+        self, role: str, *, label: Optional[str] = None, islands: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Mint an operator bearer token. ``role`` is ``owner``/``operator``/
+        ``viewer``; ``islands`` scopes it (empty = all). The response carries the
+        bearer ``secret`` — returned ONCE and never stored in the clear."""
+        body = _clean(dict(role=role, label=label, islands=islands))
+        return self._json("POST", "/v1/tokens", json=body)
+
+    def revoke_token(self, token_id: str) -> None:
+        """Revoke an operator token by id."""
+        self._req("DELETE", f"/v1/tokens/{self._seg(token_id)}")
+
     # ===== events / webhooks ---------------------------------------------
     def list_subscriptions(self) -> List[Dict[str, Any]]:
         """List webhook subscriptions."""
@@ -413,10 +458,42 @@ class Client:
         except DejimaError:
             return False
 
-    def audit(self, *, limit: Optional[int] = None) -> Dict[str, Any]:
-        """The brokered-operation ledger plus a hash-chain verification verdict.
-        ``limit`` tails the last N entries (the full chain is still verified)."""
-        return self._json("GET", "/v1/audit", params=_clean({"limit": limit}))
+    def audit(
+        self,
+        *,
+        limit: Optional[int] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        island: Optional[str] = None,
+        type_prefix: Optional[str] = None,
+        actor: Optional[str] = None,
+        decision: Optional[str] = None,
+        format: Optional[str] = None,
+    ) -> Any:
+        """The audit ledger (brokered ops + ``api.request`` + lifecycle) plus a
+        hash-chain verification verdict.
+
+        Filters compose; ``limit`` tails the filtered result. ``since``/``until``
+        are RFC3339; ``type_prefix`` matches the entry type prefix (e.g. ``port.``);
+        ``decision`` is ``allowed``/``denied``. With ``format="jsonl"`` or
+        ``"csv"`` the daemon streams a plain-text export — this returns that text
+        instead of the parsed JSON envelope.
+        """
+        params = _clean(
+            {
+                "limit": limit,
+                "since": since,
+                "until": until,
+                "island": island,
+                "type": type_prefix,
+                "actor": actor,
+                "decision": decision,
+                "format": format,
+            }
+        )
+        if format in ("jsonl", "csv"):
+            return self._req("GET", "/v1/audit", params=params).text
+        return self._json("GET", "/v1/audit", params=params)
 
     def client_history(self) -> List[Dict[str, Any]]:
         """Recent attach/detach events across every island (newest first)."""

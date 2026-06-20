@@ -157,9 +157,67 @@ test("putProvider omits default when false", async () => {
 });
 
 test("audit limit query", async () => {
-  const { dj, cap } = makeClient({ body: { total: 0, verified: true } });
+  const { dj, cap } = makeClient({ body: { total: 0, returned: 0, verified: true } });
   await dj.audit({ limit: 5 });
   assert.equal(cap.url, "http://h:1/v1/audit?limit=5");
+});
+
+test("audit filters", async () => {
+  const { dj, cap } = makeClient({ body: { total: 0, returned: 0, verified: true } });
+  await dj.audit({ island: "web", typePrefix: "port.", actor: "alice", decision: "denied" });
+  assert.match(cap.url!, /island=web/);
+  assert.match(cap.url!, /type=port\./);
+  assert.match(cap.url!, /actor=alice/);
+  assert.match(cap.url!, /decision=denied/);
+});
+
+test("audit csv returns text", async () => {
+  const { dj, cap } = makeClient({ text: "seq,type\n1,port.grant\n" });
+  const out = await dj.audit({ format: "csv" });
+  assert.equal(out, "seq,type\n1,port.grant\n");
+  assert.match(cap.url!, /format=csv/);
+});
+
+test("mcp grant / list / revoke", async () => {
+  let { dj, cap } = makeClient({ body: { grants: [] } });
+  await dj.listMcpGrants("foo");
+  assert.equal(cap.url, "http://h:1/v1/islands/foo/mcp/grants");
+
+  ({ dj, cap } = makeClient({ status: 201, body: { server: "files" } }));
+  await dj.grantMcp("foo", "files");
+  assert.deepEqual(JSON.parse(cap.body!), { server: "files" });
+
+  ({ dj, cap } = makeClient({ status: 204 }));
+  await dj.revokeMcp("foo", "files");
+  assert.equal(cap.method, "DELETE");
+  assert.equal(cap.url, "http://h:1/v1/islands/foo/mcp/grants/files");
+});
+
+test("mcpCall body", async () => {
+  const { dj, cap } = makeClient({ body: { ok: true } });
+  await dj.mcpCall("files", "tools/list", { params: { x: 1 } });
+  assert.equal(cap.url, "http://h:1/v1/mcp/call");
+  assert.deepEqual(JSON.parse(cap.body!), { server: "files", method: "tools/list", params: { x: 1 } });
+});
+
+test("createToken returns secret once", async () => {
+  const { dj, cap } = makeClient({ status: 201, body: { token: { id: "t1" }, secret: "sk-once" } });
+  const out = await dj.createToken("operator", { label: "ci", islands: ["web"] });
+  assert.equal(cap.method, "POST");
+  assert.equal(cap.url, "http://h:1/v1/tokens");
+  assert.deepEqual(JSON.parse(cap.body!), { role: "operator", label: "ci", islands: ["web"] });
+  assert.equal(out.secret, "sk-once");
+});
+
+test("list / revoke token", async () => {
+  let { dj, cap } = makeClient({ body: { tokens: [] } });
+  await dj.listTokens();
+  assert.equal(cap.url, "http://h:1/v1/tokens");
+
+  ({ dj, cap } = makeClient({ status: 204 }));
+  await dj.revokeToken("t1");
+  assert.equal(cap.method, "DELETE");
+  assert.equal(cap.url, "http://h:1/v1/tokens/t1");
 });
 
 test("healthz true / false", async () => {

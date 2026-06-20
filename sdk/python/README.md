@@ -65,10 +65,12 @@ The client covers the full v1 surface:
 - **Exec & files** — exec, file read/write, logs.
 - **Port broker** — scopes (list/grant/revoke), intake/export/write.
 - **Capability broker** — grants (list/grant/revoke), execute.
+- **MCP broker** — grants (list/grant/revoke), `mcp_call`.
 - **Credentials** — Claude push/status, GitHub identities + repos, LLM providers.
+- **Operator tokens** — create/list/revoke (owner-only; role + island scope).
 - **Events** — webhook subscribe/list/unsubscribe.
-- **Daemon** — overview, agent-types, healthz, audit, clients, sessions-revoke,
-  panic, admin-update, image-build, SSH account keys.
+- **Daemon** — overview, agent-types, healthz, audit (filters + jsonl/csv export),
+  clients, sessions-revoke, panic, admin-update, image-build, SSH account keys.
 - **Host terminals** — list/create/delete/relabel + `attach_terminal`.
 - **Sessions** — `attach` / `attach_terminal` (PTY) and `session_url`.
 

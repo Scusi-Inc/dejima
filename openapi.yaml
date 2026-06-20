@@ -33,7 +33,9 @@ tags:
   - name: exec-and-files
   - name: port
   - name: capability
+  - name: mcp
   - name: credentials
+  - name: tokens
   - name: events
   - name: terminals
   - name: daemon
@@ -599,6 +601,82 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/islands/{name}/mcp/grants:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [mcp]
+      summary: List the MCP servers an island may call (deny-all by default)
+      operationId: listMCPGrants
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPGrantsResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [mcp]
+      summary: Grant an island access to a registered MCP server
+      operationId: grantMCP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MCPGrantRequest" }
+      responses:
+        "201":
+          description: Granted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPGrantView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Already granted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/islands/{name}/mcp/grants/{server}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: server
+        in: path
+        required: true
+        schema: { type: string }
+        description: MCP server name
+    delete:
+      tags: [mcp]
+      summary: Revoke an island's MCP-server grant
+      operationId: revokeMCP
+      responses:
+        "204": { description: Revoked }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/mcp/call:
+    post:
+      tags: [mcp]
+      summary: Invoke a method on a granted MCP server (deny-all; every call ledgered)
+      description: >
+        Token-authenticated in-island callers are pinned to their own island
+        (the `island` field is ignored); operators name the island explicitly.
+        The brokered call is the JSON-RPC `method` (e.g. `tools/list`,
+        `tools/call`) with opaque `params`.
+      operationId: mcpCall
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MCPCallRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPCallResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: MCP server not granted to this island
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/credentials/claude:
     get:
       tags: [credentials]
@@ -734,6 +812,52 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DeleteProviderCredentialResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/tokens:
+    get:
+      tags: [tokens]
+      summary: "List issued operator tokens (owner-only; never returns secrets)"
+      operationId: listTokens
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokensResponse" }
+    post:
+      tags: [tokens]
+      summary: "Mint an operator bearer token (owner-only; secret returned once)"
+      description: >
+        Issues a role/island-scoped operator token. The bearer secret is returned
+        exactly once in the response and is never stored in the clear — a lost
+        secret means minting a new token, not recovering this one.
+      operationId: createToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTokenRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateTokenResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/tokens/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Token id
+    delete:
+      tags: [tokens]
+      summary: "Revoke an operator token by id (owner-only)"
+      operationId: revokeToken
+      responses:
+        "204": { description: Revoked }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/events/subscribe:
     post:
@@ -894,19 +1018,54 @@ paths:
   /v1/audit:
     get:
       tags: [daemon]
-      summary: The brokered-operation ledger + hash-chain verification verdict
+      summary: The audit ledger (brokered ops + api.request + lifecycle) with filtering
+      description: >
+        Returns the hash-chained audit ledger plus a whole-chain verification
+        verdict. Filters compose; `limit` tails the filtered result. With
+        `format=jsonl` or `format=csv` the body is a plain-text export of the
+        filtered entries instead of the JSON envelope.
       operationId: audit
       parameters:
         - name: limit
           in: query
           schema: { type: integer }
-          description: Tail the last N entries (the full chain is still verified)
+          description: Tail the last N entries after filtering (the full chain is still verified)
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: Only entries at/after this RFC3339 time
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+          description: Only entries at/before this RFC3339 time
+        - name: island
+          in: query
+          schema: { type: string }
+          description: Only entries for this island
+        - name: type
+          in: query
+          schema: { type: string }
+          description: "Only entries whose type has this prefix (e.g. port., api.request)"
+        - name: actor
+          in: query
+          schema: { type: string }
+          description: Only entries by this actor (identity subject)
+        - name: decision
+          in: query
+          schema: { type: string, enum: [allowed, denied] }
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, jsonl, csv], default: json }
+          description: "json (default) returns AuditResponse; jsonl/csv stream a text export"
       responses:
         "200":
-          description: OK
+          description: "AuditResponse (format=json), or a text/plain export (jsonl/csv)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuditResponse" }
+            text/plain:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /v1/clients:
     get:
       tags: [daemon]
@@ -1364,6 +1523,63 @@ components:
         output: { type: string }
         exit_code: { type: integer }
         ledger_seq: { type: integer }
+    MCPGrantRequest:
+      type: object
+      required: [server]
+      properties:
+        server: { type: string, description: registered MCP server name }
+    MCPGrantView:
+      type: object
+      properties:
+        server: { type: string }
+        granted_at: { type: string, format: date-time }
+    MCPGrantsResponse:
+      type: object
+      properties:
+        grants:
+          type: array
+          items: { $ref: "#/components/schemas/MCPGrantView" }
+    MCPCallRequest:
+      type: object
+      required: [server, method]
+      properties:
+        island: { type: string, description: ignored for token-authenticated in-island callers }
+        server: { type: string }
+        method: { type: string, description: "JSON-RPC method, e.g. tools/list, tools/call" }
+        params: { description: "opaque JSON-RPC params passed through to the server" }
+    MCPCallResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        is_error: { type: boolean, description: the MCP server returned a tool/protocol error }
+        result: { description: "opaque JSON-RPC result from the server" }
+        ledger_seq: { type: integer }
+    TokenView:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        role: { type: string, enum: [owner, operator, viewer] }
+        islands: { type: array, items: { type: string }, description: "scope; empty = all islands" }
+        created_at: { type: string, format: date-time }
+    CreateTokenRequest:
+      type: object
+      required: [role]
+      properties:
+        label: { type: string }
+        role: { type: string, enum: [owner, operator, viewer] }
+        islands: { type: array, items: { type: string }, description: "scope to these islands; empty = all" }
+    CreateTokenResponse:
+      type: object
+      properties:
+        token: { $ref: "#/components/schemas/TokenView" }
+        secret: { type: string, description: "the bearer secret — returned ONCE, never stored in the clear" }
+    TokensResponse:
+      type: object
+      properties:
+        tokens:
+          type: array
+          items: { $ref: "#/components/schemas/TokenView" }
     ClaudeCredentialsStatus:
       type: object
       properties:
@@ -1554,16 +1770,20 @@ components:
       properties:
         seq: { type: integer }
         time: { type: string, format: date-time }
-        type: { type: string, description: "port.grant | port.revoke | trade.read | trade.write | capability.* | …" }
+        type: { type: string, description: "port.grant | port.revoke | trade.read | trade.write | capability.* | mcp.* | api.request | <lifecycle event>" }
         island: { type: string }
         agent: { type: string }
         scope: { type: string }
-        path: { type: string }
+        path: { type: string, description: "host/scope path (trades) or request path (api.request)" }
         mode: { type: string }
         bytes: { type: integer }
         sha256: { type: string }
         decision: { type: string, description: allowed | denied }
         detail: { type: string }
+        method: { type: string, description: "HTTP method (api.request)" }
+        status: { type: integer, description: "HTTP status code (api.request)" }
+        actor: { type: string, description: "who made the request (identity; filled by the auth layer)" }
+        role: { type: string, description: "the actor's role, when known" }
         prev: { type: string, description: chain value of the previous entry }
         chain: { type: string, description: chain value of this entry }
     AuditResponse:
@@ -1572,8 +1792,9 @@ components:
         entries:
           type: array
           items: { $ref: "#/components/schemas/LedgerEntry" }
-        total: { type: integer }
-        verified: { type: boolean }
+        total: { type: integer, description: entries in the whole ledger (before filtering) }
+        returned: { type: integer, description: entries returned after filter + limit }
+        verified: { type: boolean, description: whole-chain hash verification result }
         error: { type: string, description: chain-verification failure detail }
     OverviewResponse:
       type: object

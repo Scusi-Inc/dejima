@@ -248,9 +248,73 @@ def test_put_provider_default_flag(server):
 
 def test_audit_limit(server):
     rec, dj = server
-    _set(rec, body={"entries": [], "total": 0, "verified": True})
+    _set(rec, body={"entries": [], "total": 0, "returned": 0, "verified": True})
     dj.audit(limit=5)
     assert rec.path == "/v1/audit?limit=5"
+
+
+def test_audit_filters(server):
+    rec, dj = server
+    _set(rec, body={"entries": [], "total": 0, "returned": 0, "verified": True})
+    dj.audit(island="web", type_prefix="port.", actor="alice", decision="denied")
+    # query params are present (order not guaranteed)
+    assert "island=web" in rec.path
+    assert "type=port." in rec.path
+    assert "actor=alice" in rec.path
+    assert "decision=denied" in rec.path
+
+
+def test_audit_csv_returns_text(server):
+    rec, dj = server
+    rec.status = 200
+    rec.resp = b"seq,type\n1,port.grant\n"
+    rec.content_type = "text/plain"
+    out = dj.audit(format="csv")
+    assert out == "seq,type\n1,port.grant\n"
+    assert "format=csv" in rec.path
+
+
+def test_mcp_grant_list_revoke(server):
+    rec, dj = server
+    _set(rec, body={"grants": []})
+    dj.list_mcp_grants("foo")
+    assert rec.path == "/v1/islands/foo/mcp/grants"
+
+    _set(rec, status=201, body={"server": "files"})
+    dj.grant_mcp("foo", "files")
+    assert rec.method == "POST" and json.loads(rec.body) == {"server": "files"}
+
+    _set(rec, status=204)
+    dj.revoke_mcp("foo", "files")
+    assert rec.method == "DELETE" and rec.path == "/v1/islands/foo/mcp/grants/files"
+
+
+def test_mcp_call(server):
+    rec, dj = server
+    _set(rec, body={"ok": True})
+    dj.mcp_call("files", "tools/list", params={"x": 1})
+    assert rec.path == "/v1/mcp/call"
+    assert json.loads(rec.body) == {"server": "files", "method": "tools/list", "params": {"x": 1}}
+
+
+def test_create_token(server):
+    rec, dj = server
+    _set(rec, status=201, body={"token": {"id": "t1"}, "secret": "sk-once"})
+    out = dj.create_token("operator", label="ci", islands=["web"])
+    assert rec.method == "POST" and rec.path == "/v1/tokens"
+    assert json.loads(rec.body) == {"role": "operator", "label": "ci", "islands": ["web"]}
+    assert out["secret"] == "sk-once"
+
+
+def test_list_and_revoke_token(server):
+    rec, dj = server
+    _set(rec, body={"tokens": []})
+    dj.list_tokens()
+    assert rec.path == "/v1/tokens"
+
+    _set(rec, status=204)
+    dj.revoke_token("t1")
+    assert rec.method == "DELETE" and rec.path == "/v1/tokens/t1"
 
 
 def test_overview(server):

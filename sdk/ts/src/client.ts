@@ -310,6 +310,28 @@ export class Client {
     return this.json("POST", "/v1/capabilities/execute", { json: clean({ target, island: opts.island, args: opts.args }) });
   }
 
+  // ===== MCP broker -----------------------------------------------------
+  listMcpGrants(name: string): Promise<any> {
+    return this.json("GET", `${this.island(name)}/mcp/grants`);
+  }
+
+  grantMcp(name: string, server: string): Promise<any> {
+    return this.json("POST", `${this.island(name)}/mcp/grants`, { json: { server } });
+  }
+
+  async revokeMcp(name: string, server: string): Promise<void> {
+    await this.request("DELETE", `${this.island(name)}/mcp/grants/${this.seg(server)}`);
+  }
+
+  /** Invoke a JSON-RPC `method` on a granted MCP server (deny-all; ledgered). */
+  mcpCall(
+    server: string,
+    method: string,
+    opts: { island?: string; params?: unknown } = {},
+  ): Promise<any> {
+    return this.json("POST", "/v1/mcp/call", { json: clean({ server, method, island: opts.island, params: opts.params }) });
+  }
+
   // ===== credentials ----------------------------------------------------
   async pushClaudeCredentials(credentialsJson: string): Promise<void> {
     await this.request("PUT", "/v1/credentials/claude", { json: { credentials_json: credentialsJson } });
@@ -355,6 +377,27 @@ export class Client {
     return this.json("DELETE", `/v1/credentials/providers/${this.seg(provider)}`);
   }
 
+  // ===== operator tokens (owner-only) ----------------------------------
+  listTokens(): Promise<any> {
+    return this.json("GET", "/v1/tokens");
+  }
+
+  /**
+   * Mint an operator bearer token. `role` is `owner`/`operator`/`viewer`;
+   * `islands` scopes it (empty = all). The response carries the bearer `secret` —
+   * returned ONCE and never stored in the clear.
+   */
+  createToken(
+    role: "owner" | "operator" | "viewer",
+    opts: { label?: string; islands?: string[] } = {},
+  ): Promise<any> {
+    return this.json("POST", "/v1/tokens", { json: clean({ role, label: opts.label, islands: opts.islands }) });
+  }
+
+  async revokeToken(tokenId: string): Promise<void> {
+    await this.request("DELETE", `/v1/tokens/${this.seg(tokenId)}`);
+  }
+
   // ===== events / webhooks ---------------------------------------------
   listSubscriptions(): Promise<any[]> {
     return this.json("GET", "/v1/events/subscriptions");
@@ -388,9 +431,39 @@ export class Client {
     }
   }
 
-  /** The brokered-operation ledger + a hash-chain verification verdict. */
-  audit(opts: { limit?: number } = {}): Promise<any> {
-    return this.json("GET", "/v1/audit", { query: clean({ limit: opts.limit }) });
+  /**
+   * The audit ledger (brokered ops + `api.request` + lifecycle) + a hash-chain
+   * verdict. Filters compose; `limit` tails the filtered result. `since`/`until`
+   * are RFC3339; `typePrefix` matches the entry-type prefix. With
+   * `format: "jsonl" | "csv"` the daemon streams a text export — this resolves
+   * that string instead of the parsed envelope.
+   */
+  async audit(
+    opts: {
+      limit?: number;
+      since?: string;
+      until?: string;
+      island?: string;
+      typePrefix?: string;
+      actor?: string;
+      decision?: "allowed" | "denied";
+      format?: "json" | "jsonl" | "csv";
+    } = {},
+  ): Promise<any> {
+    const query = clean({
+      limit: opts.limit,
+      since: opts.since,
+      until: opts.until,
+      island: opts.island,
+      type: opts.typePrefix,
+      actor: opts.actor,
+      decision: opts.decision,
+      format: opts.format,
+    });
+    if (opts.format === "jsonl" || opts.format === "csv") {
+      return (await this.request("GET", "/v1/audit", { query })).text();
+    }
+    return this.json("GET", "/v1/audit", { query });
   }
 
   /** Recent attach/detach events across every island (newest first). */
