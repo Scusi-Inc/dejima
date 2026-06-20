@@ -6,21 +6,31 @@ name: sdk
 on:
   push:
     branches: [master, main]
-    paths: ["openapi.yaml", "redocly.yaml", "sdk/**", ".github/workflows/sdk.yml"]
+    # internal/api/** so a daemon route change trips the parity check too.
+    paths: ["openapi.yaml", "redocly.yaml", "sdk/**", "internal/api/**", ".github/workflows/sdk.yml"]
   pull_request:
-    paths: ["openapi.yaml", "redocly.yaml", "sdk/**", ".github/workflows/sdk.yml"]
+    paths: ["openapi.yaml", "redocly.yaml", "sdk/**", "internal/api/**", ".github/workflows/sdk.yml"]
 
 jobs:
-  openapi-lint:
+  openapi:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       # Pinned, not "@latest": a floating spec linter can fail CI on a rule the
       # spec predates. Bump deliberately.
-      - run: npx --yes @redocly/cli@1.34.5 lint
+      - name: Lint spec
+        run: npx --yes @redocly/cli@1.34.5 lint
+      # Route parity: every internal/api route must be documented, and vice versa.
+      - name: Route parity (server.go ↔ openapi.yaml)
+        run: |
+          pip install pyyaml
+          python sdk/openapi_parity.py
 
   python-sdk:
     runs-on: ubuntu-latest
