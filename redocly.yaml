@@ -1,0 +1,17 @@
+# Redocly lint config for the Dejima OpenAPI spec (openapi.yaml).
+# Used by `redocly lint` locally and in CI (.github/workflows/sdk.yml) to catch
+# spec drift / structural errors. The spec is hand-maintained from the route
+# table in internal/api/server.go — see openapi.yaml's top-level description.
+extends:
+  - recommended
+rules:
+  # SessionEnvelope documents the PTY WebSocket wire protocol, which OpenAPI
+  # can't model as an HTTP body — it is referenced from prose, not via $ref, so
+  # the "unused component" check is a false positive here.
+  no-unused-components: off
+  # Many endpoints are WebSocket upgrades (101) or plain-text streams; not every
+  # one carries a modeled 4xx. Keep this as a hint, not a hard failure.
+  operation-4xx-response: warn
+apis:
+  dejima:
+    root: openapi.yaml

@@ -11,11 +11,13 @@ info:
     stable, but fields may change until `v1.0.0`; an integer `api_version`
     (advertised on `/v1/overview`) tracks the client/daemon contract separately
     from the semver tag. This spec is hand-maintained from the route table in
-    `internal/api/server.go` and may drift slightly between releases — the source
-    is the source of truth.
+    `internal/api/server.go` and the request/response shapes in
+    `internal/api/types.go` — those are the source of truth and the spec may
+    drift slightly between releases.
 
     WebSocket endpoints (PTY session streams) are listed for discoverability but
-    cannot be fully modeled in OpenAPI; see the per-path notes.
+    cannot be fully modeled in OpenAPI; see the per-path notes and the
+    `SessionEnvelope` schema for the wire protocol.
 servers:
   - url: http://{host}
     description: Daemon over the tailnet (DEJIMA_HOST, e.g. 100.84.12.7:7273)
@@ -30,8 +32,11 @@ tags:
   - name: agents
   - name: exec-and-files
   - name: port
-  - name: daemon
+  - name: capability
+  - name: credentials
   - name: events
+  - name: terminals
+  - name: daemon
 paths:
   /v1/islands:
     get:
@@ -61,12 +66,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CreateIslandResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: An island with this name already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/islands/{name}:
     parameters:
       - $ref: "#/components/parameters/Name"
     get:
       tags: [islands]
-      summary: Island detail (agents, presence, cpu/mem, git, health)
+      summary: Island detail (agents, presence, cpu/mem, git, health, disk, resources)
       operationId: getIsland
       responses:
         "200":
@@ -83,12 +94,14 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                title: { type: string }
+            schema: { $ref: "#/components/schemas/UpdateIslandRequest" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [islands]
       summary: Purge an island (container + volumes)
@@ -100,8 +113,27 @@ paths:
           description: Bypass the unpushed-work guard
       responses:
         "204": { description: Purged }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Refused — unpushed/dirty work (retry with force=true)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/islands/{name}/workspace-ready:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: Whether the island's repo clone has landed in /workspace yet
+      operationId: workspaceReady
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { ready: { type: boolean } }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/resources:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     put:
@@ -112,42 +144,66 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                memory: { type: string, description: "e.g. 4g; \"\" = unlimited; null = unchanged", nullable: true }
-                oom_priority: { type: integer, nullable: true }
+            schema: { $ref: "#/components/schemas/UpdateResourcesRequest" }
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  resources: { $ref: "#/components/schemas/Resources" }
-                  restart_required: { type: boolean }
+              schema: { $ref: "#/components/schemas/UpdateResourcesResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/hibernate:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
       tags: [islands]
       summary: Stop the container, preserve volumes
       operationId: hibernateIsland
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/wake:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
       tags: [islands]
       summary: Start the container against existing volumes
       operationId: wakeIsland
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/reset:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
       tags: [islands]
       summary: Clear agent state (preserves workspace)
       operationId: resetIsland
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/upgrade:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [islands]
+      summary: Recreate the container against the current image (both volumes preserved)
+      operationId: upgradeIsland
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/clone:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
@@ -155,17 +211,37 @@ paths:
       summary: Copy an island (workspace + home volumes, drops Port grants)
       operationId: cloneIsland
       requestBody:
+        required: true
         content:
           application/json:
-            schema:
-              type: object
-              properties: { name: { type: string, description: new island name } }
+            schema: { $ref: "#/components/schemas/CloneIslandRequest" }
       responses:
         "201":
           description: Cloned
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IslandInfo" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Target name already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/islands/{name}/events:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: The island's recent event log (newest first)
+      operationId: islandEvents
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Event" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/agents:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -195,6 +271,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AgentInfo" }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /v1/islands/{name}/agents/{id}:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -209,16 +286,67 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AgentInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [agents]
+      summary: Rename an agent's cosmetic label
+      operationId: updateAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { label: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [agents]
-      summary: Remove an agent
+      summary: Remove an agent (non-primary; not the last one)
       operationId: removeAgent
-      responses: { "204": { description: Removed } }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Cannot remove the primary or the last agent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/islands/{name}/agents/{id}/config:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AgentID"
+    patch:
+      tags: [agents]
+      summary: Set an agent's LLM provider/model (key-requiring frameworks only)
+      operationId: configureAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentConfigRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentConfigResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The agent type does not use an LLM provider key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/islands/{name}/session:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
       tags: [agents]
-      summary: "WebSocket PTY stream (multi-attach). NOTE: WebSocket upgrade — not modeled by OpenAPI."
+      summary: "WebSocket PTY stream (multi-attach). NOTE: WebSocket upgrade — see SessionEnvelope."
       operationId: sessionWS
       x-websocket: true
       responses:
@@ -229,7 +357,7 @@ paths:
       - $ref: "#/components/parameters/AgentID"
     get:
       tags: [agents]
-      summary: "Per-agent WebSocket PTY stream. NOTE: WebSocket upgrade."
+      summary: "Per-agent WebSocket PTY stream. NOTE: WebSocket upgrade — see SessionEnvelope."
       operationId: agentSessionWS
       x-websocket: true
       responses:
@@ -244,17 +372,14 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [cmd]
-              properties:
-                cmd: { type: array, items: { type: string } }
+            schema: { $ref: "#/components/schemas/ExecRequest" }
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExecResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/files/{path}:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -272,6 +397,7 @@ paths:
           description: File contents
           content:
             application/octet-stream: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/NotFound" }
     put:
       tags: [exec-and-files]
       summary: Write a file into an island
@@ -280,7 +406,9 @@ paths:
         required: true
         content:
           application/octet-stream: { schema: { type: string, format: binary } }
-      responses: { "204": { description: Written } }
+      responses:
+        "204": { description: Written }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/logs:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -305,26 +433,308 @@ paths:
       tags: [port]
       summary: List Port grants (brokered host-folder scopes)
       operationId: listPortScopes
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortScopesResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
     post:
       tags: [port]
       summary: Grant a scoped host folder (deny-all by default)
       operationId: grantPortScope
-      responses: { "201": { description: Granted } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PortScopeRequest" }
+      responses:
+        "201":
+          description: Granted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortScopeView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/islands/{name}/port/scopes/{scope}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: scope
+        in: path
+        required: true
+        schema: { type: string }
+        description: Scope name (e.g. scope-1)
+    delete:
+      tags: [port]
+      summary: Revoke a Port grant by scope name
+      operationId: revokePortScope
+      responses:
+        "204": { description: Revoked }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/port/intake:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
       tags: [port]
       summary: Brokered read-only file import (host -> island), ledgered
       operationId: portIntake
-      responses: { "200": { description: OK } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PortIntakeRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortIntakeResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /v1/islands/{name}/port/export:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
       tags: [port]
       summary: Brokered export (island -> host staging), append-only ledger
       operationId: portExport
-      responses: { "200": { description: OK } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PortExportRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortExportResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/islands/{name}/port/write:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [port]
+      summary: Brokered write (island -> a read-write host scope), ledgered
+      operationId: portWrite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PortWriteRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortWriteResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/islands/{name}/capability/grants:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [capability]
+      summary: List the host capability targets an island may invoke
+      operationId: listCapabilityGrants
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CapabilityGrantsResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [capability]
+      summary: Grant permission to invoke a named host capability target
+      operationId: grantCapability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CapabilityGrantRequest" }
+      responses:
+        "201":
+          description: Granted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CapabilityGrantView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/islands/{name}/capability/grants/{target}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: target
+        in: path
+        required: true
+        schema: { type: string }
+        description: Capability target name
+    delete:
+      tags: [capability]
+      summary: Revoke a capability grant by target name
+      operationId: revokeCapability
+      responses:
+        "204": { description: Revoked }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/capabilities/execute:
+    post:
+      tags: [capability]
+      summary: Invoke a granted capability target (deny-all; every outcome ledgered)
+      description: >
+        Token-authenticated in-island callers are pinned to their own island
+        (the `island` field is ignored); operators name the island explicitly.
+      operationId: executeCapability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CapabilityExecuteRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CapabilityExecuteResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: Capability not granted to this island
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: Capability execution unavailable on this host
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/credentials/claude:
+    get:
+      tags: [credentials]
+      summary: Whether new islands get Claude credentials, and from where (no secret)
+      operationId: claudeCredentialsStatus
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClaudeCredentialsStatus" }
+    put:
+      tags: [credentials]
+      summary: Push a Claude Code credentials blob as the seed new islands clone from
+      operationId: pushClaudeCredentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PushCredentialsRequest" }
+      responses:
+        "204": { description: Stored }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/credentials/github:
+    get:
+      tags: [credentials]
+      summary: List the daemon's GitHub identities (no tokens)
+      operationId: listGitHubIdentities
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubIdentitiesResponse" }
+  /v1/credentials/github/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Identity name
+    put:
+      tags: [credentials]
+      summary: Add or update a named GitHub identity
+      operationId: putGitHubIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutGitHubIdentityRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubIdentitiesResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    delete:
+      tags: [credentials]
+      summary: Remove a GitHub identity (reports islands that still referenced it)
+      operationId: deleteGitHubIdentity
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeleteGitHubIdentityResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/credentials/github/{name}/repos:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Identity name
+    get:
+      tags: [credentials]
+      summary: List the repositories a GitHub identity can access (fetched daemon-side)
+      operationId: gitHubRepos
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubReposResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: Upstream GitHub call failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/credentials/providers:
+    get:
+      tags: [credentials]
+      summary: List LLM provider credentials (masked hint only, no keys)
+      operationId: listProviderCreds
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderCredentialsResponse" }
+  /v1/credentials/providers/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { type: string }
+        description: Provider name (e.g. anthropic)
+    put:
+      tags: [credentials]
+      summary: Store or update a provider key (write-only; never echoed back)
+      operationId: putProviderCred
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutProviderCredentialRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderCredentialsResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    delete:
+      tags: [credentials]
+      summary: Remove a provider credential (reports islands that still reference it)
+      operationId: deleteProviderCred
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeleteProviderCredentialResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/events/subscribe:
     post:
       tags: [events]
@@ -336,19 +746,127 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/SubscribeWebhookRequest" }
       responses:
-        "201": { description: Subscribed }
+        "201":
+          description: Subscribed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /v1/events/subscriptions:
     get:
       tags: [events]
       summary: List webhook subscriptions
       operationId: listSubscriptions
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Subscription" }
+  /v1/events/subscriptions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Subscription id
+    delete:
+      tags: [events]
+      summary: Remove a webhook subscription
+      operationId: unsubscribeWebhook
+      responses:
+        "204": { description: Removed }
+  /v1/terminals:
+    get:
+      tags: [terminals]
+      summary: "List host terminals (operator-only; requires --host-terminals)"
+      operationId: listTerminals
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TerminalsResponse" }
+        "403": { $ref: "#/components/responses/HostTerminalsDisabled" }
+    post:
+      tags: [terminals]
+      summary: Create a host terminal
+      operationId: createTerminal
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { label: { type: string } }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Terminal" }
+        "403": { $ref: "#/components/responses/HostTerminalsDisabled" }
+  /v1/terminals/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Terminal id (e.g. t1)
+    patch:
+      tags: [terminals]
+      summary: Rename a host terminal
+      operationId: relabelTerminal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { label: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Terminal" }
+        "403": { $ref: "#/components/responses/HostTerminalsDisabled" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [terminals]
+      summary: Remove a host terminal
+      operationId: deleteTerminal
+      responses:
+        "204": { description: Removed }
+        "403": { $ref: "#/components/responses/HostTerminalsDisabled" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/terminals/{id}/session:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Terminal id
+    get:
+      tags: [terminals]
+      summary: "Host-terminal WebSocket PTY stream. NOTE: WebSocket upgrade — see SessionEnvelope."
+      operationId: terminalSessionWS
+      x-websocket: true
+      responses:
+        "101": { description: Switching Protocols (WebSocket) }
+        "403": { $ref: "#/components/responses/HostTerminalsDisabled" }
   /v1/agent-types:
     get:
       tags: [daemon]
       summary: Handler registry + provider-key hints
       operationId: agentTypes
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentTypesResponse" }
   /v1/overview:
     get:
       tags: [daemon]
@@ -365,7 +883,176 @@ paths:
       tags: [daemon]
       summary: Reachability probe (token-accessible)
       operationId: healthz
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, example: ok } }
+  /v1/audit:
+    get:
+      tags: [daemon]
+      summary: The brokered-operation ledger + hash-chain verification verdict
+      operationId: audit
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer }
+          description: Tail the last N entries (the full chain is still verified)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditResponse" }
+  /v1/clients:
+    get:
+      tags: [daemon]
+      summary: Recent attach/detach events across every island (newest first)
+      operationId: clientHistory
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ClientHistoryEntry" }
+  /v1/sessions/revoke:
+    post:
+      tags: [daemon]
+      summary: Drop every active websocket client across every island
+      operationId: revokeSessions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { revoked: { type: integer } }
+  /v1/panic:
+    get:
+      tags: [daemon]
+      summary: PANIC status (all islands stopped; no auto-start)
+      operationId: panicStatus
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PanicResponse" }
+    post:
+      tags: [daemon]
+      summary: Engage PANIC — stop every island
+      operationId: panic
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PanicRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PanicResponse" }
+    delete:
+      tags: [daemon]
+      summary: Clear PANIC and restart islands that should be running
+      operationId: unpanic
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PanicResponse" }
+  /v1/admin/update:
+    post:
+      tags: [daemon]
+      summary: Report (or apply) a daemon self-update
+      operationId: adminUpdate
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminUpdateRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUpdateResponse" }
+  /v1/image/build:
+    post:
+      tags: [daemon]
+      summary: Rebuild the island image (streams combined build output)
+      description: >
+        Streams the docker-build output as text/plain. A build failure is
+        reported as a trailing `ERROR: …` line in the stream (the 200 status is
+        already sent by then), and success ends with a `--- dejima: image build
+        succeeded ---` marker.
+      operationId: imageBuild
+      responses:
+        "200":
+          description: Build output stream
+          content:
+            text/plain: { schema: { type: string } }
+  /v1/ssh/account-keys:
+    get:
+      tags: [daemon]
+      summary: List the fleet-wide authorized SSH keys
+      operationId: listAccountKeys
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListSSHKeysResponse" }
+    post:
+      tags: [daemon]
+      summary: Authorize an OpenSSH public key fleet-wide
+      operationId: authorizeAccountKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthorizeSSHKeyRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthorizeSSHKeyResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /metrics:
+    get:
+      tags: [daemon]
+      summary: "Prometheus metrics (text exposition format; not JSON)"
+      operationId: metrics
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain: { schema: { type: string } }
+  /v1/internal/agent-event:
+    post:
+      tags: [daemon]
+      summary: "Internal — agent telemetry sink (notify-hook shims). Not for app use."
+      description: >
+        Posted by the in-island notify hooks. A token-authenticated caller may
+        only emit for its own island (the body's island is overridden by the
+        token's island). Listed for completeness; third-party apps consume events
+        via webhooks, not by posting here.
+      operationId: agentEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentEventRequest" }
+      responses:
+        "202": { description: Accepted }
+        "400": { $ref: "#/components/responses/BadRequest" }
 components:
   securitySchemes:
     bearerToken:
@@ -387,8 +1074,25 @@ components:
       description: Agent id (e.g. p1, p2)
   responses:
     NotFound:
-      description: Island or agent not found
+      description: Island, agent, or resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    HostTerminalsDisabled:
+      description: Host terminals are disabled (start dejimad with --host-terminals)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
   schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
     CreateIslandRequest:
       type: object
       required: [repo]
@@ -397,7 +1101,17 @@ components:
         repo: { type: string, description: git URL or local path }
         agent: { type: string, default: claude-code }
         image: { type: string, default: "dejima/island:latest" }
+        cmd: { type: string, description: "entrypoint for agent=headless (required then; ignored otherwise)" }
         resources: { $ref: "#/components/schemas/Resources" }
+        agents:
+          type: array
+          description: "Seed a multi-agent island; element 0 is the primary."
+          items: { $ref: "#/components/schemas/AgentSpecRequest" }
+        role: { type: string, description: "\"\" (work island) or \"home\" (assistant brain; must be headless)" }
+        github_identity: { type: string, description: which daemon GitHub identity to clone/push as }
+        seed_path: { type: string, description: host path bind-mounted read-only as the clone source (local daemon only) }
+        owner: { type: string }
+        tags: { type: object, additionalProperties: { type: string } }
     CreateIslandResponse:
       allOf:
         - $ref: "#/components/schemas/IslandInfo"
@@ -406,21 +1120,58 @@ components:
             token:
               type: string
               description: only present on a token-authenticated (Home-Island spawn) create
+    UpdateIslandRequest:
+      type: object
+      properties:
+        title: { type: string }
+    CloneIslandRequest:
+      type: object
+      required: [new_name]
+      properties:
+        new_name: { type: string }
     AgentSpecRequest:
       type: object
       properties:
-        type: { type: string, description: agent handler (claude-code, codex, shell, openclaw, headless, …) }
+        type: { type: string, description: "agent handler — claude-code, codex, shell, openclaw, headless, …" }
         label: { type: string }
-        cmd: { type: string, description: required for headless }
+        cmd: { type: string, description: required for a generic headless type }
+        provider: { type: string, description: names a daemon provider credential }
+        model: { type: string, description: "\"provider/model\" string" }
+    AgentConfigRequest:
+      type: object
+      description: Pointer-style — omit a field to leave it unchanged; "" clears it.
+      properties:
+        provider: { type: [string, "null"] }
+        model: { type: [string, "null"] }
+    AgentConfigResponse:
+      type: object
+      properties:
         provider: { type: string }
         model: { type: string }
+        restart_required: { type: boolean }
     Resources:
       type: object
       properties:
         memory: { type: string }
         cpus: { type: string }
         disk: { type: string }
-        oom_priority: { type: integer, nullable: true }
+        oom_priority: { type: [integer, "null"] }
+    UpdateResourcesRequest:
+      type: object
+      description: Pointer-style — omit a field to leave it unchanged.
+      properties:
+        memory: { type: [string, "null"], description: "e.g. 4g; \"\" = unlimited; omit = unchanged" }
+        oom_priority: { type: [integer, "null"] }
+    UpdateResourcesResponse:
+      type: object
+      properties:
+        resources: { $ref: "#/components/schemas/Resources" }
+        restart_required: { type: boolean }
+    ExecRequest:
+      type: object
+      required: [cmd]
+      properties:
+        cmd: { type: array, items: { type: string } }
     ExecResponse:
       type: object
       properties:
@@ -435,6 +1186,7 @@ components:
         repo: { type: string }
         agent: { type: string }
         image: { type: string }
+        cmd: { type: string }
         role: { type: string }
         owner: { type: string }
         tags: { type: object, additionalProperties: { type: string } }
@@ -442,9 +1194,14 @@ components:
         container: { type: string, description: observed runtime status }
         created_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
+        attached:
+          type: array
+          items: { $ref: "#/components/schemas/PresenceEntry" }
         stats: { $ref: "#/components/schemas/IslandStats" }
+        agent_state: { $ref: "#/components/schemas/AgentStateInfo" }
         git: { $ref: "#/components/schemas/GitInfo" }
         health: { $ref: "#/components/schemas/IslandHealth" }
+        disk: { $ref: "#/components/schemas/IslandDisk" }
         resources: { $ref: "#/components/schemas/Resources" }
         agents:
           type: array
@@ -455,13 +1212,33 @@ components:
         id: { type: string }
         type: { type: string }
         label: { type: string }
+        tmux: { type: string }
         branch: { type: string }
         worktree: { type: string }
         attachable: { type: boolean }
-        state: { type: string }
+        created_at: { type: string, format: date-time }
+        state: { type: string, description: "session liveness: running | stopped | exited (detail only)" }
+        agent_state: { $ref: "#/components/schemas/AgentStateInfo" }
+        attached:
+          type: array
+          items: { $ref: "#/components/schemas/PresenceEntry" }
         restarts: { type: integer }
+        error: { type: string, description: last orchestration failure }
+        error_at: { type: string, format: date-time }
         provider: { type: string }
         model: { type: string }
+        provider_key_set: { type: boolean }
+        auth_state: { type: string, description: "\"missing-provider-auth\" or \"\" (ready)" }
+    PresenceEntry:
+      type: object
+      properties:
+        label: { type: string }
+        joined_at: { type: string, format: date-time }
+    AgentStateInfo:
+      type: object
+      properties:
+        latest: { type: string, description: "e.g. waiting-for-input, task-complete, error" }
+        updated_at: { type: string, format: date-time }
     IslandStats:
       type: object
       properties:
@@ -482,15 +1259,322 @@ components:
         oom_killed: { type: boolean }
         restart_count: { type: integer }
         exit_code: { type: integer }
+    IslandDisk:
+      type: object
+      properties:
+        workspace_bytes: { type: integer }
+        home_bytes: { type: integer }
+        total_bytes: { type: integer }
+    Event:
+      type: object
+      properties:
+        type: { type: string, description: "e.g. island.created, agent.task-complete" }
+        island: { type: string }
+        agent: { type: string }
+        timestamp: { type: string, format: date-time }
+        payload: { type: object, additionalProperties: true }
+    PortScopeRequest:
+      type: object
+      required: [host_path]
+      properties:
+        host_path: { type: string }
+        mode: { type: string, enum: [ro, rw], default: ro }
+    PortScopeView:
+      type: object
+      properties:
+        name: { type: string }
+        host_path: { type: string }
+        mode: { type: string }
+        granted_at: { type: string, format: date-time }
+    PortScopesResponse:
+      type: object
+      properties:
+        scopes:
+          type: array
+          items: { $ref: "#/components/schemas/PortScopeView" }
+    PortIntakeRequest:
+      type: object
+      required: [scope, src_rel]
+      properties:
+        scope: { type: string, description: scope name to read from }
+        src_rel: { type: string, description: path relative to the scope's host root }
+        dest: { type: string, description: "container path; default /intake/<scope>/<src_rel>" }
+    PortIntakeResponse:
+      type: object
+      properties:
+        scope: { type: string }
+        src: { type: string }
+        dest: { type: string }
+        bytes: { type: integer }
+        sha256: { type: string }
+    PortExportRequest:
+      type: object
+      required: [src]
+      properties:
+        src: { type: string, description: container path to export }
+    PortExportResponse:
+      type: object
+      properties:
+        src: { type: string }
+        dest: { type: string }
+        bytes: { type: integer }
+        sha256: { type: string }
+    PortWriteRequest:
+      type: object
+      required: [scope, src, dest_rel]
+      properties:
+        scope: { type: string }
+        src: { type: string, description: container path }
+        dest_rel: { type: string, description: path within the scope }
+    PortWriteResponse:
+      type: object
+      properties:
+        scope: { type: string }
+        src: { type: string }
+        dest: { type: string }
+        bytes: { type: integer }
+        sha256: { type: string }
+    CapabilityGrantRequest:
+      type: object
+      required: [target]
+      properties:
+        target: { type: string }
+    CapabilityGrantView:
+      type: object
+      properties:
+        target: { type: string }
+        granted_at: { type: string, format: date-time }
+    CapabilityGrantsResponse:
+      type: object
+      properties:
+        grants:
+          type: array
+          items: { $ref: "#/components/schemas/CapabilityGrantView" }
+    CapabilityExecuteRequest:
+      type: object
+      required: [target]
+      properties:
+        island: { type: string, description: ignored for token-authenticated in-island callers }
+        target: { type: string }
+        args: { type: object, additionalProperties: { type: string } }
+    CapabilityExecuteResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        output: { type: string }
+        exit_code: { type: integer }
+        ledger_seq: { type: integer }
+    ClaudeCredentialsStatus:
+      type: object
+      properties:
+        seed_present: { type: boolean }
+        seed_updated_at: { type: string, format: date-time }
+        host_source: { type: string, description: "keychain | file | \"\"" }
+    PushCredentialsRequest:
+      type: object
+      required: [credentials_json]
+      properties:
+        credentials_json: { type: string, description: "verbatim Claude credentials blob (the claudeAiOauth JSON)" }
+    GitHubIdentityMeta:
+      type: object
+      properties:
+        name: { type: string }
+        login: { type: string }
+        host: { type: string }
+        default: { type: boolean }
+    GitHubIdentitiesResponse:
+      type: object
+      properties:
+        identities:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubIdentityMeta" }
+    PutGitHubIdentityRequest:
+      type: object
+      required: [login, token]
+      properties:
+        login: { type: string }
+        id: { type: integer, format: int64, description: GitHub numeric user id (for the noreply commit email) }
+        host: { type: string, default: github.com }
+        token: { type: string }
+        default: { type: boolean }
+    DeleteGitHubIdentityResponse:
+      type: object
+      properties:
+        affected_islands: { type: array, items: { type: string } }
+    GitHubRepo:
+      type: object
+      properties:
+        name_with_owner: { type: string }
+        url: { type: string }
+        description: { type: string }
+        private: { type: boolean }
+    GitHubReposResponse:
+      type: object
+      properties:
+        repos:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubRepo" }
+        capped: { type: boolean }
+    ProviderMeta:
+      type: object
+      properties:
+        name: { type: string }
+        env_var: { type: string }
+        base_url: { type: string }
+        default: { type: boolean }
+        key_set: { type: boolean }
+        hint: { type: string, description: "masked tail (e.g. …a1b2) — never the full key" }
+        updated_at: { type: string, format: date-time }
+    ProviderCredentialsResponse:
+      type: object
+      properties:
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderMeta" }
+    PutProviderCredentialRequest:
+      type: object
+      required: [api_key]
+      properties:
+        api_key: { type: string }
+        base_url: { type: string, description: optional endpoint override }
+        env_var: { type: string, description: override the derived env-var name }
+        default: { type: boolean }
+    DeleteProviderCredentialResponse:
+      type: object
+      properties:
+        affected_islands: { type: array, items: { type: string } }
+    AgentTypeCapability:
+      type: object
+      properties:
+        type: { type: string }
+        interactive: { type: boolean }
+        requires_provider_key: { type: boolean }
+        supported_providers: { type: array, items: { type: string } }
+        suggested_models: { type: array, items: { type: string } }
+        gateway_port: { type: integer, description: "0 = no localhost UI to open" }
+    AgentTypesResponse:
+      type: object
+      properties:
+        types:
+          type: array
+          items: { $ref: "#/components/schemas/AgentTypeCapability" }
     SubscribeWebhookRequest:
       type: object
       required: [url]
       properties:
         url: { type: string }
-        secret: { type: string }
+        secret: { type: string, description: HMAC-signs payloads if set }
         events:
           type: array
           items: { type: string }
+          description: empty = all event types
+    Subscription:
+      type: object
+      properties:
+        id: { type: string }
+        url: { type: string }
+        secret: { type: string }
+        events: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+    AgentEventRequest:
+      type: object
+      required: [type]
+      properties:
+        island: { type: string }
+        agent: { type: string }
+        type: { type: string }
+        payload: { type: object, additionalProperties: true }
+    Terminal:
+      type: object
+      properties:
+        id: { type: string, description: "t1, t2, …" }
+        label: { type: string }
+        created_at: { type: string, format: date-time }
+    TerminalsResponse:
+      type: object
+      properties:
+        terminals:
+          type: array
+          items: { $ref: "#/components/schemas/Terminal" }
+    ClientHistoryEntry:
+      type: object
+      properties:
+        label: { type: string }
+        island: { type: string }
+        attached_at: { type: string, format: date-time }
+        detached_at: { type: string, format: date-time }
+    PanicRequest:
+      type: object
+      properties:
+        reason: { type: string }
+    PanicResponse:
+      type: object
+      properties:
+        panicked: { type: boolean }
+        affected: { type: integer, description: islands stopped (engage) or restarted (clear) }
+        reason: { type: string }
+    AdminUpdateRequest:
+      type: object
+      properties:
+        execute: { type: boolean, description: "false (default) reports the plan without changing anything" }
+        force: { type: boolean, description: apply even while terminal sessions are attached }
+    AdminUpdateResponse:
+      type: object
+      properties:
+        current: { type: string }
+        latest: { type: string }
+        mode: { type: string, description: source | release }
+        update_available: { type: boolean }
+        applying: { type: boolean }
+        deferred: { type: boolean, description: not applied because clients attached and force unset }
+        attached_clients: { type: integer }
+    AuthorizeSSHKeyRequest:
+      type: object
+      required: [public_key]
+      properties:
+        public_key: { type: string, description: "an OpenSSH public-key line (ssh-… AAAA… optional-comment)" }
+    AuthorizeSSHKeyResponse:
+      type: object
+      properties:
+        fingerprint: { type: string }
+    SSHKeyInfo:
+      type: object
+      properties:
+        fingerprint: { type: string }
+        type: { type: string }
+        comment: { type: string }
+    ListSSHKeysResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items: { $ref: "#/components/schemas/SSHKeyInfo" }
+    LedgerEntry:
+      type: object
+      properties:
+        seq: { type: integer }
+        time: { type: string, format: date-time }
+        type: { type: string, description: "port.grant | port.revoke | trade.read | trade.write | capability.* | …" }
+        island: { type: string }
+        agent: { type: string }
+        scope: { type: string }
+        path: { type: string }
+        mode: { type: string }
+        bytes: { type: integer }
+        sha256: { type: string }
+        decision: { type: string, description: allowed | denied }
+        detail: { type: string }
+        prev: { type: string, description: chain value of the previous entry }
+        chain: { type: string, description: chain value of this entry }
+    AuditResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/LedgerEntry" }
+        total: { type: integer }
+        verified: { type: boolean }
+        error: { type: string, description: chain-verification failure detail }
     OverviewResponse:
       type: object
       properties:
@@ -500,12 +1584,40 @@ components:
         errored: { type: integer }
         attached_clients: { type: integer }
         memory_usage_bytes: { type: integer }
+        memory_limit_bytes: { type: integer }
         cpu_percent: { type: number }
+        daemon_started_at: { type: string, format: date-time }
+        webhook_count: { type: integer }
         docker_reachable: { type: boolean }
         island_image_present: { type: boolean }
+        island_image: { type: string }
+        host_terminals_enabled: { type: boolean }
+        ssh_addr: { type: string }
         daemon_version: { type: string }
         api_version: { type: integer }
         panicked: { type: boolean }
         host_memory_bytes: { type: integer }
         vm_memory_bytes: { type: integer }
         vm_recommended_bytes: { type: integer }
+    SessionEnvelope:
+      type: object
+      description: >
+        The JSON message framing for the PTY WebSocket streams (island, agent,
+        and host-terminal `/session` endpoints). NOT modeled as an HTTP body —
+        documented here so clients can implement the wire protocol. Terminal
+        bytes are base64-encoded in `b64`.
+
+        Server → client: one `{type: hello, attached: [...]}` on connect, then
+        `{type: data, b64}` for output, and `{type: error, b64}` on failure
+        (where `b64` carries the plaintext error string, not base64).
+
+        Client → server: `{type: data, b64}` for keystrokes and
+        `{type: resize, rows, cols}` to resize the PTY.
+      properties:
+        type: { type: string, enum: [hello, data, resize, error] }
+        b64: { type: string, description: base64-encoded PTY bytes (plaintext for type=error) }
+        rows: { type: integer }
+        cols: { type: integer }
+        attached:
+          type: array
+          items: { $ref: "#/components/schemas/PresenceEntry" }
