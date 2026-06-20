@@ -199,7 +199,7 @@ func TestTokenAuthMiddleware(t *testing.T) {
 	mux.HandleFunc("POST /v1/internal/agent-event", sentinel)
 
 	s := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	h := s.tokenAuth(mux)
+	h := s.tokenAuth(mux, mux)
 
 	do := func(method, path, token string) *httptest.ResponseRecorder {
 		gotIsland = ""

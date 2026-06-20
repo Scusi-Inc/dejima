@@ -66,6 +66,12 @@ var tokenRouteAccess = map[string]tokenAccess{
 	"POST /v1/islands":              accessHomeCreate,
 	"POST /v1/internal/agent-event": accessTokenOwn,
 	"POST /v1/capabilities/execute": accessTokenOwn,
+	// MCP brokering (Lane 3 handoff): the in-island brain invokes a granted MCP
+	// server. Like capability execution it is accessTokenOwn — pinned to the
+	// token's own island, authorized there by its grant — never another island's.
+	// Pre-registered here so Lane 3's route is token-reachable the moment it lands;
+	// until the route exists the router matches no pattern and it stays denied.
+	"POST /v1/mcp/call": accessTokenOwn,
 
 	"GET /v1/islands/{name}":                 accessOwnIsland, // status
 	"GET /v1/islands/{name}/events":          accessOwnIsland,
@@ -96,13 +102,18 @@ func TokenIslandFromContext(ctx context.Context) string {
 // reachable via host.docker.internal), never a LAN/0.0.0.0 bind: the token is
 // the authorization, the bind limits exposure.
 func (s *Server) TokenAuthHandler() http.Handler {
+	// Compose authenticate → audit → handle: tokenAuth pins the token's island on
+	// the context, then auditMiddleware records the request (resolveActor reads
+	// TokenIslandFromContext to attribute it to island:<name>), then the mux
+	// handles it. auditMiddleware is a no-op unless --audit is on.
 	mux := s.routes()
-	return logMiddleware(s.log, s.tokenAuth(mux))
+	return logMiddleware(s.log, s.tokenAuth(mux, s.auditMiddleware(mux)))
 }
 
 // tokenAuth authenticates the bearer token, pins the request to the token's
-// island, and rejects anything outside that island's autonomy surface.
-func (s *Server) tokenAuth(mux *http.ServeMux) http.Handler {
+// island, rejects anything outside that island's autonomy surface, and
+// dispatches to next (classifying on mux).
+func (s *Server) tokenAuth(mux *http.ServeMux, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := bearerToken(r)
 		if tok == "" {
@@ -130,7 +141,7 @@ func (s *Server) tokenAuth(mux *http.ServeMux) http.Handler {
 		}
 
 		ctx := context.WithValue(r.Context(), tokenIslandKey{}, island)
-		mux.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

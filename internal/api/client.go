@@ -802,13 +802,25 @@ func (c *Client) DialAgentSession(ctx context.Context, name, agentID, label stri
 	if encoded := q.Encode(); encoded != "" {
 		wsURL += "?" + encoded
 	}
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
-		HTTPClient: c.httpc,
-	})
+	conn, _, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
 	if err != nil {
 		return nil, fmt.Errorf("dial session: %w", err)
 	}
 	return conn, nil
+}
+
+// wsDialOptions builds the websocket dial options, carrying the bearer token in
+// an Authorization header when set. Without this, a token-authenticated client's
+// session/terminal attach would arrive header-less and be treated by roleAuth as
+// the trusted no-token (owner) caller — silently escalating a viewer/operator
+// token. The unix-socket and tailnet paths leave token empty and rely on the
+// listener's own trust.
+func (c *Client) wsDialOptions() *websocket.DialOptions {
+	opts := &websocket.DialOptions{HTTPClient: c.httpc}
+	if c.token != "" {
+		opts.HTTPHeader = http.Header{"Authorization": []string{"Bearer " + c.token}}
+	}
+	return opts
 }
 
 // ListTerminals returns the daemon's host terminals.
@@ -857,7 +869,7 @@ func (c *Client) DialTerminalSession(ctx context.Context, id, label string) (*we
 	if encoded := q.Encode(); encoded != "" {
 		wsURL += "?" + encoded
 	}
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: c.httpc})
+	conn, _, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
 	if err != nil {
 		return nil, fmt.Errorf("dial terminal session: %w", err)
 	}
@@ -894,4 +906,29 @@ func (c *Client) RelabelAgent(ctx context.Context, name, id, label string) (*Age
 		return nil, err
 	}
 	return &out, nil
+}
+
+// CreateToken issues an operator bearer token with the given role and optional
+// island scope. The returned CreateTokenResponse carries the bearer Secret —
+// shown exactly once; the daemon stores only its hash.
+func (c *Client) CreateToken(ctx context.Context, req CreateTokenRequest) (*CreateTokenResponse, error) {
+	var out CreateTokenResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/tokens", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListTokens returns every issued operator token's metadata (never a secret).
+func (c *Client) ListTokens(ctx context.Context) ([]TokenView, error) {
+	var out TokensResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/tokens", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Tokens, nil
+}
+
+// RevokeToken deletes an operator token by id.
+func (c *Client) RevokeToken(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/tokens/"+url.PathEscape(id), nil, nil)
 }

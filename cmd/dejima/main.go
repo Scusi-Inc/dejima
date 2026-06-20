@@ -104,6 +104,7 @@ func newRootCmd() *cobra.Command {
 		newSSHCmd(),
 		newWebhookCmd(),
 		newAuthCmd(),
+		newTokenCmd(),
 		newProviderCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),

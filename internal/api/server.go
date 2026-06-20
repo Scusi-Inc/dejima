@@ -106,6 +106,13 @@ type Server struct {
 	// token (tokenauth default-deny).
 	hostTerminals bool
 
+	// requireToken, when set, makes the operator surface reject anonymous
+	// (no-token) requests instead of treating them as the trusted owner — see
+	// roleauth.go. Off by default; turned on via RequireToken (dejimad
+	// --require-token). The team-auth role/scope attenuation in roleauth.go
+	// applies to every presented token regardless of this flag.
+	requireToken bool
+
 	// reposFetch resolves the repositories an identity can browse. It defaults to
 	// githubid.ListRepos (a live GitHub call); tests inject a stub so the handler
 	// can be covered without reaching GitHub.
@@ -379,12 +386,21 @@ func (s *Server) islandAgentState(island string) *AgentStateInfo {
 // socket (filesystem-permission trust) and the tailnet-pinned TCP listener.
 // Neither carries a per-request token; see TokenAuthHandler for the
 // host-internal, token-authenticated autonomy path.
+//
+// roleAuth wraps the mux to apply the team-auth model (roleauth.go): a request
+// with no bearer token runs as the trusted owner; one carrying a token is
+// attenuated to that token's role + island scope. It also lands the resolved
+// Identity (and Lane 1's AuditIdentity) on the request context for downstream
+// handlers and the audit log.
+//
+// Composition: log → roleAuth (authenticate) → audit → mux (handle). roleAuth
+// classifies on the mux but dispatches to auditMiddleware(mux), so the audit
+// record is written with the authenticated identity already on the context
+// (roleAuth stamps WithAuditIdentity). This is the authenticate→audit→handle
+// order both Lane 1 and Lane 2 specified.
 func (s *Server) Handler() http.Handler {
-	// auditMiddleware is inner to logMiddleware so it sees the request the mux
-	// actually dispatched. When Lane 2 adds an identity (who/role) middleware it
-	// should sit OUTSIDE auditMiddleware — authenticate, then audit, then handle —
-	// so AuditIdentityFromContext is populated by the time a record is written.
-	return logMiddleware(s.log, s.auditMiddleware(s.routes()))
+	mux := s.routes()
+	return logMiddleware(s.log, s.roleAuth(mux, s.auditMiddleware(mux)))
 }
 
 // routes builds the route table shared by every listener. The differences
@@ -471,6 +487,9 @@ func (s *Server) routes() *http.ServeMux {
 	// ledgered call path. Grant routes are operator-only (absent from
 	// tokenRouteAccess). See internal/api/mcp.go + docs/mcp-broker-spec.md.
 	s.RegisterMCP(mux)
+	// Team-auth: token issuance/list/revoke (owner-only; see roleauth.go +
+	// tokens.go). Registered as one append-only line per the lane seam contract.
+	s.RegisterAuth(mux)
 	return mux
 }
 

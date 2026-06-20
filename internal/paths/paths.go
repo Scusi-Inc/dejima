@@ -130,6 +130,19 @@ func TokenPath(name string) (string, error) {
 	return filepath.Join(dir, "token"), nil
 }
 
+// AuthTokensPath returns ~/.dejima/tokens.json — the store of issued operator
+// bearer tokens (owner/operator/viewer roles + optional per-island scope) for
+// the team-auth path. Only token *metadata* and a SHA-256 of each secret are
+// kept here (never the raw bearer), so a leaked file can't be replayed. 0600,
+// daemon-host-only, outside every container's blast radius.
+func AuthTokensPath() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "tokens.json"), nil
+}
+
 // HostKeyPath returns ~/.dejima/ssh_host_ed25519 — the daemon's SSH host key
 // for the SSH-façade listener. One key for the daemon (it is the single SSH
 // front door for every island), generated on first use, 0600.
