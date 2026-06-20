@@ -220,6 +220,108 @@ expect_err_match "intake refused after revoke" "no Port scope" \
   dejima port intake "$ISLAND" "vault:note.md"
 
 # ---------------------------------------------------------------------------
+# MCP broker — deny-all grants of named, host-curated MCP servers + a brokered,
+# ledgered call path (the Port/capability pattern applied to MCP servers). The
+# broker spawns the server program on the daemon host and speaks JSON-RPC over
+# its stdio, so it exercises the real grant/call/ledger path with no container
+# round-trip. See docs/mcp-broker-spec.md.
+step "MCP broker: build a mock stdio MCP server (host-curated)"
+# A minimal newline-delimited JSON-RPC 2.0 MCP server, stdlib-only so it builds
+# anywhere `go` runs (no python/jq dependency — Minion is macOS).
+cat > "$TMP/mock-mcp.go" <<'GO'
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+func main() {
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	send := func(v any) { b, _ := json.Marshal(v); fmt.Printf("%s\n", b) }
+	for sc.Scan() {
+		var m struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(sc.Bytes(), &m) != nil {
+			continue
+		}
+		switch m.Method {
+		case "initialize":
+			send(map[string]any{"jsonrpc": "2.0", "id": rawID(m.ID), "result": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "serverInfo": map[string]any{"name": "mock", "version": "1"}}})
+		case "notifications/initialized":
+		case "tools/list":
+			send(map[string]any{"jsonrpc": "2.0", "id": rawID(m.ID), "result": map[string]any{"tools": []map[string]any{{"name": "echo"}}}})
+		case "tools/call":
+			text := "called " + m.Params.Name + " island=" + os.Getenv("DEJIMA_MCP_ISLAND")
+			send(map[string]any{"jsonrpc": "2.0", "id": rawID(m.ID), "result": map[string]any{"content": []map[string]any{{"type": "text", "text": text}}, "isError": m.Params.Name == "boom"}})
+		default:
+			send(map[string]any{"jsonrpc": "2.0", "id": rawID(m.ID), "error": map[string]any{"code": -32601, "message": "method not found"}})
+		}
+	}
+}
+
+func rawID(raw json.RawMessage) any {
+	var n json.Number
+	if json.Unmarshal(raw, &n) == nil {
+		if i, err := n.Int64(); err == nil {
+			return i
+		}
+	}
+	return string(raw)
+}
+GO
+( cd "$REPO_ROOT" && go build -o "$BIN/mock-mcp" "$TMP/mock-mcp.go" ) || die "mock MCP server build failed"
+# Curate it host-side — the registry file is the trust boundary (owned by the
+# daemon user, not world-writable). The island cannot write here.
+mkdir -p "$HOME/.dejima/mcp"
+cat > "$HOME/.dejima/mcp/servers.toml" <<EOF
+[[servers]]
+name = "mock"
+transport = "stdio"
+command = "$BIN/mock-mcp"
+EOF
+chmod 600 "$HOME/.dejima/mcp/servers.toml"
+pass "mock MCP server registered as 'mock'"
+
+step "MCP broker: deny-all before any grant"
+expect_err_match "call refused before any grant" "not granted" \
+  dejima mcp call "$ISLAND" mock --method tools/list
+
+step "MCP broker: grant + brokered calls"
+expect_ok "grant mock" dejima mcp grant "$ISLAND" mock
+MLIST="$(dejima mcp ls "$ISLAND" 2>&1)"
+assert_has "$MLIST" "mock" "granted server appears in \`mcp ls\`"
+TOOLS="$(dejima mcp call "$ISLAND" mock --method tools/list 2>&1)"
+assert_has "$TOOLS" "echo" "tools/list returns the server's tools"
+CALL="$(dejima mcp call "$ISLAND" mock --method tools/call --params '{"name":"echo"}' 2>&1)"
+assert_has "$CALL" "called echo" "tools/call result returned to the caller"
+assert_has "$CALL" "island=$ISLAND" "the island identity reached the server via the broker env"
+
+step "MCP broker: only the brokered method surface is callable"
+expect_err_match "lifecycle method refused" "not permitted" \
+  dejima mcp call "$ISLAND" mock --method initialize
+
+step "MCP broker: every call is ledgered (mcp.*) + chain verifies"
+MAUDIT="$(dejima audit 2>&1)"
+assert_has "$MAUDIT" "mcp.grant" "grant recorded as mcp.grant"
+assert_has "$MAUDIT" "mcp.call"  "brokered call recorded as mcp.call"
+assert_has "$MAUDIT" "mcp.deny"  "refused call recorded as mcp.deny"
+expect_ok "ledger chain still verifies with mcp.* entries" dejima audit --verify
+
+step "MCP broker: revoke → back to deny-all"
+expect_ok "revoke mock" dejima mcp revoke "$ISLAND" mock
+expect_err_match "call refused after revoke" "not granted" \
+  dejima mcp call "$ISLAND" mock --method tools/list
+
+# ---------------------------------------------------------------------------
 step "Multi-agent: seed two agents at create time"
 dejima init --name "$ISLAND_MULTI" --repo "$REPO" --local-copy --agent claude-code --agent codex \
   >/dev/null 2>&1 || die "multi-agent island create failed"
