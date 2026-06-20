@@ -24,6 +24,9 @@ go.work.sum
 .env
 .env.local
 
+# Python virtualenvs (SDK dev)
+.venv/
+
 # Strategy / GTM notes — intentionally NOT published (repo is public).
 # Durable home is a separate private repo; this is an accidental-`git add` guard.
 /strategy/
