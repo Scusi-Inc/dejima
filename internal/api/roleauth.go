@@ -194,8 +194,8 @@ func (s *Server) roleAuth(mux *http.ServeMux, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := bearerToken(r)
 		var id authtoken.Identity
-		switch {
-		case tok == "":
+		switch tok {
+		case "":
 			if s.requireToken {
 				writeError(w, http.StatusUnauthorized,
 					errors.New("authentication required: present an Authorization: Bearer <token>"))
