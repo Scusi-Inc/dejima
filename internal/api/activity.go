@@ -98,6 +98,20 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := buildActivity(entries, s.islandOwners())
+	// Honor the caller's island scope: a scoped token (e.g. a viewer limited to
+	// specific islands) must not read the whole fleet's activity. Drop items
+	// outside its scope — including account/system items with no island, which a
+	// scoped token has no business seeing. An unscoped caller (the trusted owner,
+	// or an unscoped token) sees everything.
+	if id, ok := IdentityFromContext(r.Context()); ok && id.Scoped() {
+		scoped := items[:0]
+		for _, it := range items {
+			if it.Island != "" && id.MayTouch(it.Island) {
+				scoped = append(scoped, it)
+			}
+		}
+		items = scoped
+	}
 	items = f.apply(items)
 	// Newest-first for a feed; the ledger is oldest-first (append order).
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Seq > items[j].Seq })

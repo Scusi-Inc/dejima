@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoos/dejima/internal/authtoken"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/project"
 )
@@ -233,6 +234,19 @@ func TestHandleActivity(t *testing.T) {
 	top := resp.Items[0]
 	if top.Kind != kindBroker || top.Decision != "denied" || top.Owner != "team-web" {
 		t.Errorf("top item = %+v, want denied broker on foo owned by team-web", top)
+	}
+
+	// A token scoped to island "bar" must not see "foo"'s activity (or the
+	// account-level "created an island" item, which has no island).
+	scopedReq := httptest.NewRequest("GET", "/v1/activity", nil)
+	scopedReq = scopedReq.WithContext(WithIdentity(scopedReq.Context(),
+		idFor(authtoken.RoleViewer, "bar")))
+	ws := httptest.NewRecorder()
+	s.handleActivity(ws, scopedReq)
+	var scopedResp ActivityResponse
+	_ = json.Unmarshal(ws.Body.Bytes(), &scopedResp)
+	if scopedResp.Returned != 0 {
+		t.Errorf("scoped-to-bar token saw %d items (all activity is foo/account-level); want 0", scopedResp.Returned)
 	}
 
 	// limit=1 returns only the newest.
