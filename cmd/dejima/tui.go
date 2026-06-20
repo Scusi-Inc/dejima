@@ -135,6 +135,7 @@ type confirmPrompt struct {
 	island string
 	agent  string // for "remove-agent"
 	answer string
+	force  bool // for "update-daemon": apply even with terminals attached
 }
 
 // actionMenu is the per-row context menu (opened with ⏎ on an island/agent/
@@ -492,12 +493,12 @@ type daemonUpdatedMsg struct {
 // errors) and only restarts afterward — so this can take as long as a `make
 // install`; the timeout is generous. The Applying flag confirms the install
 // succeeded and the restart has begun.
-func (m tuiModel) updateDaemonCmd() tea.Cmd {
+func (m tuiModel) updateDaemonCmd(force bool) tea.Cmd {
 	c := m.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
-		resp, err := c.DaemonUpdate(ctx, true)
+		resp, err := c.DaemonUpdate(ctx, true, force)
 		return daemonUpdatedMsg{resp: resp, err: err}
 	}
 }
@@ -607,6 +608,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.resp != nil && msg.resp.Applying:
 			m.daemonUpdate = false
 			m.lastNotice = "daemon installed " + msg.resp.Latest + ", restarting — it'll reconnect shortly"
+		case msg.resp != nil && msg.resp.Deferred:
+			// The restart would drop every attached terminal, so the daemon held
+			// off. Re-prompt to force (the y/n confirm sets force=true), or let the
+			// operator detach those terminals first and retry.
+			n := msg.resp.AttachedClients
+			m.confirm = &confirmPrompt{verb: "update-daemon", force: true}
+			m.lastNotice = fmt.Sprintf("update deferred: %s, closing every open terminal — force anyway?", pluralizeTerminals(n))
 		default:
 			m.lastNotice = "daemon already up to date"
 		}
@@ -1120,7 +1128,7 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		}
 	case "update-daemon":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
-			return m, m.updateDaemonCmd()
+			return m, m.updateDaemonCmd(c.force)
 		}
 	}
 	return m, nil
@@ -1173,6 +1181,15 @@ func pluralY(n int) string {
 		return "y"
 	}
 	return "ies"
+}
+
+// pluralizeTerminals renders an attached-terminal count for the deferred-update
+// notice, e.g. "1 terminal attached" / "3 terminals attached".
+func pluralizeTerminals(n int) string {
+	if n == 1 {
+		return "1 terminal attached"
+	}
+	return fmt.Sprintf("%d terminals attached", n)
 }
 
 // setIslandTitleCmd sets an island's cosmetic display title (blank resets it).

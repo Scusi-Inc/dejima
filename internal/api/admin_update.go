@@ -76,6 +76,24 @@ func (s *Server) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The restart below drops every attached terminal session fleet-wide (it kills
+	// this process; the service manager brings up the new binary). Unless forced,
+	// defer the whole apply while any client is attached, so a dogfood self-update
+	// doesn't yank live sessions out from under the operator — the root cause of
+	// "terminal tabs keep closing". The caller retries with Force (or once the
+	// terminals detach) to apply. Gating here, not in the client, covers every
+	// caller (TUI [U], a future poller) from one authoritative session count.
+	if !req.Force {
+		if attached := s.attachedSessions(); len(attached) > 0 {
+			resp.Deferred = true
+			resp.AttachedClients = len(attached)
+			s.log.Info("daemon self-update: deferred — terminal sessions attached",
+				"attached", len(attached), "to", st.Latest)
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+	}
+
 	// Build/install the new binary SYNCHRONOUSLY, on a context detached from the
 	// request (a flaky client connection mustn't abort a half-done install).
 	// Doing the work here — rather than in a detached goroutine that returns

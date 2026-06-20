@@ -165,6 +165,10 @@ type OverviewResponse struct {
 // default) reports the plan without changing anything.
 type AdminUpdateRequest struct {
 	Execute bool `json:"execute"`
+	// Force applies the update even while terminal sessions are attached. The
+	// daemon restart drops every attached client, so by default an Execute with
+	// clients attached is deferred (Deferred=true) instead of yanking them.
+	Force bool `json:"force,omitempty"`
 }
 
 // AdminUpdateResponse reports the daemon's update status and, when Execute was
@@ -176,6 +180,11 @@ type AdminUpdateResponse struct {
 	Mode            string `json:"mode"` // source | release
 	UpdateAvailable bool   `json:"update_available"`
 	Applying        bool   `json:"applying"`
+	// Deferred is set when an available update was NOT applied because terminal
+	// sessions are attached and Force was not set; AttachedClients is how many.
+	// The caller retries with Force (or once the terminals detach) to apply.
+	Deferred        bool `json:"deferred,omitempty"`
+	AttachedClients int  `json:"attached_clients,omitempty"`
 }
 
 // AuthorizeSSHKeyRequest authorizes a public key fleet-wide via the operator

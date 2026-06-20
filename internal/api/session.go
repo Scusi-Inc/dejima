@@ -40,7 +40,12 @@ type presenceTracker struct {
 	clients map[*presenceHandle]presenceRecord
 }
 
-type presenceHandle struct{}
+// presenceHandle is the per-attachment map key. It must be NON-zero-size: Go
+// allocates every `&struct{}{}` to the same runtime.zerobase address, so a
+// zero-size handle would make distinct attaches collide on one map key —
+// silently collapsing the presence count (and RevokeAll) to one client per
+// agent. The unused byte forces a unique address per handle.
+type presenceHandle struct{ _ byte }
 
 // presenceRecord pairs a presence entry with a cancel function so `dejima
 // sessions revoke` can forcibly drop the underlying websocket.
@@ -145,6 +150,24 @@ func (s *Server) islandPresence(island string) []PresenceEntry {
 		if strings.HasPrefix(k, prefix) {
 			trackers = append(trackers, t)
 		}
+	}
+	s.mu.Unlock()
+	var out []PresenceEntry
+	for _, t := range trackers {
+		out = append(out, t.Snapshot()...)
+	}
+	return out
+}
+
+// attachedSessions returns every client currently attached to any island's
+// terminal session. A daemon self-update restart drops all of them, so the
+// update path consults this to defer the restart while terminals are open
+// (the cause of "terminal tabs keep closing" during dogfood self-updates).
+func (s *Server) attachedSessions() []PresenceEntry {
+	s.mu.Lock()
+	trackers := make([]*presenceTracker, 0, len(s.presence))
+	for _, t := range s.presence {
+		trackers = append(trackers, t)
 	}
 	s.mu.Unlock()
 	var out []PresenceEntry

@@ -672,9 +672,11 @@ func (c *Client) ListAccountKeys(ctx context.Context) ([]SSHKeyInfo, error) {
 // DaemonUpdate asks the daemon to update itself. execute=false reports the plan;
 // execute=true applies it (the daemon then restarts, so the connection may drop
 // right after this returns — the Applying flag is the confirmation it began).
-func (c *Client) DaemonUpdate(ctx context.Context, execute bool) (*AdminUpdateResponse, error) {
+// With execute and clients attached, the daemon defers (Deferred=true) unless
+// force is set, which applies anyway and drops those sessions.
+func (c *Client) DaemonUpdate(ctx context.Context, execute, force bool) (*AdminUpdateResponse, error) {
 	var out AdminUpdateResponse
-	if err := c.do(ctx, http.MethodPost, "/v1/admin/update", AdminUpdateRequest{Execute: execute}, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/admin/update", AdminUpdateRequest{Execute: execute, Force: force}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
