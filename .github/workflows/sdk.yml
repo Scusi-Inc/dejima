@@ -1,0 +1,51 @@
+name: sdk
+
+# SDKs + OpenAPI spec. Separate from ci.yml (the Go build/lint) so the lanes
+# don't collide on one file. Scoped to the spec + SDK trees so it stays quiet on
+# daemon-only changes.
+on:
+  push:
+    branches: [master, main]
+    paths: ["openapi.yaml", "redocly.yaml", "sdk/**", ".github/workflows/sdk.yml"]
+  pull_request:
+    paths: ["openapi.yaml", "redocly.yaml", "sdk/**", ".github/workflows/sdk.yml"]
+
+jobs:
+  openapi-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # Pinned, not "@latest": a floating spec linter can fail CI on a rule the
+      # spec predates. Bump deliberately.
+      - run: npx --yes @redocly/cli@1.34.5 lint
+
+  python-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]" build
+      - run: pytest -q
+      - run: python -m build      # smoke-test that the package is publishable
+
+  ts-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/ts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
