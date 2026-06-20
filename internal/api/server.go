@@ -467,6 +467,10 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/islands/{name}/port/export", s.handlePortExport)
 	mux.HandleFunc("POST /v1/islands/{name}/port/write", s.handlePortWrite)
 	s.RegisterAudit(mux) // GET /v1/audit (read · filter · export · verify)
+	// MCP broker — deny-all grants of named host MCP servers + the brokered,
+	// ledgered call path. Grant routes are operator-only (absent from
+	// tokenRouteAccess). See internal/api/mcp.go + docs/mcp-broker-spec.md.
+	s.RegisterMCP(mux)
 	return mux
 }
 
