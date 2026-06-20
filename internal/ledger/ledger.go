@@ -25,23 +25,35 @@ import (
 )
 
 // Entry is one append-only record. Trade entries (file crossings) carry Bytes
-// and SHA256; scope entries (grant/revoke) carry Scope/Path/Mode. Prev and
-// Chain are filled by Append and must not be set by callers.
+// and SHA256; scope entries (grant/revoke) carry Scope/Path/Mode; operational
+// audit entries (api.request + lifecycle) carry Method/Status/Actor/Role. Prev
+// and Chain are filled by Append and must not be set by callers.
+//
+// Every field beyond the chain bookkeeping is `omitempty`, which is what lets a
+// new build add fields without breaking the verification of entries written by
+// an older build: chainValue re-marshals the parsed Entry, and an absent field
+// marshals identically whether the writer knew about it or not. Do NOT drop
+// omitempty on an existing or new field — it would silently break every chain.
 type Entry struct {
 	Seq      uint64    `json:"seq"`
 	Time     time.Time `json:"time"`
-	Type     string    `json:"type"` // port.grant | port.revoke | trade.read | trade.write | trade.deny
+	Type     string    `json:"type"` // port.grant | port.revoke | trade.read | trade.write | trade.deny | api.request | <lifecycle event>
 	Island   string    `json:"island"`
 	Agent    string    `json:"agent,omitempty"`
 	Scope    string    `json:"scope,omitempty"` // scope name
-	Path     string    `json:"path,omitempty"`  // host path (scope) or path within scope (trade)
+	Path     string    `json:"path,omitempty"`  // host path (scope) or path within scope (trade); request path (api.request)
 	Mode     string    `json:"mode,omitempty"`  // ro | rw
 	Bytes    int64     `json:"bytes,omitempty"`
 	SHA256   string    `json:"sha256,omitempty"`   // content hash of the file (trades)
 	Decision string    `json:"decision,omitempty"` // allowed | denied
 	Detail   string    `json:"detail,omitempty"`
-	Prev     string    `json:"prev"`  // chain value of the previous entry ("" for the first)
-	Chain    string    `json:"chain"` // chain value of this entry
+	// Operational audit fields (api.request + lifecycle records).
+	Method string `json:"method,omitempty"` // HTTP method (api.request)
+	Status int    `json:"status,omitempty"` // HTTP status code (api.request)
+	Actor  string `json:"actor,omitempty"`  // who made the request (identity; filled by the auth layer)
+	Role   string `json:"role,omitempty"`   // the actor's role, when known
+	Prev   string `json:"prev"`             // chain value of the previous entry ("" for the first)
+	Chain  string `json:"chain"`            // chain value of this entry
 }
 
 // Log is an append-only ledger backed by a single JSONL file.
@@ -62,16 +74,41 @@ func New(path string, hmacKey []byte) *Log {
 }
 
 var (
-	defaultMu  sync.Mutex
-	defaultLog *Log
-	defaultErr error
-	defaultSet bool
+	defaultMu      sync.Mutex
+	defaultLog     *Log
+	defaultErr     error
+	defaultSet     bool
+	defaultHMACKey []byte // optional; keys the Default chain when non-empty
 )
+
+// Configure sets process-wide options for the Default ledger. It must be called
+// before the first Default() use (e.g. at daemon startup, before any append).
+//
+// A non-empty hmacKey keys the chain with HMAC-SHA-256 instead of plain
+// SHA-256, so the hash chain can only be re-derived by a holder of the key —
+// raising the bar from "tamper is detectable" to "tamper requires the key".
+// The whole file must use one keying, so this is meaningful only on a fresh
+// ledger: turning HMAC on over a file that already holds plain-SHA entries will
+// make Verify report those older entries as broken. Calling after the Default
+// log is already built is a no-op (the keying is fixed for the daemon's life).
+func Configure(hmacKey []byte) {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if defaultSet {
+		return
+	}
+	if len(hmacKey) > 0 {
+		defaultHMACKey = append([]byte(nil), hmacKey...)
+	} else {
+		defaultHMACKey = nil
+	}
+}
 
 // Default returns the process-wide ledger at ~/.dejima/ledger.jsonl. A single
 // daemon owns the file, so one shared Log keeps the in-memory chain head
 // consistent across concurrent appends. The path is resolved (from $HOME) on
-// first use and cached; ResetDefault drops the cache.
+// first use and cached; ResetDefault drops the cache. The chain is keyed by the
+// optional HMAC key set via Configure.
 func Default() (*Log, error) {
 	defaultMu.Lock()
 	defer defaultMu.Unlock()
@@ -79,7 +116,7 @@ func Default() (*Log, error) {
 		if p, err := paths.LedgerPath(); err != nil {
 			defaultErr = err
 		} else {
-			defaultLog = New(p, nil)
+			defaultLog = New(p, defaultHMACKey)
 		}
 		defaultSet = true
 	}
@@ -87,12 +124,14 @@ func Default() (*Log, error) {
 }
 
 // ResetDefault drops the cached process-wide ledger so the next Default()
-// re-resolves its path from $HOME. For tests that redirect HOME between cases;
-// not for production use (the daemon's HOME is fixed for its lifetime).
+// re-resolves its path from $HOME (and re-reads the Configure'd HMAC key). For
+// tests that redirect HOME between cases; not for production use (the daemon's
+// HOME is fixed for its lifetime).
 func ResetDefault() {
 	defaultMu.Lock()
 	defer defaultMu.Unlock()
 	defaultLog, defaultErr, defaultSet = nil, nil, false
+	defaultHMACKey = nil
 }
 
 // Append seals e onto the chain and writes it as one JSONL line. It assigns

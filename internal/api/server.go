@@ -115,6 +115,17 @@ type Server struct {
 	// resolve per host OS via capability.DefaultAdapter on demand; tests inject one.
 	capAdapter capability.Adapter
 
+	// auditEnabled gates the OPERATIONAL audit log: api.request + lifecycle
+	// records appended to the hash-chained ledger. Off by default; turned on by
+	// EnableAudit (dejimad --audit). The brokered-operation records (port.*,
+	// trade.*, capability.*) are always written regardless — this only governs
+	// the extra operational layer. See internal/api/audit.go.
+	auditEnabled bool
+	// auditReads, when set, also records read (GET) requests; the default records
+	// state-changing requests only (mutations + lifecycle), keeping the log lean
+	// and free of high-volume TUI polling noise.
+	auditReads bool
+
 	startedAt time.Time
 }
 
@@ -246,6 +257,7 @@ func (s *Server) emit(e events.Event) {
 	}
 	s.recordEvent(e)
 	s.maybeUpdateAgentState(e)
+	s.auditLifecycle(e) // append governance-relevant lifecycle events to the ledger (opt-in)
 	if s.events != nil {
 		s.events.Emit(e)
 	}
@@ -368,7 +380,11 @@ func (s *Server) islandAgentState(island string) *AgentStateInfo {
 // Neither carries a per-request token; see TokenAuthHandler for the
 // host-internal, token-authenticated autonomy path.
 func (s *Server) Handler() http.Handler {
-	return logMiddleware(s.log, s.routes())
+	// auditMiddleware is inner to logMiddleware so it sees the request the mux
+	// actually dispatched. When Lane 2 adds an identity (who/role) middleware it
+	// should sit OUTSIDE auditMiddleware — authenticate, then audit, then handle —
+	// so AuditIdentityFromContext is populated by the time a record is written.
+	return logMiddleware(s.log, s.auditMiddleware(s.routes()))
 }
 
 // routes builds the route table shared by every listener. The differences
@@ -450,7 +466,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/islands/{name}/port/intake", s.handlePortIntake)
 	mux.HandleFunc("POST /v1/islands/{name}/port/export", s.handlePortExport)
 	mux.HandleFunc("POST /v1/islands/{name}/port/write", s.handlePortWrite)
-	mux.HandleFunc("GET /v1/audit", s.handleAudit)
+	s.RegisterAudit(mux) // GET /v1/audit (read · filter · export · verify)
 	return mux
 }
 

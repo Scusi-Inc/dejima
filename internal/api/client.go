@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -305,18 +306,91 @@ func (c *Client) PortIntake(ctx context.Context, name, scope, srcRel, dest strin
 	return &out, nil
 }
 
-// Audit returns the brokered-operation Ledger plus its chain-verification
-// result. limit>0 tails the last N entries (the whole chain is still verified).
-func (c *Client) Audit(ctx context.Context, limit int) (*AuditResponse, error) {
+// AuditQuery are the optional filters for reading or exporting the ledger. The
+// zero value reads the whole ledger. Verification always covers the full chain
+// regardless of any filter — these only narrow what is returned.
+type AuditQuery struct {
+	Limit    int    // last N entries after filtering (0 = all)
+	Island   string // exact island name
+	Type     string // type prefix ("port" matches port.*) or an exact dotted type
+	Actor    string // exact actor
+	Decision string // "allowed" | "denied"
+	Since    string // RFC3339 lower bound (inclusive)
+	Until    string // RFC3339 upper bound (inclusive)
+}
+
+// values renders the query as URL parameters (omitting empty fields).
+func (q AuditQuery) values() url.Values {
+	v := url.Values{}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	if q.Island != "" {
+		v.Set("island", q.Island)
+	}
+	if q.Type != "" {
+		v.Set("type", q.Type)
+	}
+	if q.Actor != "" {
+		v.Set("actor", q.Actor)
+	}
+	if q.Decision != "" {
+		v.Set("decision", q.Decision)
+	}
+	if q.Since != "" {
+		v.Set("since", q.Since)
+	}
+	if q.Until != "" {
+		v.Set("until", q.Until)
+	}
+	return v
+}
+
+// Audit returns the Ledger (filtered per q) plus its whole-chain verification
+// result.
+func (c *Client) Audit(ctx context.Context, q AuditQuery) (*AuditResponse, error) {
 	path := "/v1/audit"
-	if limit > 0 {
-		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	if vs := q.values(); len(vs) > 0 {
+		path += "?" + vs.Encode()
 	}
 	var out AuditResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// AuditExport streams the filtered ledger in the given format ("jsonl" or
+// "csv"). The caller owns the returned reader and must Close it.
+func (c *Client) AuditExport(ctx context.Context, q AuditQuery, format string) (io.ReadCloser, error) {
+	vs := q.values()
+	vs.Set("format", format)
+	return c.getRaw(ctx, "/v1/audit?"+vs.Encode())
+}
+
+// getRaw performs a GET and returns the response body unparsed (for streamed
+// exports). On an error status it drains the body into an error and closes it.
+func (c *Client) getRaw(ctx context.Context, path string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("daemon unreachable: %w (is dejimad running?)", err)
+	}
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		var er ErrorResponse
+		if json.NewDecoder(resp.Body).Decode(&er) == nil && er.Error != "" {
+			return nil, fmt.Errorf("%s", er.Error)
+		}
+		return nil, fmt.Errorf("http %d", resp.StatusCode)
+	}
+	return resp.Body, nil
 }
 
 // PortExport copies a file out of the island into host-owned export staging.
