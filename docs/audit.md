@@ -73,3 +73,41 @@ socket, tailnet TCP) that is `operator`. Richer per-request identity (named
 tokens + roles) is provided by the team-auth work and consumed here via the
 `AuditIdentity` request-context seam (`internal/api/audit.go`); the team
 activity feed is built on top of this operational log.
+
+## Activity feed (`dejima activity`)
+
+The activity feed is the team-facing companion to the raw audit log: same
+source, friendlier rendering. Where `dejima audit` hands back the verifiable
+ledger for compliance, `dejima activity` is a curated, newest-first timeline of
+**who launched what, and which agent did what** — each item attributed to an
+actor (+ role) and enriched with the acted-on island's **owner**.
+
+```
+dejima activity                          # the last 50 actions, newest first
+dejima activity --decision denied        # refused attempts (a viewer blocked
+                                         # from a purge; an agent blocked from an
+                                         # ungranted MCP server)
+dejima activity --actor scusi-prod       # everything a service token did
+dejima activity --island myrepo          # one island's history
+dejima activity --owner team-web --kind broker   # a team's agent↔host access
+dejima activity --json -n 0              # the whole feed as JSON
+```
+
+It classifies each ledger entry into **one** item so an action appears once:
+
+| Source | Becomes | Needs `--audit`? |
+|---|---|---|
+| `api.request` mutations (non-GET, non-broker) | operator/human "who did what" — created an island, issued a token, was denied a purge — with the authenticated actor + role | yes |
+| brokered `port.*` / `trade.*` / `capability.*` / `mcp.*` | "which agent did what" to the host (grants, reads/writes, capability/MCP calls) | no (always-on) |
+| `container.crashed`, `daemon.started` | system events | yes |
+
+Reads, the redundant `island.*` lifecycle records (their `api.request` carries
+the actor), and high-frequency telemetry are dropped. The agent↔host broker
+slice shows even with the operational log off; the full who-did-what timeline
+needs `dejimad --audit` (the API response carries an `audit_enabled` hint, and
+the CLI prints a one-line nudge when it's off).
+
+The feed is **viewer-readable** (the lowest team-auth role) and operator-surface
+only — an island's own token can never read the fleet feed. HTTP: `GET
+/v1/activity` (`?actor=&island=&owner=&kind=lifecycle|broker|system&`
+`decision=allowed|denied&since=&until=&limit=`). (`internal/api/activity.go`)

@@ -88,6 +88,7 @@ var roleRouteCap = map[string]roleCap{
 	"GET /v1/clients":                          capRead,
 	"GET /v1/overview":                         capRead,
 	"GET /v1/audit":                            capRead,
+	"GET /v1/activity":                         capRead, // team activity feed (curated audit view)
 	"GET /v1/panic":                            capRead, // status (engage/clear are owner)
 
 	// --- island lifecycle + interaction (operator and up; never purge) ---

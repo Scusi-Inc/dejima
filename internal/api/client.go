@@ -393,6 +393,49 @@ func (c *Client) getRaw(ctx context.Context, path string) (io.ReadCloser, error)
 	return resp.Body, nil
 }
 
+// ActivityFilter narrows the team activity feed. All fields are optional.
+type ActivityFilter struct {
+	Actor    string
+	Island   string
+	Owner    string
+	Kind     string // lifecycle | broker | system
+	Decision string // allowed | denied
+	Since    string // RFC3339
+	Until    string // RFC3339
+	Limit    int
+}
+
+// Activity returns the curated team activity feed (newest-first), narrowed by the
+// filter. AuditEnabled in the response reflects whether the full who-did-what log
+// is on (vs only the always-on agent↔host broker records).
+func (c *Client) Activity(ctx context.Context, f ActivityFilter) (*ActivityResponse, error) {
+	q := url.Values{}
+	set := func(k, v string) {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	set("actor", f.Actor)
+	set("island", f.Island)
+	set("owner", f.Owner)
+	set("kind", f.Kind)
+	set("decision", f.Decision)
+	set("since", f.Since)
+	set("until", f.Until)
+	if f.Limit > 0 {
+		q.Set("limit", strconv.Itoa(f.Limit))
+	}
+	path := "/v1/activity"
+	if e := q.Encode(); e != "" {
+		path += "?" + e
+	}
+	var out ActivityResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // PortExport copies a file out of the island into host-owned export staging.
 func (c *Client) PortExport(ctx context.Context, name, src string) (*PortExportResponse, error) {
 	var out PortExportResponse

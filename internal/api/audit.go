@@ -112,7 +112,9 @@ func (s *Server) shouldAudit(r *http.Request) bool {
 	switch {
 	case p == "/v1/healthz", p == "/metrics":
 		return false
-	case strings.HasPrefix(p, "/v1/audit"):
+	case strings.HasPrefix(p, "/v1/audit"), strings.HasPrefix(p, "/v1/activity"):
+		// The audit read and its team-facing activity-feed sibling: excluded so a
+		// polling reader can't inflate the very log it's reading.
 		return false
 	case p == "/v1/internal/agent-event":
 		return false

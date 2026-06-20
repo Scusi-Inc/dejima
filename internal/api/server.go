@@ -490,6 +490,9 @@ func (s *Server) routes() *http.ServeMux {
 	// Team-auth: token issuance/list/revoke (owner-only; see roleauth.go +
 	// tokens.go). Registered as one append-only line per the lane seam contract.
 	s.RegisterAuth(mux)
+	// Team activity feed — the curated, owner-enriched view over the audit ledger
+	// (viewer-readable; see activity.go). One append-only line per the seam contract.
+	s.RegisterActivity(mux)
 	return mux
 }
 
