@@ -184,6 +184,25 @@ serves a web UI / HTTP API on; `dejima agent open <island>/<id>` forwards it to
 localhost and opens it. Leave it 0 for frameworks with no localhost UI (e.g. a
 messaging-only gateway).
 
+#### Shipped first-class adapters
+
+Three provider-key frameworks ship as built-in registry entries alongside
+OpenClaw (no custom image needed — each self-installs on first launch and sources
+the daemon-materialized provider key in its launch command):
+
+| Handler | Launch | Gateway | Notes |
+|---|---|---|---|
+| `letta`  | `letta server` (pip self-install) | **8283** (`agent open`) | reads `<PROVIDER>_API_KEY` from env directly |
+| `goose`  | `goosed` (CLI installer) | **3000** (`agent open`) | launch maps `DEJIMA_PROVIDER`/`DEJIMA_MODEL` → `GOOSE_PROVIDER`/`GOOSE_MODEL` |
+| `hermes` | `hermes gateway` | **0** (injection-only) | messaging bridge, no localhost UI |
+
+These are env-driven (auth + model arrive via the provider-key env var and
+`DEJIMA_PROVIDER`/`DEJIMA_MODEL`), so they need no `init.sh` shim — the launch
+sources `DEJIMA_PROVIDER_KEY_FILE` and exports the framework's vars before
+`exec`. The exact install commands are best-effort and **pending a live
+in-island install+launch check on Minion** (the frameworks aren't in the base
+image).
+
 ### Wiring the command
 
 Add the agent's launch command to the `case` block in `image/start.sh`:
