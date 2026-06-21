@@ -1,21 +1,33 @@
 name: sdk-publish
 
-# Tag-driven SDK publish. DORMANT by design: it only fires on a pushed `v*` tag
-# (same trigger as release.yml), and even then the actual upload step is skipped
+# Tag-driven SDK publish. DORMANT by design: the actual upload step is skipped
 # until the matching repo secret exists:
 #   - PYPI_API_TOKEN  → publishes sdk/python to PyPI
 #   - NPM_TOKEN       → publishes sdk/ts to npm
 # The build/test steps run regardless (cheap, and they prove the package is
 # publishable); only the upload is gated, so an early tag never hard-fails.
-# Versions are pinned in pyproject.toml / package.json (kept at 0.1.0,
-# "0.x — may change"); bump them before tagging to publish a new release.
+#
+# Triggers:
+#   - push of a `v*` tag (the normal release path), and
+#   - workflow_dispatch with an existing tag (re-run a publish for a tag that was
+#     pushed before the secrets/names existed — no need to re-tag).
+#
+# Versioning: the PUBLISHED version is stamped from the tag (v0.4.0 → 0.4.0) into
+# pyproject.toml / package.json (+ the in-package __version__ / VERSION) at build
+# time, so the committed sources keep a stable dev baseline. The SDKs are 0.x
+# ("0.x — may change"); the tag drives the real version.
 #
 # NOTE: `secrets` can't be read in a job-level `if:`, so each job maps its secret
-# to a job env var and the upload step guards on that env (which IS allowed in a
-# step `if:`).
+# to a job env var and the upload step guards on that env (allowed in a step `if:`).
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to publish (e.g. v0.4.0)"
+        required: true
+        type: string
 
 jobs:
   publish-python:
@@ -27,9 +39,22 @@ jobs:
         working-directory: sdk/python
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build the tagged commit, whether triggered by a tag push or a manual
+          # dispatch naming an existing tag.
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Stamp version from tag
+        run: |
+          REF="${{ inputs.tag || github.ref_name }}"
+          VERSION="${REF#v}"
+          if [ -z "$VERSION" ]; then echo "::error::could not derive version from '$REF'"; exit 1; fi
+          echo "Publishing version $VERSION"
+          sed -i -E "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" pyproject.toml
+          sed -i -E "s/^__version__ = \"[^\"]*\"/__version__ = \"$VERSION\"/" dejima/__init__.py
+          grep -E '^version = ' pyproject.toml
       - run: pip install build twine
       - run: python -m build
       - name: Publish to PyPI
@@ -50,10 +75,20 @@ jobs:
         working-directory: sdk/ts
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+      - name: Stamp version from tag
+        run: |
+          REF="${{ inputs.tag || github.ref_name }}"
+          VERSION="${REF#v}"
+          if [ -z "$VERSION" ]; then echo "::error::could not derive version from '$REF'"; exit 1; fi
+          echo "Publishing version $VERSION"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          sed -i -E "s/(export const VERSION = )\"[^\"]*\"/\1\"$VERSION\"/" src/index.ts
       - run: npm ci
       - run: npm run build
       - run: npm test
