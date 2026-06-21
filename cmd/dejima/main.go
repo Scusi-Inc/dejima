@@ -331,6 +331,8 @@ func newServiceCmd() *cobra.Command {
 	var tcpAddr string
 	var skipTCPPrompt bool
 	var tokenTCPAddr, sshAddr, autonomyDial string
+	var auditOn, auditReads bool
+	var auditHMACKeyFile string
 	installCmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install dejimad as a launchd (macOS) or systemd-user (Linux) service.",
@@ -380,6 +382,20 @@ func newServiceCmd() *cobra.Command {
 			}
 			if autonomyDial != "" {
 				svcArgs = append(svcArgs, "--autonomy-dial", autonomyDial)
+			}
+			// Audit must be baked into the supervised daemon's args — a flag on a
+			// hand-run dejimad doesn't reach the launchd/systemd-managed process,
+			// so without this the operational audit log can't be enabled in a
+			// normal service deployment. --audit-reads / --audit-hmac-key-file are
+			// only meaningful alongside --audit.
+			if auditOn {
+				svcArgs = append(svcArgs, "--audit")
+				if auditReads {
+					svcArgs = append(svcArgs, "--audit-reads")
+				}
+				if auditHMACKeyFile != "" {
+					svcArgs = append(svcArgs, "--audit-hmac-key-file", auditHMACKeyFile)
+				}
 			}
 			// Interactive notify prompt: only when we have a TTY, no flag, and
 			// the user didn't explicitly opt out.
@@ -460,6 +476,9 @@ func newServiceCmd() *cobra.Command {
 	installCmd.Flags().StringVar(&notifyURL, "notify", "", "auto-subscribe this webhook URL after install")
 	installCmd.Flags().StringVar(&notifySecret, "notify-secret", "", "HMAC secret for the auto-subscribed webhook")
 	installCmd.Flags().BoolVar(&skipNotifyPrompt, "no-notify-prompt", false, "skip the interactive notification prompt")
+	installCmd.Flags().BoolVar(&auditOn, "audit", false, "bake --audit into the service: record an operational audit log (API requests + lifecycle) to the hash-chained ledger")
+	installCmd.Flags().BoolVar(&auditReads, "audit-reads", false, "with --audit, also record read (GET) requests")
+	installCmd.Flags().StringVar(&auditHMACKeyFile, "audit-hmac-key-file", "", "with --audit, key the ledger chain with the HMAC key in this file (set on a FRESH ledger only)")
 	cmd.AddCommand(
 		installCmd,
 		&cobra.Command{
