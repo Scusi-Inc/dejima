@@ -1156,64 +1156,164 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) {
 // runSession is the websocket ↔ local-stdio bridge driving `dejima connect`.
 // An empty agentID attaches to the island's primary agent.
 func runSession(ctx context.Context, c *api.Client, name, agentID, label string) error {
-	conn, err := c.DialAgentSession(ctx, name, agentID, label)
-	if err != nil {
-		return err
-	}
-	return runSessionConn(ctx, conn)
+	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
+		return c.DialAgentSession(ctx, name, agentID, label)
+	})
 }
 
 // runTerminalSession attaches the local terminal to a host terminal's session.
 func runTerminalSession(ctx context.Context, c *api.Client, id, label string) error {
-	conn, err := c.DialTerminalSession(ctx, id, label)
+	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
+		return c.DialTerminalSession(ctx, id, label)
+	})
+}
+
+// sessReason is why a single attached connection ended.
+type sessReason int
+
+const (
+	sessReconnect    sessReason = iota // abnormal link drop — re-dial and resume
+	sessExitClean                      // server closed cleanly (detach / agent exited / server error)
+	sessExitStdinEOF                   // local stdin closed (the terminal window went away)
+	sessExitCtx                        // the caller's context was cancelled (Ctrl-C)
+)
+
+// classifySessionClose decides, from a websocket read error, whether to exit or
+// reconnect. A clean server-initiated NormalClosure means we're done — that's a
+// Ctrl-b d detach, the agent exiting, or an explicit server error envelope.
+// Anything else (a transport error, which CloseStatus reports as -1, going-away,
+// or 1006) is an abnormal drop — a daemon restart, the host sleeping/waking, a
+// network blip — that we transparently reconnect through, since the island's
+// tmux session keeps running and re-attaching resumes it.
+func classifySessionClose(err error, ctx context.Context) sessReason {
+	if ctx.Err() != nil {
+		return sessExitCtx
+	}
+	if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+		return sessExitClean
+	}
+	return sessReconnect
+}
+
+// runSessionLoop bridges the local terminal to a session websocket, transparently
+// reconnecting to the (persistent) in-island tmux session when the link drops —
+// so a daemon restart, the host sleeping, or a network blip no longer closes the
+// terminal out from under you when you next type. Stdin is read by one long-lived
+// goroutine that outlives individual connections; raw mode is entered once.
+func runSessionLoop(ctx context.Context, dial func(context.Context) (*websocket.Conn, error)) error {
+	// The first dial surfaces real errors (auth, no such island/agent) directly —
+	// no reconnect spinner on a connect that was never going to work.
+	conn, err := dial(ctx)
 	if err != nil {
 		return err
 	}
-	return runSessionConn(ctx, conn)
-}
 
-// runSessionConn bridges the local terminal to an already-dialed session
-// websocket — an island agent or a host terminal — until detach or EOF.
-func runSessionConn(ctx context.Context, conn *websocket.Conn) error {
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	var err error
-
-	// Surface the detach hint before raw mode swallows newlines.
 	stdinFd := int(os.Stdin.Fd())
 	if term.IsTerminal(stdinFd) {
-		fmt.Fprintln(os.Stderr, "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. Session keeps running either way.")
-	}
-
-	// Enter raw mode on stdin so keystrokes pass through to the agent unfiltered.
-	var oldState *term.State
-	if term.IsTerminal(stdinFd) {
-		oldState, err = term.MakeRaw(stdinFd)
-		if err != nil {
-			return fmt.Errorf("raw mode: %w", err)
+		fmt.Fprintln(os.Stderr, "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. "+
+			"Session keeps running; this client auto-reconnects if the link drops.")
+		oldState, rerr := term.MakeRaw(stdinFd)
+		if rerr != nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return fmt.Errorf("raw mode: %w", rerr)
 		}
 		defer func() { _ = term.Restore(stdinFd, oldState) }()
 	}
 
-	sessionCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// One long-lived stdin reader → channel; it survives reconnects so keystrokes
+	// route to whichever connection is current. Closing stdinDone means the local
+	// terminal went away (EOF) — a real exit, never a reconnect.
+	stdinCh := make(chan []byte, 64)
+	stdinDone := make(chan struct{})
+	go func() {
+		defer close(stdinDone)
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := os.Stdin.Read(buf)
+			if n > 0 {
+				b := make([]byte, n)
+				copy(b, buf[:n])
+				select {
+				case stdinCh <- b:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
 
-	// Send an initial resize so tmux opens at the right dimensions.
-	if rows, cols, err := terminalSize(stdinFd); err == nil {
-		_ = writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+	for {
+		if runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone) != sessReconnect {
+			return nil
+		}
+		if term.IsTerminal(stdinFd) {
+			fmt.Fprint(os.Stderr, "\r\n[dejima] connection lost — reconnecting…\r\n")
+		}
+		next, rerr := reconnectSession(ctx, dial, stdinDone)
+		if rerr != nil {
+			return rerr
+		}
+		if next == nil {
+			return nil // ctx cancelled or stdin closed while reconnecting
+		}
+		conn = next
+		if term.IsTerminal(stdinFd) {
+			fmt.Fprint(os.Stderr, "\r\n[dejima] reconnected.\r\n")
+		}
 	}
+}
 
-	// Forward terminal resizes for the life of the session. The mechanism is
-	// OS-specific (SIGWINCH on Unix, polling on Windows) — see resize_*.go.
-	watchTerminalResize(sessionCtx, stdinFd, func(rows, cols uint16) {
-		_ = writeEnvelope(sessionCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+// reconnectSession re-dials with capped exponential backoff for up to 5 minutes.
+// Returns the new connection, or (nil, nil) if the caller cancels / the local
+// terminal closes, or (nil, err) if the window is exceeded (e.g. island purged).
+func reconnectSession(ctx context.Context, dial func(context.Context) (*websocket.Conn, error), stdinDone <-chan struct{}) (*websocket.Conn, error) {
+	deadline := time.Now().Add(5 * time.Minute)
+	backoff := 250 * time.Millisecond
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case <-stdinDone:
+			return nil, nil
+		case <-time.After(backoff):
+		}
+		if conn, err := dial(ctx); err == nil {
+			return conn, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("could not reconnect after 5m — the session may be gone (check `dejima ls`)")
+		}
+		if backoff < 5*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// runOneSessionConn pumps one connection until it ends, returning why. The
+// websocket is closed on return; stdin/resize are owned by the caller's
+// long-lived reader, so a reconnect resumes without re-reading the terminal.
+func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}) sessReason {
+	connCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Re-send the size on (re)attach so tmux opens/resumes at the right dimensions.
+	if rows, cols, err := terminalSize(stdinFd); err == nil {
+		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+	}
+	watchTerminalResize(connCtx, stdinFd, func(rows, cols uint16) {
+		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
 	})
 
-	// Server → stdout pump.
+	readReason := make(chan sessReason, 1)
 	go func() {
-		defer cancel()
 		for {
-			_, data, err := conn.Read(sessionCtx)
+			_, data, err := conn.Read(connCtx)
 			if err != nil {
+				readReason <- classifySessionClose(err, connCtx)
 				return
 			}
 			var env api.SessionEnvelope
@@ -1226,38 +1326,29 @@ func runSessionConn(ctx context.Context, conn *websocket.Conn) error {
 			case "presence":
 				printPresence("now attached", env.Attached)
 			case "data":
-				raw, derr := base64StdDecode(env.B64)
-				if derr != nil {
-					continue
+				if raw, derr := base64StdDecode(env.B64); derr == nil {
+					_, _ = os.Stdout.Write(raw)
 				}
-				_, _ = os.Stdout.Write(raw)
 			case "error":
 				fmt.Fprintln(os.Stderr, "server error:", env.B64)
+				readReason <- sessExitClean // a real server error — don't loop on it
 				return
 			}
 		}
 	}()
 
-	// Stdin → server pump.
-	buf := make([]byte, 4096)
 	for {
 		select {
-		case <-sessionCtx.Done():
-			return nil
-		default:
-		}
-		n, err := os.Stdin.Read(buf)
-		if n > 0 {
-			env := api.SessionEnvelope{Type: "data", B64: base64StdEncode(buf[:n])}
-			if werr := writeEnvelope(sessionCtx, conn, env); werr != nil {
-				return nil
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
+		case <-ctx.Done():
+			return sessExitCtx
+		case <-stdinDone:
+			return sessExitStdinEOF
+		case r := <-readReason:
+			return r
+		case b := <-stdinCh:
+			// A write failure means this conn is dead; keep selecting — the read
+			// pump delivers the authoritative close reason momentarily.
+			_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(b)})
 		}
 	}
 }
