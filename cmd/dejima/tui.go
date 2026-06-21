@@ -1893,6 +1893,14 @@ func (m tuiModel) View() string {
 		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.confirm != nil {
+		// Same centered-modal treatment as the menu — a destructive confirm
+		// (purge / force-purge / remove-agent) must be unmissable, not a thin
+		// footer line that scrolls off the bottom.
+		box := styleMenuBox.Render(m.renderConfirm())
+		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 	if m.settings != nil {
 		box := styleMenuBox.Render(m.renderSettings())
 		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
@@ -2136,9 +2144,6 @@ func (m tuiModel) renderBody(headerHeight int) string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	if m.confirm != nil {
-		return body + "\n" + m.renderConfirm()
-	}
 	return body
 }
 
@@ -2837,7 +2842,16 @@ func (m tuiModel) renderConfirm() string {
 		prompt = fmt.Sprintf("Update the daemon to %s and restart it (briefly disconnects)? Type 'y' and Enter: %s",
 			m.latestRelease, c.answer)
 	}
-	return styleErrored.Render("┌── ") + prompt + styleErrored.Render(" ──┐")
+	// Render inside the centered styleMenuBox (View supplies the border): a clear
+	// title, the prompt with a blinking-style cursor on the typed answer, and a
+	// key hint — so the confirm is an unmissable pop-up, not a one-line footer.
+	title := styleHeader.Render("Confirm")
+	switch c.verb {
+	case "purge", "force-purge", "remove-agent", "remove-terminal":
+		title = styleErrored.Render("⚠  Confirm")
+	}
+	hint := styleHeader.Render("Enter = confirm    ·    Esc = cancel")
+	return title + "\n\n" + prompt + "▌" + "\n\n" + hint
 }
 
 // renderActionMenu draws the inner content of the per-row context popup: a
