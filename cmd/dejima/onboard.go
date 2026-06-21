@@ -27,13 +27,25 @@ import (
 // newOnboardCmd is the explicit re-entry into the wizard. Always runs,
 // regardless of whether the dismissal marker exists.
 func newOnboardCmd() *cobra.Command {
-	return &cobra.Command{
+	var provisionHost, yes, reset bool
+	cmd := &cobra.Command{
 		Use:   "onboard",
 		Short: "Walk through Dejima setup (run anytime to (re)configure).",
 		Long: "Interactive wizard. Detects what's already on this machine, asks what " +
 			"you're trying to do, and prints a tailored set of commands. Safe to run " +
-			"more than once.",
+			"more than once.\n\n" +
+			"`--provision-host` (macOS) runs the full host-provisioning wizard: a fresh " +
+			"Mac mini → working Dejima agent server in one command (never-sleep power " +
+			"settings, Homebrew/Tailscale/Docker, then the daemon). Resumable; --yes runs " +
+			"non-interactively; --reset starts the provisioning from scratch.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if provisionHost {
+				if err := runProvisionHost(cmd.Context(), yes, reset); err != nil {
+					return err
+				}
+				_ = writeDismissalMarker()
+				return nil
+			}
 			if err := runOnboarding(cmd.Context()); err != nil {
 				return err
 			}
@@ -43,6 +55,10 @@ func newOnboardCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&provisionHost, "provision-host", false, "run the macOS host-provisioning wizard (fresh Mac mini → Dejima agent server)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "with --provision-host: auto-confirm scriptable steps, skip GUI pauses (collect them into a checklist)")
+	cmd.Flags().BoolVar(&reset, "reset", false, "with --provision-host: clear saved progress and start the provisioning from scratch")
+	return cmd
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +85,66 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 		return true, nil // can't prompt without a TTY; defer to TUI which handles unconfigured state.
 	}
 
+	// Adapt the question to what this machine looks like, so the first prompt
+	// matches the user's actual situation instead of asking everyone the same
+	// generic thing. A cheap probe (no docker/tailscale shell-outs) keeps the
+	// no-args path snappy.
+	switch detectFirstRunContext(ctx) {
+	case firstRunConfigured:
+		// Already talking to a daemon — nothing to set up. Drop straight into the
+		// dashboard and stop nagging.
+		_ = writeDismissalMarker()
+		return true, nil
+
+	case firstRunClientUnreachable:
+		fmt.Println()
+		fmt.Println(bold("Can't reach your Dejima host"))
+		fmt.Println()
+		fmt.Printf("  DEJIMA_HOST is set (%s) but the daemon isn't answering.\n", strings.TrimSpace(os.Getenv("DEJIMA_HOST")))
+		fmt.Println()
+		if ans := readSingleKey("Troubleshoot the connection now? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
+			runConnectionTroubleshooter(ctx)
+		}
+		fmt.Println("Opening the dashboard. Re-run `dejima onboard` anytime.")
+		return true, nil
+
+	case firstRunFreshHost:
+		fmt.Println()
+		fmt.Println(bold("First time — set this Mac up as an agent server?"))
+		fmt.Println()
+		fmt.Println("  I can provision this Mac into a secure, always-on Dejima host: never-sleep")
+		fmt.Println("  power settings, Homebrew/Tailscale/Docker, and the daemon — one walkthrough.")
+		fmt.Println()
+		fmt.Println("    y) Yes, provision this host (dejima onboard --provision-host)")
+		fmt.Println("    g) Just the generic setup walkthrough")
+		fmt.Println("    n) Not now — ask me again next time")
+		fmt.Println("    N) Never ask again")
+		fmt.Println()
+		switch readSingleKey("Choice [y/g/n/N]: ") {
+		case "y", "Y", "yes":
+			if err := runProvisionHost(ctx, false, false); err != nil {
+				return false, err
+			}
+			_ = writeDismissalMarker()
+			return true, nil
+		case "g", "G":
+			if err := runOnboarding(ctx); err != nil {
+				return false, err
+			}
+			_ = writeDismissalMarker()
+			return true, nil
+		case "N", "never":
+			fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
+			_ = writeDismissalMarker()
+			return true, nil
+		default:
+			fmt.Println("OK — opening the dashboard. Run `dejima onboard --provision-host` anytime.")
+			return true, nil
+		}
+	}
+
+	// Generic context (a non-host machine, or we couldn't tell): the original
+	// server-or-client walkthrough.
 	fmt.Println()
 	fmt.Println(bold("First time on this machine?"))
 	fmt.Println()
@@ -100,6 +176,44 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 		fmt.Println("Didn't catch that — treating as 'not now'.")
 		return true, nil
 	}
+}
+
+// firstRunContext is the situation the no-args first-run prompt adapts to.
+type firstRunContext int
+
+const (
+	firstRunGeneric           firstRunContext = iota // can't tell — generic walkthrough
+	firstRunConfigured                               // a daemon is already reachable
+	firstRunClientUnreachable                        // DEJIMA_HOST set but daemon down → troubleshoot
+	firstRunFreshHost                                // macOS, no daemon, looks like a host to provision
+)
+
+// detectFirstRunContext does a cheap classification of this machine. It avoids
+// the heavier docker/tailscale probes in detectEnv() so the no-args path stays
+// fast; the only network call is a short daemon health check.
+func detectFirstRunContext(ctx context.Context) firstRunContext {
+	reachable := false
+	if c, err := api_client(); err == nil {
+		hctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if c.Health(hctx) == nil {
+			reachable = true
+		}
+	}
+	if reachable {
+		return firstRunConfigured
+	}
+	if strings.TrimSpace(os.Getenv("DEJIMA_HOST")) != "" {
+		return firstRunClientUnreachable
+	}
+	// No reachable daemon and no host target. On macOS with no daemon installed,
+	// this is the fresh-Mac-mini-host case the provisioning wizard targets.
+	if runtime.GOOS == "darwin" {
+		if _, err := exec.LookPath("dejimad"); err != nil {
+			return firstRunFreshHost
+		}
+	}
+	return firstRunGeneric
 }
 
 // stdinReader is a single shared buffered reader over stdin. It must be shared
