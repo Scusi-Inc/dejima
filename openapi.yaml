@@ -383,6 +383,45 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExecResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/mailbox:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [mailbox]
+      summary: Poll an island's intra-island agent mailbox
+      operationId: pollMailbox
+      parameters:
+        - name: agent
+          in: query
+          schema: { type: string }
+          description: Your agent id — filters to broadcasts plus messages addressed to you
+        - name: since
+          in: query
+          schema: { type: integer, format: int64 }
+          description: Only messages with seq greater than this cursor
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailboxPollResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [mailbox]
+      summary: Send a message into an island's mailbox (intra-island only)
+      operationId: sendMailbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MailboxSendRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailboxMessage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/files/{path}:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -1387,6 +1426,29 @@ components:
         stdout: { type: string }
         stderr: { type: string }
         exit_code: { type: integer }
+    MailboxSendRequest:
+      type: object
+      required: [payload]
+      properties:
+        from: { type: string, description: Sender agent id }
+        to: { type: string, description: Recipient agent id; empty broadcasts to the island }
+        topic: { type: string }
+        payload: { type: string }
+    MailboxMessage:
+      type: object
+      properties:
+        seq: { type: integer, format: int64 }
+        island: { type: string }
+        from: { type: string }
+        to: { type: string }
+        topic: { type: string }
+        payload: { type: string }
+        time: { type: string, format: date-time }
+    MailboxPollResponse:
+      type: object
+      properties:
+        messages: { type: array, items: { $ref: "#/components/schemas/MailboxMessage" } }
+        latest: { type: integer, format: int64 }
     IslandInfo:
       type: object
       properties:
