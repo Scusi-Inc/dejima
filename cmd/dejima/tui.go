@@ -1116,7 +1116,9 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			return m, m.opCmd(c.island, "purge-force")
 		}
 	case "remove-agent":
-		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+		// Require typing the agent id (parity with island purge typing the name) —
+		// a destructive op shouldn't go through on a single keystroke.
+		if strings.TrimSpace(c.answer) == c.agent {
 			m.dirtyOps[c.island] = "removing agent"
 			return m, m.removeAgentCmd(c.island, c.agent)
 		}
@@ -2823,6 +2825,15 @@ func (m tuiModel) renderConfirm() string {
 	case "force-purge":
 		prompt = fmt.Sprintf("%q has unpushed/uncommitted work that will be LOST. Force-purge anyway? Type 'y' and Enter: %s",
 			c.island, c.answer)
+	case "remove-agent":
+		who := c.agent
+		if isl, ok := m.islandByName(c.island); ok {
+			if lbl := agentByID(isl, c.agent).Label; lbl != "" {
+				who = lbl
+			}
+		}
+		prompt = fmt.Sprintf("Remove agent %q (id %s) from island %q — destroys its worktree + agent state. Type the agent id %q to confirm: %s",
+			who, c.agent, c.island, c.agent, c.answer)
 	case "remove-terminal":
 		prompt = fmt.Sprintf("Close host terminal %s (kills the shell on the daemon host)? Type 'y' and press Enter: %s",
 			c.agent, c.answer)
