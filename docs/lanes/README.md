@@ -1,6 +1,14 @@
 # Agent lanes
 
-## Wave 0.5 (current)
+## Wave 0.6 (ready now — not inter-island)
+
+| Lane | Brief | Prompt to give the agent |
+|---|---|---|
+| Completeness (adapters · Port read-norm · macOS Shortcuts · observability) | `docs/lanes/0.6-completeness.md` | "Read `docs/lanes/0.6-completeness.md` and follow it — it's your full brief." |
+
+Inter-agent/inter-island exchange (**Lane 5**) is design-gated — not in this batch.
+
+## Wave 0.5 (shipped)
 
 | Lane | Brief | Prompt to give the agent |
 |---|---|---|

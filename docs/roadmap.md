@@ -147,6 +147,19 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 ---
 
+## 🧹 Housekeeping (one-off, when next at the host)
+
+A finished lane agent left a worktree squatting the `master` branch ref
+(`.agents/d7`), which caused a tag to land on the wrong commit once. Clear it when
+no agent is attached:
+
+```bash
+git -C <dejima checkout> worktree remove .agents/d7   # frees the 'master' branch ref
+git -C <dejima checkout> worktree prune
+```
+
+---
+
 ## 🧑 Operator verification queue (built, needs a live run)
 
 These shipped to `master` with unit/security review but can't be exercised from the
