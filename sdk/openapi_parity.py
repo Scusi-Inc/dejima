@@ -22,7 +22,10 @@ import sys
 try:
     import yaml
 except ImportError:  # pragma: no cover
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Hard failure (exit non-zero), never a silent pass: a missing dependency must
+    # fail CI loudly rather than let the parity gate false-pass.
+    print("error: PyYAML is required (pip install pyyaml)", file=sys.stderr)
+    raise SystemExit(2)
 
 # Matches `mux.HandleFunc("GET /v1/path", ...)` in the Go sources.
 ROUTE_RE = re.compile(r'HandleFunc\(\s*"([A-Z]+)\s+(/[^"]*)"')
