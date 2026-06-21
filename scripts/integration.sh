@@ -326,22 +326,25 @@ step "Multi-agent: seed two agents at create time"
 dejima init --name "$ISLAND_MULTI" --repo "$REPO" --local-copy --agent claude-code --agent codex \
   >/dev/null 2>&1 || die "multi-agent island create failed"
 AGENTS="$(dejima agent ls "$ISLAND_MULTI" 2>&1)"
-assert_has "$AGENTS" "claude-code" "primary agent a1 = claude-code"
-assert_has "$AGENTS" "codex"       "seeded agent a2 = codex"
-# a2's worktree is reconciled asynchronously after create returns — poll for it.
+assert_has "$AGENTS" "claude-code" "primary agent = claude-code"
+assert_has "$AGENTS" "codex"       "seeded secondary agent = codex"
+# The secondary agent's worktree is reconciled asynchronously after create
+# returns — poll for it. id-scheme-agnostic: any reconciled worktree under
+# /workspace/.agents/<id> carries a .git pointer file (don't hardcode the id,
+# which is no longer "a2" under the current scheme).
 wt_ok=""
 for _ in $(seq 1 30); do
-  if dejima exec "$ISLAND_MULTI" -- test -d /workspace/.agents/a2 >/dev/null 2>&1; then wt_ok=1; break; fi
+  if dejima exec "$ISLAND_MULTI" -- sh -c 'ls /workspace/.agents/*/.git >/dev/null 2>&1'; then wt_ok=1; break; fi
   sleep 1
 done
 if [ -n "$wt_ok" ]; then
-  pass "a2 worktree exists in-container"
+  pass "secondary-agent worktree exists in-container"
 else
-  fail "a2 worktree never appeared in-container (waited 30s)"
+  fail "secondary-agent worktree never appeared in-container (waited 30s)"
   printf '\033[33m  ── diagnostics ──\033[0m\n'
   printf '  /workspace/.git present? %s\n' "$(dejima exec "$ISLAND_MULTI" -- sh -c 'test -e /workspace/.git && echo YES || echo NO' 2>&1)"
   printf '  /workspace listing:\n'; dejima exec "$ISLAND_MULTI" -- ls -la /workspace 2>&1 | sed 's/^/    /'
-  printf '  agent table (look at a2 ERROR column):\n'; dejima agent ls "$ISLAND_MULTI" 2>&1 | sed 's/^/    /'
+  printf '  agent table (check the secondary agent row):\n'; dejima agent ls "$ISLAND_MULTI" 2>&1 | sed 's/^/    /'
   printf '  daemon log (worktree/reconcile/clone lines):\n'
   grep -iE "worktree|ensure agent|reconcile|clone|seed|not a git" "$TMP/dejimad.log" 2>/dev/null | tail -20 | sed 's/^/    /'
 fi
