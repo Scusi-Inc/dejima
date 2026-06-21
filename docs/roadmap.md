@@ -8,6 +8,37 @@ This is the living roadmap for Dejima. Items are grouped by phase and sized roug
 
 ---
 
+## 🔖 Versioning / release map
+
+Semver, staying in **0.x** through alpha → beta (API may break; `api_version`
+tracks the client/daemon contract separately). **Minor = a feature wave; patch =
+fixes.** `1.0.0` is reserved for **API stability ("safe to build on") — the stable
+launch line, not a marketing bump.** Retroactive + forward map (semver layered over
+the "planning bucket" headings below):
+
+- **0.1** — core runtime: islands, multi-attach sessions, lifecycle, TUI/CLI.
+- **0.2** — brokering: Port (intake/export/Ledger), Home Islands, capability broker.
+- **0.3** — multi-agent + remote dev: agents-per-island, SSH-façade + VS Code, GitHub
+  identities, provider keys, resource controls, self-update.
+- **0.4** — **governance wave (shipped + verified): audit log + viewer, team rung
+  (tokens/roles/activity feed), audited MCP brokering, Python/TS SDKs + OpenAPI.  ← here**
+- **0.5** — "up in minutes": `onboard --provision-host` wizard, adaptive first-run +
+  connection-failure prompts, mac-mini runbook; SDK publish (PyPI/npm); Keychain
+  secrets + idle auto-hibernate.
+- **0.6** — collaboration + completeness: inter-agent + inter-island exchange (Lane 5,
+  brokered/audited), Port read-normalization + live brokered mount, macOS Shortcuts
+  capability adapter, first-class framework adapters (Letta/Hermes/Goose).
+- **0.7–0.8** — hardening: trust-on-first-use, per-island egress allow-list,
+  observability rollups, webhook-security hardening, watchdog polish.
+- **0.9** — public **beta**: feature-complete; web/PWA reference client; optional
+  microVM backend; backup/restore.
+- **1.0.0** — API frozen, "safe to build on"; SDKs go semver-stable.
+
+Next release: **`v0.4.0`** (governance wave + the post-verification fixes), a
+deliberate jump from the 0.1.x patch line to reflect the four shipped waves.
+
+---
+
 ## 🎯 Committed build queue — post-0.1.0 (in order)
 
 The committed forward plan, distilled from the 2026 competitive review (see
