@@ -6,7 +6,10 @@
 |---|---|---|
 | Completeness (adapters · Port read-norm · macOS Shortcuts · observability) | `docs/lanes/0.6-completeness.md` | "Read `docs/lanes/0.6-completeness.md` and follow it — it's your full brief." |
 
-Inter-agent/inter-island exchange (**Lane 5**) is design-gated — not in this batch.
+Inter-agent/inter-island exchange (**Lane 5**) is now designed — spec
+`docs/inter-island-exchange-spec.md`, kickoff brief:
+
+> "Read `docs/lanes/lane-5-inter-island.md` and follow it — it's your full brief."
 
 ## Wave 0.5 (shipped)
 
