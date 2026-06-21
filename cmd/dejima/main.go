@@ -41,8 +41,115 @@ func base64StdDecode(s string) ([]byte, error) { return base64.StdEncoding.Decod
 func main() {
 	root := newRootCmd()
 	if err := root.Execute(); err != nil {
+		// Cobra already printed the error. If it's a can't-reach-the-daemon
+		// failure on a machine pointed at a host, offer a one-shot troubleshooter.
+		maybeOfferConnectionHelp(err)
 		os.Exit(1)
 	}
+}
+
+// maybeOfferConnectionHelp offers a one-time troubleshooting walkthrough the
+// first time a command can't reach the daemon AND DEJIMA_HOST is set (i.e. this
+// machine is a client pointed at a host that isn't answering). It fires at most
+// once (a marker file), so a host that's down doesn't nag on every command.
+func maybeOfferConnectionHelp(err error) {
+	if err == nil || !isConnectionError(err) {
+		return
+	}
+	if strings.TrimSpace(os.Getenv("DEJIMA_HOST")) == "" {
+		return // only the client-pointed-at-a-host case; a local socket failure is different
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return
+	}
+	if connHelpOffered() {
+		return
+	}
+	_ = markConnHelpOffered()
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprint(os.Stderr, "Want help troubleshooting the connection? [Y/n]: ")
+	line, _ := stdinReader.ReadString('\n')
+	if a := strings.TrimSpace(line); a == "" || strings.EqualFold(a, "y") {
+		runConnectionTroubleshooter(context.Background())
+	} else {
+		fmt.Fprintln(os.Stderr, "OK. Re-run with `dejima doctor` or `dejima onboard` for help anytime.")
+	}
+}
+
+// isConnectionError reports whether err looks like a failure to reach the daemon
+// (the client wraps these as "daemon unreachable: …").
+func isConnectionError(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "daemon unreachable") ||
+		strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "no such host") ||
+		strings.Contains(s, "i/o timeout")
+}
+
+func connHelpMarkerPath() (string, error) {
+	root, err := paths.Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "conn-help-offered"), nil
+}
+
+func connHelpOffered() bool {
+	p, err := connHelpMarkerPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p)
+	return err == nil
+}
+
+func markConnHelpOffered() error {
+	p, err := connHelpMarkerPath()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte("offered\n"), 0o600)
+}
+
+// runConnectionTroubleshooter prints a focused set of checks for the common
+// "can't reach my Dejima host" failures: wrong/missing DEJIMA_HOST, not on the
+// tailnet, or the host's daemon not exposing TCP.
+func runConnectionTroubleshooter(ctx context.Context) {
+	host := strings.TrimSpace(os.Getenv("DEJIMA_HOST"))
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, bold("Connection troubleshooter"))
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  Target: %s\n", host)
+
+	// 1. Is Tailscale present and up here? The host accepts only tailnet peers.
+	if _, err := exec.LookPath("tailscale"); err != nil {
+		fmt.Fprintln(os.Stderr, "  ✗ Tailscale isn't installed here — the host accepts only tailnet peers.")
+		fmt.Fprintln(os.Stderr, "      macOS: brew install --cask tailscale   ·   Linux: https://tailscale.com/download")
+		fmt.Fprintln(os.Stderr, "      then: tailscale up   (log into the SAME account that owns the host)")
+	} else if st := tailscaleStatus(); st.BackendState != "Running" {
+		fmt.Fprintf(os.Stderr, "  ✗ Tailscale isn't up here (state: %s) — run: tailscale up\n", st.BackendState)
+	} else {
+		fmt.Fprintln(os.Stderr, "  ✓ Tailscale is up here")
+		if len(st.Peer) == 0 {
+			fmt.Fprintln(os.Stderr, "    ⚠ but no peers are visible — is the host on the same Tailscale account?")
+		}
+	}
+
+	// 2. Re-probe the daemon health with a clear timeout.
+	if c, err := clientForHost(host); err == nil {
+		hctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		defer cancel()
+		if herr := c.Health(hctx); herr != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ still can't reach the daemon: %v\n", herr)
+			fmt.Fprintln(os.Stderr, "    Likely the host isn't exposing TCP. On the HOST, run:")
+			fmt.Fprintln(os.Stderr, "        dejima service install --tcp :7273")
+			fmt.Fprintln(os.Stderr, "    Also confirm the address/port are right (default port 7273).")
+		} else {
+			fmt.Fprintln(os.Stderr, "  ✓ the daemon is reachable now — retry your command")
+		}
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "  More: dejima doctor   ·   dejima onboard")
 }
 
 func newRootCmd() *cobra.Command {
