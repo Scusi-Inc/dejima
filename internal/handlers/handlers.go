@@ -94,6 +94,41 @@ var registry = map[string]Handler{
 		SupportedProviders:  []string{"anthropic", "openai", "google"},
 		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6", "openai/gpt-5.5"},
 		GatewayPort:         18789},
+	// Letta — a stateful-agent framework with a REST API + web UI on 8283. Reads
+	// its model key straight from the provider env var (OPENAI_API_KEY /
+	// ANTHROPIC_API_KEY …), so the launch sources the daemon-materialized key file
+	// (DEJIMA_PROVIDER_KEY_FILE → `<PROVIDER>_API_KEY=…`) before `letta server` —
+	// no extra config shim needed. Self-installs via pip on first launch (kept out
+	// of the base image, like openclaw). GatewayPort 8283 → `dejima agent open`.
+	"letta": {ID: "letta", Kind: KindHeadless,
+		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; command -v letta >/dev/null 2>&1 || pip3 install --user letta; exec letta server'",
+		StateDir:            "/home/dejima/.letta",
+		RequiresProviderKey: true,
+		SupportedProviders:  []string{"anthropic", "openai", "google"},
+		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6", "openai/gpt-5.5"},
+		GatewayPort:         8283},
+	// Hermes — a messaging-bridge gateway (no localhost web UI), so GatewayPort 0
+	// (injection-only: there is nothing for `dejima agent open` to forward). The
+	// launch sources the provider key env; richer auth (`hermes auth add`) is a
+	// framework concern left to the operator / a later shim.
+	"hermes": {ID: "hermes", Kind: KindHeadless,
+		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; command -v hermes >/dev/null 2>&1 || npm install -g @hermes-gateway/cli; exec hermes gateway'",
+		StateDir:            "/home/dejima/.hermes",
+		RequiresProviderKey: true,
+		SupportedProviders:  []string{"anthropic", "openai", "google"},
+		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6"},
+		GatewayPort:         0},
+	// Goose — Block's agent with a web UI on 3000 (`goosed`). Beyond the provider
+	// key it reads GOOSE_PROVIDER / GOOSE_MODEL, so the launch translates dejima's
+	// framework-agnostic DEJIMA_PROVIDER / DEJIMA_MODEL ("provider/model") into
+	// them. Self-installs via the official CLI installer on first launch.
+	"goose": {ID: "goose", Kind: KindHeadless,
+		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; [ -n \"${DEJIMA_PROVIDER:-}\" ] && export GOOSE_PROVIDER=\"$DEJIMA_PROVIDER\"; [ -n \"${DEJIMA_MODEL:-}\" ] && export GOOSE_MODEL=\"${DEJIMA_MODEL#*/}\"; command -v goosed >/dev/null 2>&1 || curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash; exec goosed'",
+		StateDir:            "/home/dejima/.config/goose",
+		RequiresProviderKey: true,
+		SupportedProviders:  []string{"anthropic", "openai", "google"},
+		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6", "openai/gpt-5.5"},
+		GatewayPort:         3000},
 	Headless: {ID: Headless, Kind: KindHeadless, Launch: "", StateDir: "/home/dejima/.agent-state"},
 }
 
