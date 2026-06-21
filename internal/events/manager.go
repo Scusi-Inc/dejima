@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/secrets"
 )
 
 // Subscription is a registered webhook.
@@ -30,11 +31,16 @@ type Subscription struct {
 
 // Manager fans out events to subscribed webhooks.
 type Manager struct {
-	log   *slog.Logger
-	mu    sync.RWMutex
-	subs  map[string]Subscription
-	httpc *http.Client
+	log     *slog.Logger
+	mu      sync.RWMutex
+	subs    map[string]Subscription
+	httpc   *http.Client
+	secrets *secrets.Store // webhook HMAC secrets at rest (keychain, file fallback); nil ⇒ legacy inline
 }
+
+// webhookSecretKey is the keychain account under which a subscription's HMAC
+// secret is stored.
+func webhookSecretKey(id string) string { return "webhook." + id }
 
 // New constructs a Manager and loads any persisted subscriptions.
 func New(log *slog.Logger) (*Manager, error) {
@@ -42,6 +48,13 @@ func New(log *slog.Logger) (*Manager, error) {
 		log:   log,
 		subs:  map[string]Subscription{},
 		httpc: &http.Client{Timeout: 10 * time.Second},
+	}
+	// A secrets store keeps HMAC secrets out of plaintext webhooks.json. If it
+	// can't be opened, degrade to the legacy inline behavior rather than fail.
+	if store, err := secrets.Open(); err != nil {
+		log.Warn("secrets store unavailable; webhook secrets stay inline", "err", err)
+	} else {
+		m.secrets = store
 	}
 	if err := m.load(); err != nil {
 		return nil, err
@@ -74,10 +87,37 @@ func (m *Manager) load() error {
 	if err := json.Unmarshal(data, &list); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
+	migrated := false
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, s := range list {
+	for i := range list {
+		s := list[i]
+		if m.secrets != nil {
+			switch {
+			case s.Secret != "":
+				// Legacy plaintext secret in webhooks.json — move it into the
+				// secrets store and rewrite the file without it.
+				if err := m.secrets.Set(webhookSecretKey(s.ID), s.Secret); err != nil {
+					m.log.Warn("migrate webhook secret to keychain", "id", s.ID, "err", err)
+				} else {
+					migrated = true
+				}
+			default:
+				// Secret lives in the store; load it back for signing.
+				if v, ok, err := m.secrets.Get(webhookSecretKey(s.ID)); err != nil {
+					m.log.Warn("read webhook secret", "id", s.ID, "err", err)
+				} else if ok {
+					s.Secret = v
+				}
+			}
+		}
 		m.subs[s.ID] = s
+	}
+	m.mu.Unlock()
+	if migrated {
+		// Rewrite webhooks.json so the plaintext secrets no longer linger there.
+		if err := m.save(); err != nil {
+			m.log.Warn("rewrite webhooks.json after secret migration", "err", err)
+		}
 	}
 	return nil
 }
@@ -90,6 +130,12 @@ func (m *Manager) save() error {
 	m.mu.RLock()
 	list := make([]Subscription, 0, len(m.subs))
 	for _, s := range m.subs {
+		// Never persist the HMAC secret in webhooks.json when a secrets store
+		// holds it (keychain or its file fallback). When there's no store
+		// (degraded), keep the inline secret so signing survives a restart.
+		if m.secrets != nil {
+			s.Secret = ""
+		}
 		list = append(list, s)
 	}
 	m.mu.RUnlock()
@@ -112,6 +158,13 @@ func (m *Manager) Subscribe(s Subscription) (Subscription, error) {
 	if s.CreatedAt.IsZero() {
 		s.CreatedAt = time.Now().UTC()
 	}
+	// Persist the HMAC secret in the secrets store (keychain / file fallback),
+	// keeping it in memory for signing. save() then writes webhooks.json without it.
+	if m.secrets != nil && s.Secret != "" {
+		if err := m.secrets.Set(webhookSecretKey(s.ID), s.Secret); err != nil {
+			return Subscription{}, fmt.Errorf("store webhook secret: %w", err)
+		}
+	}
 	m.mu.Lock()
 	m.subs[s.ID] = s
 	m.mu.Unlock()
@@ -126,15 +179,20 @@ func (m *Manager) Unsubscribe(id string) error {
 	m.mu.Lock()
 	delete(m.subs, id)
 	m.mu.Unlock()
+	if m.secrets != nil {
+		_ = m.secrets.Delete(webhookSecretKey(id))
+	}
 	return m.save()
 }
 
-// List returns every subscription.
+// List returns every subscription with its HMAC secret redacted — secrets are
+// write-only from a client's perspective and never travel back out.
 func (m *Manager) List() []Subscription {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]Subscription, 0, len(m.subs))
 	for _, s := range m.subs {
+		s.Secret = ""
 		out = append(out, s)
 	}
 	return out
