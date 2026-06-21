@@ -1,5 +1,22 @@
 # Agent lanes
 
+## Wave 0.5 (current)
+
+| Lane | Brief | Prompt to give the agent |
+|---|---|---|
+| Onboarding (Mac-mini wizard) | `docs/lanes/0.5-onboarding.md` | "Read `docs/lanes/0.5-onboarding.md` and follow it — it's your full brief." |
+| SDK publish (PyPI/npm) | `docs/lanes/0.5-sdk-publish.md` | "Read `docs/lanes/0.5-sdk-publish.md` and follow it — it's your full brief." |
+| Hardening (keychain + idle-hibernate) | `docs/lanes/0.5-hardening.md` | "Read `docs/lanes/0.5-hardening.md` and follow it — it's your full brief." |
+
+The 0.5 **terminal auto-reconnect** fix already shipped (PR #14) — it just needs
+Minion live-verify (drop the link mid-session → terminal reconnects, doesn't close).
+All three lanes above are independent; start them in parallel. Wave-0.4 lane briefs
+(audit / team-auth / mcp / sdk) are below for reference.
+
+---
+
+# Wave 0.4 lanes (shipped — reference)
+
 Parallel work briefs so up to four agents (each in its own island/worktree) can
 build the committed queue without colliding. See `docs/roadmap.md` →
 "Committed build queue" and "Parallel lanes" for the plan, gates, and shared seams.
