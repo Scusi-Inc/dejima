@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
@@ -25,6 +26,15 @@ type islandMetric struct {
 	attached    int
 }
 
+// agentMetric is a per-agent idle sample: seconds since the agent last emitted a
+// state event (the agent-liveness heartbeat). Only agents that have emitted at
+// least one event appear — the heartbeat is opt-in (the shim's agent-event POST),
+// so a never-heard-from agent has no idle reading rather than a misleading zero.
+type agentMetric struct {
+	island, owner, agent string
+	idleSeconds          float64
+}
+
 // handleMetrics serves a Prometheus text-exposition snapshot of fleet state:
 // islands-by-state, per-island cpu/mem/disk, restart/OOM counts, attached
 // clients, panic state, and daemon build info. Hand-rolled (no client_golang
@@ -42,7 +52,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	stateCount := map[string]int{"running": 0, "hibernated": 0, "errored": 0}
 	ims := make([]islandMetric, 0, len(projects))
+	ownerByName := make(map[string]string, len(projects))
 	for _, p := range projects {
+		ownerByName[p.Name] = p.Owner
 		status, _ := s.rt.Status(ctx, p.ContainerName())
 		im := islandMetric{name: p.Name, owner: p.Owner}
 		switch status {
@@ -71,15 +83,45 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Stable output so diffs/scrapes are deterministic.
 	sort.Slice(ims, func(i, j int) bool { return ims[i].name < ims[j].name })
 
+	agents := s.agentIdleMetrics(ownerByName, time.Now())
+
 	var b strings.Builder
-	writeMetrics(&b, stateCount, ims, panicEngaged())
+	writeMetrics(&b, stateCount, ims, agents, panicEngaged())
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
 }
 
+// agentIdleMetrics turns the per-agent state heartbeats into idle samples:
+// now − UpdatedAt for each (island, agent) that has emitted at least one event.
+// owner is looked up per island so per-team rollups carry the same label as the
+// island families. Sorted for deterministic output.
+func (s *Server) agentIdleMetrics(ownerByName map[string]string, now time.Time) []agentMetric {
+	s.agentStateMu.Lock()
+	out := make([]agentMetric, 0, len(s.agentStates))
+	for key, st := range s.agentStates {
+		island, agent, ok := strings.Cut(key, "\x00")
+		if !ok {
+			continue
+		}
+		idle := now.Sub(st.UpdatedAt).Seconds()
+		if idle < 0 {
+			idle = 0 // clock skew guard; never report a negative idle
+		}
+		out = append(out, agentMetric{island: island, owner: ownerByName[island], agent: agent, idleSeconds: idle})
+	}
+	s.agentStateMu.Unlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].island != out[j].island {
+			return out[i].island < out[j].island
+		}
+		return out[i].agent < out[j].agent
+	})
+	return out
+}
+
 // writeMetrics renders the exposition text. Split out (pure) so it's testable
 // without a runtime.
-func writeMetrics(b *strings.Builder, stateCount map[string]int, ims []islandMetric, panicked bool) {
+func writeMetrics(b *strings.Builder, stateCount map[string]int, ims []islandMetric, agents []agentMetric, panicked bool) {
 	fmt.Fprintf(b, "# HELP dejima_daemon_info Daemon build info (constant 1; version in labels).\n")
 	fmt.Fprintf(b, "# TYPE dejima_daemon_info gauge\n")
 	fmt.Fprintf(b, "dejima_daemon_info{version=%q,api_version=\"%d\"} 1\n", version.Version, version.APIVersion)
@@ -116,6 +158,16 @@ func writeMetrics(b *strings.Builder, stateCount map[string]int, ims []islandMet
 	for _, im := range ims {
 		fmt.Fprintf(b, "dejima_island_disk_bytes{island=%q,owner=%q,volume=\"workspace\"} %d\n", im.name, im.owner, im.wsBytes)
 		fmt.Fprintf(b, "dejima_island_disk_bytes{island=%q,owner=%q,volume=\"home\"} %d\n", im.name, im.owner, im.homeBytes)
+	}
+
+	// Per-agent idle seconds — the real-time agent-liveness signal (a remote
+	// client can't compute it). Only agents that have emitted a state event
+	// appear; history/aggregation stays in wrapper tooling (positioning.md).
+	fmt.Fprintf(b, "# HELP dejima_agent_idle_seconds Seconds since the agent last emitted a state event (waiting/complete/error).\n")
+	fmt.Fprintf(b, "# TYPE dejima_agent_idle_seconds gauge\n")
+	for _, am := range agents {
+		fmt.Fprintf(b, "dejima_agent_idle_seconds{island=%q,owner=%q,agent=%q} %s\n",
+			am.island, am.owner, am.agent, trimFloat(am.idleSeconds))
 	}
 }
 
