@@ -20,22 +20,55 @@ the "planning bucket" headings below):
 - **0.2** — brokering: Port (intake/export/Ledger), Home Islands, capability broker.
 - **0.3** — multi-agent + remote dev: agents-per-island, SSH-façade + VS Code, GitHub
   identities, provider keys, resource controls, self-update.
-- **0.4** — **governance wave (shipped + verified): audit log + viewer, team rung
-  (tokens/roles/activity feed), audited MCP brokering, Python/TS SDKs + OpenAPI.  ← here**
-- **0.5** — "up in minutes": `onboard --provision-host` wizard, adaptive first-run +
-  connection-failure prompts, mac-mini runbook; SDK publish (PyPI/npm); Keychain
-  secrets + idle auto-hibernate.
-- **0.6** — collaboration + completeness: inter-agent + inter-island exchange (Lane 5,
-  brokered/audited), Port read-normalization + live brokered mount, macOS Shortcuts
-  capability adapter, first-class framework adapters (Letta/Hermes/Goose).
+- **0.4** — governance wave (shipped, v0.4.x): audit log + viewer, team rung
+  (tokens/roles/activity feed), audited MCP brokering, Python/TS SDKs + OpenAPI.
+- **0.5** — "up in minutes" (shipped, **v0.5.0**): `onboard --provision-host` wizard,
+  adaptive first-run + connection-failure prompts, mac-mini runbook; SDK publish
+  wiring (PyPI/npm); Keychain secrets + idle auto-hibernate. ← here
+- **0.6** — collaboration + completeness (**next; design-gated**): inter-agent +
+  inter-island exchange (Lane 5, brokered/audited — needs the design pass +
+  `positioning.md` call first), Port read-normalization + live brokered mount,
+  macOS Shortcuts capability adapter, first-class framework adapters (Letta/Hermes/Goose).
 - **0.7–0.8** — hardening: trust-on-first-use, per-island egress allow-list,
   observability rollups, webhook-security hardening, watchdog polish.
 - **0.9** — public **beta**: feature-complete; web/PWA reference client; optional
   microVM backend; backup/restore.
 - **1.0.0** — API frozen, "safe to build on"; SDKs go semver-stable.
 
-Next release: **`v0.4.0`** (governance wave + the post-verification fixes), a
-deliberate jump from the 0.1.x patch line to reflect the four shipped waves.
+Current: **`v0.5.0`**. Each minor tag is cut only after the **Release testing &
+verification** checklist below passes on a live host (Minion). Next minor (`0.6`)
+is design-gated on the inter-island decision.
+
+---
+
+## ✅ Release testing & verification (run before each tag)
+
+Much of Dejima is built in Docker-less build islands, so green CI is necessary but
+**not sufficient** — each release is verified live on a host (Minion) before the tag
+is cut. (The "Operator verification queue" further below is the *current* batch of
+built-but-not-yet-live-verified items; this is the standing checklist.)
+
+**Automated — CI, every PR (must be green to merge):**
+- `go build` · `go vet` · `golangci-lint run ./...` · `go test ./...`
+- SDK: Python pytest + TS tests; OpenAPI redocly lint; **route-parity** (`server.go` ↔ `openapi.yaml`).
+
+**Live-Docker — on Minion, every release:**
+- `scripts/integration.sh` full (Port + multi-agent + MCP sections) — all green.
+- Island lifecycle: `init` / `clone` / `exec` / `hibernate` / `wake` / `upgrade` / `purge` + the unpushed-work guard.
+- Port: intake / export / traversal-refusal / Ledger verify. MCP: grant → call → `mcp.*` ledgered → revoke.
+- Audit: record → `--verify` → `--export csv`; activity feed. Team: `viewer`/scoped token → read OK, `purge` denied.
+
+**macOS-host-specific — on Minion, every release:**
+- `service install --system --audit` brings the daemon up audited; reboot leaves it reachable with no login.
+- `onboard --provision-host`: sleep disabled, audit on, fresh-host path clean.
+- SSH-façade + VS Code Remote-SSH land in `/workspace`; in-island token autonomy (#8).
+- **Terminal auto-reconnect:** drop the link (restart daemon / sleep-wake) mid-session → terminal reattaches, doesn't close; Ctrl-b d still exits cleanly.
+- Keychain secret storage (no plaintext in config); opt-in idle auto-hibernate fires + wakes.
+
+**Cross-device — Minion ↔ a client (e.g. GIZMO), each release:**
+- `connect` / attach / resize / multi-attach; `dejima update` (client + daemon); Windows client.
+
+**Gate:** cut the version tag only after the live checklist passes on Minion.
 
 ---
 
