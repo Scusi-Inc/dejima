@@ -20,6 +20,7 @@ import (
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
+	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/providercreds"
 )
@@ -227,6 +228,36 @@ func (c *Client) ConfigureAgent(ctx context.Context, island, id string, req Agen
 	var out AgentConfigResponse
 	path := "/v1/islands/" + url.PathEscape(island) + "/agents/" + url.PathEscape(id) + "/config"
 	if err := c.do(ctx, http.MethodPatch, path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SendMailbox posts a message into an island's intra-island mailbox.
+func (c *Client) SendMailbox(ctx context.Context, island string, req MailboxSendRequest) (*mailbox.Message, error) {
+	var out mailbox.Message
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(island)+"/mailbox", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PollMailbox returns the messages in an island's mailbox visible to agent (or
+// just broadcasts when agent is "") with seq > since.
+func (c *Client) PollMailbox(ctx context.Context, island, agent string, since int64) (*MailboxPollResponse, error) {
+	path := "/v1/islands/" + url.PathEscape(island) + "/mailbox"
+	q := url.Values{}
+	if agent != "" {
+		q.Set("agent", agent)
+	}
+	if since > 0 {
+		q.Set("since", strconv.FormatInt(since, 10))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out MailboxPollResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

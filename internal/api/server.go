@@ -21,6 +21,7 @@ import (
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/islandimage"
+	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/porttoken"
 	"github.com/aoos/dejima/internal/project"
@@ -49,6 +50,7 @@ type Server struct {
 	locks    map[string]*sync.Mutex // per-island
 	presence map[string]*presenceTracker
 	events   *events.Manager
+	mailbox  *mailbox.Store // intra-island agent message ring (Lane 5, Phase 1)
 
 	// In-memory ring buffer of recent attach/detach events. Bounded so the
 	// daemon never accumulates client history indefinitely. Not persisted —
@@ -208,6 +210,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		locks:       map[string]*sync.Mutex{},
 		presence:    map[string]*presenceTracker{},
 		events:      ev,
+		mailbox:     mailbox.NewStore(256),
 		historyCap:  200,
 		agentStates: map[string]AgentStateInfo{},
 		agentErrors: map[string]agentErrInfo{},
@@ -435,6 +438,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
+	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
+	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
