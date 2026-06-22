@@ -54,7 +54,7 @@ $ dejima onboard --provision-host
 Or, after the GitHub Pages site is live:
 
 ```
-$ curl -fsSL dejima.sh/provision | bash
+$ curl -fsSL dejima.tech/provision | bash
 ```
 
 From there: a series of phases (described below). Each phase shows current state, does what it can, instructs for what it can't, verifies, moves on. Resumable; if the user exits mid-flow, re-running picks up where they left off.
@@ -192,7 +192,7 @@ The "fresh Mac mini" persona becomes the primary install path on the landing pag
 
 ```bash
 # On a fresh Mac mini:
-curl -fsSL dejima.sh/provision | bash
+curl -fsSL dejima.tech/provision | bash
 ```
 
 The existing "advanced / I know what I want" install paths move below as alternatives.

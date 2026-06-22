@@ -128,7 +128,7 @@ Notes:
 
 After a signed run, on a clean Mac:
 ```
-curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash
+curl -fsSL https://dejima.tech/install-client.sh | bash
 spctl -a -vvv -t install "$(command -v dejima)"   # should say: accepted, Developer ID
 codesign -dv --verbose=4 "$(command -v dejima)"    # shows the Developer ID + hardened runtime
 ```
