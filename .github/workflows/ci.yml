@@ -1,11 +1,20 @@
 name: ci
 
+# Tier-1 of the automated test harness (docs/testing/automated-test-harness.md):
+# unit + API (httptest) + CLI-vs-in-proc-daemon + TUI (teatest). All run with no
+# Docker on GitHub-hosted runners, so this fires on every push + PR. The Tier-2
+# Docker matrix and the Tier-3 macOS-host suite run on a schedule from
+# nightly.yml (a disabled scaffold today — see that file).
+
 on:
   push:
     branches: [master, main]
   pull_request:
 
 jobs:
+  # build runs the full Tier-1 suite (build + vet + `go test ./...`, which now
+  # includes the teatest TUI tests, the CLI table tests, and the httptest API
+  # handler tests — none of which need Docker) on both Linux and macOS.
   build:
     strategy:
       matrix:
@@ -34,3 +43,16 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
+
+  # shellcheck keeps the Tier-2 integration suite (scripts/integration.sh, run
+  # live on a Docker host) lint-clean on every PR even though CI can't execute it
+  # — a broken edit to the suite is caught here, not later on the Docker host.
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck integration suite
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/integration.sh
