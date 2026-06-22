@@ -641,6 +641,75 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/links:
+    get:
+      tags: [link]
+      summary: List inter-island link grants (operator)
+      operationId: listLinks
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinksResponse" }
+    post:
+      tags: [link]
+      summary: Authorize a directional inter-island info channel (operator; deny-all default)
+      operationId: grantLink
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LinkGrantRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkGrant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [link]
+      summary: Revoke a link grant (operator)
+      operationId: revokeLink
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string } }
+        - { name: to, in: query, required: true, schema: { type: string } }
+        - { name: topic, in: query, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/link/send:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [link]
+      summary: Send an info message to a specific agent in another island (granted channel)
+      description: >
+        The path island is the sender, pinned to the caller's token (it can only
+        send as itself). Default-deny: with no matching operator grant the send is
+        refused (403) and ledgered link.deny. A granted message is delivered into
+        the target agent's ordinary mailbox with daemon-stamped cross-island
+        Origin — so the response is a MailboxMessage.
+      operationId: sendLink
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LinkSendRequest" }
+      responses:
+        "201":
+          description: Delivered into the recipient's mailbox
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailboxMessage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: No link grant for this from→to/topic (cross-island is deny-all)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/mcp/grants:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -1444,11 +1513,50 @@ components:
         topic: { type: string }
         payload: { type: string }
         time: { type: string, format: date-time }
+        origin:
+          $ref: "#/components/schemas/MailboxOrigin"
+    MailboxOrigin:
+      type: object
+      description: >
+        Daemon-stamped provenance, present only on messages delivered from another
+        island over a brokered link (Lane 5). Absent for ordinary intra-island
+        messages. Unforgeable — agents cannot set it.
+      properties:
+        source_island: { type: string }
+        cross_island: { type: boolean }
     MailboxPollResponse:
       type: object
       properties:
         messages: { type: array, items: { $ref: "#/components/schemas/MailboxMessage" } }
         latest: { type: integer, format: int64 }
+    LinkGrantRequest:
+      type: object
+      required: [from, to, topic]
+      properties:
+        from: { type: string, description: Source island }
+        to: { type: string, description: Destination island }
+        topic: { type: string, description: Named channel }
+    LinkGrant:
+      type: object
+      properties:
+        from: { type: string }
+        to: { type: string }
+        topic: { type: string }
+        actions: { type: array, items: { type: string }, description: "Phase 3 per-action allowlist; empty = info-only" }
+        created_at: { type: string, format: date-time }
+    LinksResponse:
+      type: object
+      properties:
+        grants: { type: array, items: { $ref: "#/components/schemas/LinkGrant" } }
+    LinkSendRequest:
+      type: object
+      required: [to, to_agent, topic, payload]
+      properties:
+        to: { type: string, description: Destination island }
+        to_agent: { type: string, description: Destination agent id (required — no island-wide broadcast) }
+        topic: { type: string }
+        payload: { type: string }
+        from_agent: { type: string, description: Sending agent id (optional) }
     IslandInfo:
       type: object
       properties:

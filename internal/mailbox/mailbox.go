@@ -18,11 +18,25 @@ import (
 type Message struct {
 	Seq     int64     `json:"seq"`
 	Island  string    `json:"island"`
-	From    string    `json:"from"`            // sender agent id
+	From    string    `json:"from"`            // sender agent id (literal)
 	To      string    `json:"to,omitempty"`    // recipient agent id; empty = broadcast to the island
 	Topic   string    `json:"topic,omitempty"` // optional channel within the island
 	Payload string    `json:"payload"`
 	Time    time.Time `json:"time"`
+	// Origin is daemon-stamped provenance, set ONLY for messages delivered from
+	// another island over a brokered link (Lane 5). nil for ordinary intra-island
+	// messages. Agents cannot set it — see DeliverExternal vs Send.
+	Origin *Origin `json:"origin,omitempty"`
+}
+
+// Origin marks a message that entered this island's mailbox from ANOTHER island
+// over a brokered link. It's machine-read provenance (SDK / activity feed / audit
+// tooling branch on CrossIsland) — a structured field rather than a parseable
+// sender-string prefix, and unforgeable because only the daemon's cross-island
+// delivery path sets it.
+type Origin struct {
+	SourceIsland string `json:"source_island"`
+	CrossIsland  bool   `json:"cross_island"`
 }
 
 // Store is an in-memory, per-island ring of recent messages. Intra-island
@@ -55,6 +69,27 @@ func (s *Store) Send(island, from, to, topic, payload string) Message {
 	q := append(s.byIsl[island], m)
 	if len(q) > s.max {
 		q = q[len(q)-s.max:] // evict oldest
+	}
+	s.byIsl[island] = q
+	return m
+}
+
+// DeliverExternal appends a message delivered into `island`'s mailbox from
+// another island (sourceIsland) over a brokered link, stamping daemon-controlled
+// Origin (CrossIsland=true). `from` is the source agent's literal id and `to` the
+// local recipient agent. It is distinct from Send precisely so the intra-island
+// path can never set Origin — provenance is the daemon's to assert.
+func (s *Store) DeliverExternal(island, sourceIsland, from, to, topic, payload string) Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq++
+	m := Message{
+		Seq: s.seq, Island: island, From: from, To: to, Topic: topic, Payload: payload, Time: s.now(),
+		Origin: &Origin{SourceIsland: sourceIsland, CrossIsland: true},
+	}
+	q := append(s.byIsl[island], m)
+	if len(q) > s.max {
+		q = q[len(q)-s.max:]
 	}
 	s.byIsl[island] = q
 	return m
