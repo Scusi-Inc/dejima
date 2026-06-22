@@ -189,6 +189,7 @@ func newRootCmd() *cobra.Command {
 		newConnectCmd(),
 		newLsCmd(),
 		newAgentCmd(),
+		newMsgCmd(),
 		newTermCmd(),
 		newStatusCmd(),
 		newHibernateCmd(),

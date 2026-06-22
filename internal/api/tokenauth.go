@@ -81,6 +81,8 @@ var tokenRouteAccess = map[string]tokenAccess{
 	"POST /v1/islands/{name}/port/export":    accessOwnIsland,
 	"POST /v1/islands/{name}/port/write":     accessOwnIsland,
 	"POST /v1/islands/{name}/exec":           accessOwnIsland,
+	"POST /v1/islands/{name}/mailbox":        accessOwnIsland, // intra-island agent messaging (Lane 5 P1)
+	"GET /v1/islands/{name}/mailbox":         accessOwnIsland,
 	"GET /v1/islands/{name}/files/{path...}": accessOwnIsland,
 	"PUT /v1/islands/{name}/files/{path...}": accessOwnIsland,
 }
