@@ -14,19 +14,19 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 ---
 
 ## 1. Island lifecycle
-- [ ] `init` / `new` / `create` — create an island from a repo · CLI/API/TUI · T2 · M
+- [x] `init` / `new` / `create` — create an island from a repo · CLI/API/TUI · T2 · A
 - [ ] create from a private repo (GitHub creds) · T2/T4 · M
 - [ ] `ls` / `list` — list islands + states · CLI/API/TUI · T1/T2 · M
-- [ ] `status <name>` / `info <island>` — status + details · CLI/API · T2 · M
+- [x] `status <name>` / `info <island>` — status + details · CLI/API · T2 · A
 - [ ] `GET workspace-ready` — readiness gate · API · T2 · ▢
-- [ ] `clone <name> <new-name>` — duplicate an island · T2 · M
-- [ ] `hibernate <name>` — stop container, keep state · CLI/API/TUI · T2 · M
+- [x] `clone <name> <new-name>` — duplicate an island · T2 · A
+- [x] `hibernate <name>` — stop container, keep state · CLI/API/TUI · T2 · A
 - [ ] `wake <name>` — resume hibernated island · T2 · M
 - [ ] `reset <name>` — reset island · T2 · M
-- [ ] `upgrade [name]` — re-pull base image / migrate · T2 · M
-- [ ] `purge <name>` — destroy island · CLI/API/TUI · T2 · M
-- [ ] purge **unpushed-work guard** — refuse/confirm when commits unpushed · T2 · M
-- [ ] `force-purge` / `purge-force` — override the guard · TUI/CLI · T2 · M
+- [x] `upgrade [name]` — re-pull base image / migrate · T2 · A
+- [x] `purge <name>` — destroy island · CLI/API/TUI · T2 · A
+- [x] purge **unpushed-work guard** — refuse/confirm when commits unpushed · T2 · A
+- [x] `force-purge` / `purge-force` — override the guard · TUI/CLI · T2 · A
 - [ ] `recreate-island` (TUI) — recreate after OOM/resource change · T3 · M
 - [ ] `relabel`/`rename-island` — change title · CLI(PATCH)/TUI · T1/T2 · M
 - [ ] `resources` (PUT) — set per-island memory/CPU/OOM-priority · T2/T3 · M
@@ -49,7 +49,7 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] **terminal auto-reconnect** — drop link (daemon restart / sleep-wake) → reattaches, doesn't close · T3 · M
 - [ ] multi-attach (two clients, same session) · T3 · M
 - [ ] terminal resize propagation · T3 · M
-- [ ] `exec <name> -- <cmd>` — one-shot exec · CLI/API · T2 · M
+- [x] `exec <name> -- <cmd>` — one-shot exec · CLI/API · T2 · A
 - [ ] host `terminals` create/ls/rm/relabel + `session` (owner-only) · CLI/API/TUI · T3 · M
 - [ ] clean detach (Ctrl-b d) exits without killing the agent · T3 · M
 
