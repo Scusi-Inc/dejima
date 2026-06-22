@@ -319,3 +319,75 @@ Then: `dejima init --repo … --agent aider`.
 - **A task model.** Today, an island has one current agent process. There's
   no concept of queued tasks, retries, parents/children, etc. By design — see
   the v1 spec for why.
+
+---
+
+## Inter-island recipient contract + wake-on-message (Lane 5, Phase 3.5)
+
+When an island receives cross-island mail or a delegated action (the brokered
+`link` layer), two things matter to an agent author: **how to act on it safely**,
+and **how the agent gets woken to look**.
+
+### The recipient action-handler contract (security-critical)
+
+A cross-island **action** arrives as a `mailbox.Message` with a **daemon-stamped**
+`Action` field set and `Origin.CrossIsland = true`. The daemon-stamp is the trust
+signal: an agent **cannot forge** `Action`/`Origin` — only the daemon's gated
+delivery path (`DeliverAction`/`DeliverExternal`) sets them, and an ordinary
+intra-island `dejima msg send` whose `from` starts with the reserved `link:`
+prefix is rejected.
+
+So a recipient agent **MUST**:
+
+1. **Act on actions only when `message.action` is set.** Dispatch on
+   `action.type` — a verb the island *exposed* (`dejima link expose`). Never treat
+   a free-form `payload` (info-tier message) as an instruction to execute. Free
+   text is information; B acting on it is B's own capability-gated autonomy, not a
+   delegated action. This separation is what stops a prompt-injected upstream
+   agent from propagating actions downstream.
+2. **Ignore unknown/unexposed `action.type`.** It shouldn't arrive (the gate
+   blocks it), but ignore it as defense-in-depth.
+3. **Trust `origin` for provenance.** `origin.cross_island` / `origin.source_island`
+   are machine-read and unforgeable — branch on them, don't parse the sender string.
+
+Reference poll handler (shell sketch, runs in the island):
+
+```bash
+# Poll your mailbox; act ONLY on daemon-stamped actions, never on free-form payload.
+dejima msg poll --island "$DEJIMA_PROJECT_NAME" --agent "$DEJIMA_AGENT_ID" \
+  | jq -c '.messages[] | select(.action != null)' \
+  | while read -r m; do
+      type=$(jq -r '.action.type'  <<<"$m")
+      params=$(jq -r '.action.params // ""' <<<"$m")
+      case "$type" in
+        deploy)    run_deploy "$params" ;;       # a verb you exposed via `dejima link expose`
+        interrupt) signal_halt ;;                # hard-interrupt arrives as a gated action, not a flag
+        *)         : ;;                           # unknown → ignore (defense in depth)
+      esac
+    done
+# Info-tier messages (.action == null) are context for the agent to read — never executed.
+```
+
+### Wake-on-message (substrate; the actor-runtime twin of idle-hibernate)
+
+Delivery and authorization don't make an *idle* agent look. Dejima's
+`--wake-notify` (on by default) is the wake half of the actor model paired with
+`--idle-hibernate`:
+
+- **Default soft-notify (info tier).** On arrival, the daemon wakes a hibernated
+  recipient island, then injects a **batched pointer** (`📬 N new — dejima msg
+  poll`) into the agent's session **at a turn boundary only** (never mid-turn),
+  de-duped to one nudge per quiet period. Turn-boundary detection reuses the
+  agent-liveness heartbeat (`waiting-for-input` / `task-complete`); an agent with
+  no heartbeat simply relies on polling (Dejima won't risk a mid-turn injection).
+  Injection is a per-adapter seam — the default is a tmux PTY write; headless
+  agents that poll their own loop (e.g. OpenClaw) are skipped.
+- **Hard interrupt is NOT a message flag.** "Stop now" *clobbers* in-flight work
+  and would be a DoS vector if ungated, so it is an **exposed action** routed
+  through the Phase-3 gate (deny-all + pre-auth/approval + audited) — e.g. expose
+  an `interrupt` action whose handler signals the agent to halt. Never add an
+  interrupt flag to ordinary messages.
+- **App-layer override.** Every arrival also emits a `mailbox.arrival` event on
+  the webhook/event stream (island, agent, `cross_island`/`action` flags — never
+  the body). A wrapper can subscribe to implement custom routing/priority; set
+  `--wake-notify=0` (or `DEJIMAD_WAKE_NOTIFY=0`) to turn off the built-in default.

@@ -59,6 +59,7 @@ func main() {
 		auditHMACKeyFile string
 
 		idleHibernate time.Duration
+		wakeNotify    bool
 	)
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
@@ -73,6 +74,7 @@ func main() {
 	flag.BoolVar(&auditReads, "audit-reads", os.Getenv("DEJIMAD_AUDIT_READS") == "1", "with --audit, also record read (GET) requests; default records state-changing requests + lifecycle only.")
 	flag.StringVar(&auditHMACKeyFile, "audit-hmac-key-file", os.Getenv("DEJIMAD_AUDIT_HMAC_KEY_FILE"), "path to a file holding an HMAC key; when set, the ledger chain is keyed (HMAC-SHA-256) so tamper-detection requires the key. Set on a FRESH ledger only.")
 	flag.DurationVar(&idleHibernate, "idle-hibernate", envDuration("DEJIMAD_IDLE_HIBERNATE"), "hibernate a running island after this much idle time (no attached client, no live agent), e.g. \"4h\". Zero (default) disables it. Never touches an island with a live agent.")
+	flag.BoolVar(&wakeNotify, "wake-notify", os.Getenv("DEJIMAD_WAKE_NOTIFY") != "0", "wake-on-message: nudge an idle agent (at its turn boundary) and wake a hibernated island when mail arrives. On by default; the mailbox.arrival event fires either way for wrapper-defined policy.")
 	flag.Parse()
 	_ = foreground
 
@@ -88,7 +90,7 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
 	if err := run(log, tcpAddr, tokenAddr, autonomyDial, sshAddr, hostTerminals, requireToken,
-		auditConfig{enabled: audit, reads: auditReads, hmacKeyFile: auditHMACKeyFile}, idleHibernate); err != nil {
+		auditConfig{enabled: audit, reads: auditReads, hmacKeyFile: auditHMACKeyFile}, idleHibernate, wakeNotify); err != nil {
 		log.Error("dejimad fatal", "err", err)
 		os.Exit(1)
 	}
@@ -106,7 +108,7 @@ type auditConfig struct {
 // socket is no longer mounted into containers — this is the only in-island path.
 const defaultTokenAddr = "127.0.0.1:7274"
 
-func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hostTerminals, requireToken bool, audit auditConfig, idleHibernate time.Duration) error {
+func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hostTerminals, requireToken bool, audit auditConfig, idleHibernate time.Duration, wakeNotify bool) error {
 	socketPath, err := paths.SocketPath()
 	if err != nil {
 		return err
@@ -305,6 +307,8 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hos
 	server.EmitDaemonStarted(listenModes)
 	go server.RunWatchdog(ctx, 0)
 	go server.RunIdleHibernator(ctx, idleHibernate) // no-op when idleHibernate == 0
+	server.SetWakeNotify(wakeNotify)
+	go server.RunWakeNotifier(ctx) // wake-on-message (Lane 5 P3.5); no-op when disabled
 
 	select {
 	case <-ctx.Done():

@@ -56,11 +56,12 @@ type Origin struct {
 // coordination is ephemeral by design in Phase 1 — durable mail is a later
 // concern; the ring bounds memory so a chatty island can't grow unbounded.
 type Store struct {
-	mu    sync.Mutex
-	seq   int64
-	max   int
-	byIsl map[string][]Message
-	now   func() time.Time // injectable for tests
+	mu      sync.Mutex
+	seq     int64
+	max     int
+	byIsl   map[string][]Message
+	now     func() time.Time // injectable for tests
+	arrival func(m Message)  // optional: fired (async) after each delivery, for wake-on-message
 }
 
 // NewStore returns a store retaining up to maxPerIsland messages per island.
@@ -71,12 +72,30 @@ func NewStore(maxPerIsland int) *Store {
 	return &Store{max: maxPerIsland, byIsl: map[string][]Message{}, now: time.Now}
 }
 
+// SetArrivalHook registers a callback fired (in its own goroutine, so it never
+// holds the store lock or blocks the sender) after every message is appended —
+// the wake-on-message seam (Lane 5 Phase 3.5). nil disables it.
+func (s *Store) SetArrivalHook(fn func(m Message)) {
+	s.mu.Lock()
+	s.arrival = fn
+	s.mu.Unlock()
+}
+
+// notify fires the arrival hook off the lock. Caller must NOT hold s.mu.
+func (s *Store) notify(m Message) {
+	s.mu.Lock()
+	fn := s.arrival
+	s.mu.Unlock()
+	if fn != nil {
+		go fn(m)
+	}
+}
+
 // Send appends a message to an island's ring and returns it with Seq/Time set.
 // from is the sender agent id; to is a recipient agent id, or "" to broadcast to
 // every agent in the island.
 func (s *Store) Send(island, from, to, topic, payload string) Message {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.seq++
 	m := Message{Seq: s.seq, Island: island, From: from, To: to, Topic: topic, Payload: payload, Time: s.now()}
 	q := append(s.byIsl[island], m)
@@ -84,6 +103,8 @@ func (s *Store) Send(island, from, to, topic, payload string) Message {
 		q = q[len(q)-s.max:] // evict oldest
 	}
 	s.byIsl[island] = q
+	s.mu.Unlock()
+	s.notify(m)
 	return m
 }
 
@@ -94,7 +115,6 @@ func (s *Store) Send(island, from, to, topic, payload string) Message {
 // path can never set Origin — provenance is the daemon's to assert.
 func (s *Store) DeliverExternal(island, sourceIsland, from, to, topic, payload string) Message {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.seq++
 	m := Message{
 		Seq: s.seq, Island: island, From: from, To: to, Topic: topic, Payload: payload, Time: s.now(),
@@ -105,6 +125,8 @@ func (s *Store) DeliverExternal(island, sourceIsland, from, to, topic, payload s
 		q = q[len(q)-s.max:]
 	}
 	s.byIsl[island] = q
+	s.mu.Unlock()
+	s.notify(m)
 	return m
 }
 
@@ -115,7 +137,6 @@ func (s *Store) DeliverExternal(island, sourceIsland, from, to, topic, payload s
 // the gated action path can mark a message as an action.
 func (s *Store) DeliverAction(island, sourceIsland, from, to, topic, actionType, params string) Message {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.seq++
 	m := Message{
 		Seq: s.seq, Island: island, From: from, To: to, Topic: topic, Time: s.now(),
@@ -127,6 +148,8 @@ func (s *Store) DeliverAction(island, sourceIsland, from, to, topic, actionType,
 		q = q[len(q)-s.max:]
 	}
 	s.byIsl[island] = q
+	s.mu.Unlock()
+	s.notify(m)
 	return m
 }
 
