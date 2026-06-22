@@ -1,8 +1,8 @@
-# dejima — TypeScript/JavaScript client
+# @dejima/sdk — TypeScript/JavaScript client
 
 Thin client for the [Dejima](https://dejima.tech/) API: run a fleet of
 AI coding agents on hardware you own. Mirrors the
-[Python client](https://pypi.org/project/dejima/).
+[Python client](https://pypi.org/project/dejima-sdk/).
 
 > **Alpha (0.x).** The API is stable in shape (`v1/`-prefixed) but fields may
 > change until `1.0`. The REST layer mirrors
@@ -12,7 +12,7 @@ AI coding agents on hardware you own. Mirrors the
 ## Install
 
 ```bash
-npm install dejima
+npm install @dejima/sdk
 # attach() uses the global WebSocket (Node 22+/browser) when present,
 # else falls back to the optional `ws` package:
 npm install ws        # only for Node < 22 with token auth
@@ -23,7 +23,7 @@ Requires Node 18+ (uses the global `fetch` and `AbortController`). ESM-only.
 ## Quickstart
 
 ```ts
-import { Client } from "dejima";
+import { Client } from "@dejima/sdk";
 
 // host/token from $DEJIMA_HOST and $DEJIMA_TOKEN, or pass explicitly:
 const dj = new Client({ host: "100.84.12.7:7273" });

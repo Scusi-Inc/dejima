@@ -1,5 +1,5 @@
 {
-  "name": "dejima",
+  "name": "@dejima/sdk",
   "version": "0.1.0",
   "description": "TypeScript/JavaScript client for the Dejima API — run a fleet of AI coding agents on hardware you own.",
   "license": "MIT",
@@ -20,7 +20,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "keywords": ["dejima", "ai-agents", "claude-code", "codex", "sandbox", "self-hosted"],
-  "homepage": "https://aoos.github.io/dejima/",
+  "homepage": "https://dejima.tech/",
   "repository": { "type": "git", "url": "git+https://github.com/aoos/dejima.git", "directory": "sdk/ts" },
   "bugs": { "url": "https://github.com/aoos/dejima/issues" },
   "devDependencies": {

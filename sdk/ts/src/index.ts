@@ -2,7 +2,7 @@
  * Dejima — TypeScript/JavaScript client for the Dejima API.
  *
  * ```ts
- * import { Client } from "dejima";
+ * import { Client } from "@dejima/sdk";
  * const dj = new Client();                 // reads DEJIMA_HOST / DEJIMA_TOKEN
  * const isl = await dj.createIsland("git@github.com:you/foo.git", { agent: "claude-code" });
  * console.log(await dj.listIslands());
