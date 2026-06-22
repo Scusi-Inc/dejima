@@ -24,20 +24,40 @@ the "planning bucket" headings below):
   (tokens/roles/activity feed), audited MCP brokering, Python/TS SDKs + OpenAPI.
 - **0.5** — "up in minutes" (shipped, **v0.5.0**): `onboard --provision-host` wizard,
   adaptive first-run + connection-failure prompts, mac-mini runbook; SDK publish
-  wiring (PyPI/npm); Keychain secrets + idle auto-hibernate. ← here
-- **0.6** — collaboration + completeness (**next; design-gated**): inter-agent +
-  inter-island exchange (Lane 5, brokered/audited — needs the design pass +
-  `positioning.md` call first), Port read-normalization + live brokered mount,
-  macOS Shortcuts capability adapter, first-class framework adapters (Letta/Hermes/Goose).
+  wiring (PyPI/npm); Keychain secrets + idle auto-hibernate.
+- **0.6** — collaboration + completeness (**in progress**): inter-island exchange
+  (Lane 5 — mailbox, brokered info link, deny-all action-delegation gate,
+  wake-on-message; **code-complete on master, awaiting Minion live-verify**), Port
+  read-normalization (shipped), macOS Shortcuts capability adapter (shipped),
+  first-class framework adapters (Letta/Hermes/Goose, #21). ← here
 - **0.7–0.8** — hardening: trust-on-first-use, per-island egress allow-list,
   observability rollups, webhook-security hardening, watchdog polish.
 - **0.9** — public **beta**: feature-complete; web/PWA reference client; optional
   microVM backend; backup/restore.
 - **1.0.0** — API frozen, "safe to build on"; SDKs go semver-stable.
 
-Current: **`v0.5.0`**. Each minor tag is cut only after the **Release testing &
-verification** checklist below passes on a live host (Minion). Next minor (`0.6`)
-is design-gated on the inter-island decision.
+Current: **`v0.5.0`**. The **0.6 / inter-island wave is code-complete on master**
+(mailbox → info link → action gate → wake-on-message); **`v0.6.0` is gated on your
+Minion live-verify** — see **Operator action items** below. Each minor tag is cut only
+after the **Release testing & verification** checklist passes on a live host (Minion).
+
+---
+
+## 📋 Operator action items (you)
+
+The things only you can do (on Minion / as owner), in priority order:
+
+1. **Live-verify the inter-island wave → then cut `v0.6.0`.** Follow
+   [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md):
+   deny-all → grant → cross-island message → action approve/deny → fail-closed →
+   **wake-on-message (does Claude Code actually wake from the tmux nudge + from
+   hibernation?)**. All pass → tag `v0.6.0`.
+2. **Clear the standing Minion backlog** (onboarding wizard, terminal auto-reconnect,
+   Keychain secrets, idle auto-hibernate, viewer-token scope) — see the Release-testing
+   checklist below + the Operator verification queue.
+3. **SDK publish:** claim the `dejima` name on **PyPI** + **npm**, add repo secrets
+   `PYPI_API_TOKEN` / `NPM_TOKEN`, then push a `v*` tag (or `workflow_dispatch`).
+4. **Housekeeping:** remove the stray `.agents/d7` worktree (see Housekeeping below).
 
 ---
 
@@ -164,6 +184,12 @@ git -C <dejima checkout> worktree prune
 
 These shipped to `master` with unit/security review but can't be exercised from the
 build island (no live Docker/macOS host here). Run them on Minion and feed findings back.
+
+- [ ] **Inter-island exchange (Lane 5, Phases 1–3.5) — full live-verify** → gates `v0.6.0`.
+  Run [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md) on Minion:
+  deny-all default, grant + cross-island delivery (tagged + ledgered), action-gate approve/deny
+  (gated + audited), agent-can't-self-approve, fail-closed, and **wake-on-message** (Claude Code
+  wakes from the tmux nudge + from hibernation; a busy agent is not interrupted mid-turn).
 
 - [x] **OpenClaw idles in a Home Island, not crash-loops.** Verified on Minion 2026-06-15:
   `dejima home create --agent openclaw` self-installs openclaw (`2026.6.6`) and the gateway
