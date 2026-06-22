@@ -95,6 +95,12 @@ built-but-not-yet-live-verified items; this is the standing checklist.)
 
 **Gate:** cut the version tag only after the live checklist passes on Minion.
 
+**Two companion docs:** the **exhaustive automated target** is
+[`testing/test-coverage-matrix.md`](testing/test-coverage-matrix.md) (~150 items; Lane 6
+drives each row's `Now` → `A`), and the **curated human pass** you run per release is
+[`operator-tests/release-acceptance.md`](operator-tests/release-acceptance.md). As the
+matrix automates, the human pass shrinks toward just the go/no-go + real-world/UX eyeball.
+
 ---
 
 ## 🎯 Committed build queue — post-0.1.0 (in order)
