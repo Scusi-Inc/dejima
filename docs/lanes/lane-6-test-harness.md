@@ -3,9 +3,11 @@
 You are the **Test-Harness** agent. Build **Phase A** — everything that needs **no
 external accounts** and catches regressions **on every PR**. The goal is to start
 replacing the manual Minion verification pass with automation. Full design + tiers +
-phasing: **`docs/testing/automated-test-harness.md`** (read it first), plus
-`scripts/integration.sh` (the existing Docker suite — your Tier-2 base), `cmd/dejima`
-(CLI), the bubbletea TUI, and `internal/api` (handlers).
+phasing: **`docs/testing/automated-test-harness.md`** (read it first). Your **checklist
+of what to cover** is **`docs/testing/test-coverage-matrix.md`** — ~150 items mapped to
+tiers; work the `T1`/`T2` rows and flip `Now` from `▢`/`M` to `A` as you automate them.
+Also read `scripts/integration.sh` (the existing Docker suite — your Tier-2 base),
+`cmd/dejima` (CLI), the bubbletea TUI, and `internal/api` (handlers).
 
 ## Phase A scope (each its own small PR)
 
