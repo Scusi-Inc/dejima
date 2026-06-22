@@ -54,6 +54,14 @@ type Server struct {
 	mailbox   *mailbox.Store // intra-island agent message ring (Lane 5, Phase 1)
 	linkQueue *link.Queue    // pending cross-island action approvals (Lane 5, Phase 3; in-memory, fail-closed)
 
+	// Wake-on-message (Lane 5, Phase 3.5). wakeEnabled gates the default
+	// soft-notify; wakeNudges batches pending notifications. injectFn/idleFn are
+	// the session-inject + turn-boundary seams (swapped in tests).
+	wakeEnabled bool
+	wakeNudges  *wakeNotifier
+	injectFn    func(ctx context.Context, p *project.Project, a *project.AgentSpec, text string) error
+	idleFn      func(island, agent string) bool
+
 	// In-memory ring buffer of recent attach/detach events. Bounded so the
 	// daemon never accumulates client history indefinitely. Not persisted —
 	// daemon restart loses it. Surveillance-free by design.
@@ -206,7 +214,7 @@ func (s *Server) volumeSizes(ctx context.Context) map[string]int64 {
 
 // NewServer constructs a server backed by the given runtime.
 func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server {
-	return &Server{
+	s := &Server{
 		rt:          rt,
 		log:         log,
 		locks:       map[string]*sync.Mutex{},
@@ -214,6 +222,8 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		events:      ev,
 		mailbox:     mailbox.NewStore(256),
 		linkQueue:   link.NewQueue(15 * time.Minute),
+		wakeEnabled: true, // default soft-notify on, so it works with no wrapper
+		wakeNudges:  newWakeNotifier(),
 		historyCap:  200,
 		agentStates: map[string]AgentStateInfo{},
 		agentErrors: map[string]agentErrInfo{},
@@ -222,7 +232,17 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		reposFetch:  githubid.ListRepos,
 		startedAt:   time.Now().UTC(),
 	}
+	// Wake-on-message seams (swappable in tests) + the store's arrival hook.
+	s.injectFn = s.tmuxInject
+	s.idleFn = s.agentIdleAtBoundary
+	s.mailbox.SetArrivalHook(s.onMailboxArrival)
+	return s
 }
+
+// SetWakeNotify toggles the default wake-on-message soft-notify (Lane 5 P3.5).
+// The mailbox.arrival event still fires either way (the wrapper override path);
+// this only gates Dejima's built-in nudge + wake-from-hibernate.
+func (s *Server) SetWakeNotify(on bool) { s.wakeEnabled = on }
 
 // recordClientHistory appends an attach/detach event to the ring buffer.
 func (s *Server) recordClientHistory(e ClientHistoryEntry) {

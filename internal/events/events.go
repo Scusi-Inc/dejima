@@ -36,6 +36,12 @@ const (
 	// needs operator approval. Fires so an operator can approve/deny from a phone
 	// notification; the payload carries from/to islands + the action type.
 	TypeLinkActionPending Type = "link.action-pending"
+
+	// Mailbox arrival (Lane 5, Phase 3.5): a message landed in an agent's mailbox.
+	// The wake-on-message seam — Dejima's default soft-notify acts on it, and a
+	// wrapper can subscribe to implement its own routing/priority. Payload carries
+	// island/agent and cross_island/action flags (never the message body).
+	TypeMailboxArrival Type = "mailbox.arrival"
 )
 
 // catalog is every event type a subscriber can filter on, in display order.
