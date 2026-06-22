@@ -99,3 +99,31 @@ jobs:
           git add Formula/dejima.rb
           git commit -m "dejima ${GITHUB_REF_NAME}"
           git push
+
+  # Publish the `dejima` npm package (the CLI wrapper in npm/). Runs after the
+  # release so the binary + SHA256SUMS the wrapper downloads already exist.
+  # No-ops cleanly unless NPM_TOKEN is set; skips pre-release tags.
+  publish-npm-cli:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Stamp version + publish
+        working-directory: npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::notice::NPM_TOKEN not set — skipping npm CLI publish for ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          # --ignore-scripts: don't run the postinstall download on the publisher.
+          npm publish --ignore-scripts --access public
