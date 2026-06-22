@@ -16,7 +16,7 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 ## 1. Island lifecycle
 - [x] `init` / `new` / `create` — create an island from a repo · CLI/API/TUI · T2 · A
 - [ ] create from a private repo (GitHub creds) · T2/T4 · M
-- [ ] `ls` / `list` — list islands + states · CLI/API/TUI · T1/T2 · M
+- [x] `ls` / `list` — list islands + states · CLI/API/TUI · T1/T2 · A
 - [x] `status <name>` / `info <island>` — status + details · CLI/API · T2 · A
 - [ ] `GET workspace-ready` — readiness gate · API · T2 · ▢
 - [x] `clone <name> <new-name>` — duplicate an island · T2 · A
@@ -33,13 +33,13 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] island survives daemon restart (state persists) · T2 · M
 
 ## 2. Agents
-- [ ] `agent add <island>` — add an agent (own git worktree/branch) · CLI/API/TUI · T2 · M
-- [ ] `agent ls/list <island>` — list agents + states · CLI/API · T2 · M
+- [x] `agent add <island>` — add an agent (own git worktree/branch) · CLI/API/TUI · T2 · A
+- [x] `agent ls/list <island>` — list agents + states · CLI/API · T2 · A
 - [ ] `agent rm <island> <agent-id>` — remove agent (worktree cleanup) · CLI/API/TUI · T2 · M
 - [ ] `agent config` get/set (`PATCH .../config`) · CLI/API · T2 · M
 - [ ] `relabel-agent` / `agent relabel` — rename · TUI/CLI · T2 · M
 - [ ] `agent open <island> [id]` — open agent UI/url · CLI · T2 · M
-- [ ] `agent-types` / `types` — capability discovery · CLI/API · T1 · M
+- [x] `agent-types` / `types` — capability discovery · CLI/API · T1 · A
 - [ ] per-agent **idle-seconds** metric emitted · API(`/metrics`) · T2 · A
 - [ ] agent worktree isolation (no cross-agent file collision) · T2 · M
 
@@ -110,7 +110,7 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 
 ## 9. Audit & activity
 - [ ] `audit` record (api.request + lifecycle) · API · T2 · A
-- [ ] `audit` filter (actor/type/island/time) · CLI · T2 · A
+- [x] `audit` filter (actor/type/island/time) · CLI · T2 · A
 - [ ] `audit --verify` (tamper-evident hash chain) · T1/T2 · A
 - [ ] `audit --export jsonl|csv` · T2 · A
 - [ ] optional HMAC keying · T2 · M
