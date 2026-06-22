@@ -93,12 +93,17 @@ jobs:
           cd tap
           git config user.name  "dejima-release-bot"
           git config user.email "release-bot@users.noreply.github.com"
-          if git diff --quiet -- Formula/dejima.rb; then
+          # Stage first, then check the *staged* diff — `git diff --quiet` alone
+          # ignores untracked files, so on a fresh/empty tap it would skip the
+          # very first commit. `--cached` catches both new and modified formulas.
+          git add Formula/dejima.rb
+          if git diff --cached --quiet; then
             echo "tap already up to date for ${GITHUB_REF_NAME}"; exit 0
           fi
-          git add Formula/dejima.rb
           git commit -m "dejima ${GITHUB_REF_NAME}"
-          git push
+          # Push to the tap's default branch explicitly: cloning an empty repo
+          # can leave HEAD on a differently-named local branch.
+          git push origin HEAD:main
 
   # Publish the `dejima` npm package (the CLI wrapper in npm/). Runs after the
   # release so the binary + SHA256SUMS the wrapper downloads already exist.
