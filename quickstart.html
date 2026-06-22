@@ -71,7 +71,7 @@
   <ol>
     <li><strong>Open Terminal.</strong> Press <kbd>⌘</kbd>-<kbd>Space</kbd>, type <em>Terminal</em>, hit Enter. Any working directory is fine — the installer uses <code>~/.dejima-src</code> regardless.</li>
     <li><strong>Run the installer:</strong>
-<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
+<pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
       <p class="small">It does all of this in order:</p>
       <ul>
         <li>Offers to install <strong>Tailscale</strong> (Homebrew) if missing, then walks you through <code>sudo tailscale up</code> — a browser tab opens to sign in to your tailnet.</li>
@@ -108,7 +108,7 @@ sudo systemctl enable --now docker
 sudo usermod -aG docker $USER       # log out + back in for group to take effect</code></pre>
     </li>
     <li><strong>Run the installer:</strong>
-<pre><code>curl -fsSL https://aoos.github.io/dejima/install.sh | bash</code></pre>
+<pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
       <p class="small">It does all of this in order:</p>
       <ul>
         <li>Offers to install <strong>Tailscale</strong> (official install script) if missing, then walks you through <code>sudo tailscale up</code>.</li>
@@ -146,7 +146,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
   <ol>
     <li><strong>Open Terminal.</strong> <kbd>⌘</kbd>-<kbd>Space</kbd> → <em>Terminal</em> → Enter.</li>
     <li><strong>Run the client installer:</strong>
-<pre><code>curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash</code></pre>
+<pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
       <p class="small">It does all of this in order:</p>
       <ul>
         <li>Offers to install <strong>Tailscale</strong> if missing, then walks you through <code>sudo tailscale up</code> — sign in to the <em>same tailnet</em> as your server.</li>
@@ -166,7 +166,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
   <ol>
     <li><strong>Open a terminal.</strong> Your usual one.</li>
     <li><strong>Run the client installer:</strong>
-<pre><code>curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash</code></pre>
+<pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
       <p class="small">It does all of this in order:</p>
       <ul>
         <li>Offers to install <strong>Tailscale</strong> (official install script) if missing, then walks you through <code>sudo tailscale up</code> — sign in to the <em>same tailnet</em> as your server.</li>
@@ -186,7 +186,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
   <ol>
     <li><strong>Open PowerShell.</strong> Press the Windows key, type <em>PowerShell</em>, press Enter. Any working directory is fine.</li>
     <li><strong>Run the client installer:</strong>
-<pre><code>irm https://aoos.github.io/dejima/install-client.ps1 | iex</code></pre>
+<pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
       <p class="small">It does all of this in order:</p>
       <ul>
         <li>Offers to install <strong>Tailscale</strong> via <code>winget</code> if missing. Then points you at the system-tray icon: right-click → <em>Log in</em>, sign in to the <em>same tailnet</em> as your server. (Tailscale sign-in is GUI-driven on Windows, so the installer can't fully automate it.)</li>

@@ -3,7 +3,7 @@
 # daemon; no Go, no Docker, no daemon. The full server stack is Unix-only.
 #
 # Usage (in PowerShell):
-#   irm https://aoos.github.io/dejima/install-client.ps1 | iex
+#   irm https://dejima.tech/install-client.ps1 | iex
 #
 # Knobs (set before running):
 #   $env:DEJIMA_VERSION    release tag to install (default: latest, e.g. v0.1.0)

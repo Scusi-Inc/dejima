@@ -4,7 +4,7 @@
 # no Go, no Docker, no daemon. For the full server stack, use install.sh instead.
 #
 # Usage:
-#   curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash
+#   curl -fsSL https://dejima.tech/install-client.sh | bash
 #
 # Knobs:
 #   DEJIMA_VERSION   release tag to install (default: latest, e.g. v0.1.0)

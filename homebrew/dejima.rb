@@ -16,7 +16,7 @@
 
 class Dejima < Formula
   desc "Substrate for multi-device AI agent workflows"
-  homepage "https://dejima.dev"
+  homepage "https://dejima.tech"
   version "0.1.0"
   license "Pre-public-release" # update to the chosen license before going public
 

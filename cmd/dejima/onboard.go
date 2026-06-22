@@ -618,8 +618,8 @@ func printOverview() error {
 	fmt.Println()
 	fmt.Println("More:")
 	fmt.Println("  Source:  https://github.com/aoos/dejima")
-	fmt.Println("  Install: https://aoos.github.io/dejima/")
-	fmt.Println("  API:     https://aoos.github.io/dejima/api.html")
+	fmt.Println("  Install: https://dejima.tech/")
+	fmt.Println("  API:     https://dejima.tech/api.html")
 	fmt.Println()
 	fmt.Println("Re-run this wizard anytime with `dejima onboard`.")
 	return nil

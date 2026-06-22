@@ -1,6 +1,6 @@
 # dejima — Python client
 
-Thin Python client for the [Dejima](https://aoos.github.io/dejima/) API: run a
+Thin Python client for the [Dejima](https://dejima.tech/) API: run a
 fleet of AI coding agents on hardware you own.
 
 > **Alpha (0.x).** The API is stable in shape (`v1/`-prefixed) but fields may

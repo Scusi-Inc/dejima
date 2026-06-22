@@ -78,26 +78,26 @@ The first-run wizard detects your environment (OS, Docker, Tailscale, dejimad pr
 If you already know you want the full server stack on this machine, the curl installer skips the wizard and gets you all the way there:
 
 ```bash
-curl -fsSL https://aoos.github.io/dejima/install.sh | bash
+curl -fsSL https://dejima.tech/install.sh | bash
 ```
 
 That bootstraps everything: installs Homebrew prereqs (Go, Docker Desktop if needed), clones the source to `~/.dejima-src`, builds the `dejima` + `dejimad` binaries, installs them to `/usr/local/bin`, builds the island image, registers the daemon as a launchd (macOS) or systemd user (Linux) service, and runs `dejima doctor` to verify. Idempotent — re-run to update.
 
-> The install URL above goes live the moment GitHub Pages is enabled on the repo (Settings → Pages → Branch: `master`, Folder: `/(root)`). Until then, fall back to the raw URL: `curl -fsSL https://raw.githubusercontent.com/aoos/dejima/master/install.sh | bash`. Once you've registered a custom domain (see [`docs/distribution.md`](docs/distribution.md)), `dejima.sh/install.sh` (or whichever TLD) becomes the canonical URL.
+> Served from GitHub Pages at the canonical domain `dejima.tech`. The bare GitHub Pages URL (`aoos.github.io/dejima/install.sh`) and the raw fallback (`raw.githubusercontent.com/aoos/dejima/master/install.sh`) resolve to the same script if DNS is mid-propagation.
 
 ### One-liner environment knobs
 
 ```bash
 # Auto-subscribe a push-notification webhook in the same step
-curl -fsSL https://aoos.github.io/dejima/install.sh \
+curl -fsSL https://dejima.tech/install.sh \
   | NOTIFY_URL=https://ntfy.sh/your-topic bash
 
 # Non-interactive (auto-install Docker without the y/n prompt)
-curl -fsSL https://aoos.github.io/dejima/install.sh \
+curl -fsSL https://dejima.tech/install.sh \
   | AUTO_INSTALL_DOCKER=1 bash
 
 # Install binaries to ~/.local/bin instead of /usr/local/bin (no sudo)
-curl -fsSL https://aoos.github.io/dejima/install.sh \
+curl -fsSL https://dejima.tech/install.sh \
   | PREFIX=$HOME/.local bash
 ```
 
@@ -124,7 +124,7 @@ To drive a remote Dejima daemon from your laptop or desktop, you only need the C
 ### macOS / Linux (one-liner — prebuilt binary)
 
 ```bash
-curl -fsSL https://aoos.github.io/dejima/install-client.sh | bash
+curl -fsSL https://dejima.tech/install-client.sh | bash
 ```
 
 The script:
@@ -146,7 +146,7 @@ dejima                # first-run wizard handles DEJIMA_HOST configuration
 ### Windows (PowerShell — prebuilt binary)
 
 ```powershell
-irm https://aoos.github.io/dejima/install-client.ps1 | iex
+irm https://dejima.tech/install-client.ps1 | iex
 ```
 
 The script:
