@@ -58,6 +58,11 @@ The things only you can do (on Minion / as owner), in priority order:
 3. **SDK publish:** claim the `dejima` name on **PyPI** + **npm**, add repo secrets
    `PYPI_API_TOKEN` / `NPM_TOKEN`, then push a `v*` tag (or `workflow_dispatch`).
 4. **Housekeeping:** remove the stray `.agents/d7` worktree (see Housekeeping below).
+5. **Automated test harness (only when you want the live tiers):** create the test
+   accounts/keys in [`testing/automated-test-harness.md`](testing/automated-test-harness.md)
+   → "Operator setup" — a dedicated macOS test user + a GitHub Actions self-hosted runner,
+   a throwaway GitHub account/PAT/test repo, and a throwaway agent key. **Phase A (the
+   per-PR CI tests) needs none of this** and can start immediately.
 
 ---
 
