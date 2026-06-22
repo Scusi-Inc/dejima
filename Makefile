@@ -18,7 +18,7 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
@@ -119,6 +119,15 @@ dejimad:
 
 test:
 	$(GO) test ./...
+
+# test-integration runs the full Tier-2 end-to-end suite against a LIVE Docker
+# host: lifecycle (ls/status/exec/hibernate/wake/upgrade/clone) + the purge
+# unpushed-work guard, Port (intake/export/traversal/ledger), MCP (grant/call/
+# ledger/revoke), audit (record/verify/export), and inter-island (deny-all/grant/
+# message/action/approve/deny). Requires docker (running), go, and git. It runs
+# in a throwaway $HOME and purges its test islands + daemon on exit.
+test-integration:
+	./scripts/integration.sh
 
 lint:
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed; skipping"; exit 0; }
