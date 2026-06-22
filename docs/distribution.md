@@ -1,75 +1,51 @@
-# Distribution Setup
+# Distribution & going public
 
-How to wire up the two short-install paths. These are one-time admin steps you take outside the repo.
+How `dejima` reaches users, what's already wired up in this repo, and the
+one-time manual steps that are yours to do (registrar DNS, GitHub repo/secret
+creation, license choice). The install matrix users see lives in the
+[README](../README.md#install).
 
----
+## Channels at a glance
 
-## Path A — GitHub Pages (gets you `aoos.github.io/dejima` right away)
+| Channel | User command | Delivers | Status |
+|---------|--------------|----------|--------|
+| Source curl | `curl -fsSL https://dejima.tech/install.sh \| bash` | full host (build + image + service) | ✅ live |
+| Client curl | `curl -fsSL https://dejima.tech/install-client.sh \| bash` | CLI binary | ✅ live |
+| Windows PS | `irm https://dejima.tech/install-client.ps1 \| iex` | CLI binary | ✅ live |
+| `go install` | `go install github.com/aoos/dejima/cmd/dejima@latest` | CLI from source | ✅ live |
+| Homebrew | `brew install aoos/dejima/dejima` | dejima + dejimad binaries | ⏳ needs tap repo + token |
+| npm | `npm install -g dejima` | CLI binary | ⏳ needs `NPM_TOKEN` |
 
-### 1. Enable GitHub Pages on `aoos/dejima`
-
-In the repo settings on GitHub:
-
-- **Settings → Pages**
-- **Source**: Deploy from a branch
-- **Branch**: `master` → folder `/(root)`
-- Save.
-
-(GitHub Pages only allows `/` or `/docs` as serving folders. The site files live at the repo root: `index.html`, `install.sh`. `.nojekyll` disables Jekyll processing so the other root files like `README.md` aren't rendered.)
-
-That's it. Within a minute, the install URL is live:
-
-```bash
-curl -fsSL https://aoos.github.io/dejima/install.sh | bash
-```
-
-The landing page is at `https://aoos.github.io/dejima/`.
-
-### 2. Verify
-
-```bash
-curl -fsSL https://aoos.github.io/dejima/install.sh | head -5
-```
-
-Should print the script's shebang and a few lines of comments.
-
-### Cost / effort
-
-Free. Five minutes. **This is the recommended first step.**
+All binary channels download the same [GitHub Release](https://github.com/aoos/dejima/releases)
+tarballs and checksum-verify against `SHA256SUMS`. The release pipeline
+(`.github/workflows/release.yml` + `make release-binaries`) is live and fires on
+every `v*` tag.
 
 ---
 
-## Path B — Custom short domain (e.g. `dejima.sh/install.sh`)
+## ✅ Already done in-repo
 
-If you want a brand-pure URL, add a custom domain on top of Path A.
+- **Custom domain** — `CNAME` (`dejima.tech`) committed; all install/landing/API
+  URLs point at it.
+- **GitHub Pages** — enabled, serving `master:/(root)` at `aoos.github.io/dejima/`.
+- **Release binaries** — tag-driven cross-compile of darwin/linux/windows ×
+  arm64/amd64, published with `SHA256SUMS`.
+- **Homebrew formula + auto-bump** — `scripts/gen-homebrew-formula.sh` is the
+  source of truth; `homebrew/dejima.rb` is its output for the latest release. The
+  `homebrew-tap` job in `release.yml` regenerates and pushes the formula to the
+  tap on each tag.
+- **npm CLI package** — `npm/` (postinstall download + checksum + bin shim). The
+  `publish-npm-cli` job in `release.yml` stamps the version and publishes on each
+  tag. The TS SDK was renamed to `@dejima/sdk` to free the bare `dejima` name.
 
-### 1. Register the domain
+## 🧑 Your one-time manual steps
 
-`dejima.dev` is squatted ($1,488 aftermarket). Realistic alternatives:
+### 1. Point `dejima.tech` DNS at GitHub Pages
 
-| Domain | Typical /yr | Notes |
-|--------|---|---|
-| `dejima.sh` | ~$32 | CLI-tool convention. Strongest brand fit. |
-| `dejima.app` | ~$14 | Clean, on-brand, broadly available. |
-| `dejima.io` | ~$45-60 | Classic dev TLD; check for premium pricing. |
-| `dejima.cc` | ~$12 | Cheap, unusual, fine. |
-| `getdejima.com` | ~$10 | Common product-site pattern. |
-
-Recommended registrar: **Cloudflare Registrar** for at-cost pricing.
-
-### 2. Add CNAME to the repo
-
-Create `web/CNAME` containing exactly your domain (no protocol, no trailing slash):
-
-```
-dejima.sh
-```
-
-Commit + push.
-
-### 3. Point DNS at GitHub Pages
-
-In your DNS provider's UI, add these records for the apex (`@`):
+At your registrar (Cloudflare Registrar gives at-cost pricing), add for the apex
+(`@`) — re-verify the IPs at
+[docs.github.com/pages](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site#configuring-an-apex-domain),
+GitHub rotates them occasionally:
 
 ```
 TYPE   NAME    VALUE
@@ -81,74 +57,65 @@ AAAA   @       2606:50c0:8000::153
 AAAA   @       2606:50c0:8001::153
 AAAA   @       2606:50c0:8002::153
 AAAA   @       2606:50c0:8003::153
+CNAME  www     aoos.github.io.
 ```
 
-(Re-verify the canonical IPs at [docs.github.com/en/pages](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site#configuring-an-apex-domain) before adding — GitHub updates them occasionally.)
+Then **Settings → Pages → Custom domain** → `dejima.tech` → Save, and tick
+**Enforce HTTPS** once the cert provisions (minutes to an hour). The committed
+`CNAME` makes Pages pick it up automatically.
 
-DNS propagation: usually minutes, occasionally hours.
-
-### 4. Update the install URL in the README
-
-Replace `https://aoos.github.io/dejima/install.sh` with `https://<your-domain>/install.sh`. That's the only string change needed.
-
-### 5. Verify
+Verify:
 
 ```bash
-curl -fsSL https://<your-domain>/install.sh | head -5
+curl -fsSL https://dejima.tech/install.sh | head -5
 ```
 
-### Cost / effort
+### 2. Create the Homebrew tap + token
 
-$10–$45 / year depending on TLD, ~30 minutes of setup.
+1. Create a public repo **`aoos/homebrew-dejima`** (Homebrew discovers taps by
+   this exact name). Empty is fine — the release CI populates
+   `Formula/dejima.rb`. To seed it now: copy this repo's `homebrew/dejima.rb` to
+   `Formula/dejima.rb` there.
+2. Create a token with `contents:write` on `aoos/homebrew-dejima` (a
+   fine-grained PAT scoped to that one repo, or a classic PAT with `repo`) and add
+   it as the **`HOMEBREW_TAP_TOKEN`** Actions secret on `aoos/dejima`.
 
----
+Then `brew install aoos/dejima/dejima` works after the next tag (or immediately
+if you seeded the formula). `brew install --HEAD aoos/dejima/dejima` builds from
+source and needs neither.
 
-## Path B — `brew install aoos/dejima/dejima`
+### 3. Add the npm token
 
-### 1. Create the tap repository
+Create an npm automation token (npmjs.com → Access Tokens) for the account that
+will own `dejima` + `@dejima/sdk`, and add it as the **`NPM_TOKEN`** Actions
+secret on `aoos/dejima`. The `@dejima` scope must exist on that account/org
+(create the org once on npm). The next tag then publishes both `dejima` (CLI) and
+`@dejima/sdk`.
 
-On GitHub, create a new public repo named **exactly** `homebrew-dejima` under your account (so the full path is `github.com/aoos/homebrew-dejima`). Homebrew discovers taps via this naming convention.
+### 4. Pick a license
 
-### 2. Add the formula
+`LICENSE`, the formula, and `npm/package.json` all say `Pre-public-release`.
+Choose a real license (e.g. Apache-2.0 / MIT for OSS, or a source-available
+license) and set it in all three before publishing. Required for npm/brew
+metadata and for any future homebrew-core submission.
 
-Copy `homebrew/dejima.rb` from this repo into the new tap repo at:
+### 5. (Fast-follow) Notarize the macOS binaries
 
-```
-homebrew-dejima/
-  Formula/
-    dejima.rb
-```
-
-Commit and push.
-
-### 3. Install
-
-Until you tag a release, the formula only supports head installs:
-
-```bash
-brew install --HEAD aoos/dejima/dejima
-```
-
-Once you tag `v0.1.0` and push GitHub Releases binaries (or a source tarball), update `homebrew/dejima.rb` here, copy the changes to `homebrew-dejima/Formula/dejima.rb`, and users can drop `--HEAD`:
-
-```bash
-brew install aoos/dejima/dejima
-```
-
-### 4. (Optional later) Submit to homebrew-core
-
-After Dejima has real users and a stable release cadence, submit to [homebrew/homebrew-core](https://github.com/Homebrew/homebrew-core) for the cleanest possible `brew install dejima`. This is months of stewardship work and gated on Homebrew's acceptance criteria — defer until v1.x is real.
-
-### Cost / effort
-
-Free, ~1 hour for the tap repo + formula validation.
+The darwin binaries are unsigned, so Gatekeeper quarantines downloads; the
+install scripts + brew + the npm installer strip the quarantine xattr as a
+stopgap. To sign + notarize properly, follow
+[`release-notarization.md`](release-notarization.md) (Apple cert + API key + the
+macOS-runner workflow diff). Not a hard blocker for 0.1.0.
 
 ---
 
 ## Recommended order
 
-1. **Enable GitHub Pages on the repo** → `curl aoos.github.io/dejima/install.sh | bash` works (~5 min, free). **Do this first.**
-2. **Set up the Homebrew tap** → `brew install --HEAD aoos/dejima/dejima` works (~1 hour, free).
-3. **Pick + register a custom domain** → e.g. `curl dejima.sh/install.sh | bash` (~30 min, ~$32/yr).
-4. **GitHub Releases (CI tag-driven binary builds)** → `brew install aoos/dejima/dejima` is fast and Go-free (few hours, free).
-5. **Eventually**: submit to homebrew-core for `brew install dejima`.
+1. **DNS for `dejima.tech`** → the canonical curl one-liners go brand-pure (~30 min).
+2. **`NPM_TOKEN`** → `npm install -g dejima` goes live on the next tag (~10 min).
+3. **Tap repo + `HOMEBREW_TAP_TOKEN`** → `brew install aoos/dejima/dejima` goes
+   live on the next tag (~15 min).
+4. **License** → unblocks the metadata; do before announcing.
+5. **Notarization** → fast-follow once there are real macOS downloaders.
+6. **Eventually**: submit to homebrew-core for a bare `brew install dejima` (months
+   of stewardship; defer until v1.x has users).

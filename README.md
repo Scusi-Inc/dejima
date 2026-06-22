@@ -57,7 +57,8 @@ A first-time setup runs through these in order:
 The shortest path: **get the `dejima` CLI on the machine you'll drive from, run it, follow the wizard.**
 
 ```bash
-# 1. Get the CLI (Go 1.26+ required; one-shot binary releases are roadmap)
+# 1. Get the CLI. Prebuilt binaries (no Go) via brew/npm/curl — see the
+#    package-manager matrix below. Or build from source with Go 1.26+:
 go install github.com/aoos/dejima/cmd/dejima@latest
 
 # 2. Run it. First invocation triggers the setup wizard.
@@ -101,13 +102,19 @@ curl -fsSL https://dejima.tech/install.sh \
   | PREFIX=$HOME/.local bash
 ```
 
-### Via Homebrew (macOS, once the tap exists)
+### Via a package manager (prebuilt binary, no Go)
 
 ```bash
-brew install --HEAD aoos/dejima/dejima
+# Homebrew (macOS / Linux) — installs the dejima + dejimad binaries
+brew install aoos/dejima/dejima
+
+# npm (macOS / Linux / Windows) — installs the dejima CLI client only
+npm install -g dejima
 ```
 
-See [`docs/distribution.md`](docs/distribution.md) for how to create the `aoos/homebrew-dejima` tap. The formula in `homebrew/dejima.rb` is ready to drop in.
+Both pull the prebuilt binary from the latest [GitHub Release](https://github.com/aoos/dejima/releases) and checksum-verify it against `SHA256SUMS`. On a **host**, you still build the island image + register the daemon (`make image && dejima service install`); the `npm` package is the **client CLI** only.
+
+> These two go live after the one-time distribution setup: the `aoos/homebrew-dejima` tap repo (brew) and an `NPM_TOKEN` CI secret (npm) — both are then kept current automatically by the release workflow. Until then, use the curl one-liners above, or `brew install --HEAD aoos/dejima/dejima` to build from source off `master`. Full checklist in [`docs/distribution.md`](docs/distribution.md).
 
 > v1 targets macOS (Mac mini priority) and Linux as **hosts** (the machines running `dejimad` + Docker). The `dejima` **client** CLI builds and runs on macOS, Linux, and **Windows** — see *Install (client only)* below.
 >
@@ -120,6 +127,14 @@ See [`docs/distribution.md`](docs/distribution.md) for how to create the `aoos/h
 To drive a remote Dejima daemon from your laptop or desktop, you only need the CLI — no daemon, no Docker. The CLI builds and runs on **macOS, Linux, and Windows**.
 
 > **Tailscale is the network layer** — the daemon only accepts connections that arrive over a tailnet interface. The installers below detect Tailscale and offer to install + sign you in if it's missing. Both server and client must be on the same tailnet.
+
+### Any OS (npm — prebuilt binary)
+
+```bash
+npm install -g dejima      # macOS / Linux / Windows
+```
+
+Downloads the matching CLI binary from the latest Release and checksum-verifies it; no Go, no Docker. You set up Tailscale + `DEJIMA_HOST` yourself (the curl/PowerShell installers below automate that part).
 
 ### macOS / Linux (one-liner — prebuilt binary)
 
@@ -214,8 +229,10 @@ make setup        # detect Docker → build → install → image → service �
 
 ## Future install paths (roadmap)
 
-- **Homebrew tap** (`brew install aoos/dejima/dejima`) — formula in `homebrew/dejima.rb` is ready; tap repo is on the to-do list.
+- **Homebrew tap** (`brew install aoos/dejima/dejima`) — formula + release-CI auto-bump are wired (`homebrew/dejima.rb`, `scripts/gen-homebrew-formula.sh`); goes live once the `aoos/homebrew-dejima` tap repo + `HOMEBREW_TAP_TOKEN` exist. See [`docs/distribution.md`](docs/distribution.md).
+- **npm** (`npm install -g dejima`) — CLI wrapper (`npm/`) + publish job are wired; goes live once `NPM_TOKEN` is set.
 - **Signed + notarized macOS binaries** — see [`docs/release-notarization.md`](docs/release-notarization.md). Until then, the installers strip the quarantine attribute on download.
+- **homebrew-core** — eventual bare `brew install dejima` without the tap prefix; defer until v1.x has users.
 
 ### Install the daemon as a service
 
