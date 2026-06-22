@@ -116,6 +116,11 @@ type Project struct {
 	// capabilities.go and docs/capability-broker-spec.md). Empty means deny-all:
 	// the island may invoke no host capabilities.
 	Capabilities []CapabilityGrant `toml:"capabilities,omitempty"`
+	// LinkActions are the named, typed action types THIS island exposes for
+	// cross-island delegation (Lane 5, Phase 3). Another island may invoke one of
+	// these only if it ALSO holds a link grant authorizing it (or an operator
+	// approves ad hoc). Empty means deny-all: this island exposes no actions.
+	LinkActions []string `toml:"link_actions,omitempty"`
 	// Owner is a free-form creator label (e.g. "alice@laptop"), captured at
 	// create time. Purely informational — there is no auth model yet — but it
 	// lets wrapper dashboards attribute islands per person/team. Empty for

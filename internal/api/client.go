@@ -298,6 +298,60 @@ func (c *Client) SendLink(ctx context.Context, island string, req LinkSendReques
 	return &out, nil
 }
 
+// ExposeAction adds a named action type to an island's exposed set (operator).
+func (c *Client) ExposeAction(ctx context.Context, island, action string) ([]string, error) {
+	var out LinkExposedResponse
+	path := "/v1/islands/" + url.PathEscape(island) + "/link/actions/" + url.PathEscape(action)
+	if err := c.do(ctx, http.MethodPut, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Actions, nil
+}
+
+// UnexposeAction removes an exposed action type (operator).
+func (c *Client) UnexposeAction(ctx context.Context, island, action string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/islands/"+url.PathEscape(island)+"/link/actions/"+url.PathEscape(action), nil, nil)
+}
+
+// ListExposedActions returns an island's exposed action types.
+func (c *Client) ListExposedActions(ctx context.Context, island string) ([]string, error) {
+	var out LinkExposedResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+url.PathEscape(island)+"/link/actions", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Actions, nil
+}
+
+// RequestLinkAction asks another island to run a named action over a granted
+// channel. The response says whether it executed (pre-authorized) or is pending
+// operator approval.
+func (c *Client) RequestLinkAction(ctx context.Context, island string, req LinkActionRequest) (*LinkActionResponse, error) {
+	var out LinkActionResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(island)+"/link/action", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListPendingActions returns the queued cross-island action approvals (operator).
+func (c *Client) ListPendingActions(ctx context.Context) ([]link.ActionRequest, error) {
+	var out LinkPendingResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/link/actions", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Pending, nil
+}
+
+// ApproveAction approves and executes a pending action (operator).
+func (c *Client) ApproveAction(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/approve", nil, nil)
+}
+
+// DenyAction denies a pending action (operator).
+func (c *Client) DenyAction(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/deny", nil, nil)
+}
+
 // ListGitHubRepos lists repositories the identity can access, fetched daemon-side
 // so a client without its own gh can still browse. capped is true when the
 // identity sees more repos than the single page returned.

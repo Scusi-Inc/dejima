@@ -21,6 +21,7 @@ import (
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/islandimage"
+	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/porttoken"
@@ -44,13 +45,14 @@ const (
 
 // Server is the Dejima HTTP API server.
 type Server struct {
-	rt       runtime.Runtime
-	log      *slog.Logger
-	mu       sync.Mutex
-	locks    map[string]*sync.Mutex // per-island
-	presence map[string]*presenceTracker
-	events   *events.Manager
-	mailbox  *mailbox.Store // intra-island agent message ring (Lane 5, Phase 1)
+	rt        runtime.Runtime
+	log       *slog.Logger
+	mu        sync.Mutex
+	locks     map[string]*sync.Mutex // per-island
+	presence  map[string]*presenceTracker
+	events    *events.Manager
+	mailbox   *mailbox.Store // intra-island agent message ring (Lane 5, Phase 1)
+	linkQueue *link.Queue    // pending cross-island action approvals (Lane 5, Phase 3; in-memory, fail-closed)
 
 	// In-memory ring buffer of recent attach/detach events. Bounded so the
 	// daemon never accumulates client history indefinitely. Not persisted —
@@ -211,6 +213,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		presence:    map[string]*presenceTracker{},
 		events:      ev,
 		mailbox:     mailbox.NewStore(256),
+		linkQueue:   link.NewQueue(15 * time.Minute),
 		historyCap:  200,
 		agentStates: map[string]AgentStateInfo{},
 		agentErrors: map[string]agentErrInfo{},
@@ -444,6 +447,14 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/links", s.listLinks)
 	mux.HandleFunc("DELETE /v1/links", s.revokeLink)
 	mux.HandleFunc("POST /v1/islands/{name}/link/send", s.sendLink)
+	// Lane 5 Phase 3 — action delegation.
+	mux.HandleFunc("GET /v1/islands/{name}/link/actions", s.listExposedActions)
+	mux.HandleFunc("PUT /v1/islands/{name}/link/actions/{action}", s.exposeAction)
+	mux.HandleFunc("DELETE /v1/islands/{name}/link/actions/{action}", s.unexposeAction)
+	mux.HandleFunc("POST /v1/islands/{name}/link/action", s.requestAction)
+	mux.HandleFunc("GET /v1/link/actions", s.listPendingActions)
+	mux.HandleFunc("POST /v1/link/actions/{id}/approve", s.approveAction)
+	mux.HandleFunc("POST /v1/link/actions/{id}/deny", s.denyAction)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)

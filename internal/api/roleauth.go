@@ -149,6 +149,23 @@ var roleRouteCap = map[string]roleCap{
 	"POST /v1/tokens":        capOwner,
 	"GET /v1/tokens":         capOwner,
 	"DELETE /v1/tokens/{id}": capOwner,
+
+	// Lane 5 — inter-island exchange. Granting channels, sending, exposing
+	// actions, and approving/denying action delegations are operator acts
+	// (owner/operator); listing is read. Approval being capOperate (not capRead)
+	// is the Phase-3 invariant: a viewer can watch the queue but never approve,
+	// and the requesting/target agents reach none of these (operator listener).
+	"GET /v1/links":                                   capRead,
+	"POST /v1/links":                                  capOperate,
+	"DELETE /v1/links":                                capOperate,
+	"POST /v1/islands/{name}/link/send":               capOperate,
+	"GET /v1/islands/{name}/link/actions":             capRead,
+	"PUT /v1/islands/{name}/link/actions/{action}":    capOperate,
+	"DELETE /v1/islands/{name}/link/actions/{action}": capOperate,
+	"POST /v1/islands/{name}/link/action":             capOperate,
+	"GET /v1/link/actions":                            capRead,
+	"POST /v1/link/actions/{id}/approve":              capOperate,
+	"POST /v1/link/actions/{id}/deny":                 capOperate,
 }
 
 // identityKey carries the resolved Identity down to handlers and to Lane 1's
