@@ -87,7 +87,12 @@ var tokenRouteAccess = map[string]tokenAccess{
 	// (deny-all) decides whether it lands, delivered into the recipient's mailbox.
 	// Grant/revoke is operator-only (absent here); there is no link-inbox route —
 	// recipients read their normal mailbox.
-	"POST /v1/islands/{name}/link/send":      accessOwnIsland,
+	"POST /v1/islands/{name}/link/send": accessOwnIsland,
+	// Action delegation (Lane 5 P3): an island REQUESTS an action as itself; the
+	// gate (deny-all + per-action authz/approval) decides. Approving/denying and
+	// exposing actions are operator-only (absent here) — an agent can never
+	// self-approve or expose its own actions.
+	"POST /v1/islands/{name}/link/action":    accessOwnIsland,
 	"GET /v1/islands/{name}/files/{path...}": accessOwnIsland,
 	"PUT /v1/islands/{name}/files/{path...}": accessOwnIsland,
 }

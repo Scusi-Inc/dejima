@@ -31,6 +31,11 @@ const (
 	TypeAgentWaitingForInput Type = "agent.waiting-for-input"
 	TypeAgentTaskComplete    Type = "agent.task-complete"
 	TypeAgentError           Type = "agent.error"
+
+	// Inter-island action delegation (Lane 5, Phase 3): a cross-island action
+	// needs operator approval. Fires so an operator can approve/deny from a phone
+	// notification; the payload carries from/to islands + the action type.
+	TypeLinkActionPending Type = "link.action-pending"
 )
 
 // catalog is every event type a subscriber can filter on, in display order.
@@ -43,6 +48,7 @@ var catalog = []Type{
 	TypeContainerCrashed, TypeDaemonStarted, TypePanicEngaged, TypePanicCleared,
 	TypeClientAttached, TypeClientDetached, TypeLastClientDetached,
 	TypeAgentWaitingForInput, TypeAgentTaskComplete, TypeAgentError,
+	TypeLinkActionPending,
 }
 
 // KnownTypes returns the catalog of subscribable event types (a copy).

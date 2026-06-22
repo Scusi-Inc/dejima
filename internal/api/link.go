@@ -19,6 +19,10 @@ type LinkGrantRequest struct {
 	From  string `json:"from"`
 	To    string `json:"to"`
 	Topic string `json:"topic"`
+	// Actions pre-authorizes these named action types on this channel (Lane 5
+	// Phase 3). Empty = info-only: any action invocation goes to the approval
+	// queue. An action still also requires the destination island to expose it.
+	Actions []string `json:"actions,omitempty"`
 }
 
 // LinksResponse is the list of grants (GET /v1/links).
@@ -67,7 +71,7 @@ func (s *Server) grantLink(w http.ResponseWriter, r *http.Request) {
 	}
 	var granted link.Grant
 	if _, err := link.Update(func(st *link.Store) error {
-		granted = st.Grant(link.Grant{From: from, To: to, Topic: topic})
+		granted = st.Grant(link.Grant{From: from, To: to, Topic: topic, Actions: req.Actions})
 		return nil
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
