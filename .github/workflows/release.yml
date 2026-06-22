@@ -49,3 +49,53 @@ jobs:
           # Tags with a pre-release suffix (e.g. v0.1.0-rc1) publish as a GitHub
           # prerelease — use one to smoke-test the pipeline before going public.
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # Regenerate the Homebrew formula from the release's SHA256SUMS and push it to
+  # the aoos/homebrew-dejima tap, so `brew install aoos/dejima/dejima` always
+  # points at the latest stable. No-ops cleanly until the tap + token exist:
+  #   - skips pre-release tags (no stable bump for rc/beta builds)
+  #   - skips entirely unless the HOMEBREW_TAP_TOKEN secret is set (a PAT or
+  #     fine-grained token with `contents:write` on aoos/homebrew-dejima)
+  homebrew-tap:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # for scripts/gen-homebrew-formula.sh
+
+      - name: Gate on tap token
+        id: gate
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::HOMEBREW_TAP_TOKEN not set — skipping Homebrew tap update for ${GITHUB_REF_NAME}"
+          fi
+
+      - name: Generate formula from release checksums
+        if: steps.gate.outputs.ok == '1'
+        run: |
+          curl -fsSL "https://github.com/aoos/dejima/releases/download/${GITHUB_REF_NAME}/SHA256SUMS" -o SHA256SUMS
+          bash scripts/gen-homebrew-formula.sh "${GITHUB_REF_NAME}" SHA256SUMS > dejima.rb
+          echo "--- generated formula ---"; cat dejima.rb
+
+      - name: Push to aoos/homebrew-dejima
+        if: steps.gate.outputs.ok == '1'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/aoos/homebrew-dejima.git" tap
+          mkdir -p tap/Formula
+          cp dejima.rb tap/Formula/dejima.rb
+          cd tap
+          git config user.name  "dejima-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          if git diff --quiet -- Formula/dejima.rb; then
+            echo "tap already up to date for ${GITHUB_REF_NAME}"; exit 0
+          fi
+          git add Formula/dejima.rb
+          git commit -m "dejima ${GITHUB_REF_NAME}"
+          git push
