@@ -7,6 +7,7 @@
 | Completeness (adapters · Port read-norm · macOS Shortcuts · observability) | `docs/lanes/0.6-completeness.md` | "Read `docs/lanes/0.6-completeness.md` and follow it — it's your full brief." |
 | 5 — Inter-island exchange (design: `docs/inter-island-exchange-spec.md`) | `docs/lanes/lane-5-inter-island.md` | "Read `docs/lanes/lane-5-inter-island.md` and follow it — it's your full brief." |
 | 5 (Phase 3.5) — wake-on-message + recipient contract | `docs/lanes/lane-5-phase-3.5-wake.md` | "Read `docs/lanes/lane-5-phase-3.5-wake.md` and follow it — it's your full brief." |
+| 6 — Automated test harness (Phase A; design: `docs/testing/automated-test-harness.md`) | `docs/lanes/lane-6-test-harness.md` | "Read `docs/lanes/lane-6-test-harness.md` and follow it — it's your full brief." |
 
 **Lane 5 status:** Phases 1–3 shipped (mailbox #24, info link #25, action gate #27);
 Phase 3.5 (wake + recipient contract) is the active piece; Phase 4 (A2A discovery)
