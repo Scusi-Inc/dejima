@@ -116,7 +116,7 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] optional HMAC keying · T2 · M
 - [ ] `activity` feed (curated, who+agent did what) · CLI/API · T2 · A
 - [ ] identity attribution (actor/role on each record) · T1/T2 · A
-- [ ] TUI audit pane (`A`) · T1(teatest) · M
+- [x] TUI audit pane (`A`) · T1(teatest) · A
 
 ## 10. Team auth, tokens, roles
 - [ ] `token` create/ls/rm (`/v1/tokens`) — owner only · CLI/API · T1/T2 · A
@@ -179,13 +179,13 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] in-island token autonomy reachability (#8, host.docker.internal:7274) · T3 · M
 
 ## 17. TUI (teatest unit + live smoke)
-- [ ] island list + navigation (j/k/up/down/pgup/pgdn) · T1 · ▢
-- [ ] agent menu, drill-in/out · T1 · ▢
-- [ ] confirm pop-up renders centered + requires typing the island/agent **name** · T1 · ▢
+- [x] island list + navigation (j/k/up/down/pgup/pgdn) · T1 · A
+- [x] agent menu, drill-in/out · T1 · A
+- [x] confirm pop-up renders centered + requires typing the island/agent **name** · T1 · A
 - [ ] confirm covers uncommitted/unpushed warning in the same pop-up · T1/T3 · ▢
-- [ ] action menu (`m`): hibernate/wake/reset/upgrade/purge/recreate/relabel/remove-agent/setup-ssh · T1 · ▢
+- [x] action menu (`m`): hibernate/wake/reset/upgrade/purge/recreate/relabel/remove-agent/setup-ssh · T1 · A
 - [ ] manual deletion of agents/islands via menu (no stall) · T1/T3 · M
-- [ ] `A` audit pane · `U` update (client/daemon) · `S` setup-ssh · `?` help · T1 · ▢
+- [x] `A` audit pane · `U` update (client/daemon) · `S` setup-ssh · `?` help · T1 · A
 - [ ] new-tab launches with manual names · T1/T3 · M
 - [ ] live TUI smoke over a real session (tmux+expect) · T3 · ▢
 
