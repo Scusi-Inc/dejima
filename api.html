@@ -172,8 +172,8 @@ curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
 
 <p>Official thin clients wrap every endpoint below plus the websocket PTY stream — you get the REST surface and <code>attach()</code> without hand-rolling the <a href="#sessions">envelope framing</a>. Both read <code>DEJIMA_HOST</code> / <code>DEJIMA_TOKEN</code> from the environment, raise a typed error on non-2xx, and are generated against <a href="https://github.com/aoos/dejima/blob/master/openapi.yaml"><code>openapi.yaml</code></a>. <span class="pill">alpha</span> — 0.x, fields may change until 1.0.</p>
 
-<h3>Python — <code>pip install dejima</code></h3>
-<pre><code>pip install dejima            # REST client
+<h3>Python — <code>pip install dejima-sdk</code></h3>
+<pre><code>pip install dejima-sdk            # REST client
 pip install 'dejima[ws]'      # + attach() PTY streams
 
 from dejima import Client

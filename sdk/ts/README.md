@@ -2,7 +2,7 @@
 
 Thin client for the [Dejima](https://dejima.tech/) API: run a fleet of
 AI coding agents on hardware you own. Mirrors the
-[Python client](https://pypi.org/project/dejima/).
+[Python client](https://pypi.org/project/dejima-sdk/).
 
 > **Alpha (0.x).** The API is stable in shape (`v1/`-prefixed) but fields may
 > change until `1.0`. The REST layer mirrors

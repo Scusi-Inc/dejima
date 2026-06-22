@@ -11,7 +11,7 @@ fleet of AI coding agents on hardware you own.
 ## Install
 
 ```bash
-pip install dejima            # REST client
+pip install dejima-sdk            # REST client
 pip install 'dejima[ws]'      # + WebSocket PTY attach()
 ```
 

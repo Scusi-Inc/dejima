@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "dejima"
+name = "dejima-sdk"
 version = "0.1.0"
 description = "Python client for the Dejima API — run a fleet of AI coding agents on hardware you own."
 readme = "README.md"
@@ -27,9 +27,9 @@ ws = ["websocket-client>=1.6"]            # for attach() PTY streams
 dev = ["pytest>=7", "websocket-client>=1.6"]
 
 [project.urls]
-Homepage = "https://aoos.github.io/dejima/"
+Homepage = "https://dejima.tech/"
 Source = "https://github.com/aoos/dejima"
-API = "https://aoos.github.io/dejima/api.html"
+API = "https://dejima.tech/api.html"
 Issues = "https://github.com/aoos/dejima/issues"
 
 [tool.hatch.build.targets.wheel]
