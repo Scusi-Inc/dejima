@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/aoos/dejima/internal/api"
@@ -20,7 +21,11 @@ func newLinkCmd() *cobra.Command {
 		Use:   "link",
 		Short: "Manage brokered inter-island info channels (deny-all).",
 	}
-	cmd.AddCommand(newLinkGrantCmd(), newLinkRevokeCmd(), newLinkLsCmd(), newLinkSendCmd())
+	cmd.AddCommand(
+		newLinkGrantCmd(), newLinkRevokeCmd(), newLinkLsCmd(), newLinkSendCmd(),
+		newLinkExposeCmd(), newLinkUnexposeCmd(), newLinkExposedCmd(),
+		newLinkActionCmd(), newLinkApprovalsCmd(), newLinkApproveCmd(), newLinkDenyCmd(),
+	)
 	return cmd
 }
 
@@ -140,4 +145,177 @@ func newLinkSendCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fromAgent, "from-agent", "", "sending agent id (default: $DEJIMA_AGENT_ID)")
 	cmd.Flags().StringVar(&topic, "topic", "", "the granted topic")
 	return cmd
+}
+
+func newLinkExposeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "expose <island> <action>",
+		Short: "Expose a named action type this island accepts via delegation (operator).",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			actions, err := c.ExposeAction(cmd.Context(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s now exposes: %s\n", args[0], strings.Join(actions, ", "))
+			return nil
+		},
+	}
+}
+
+func newLinkUnexposeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unexpose <island> <action>",
+		Short: "Stop exposing an action type (operator).",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.UnexposeAction(cmd.Context(), args[0], args[1]); err != nil {
+				return err
+			}
+			fmt.Printf("%s no longer exposes %q\n", args[0], args[1])
+			return nil
+		},
+	}
+}
+
+func newLinkExposedCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "exposed <island>",
+		Short: "List the action types an island exposes.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			actions, err := c.ListExposedActions(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			if len(actions) == 0 {
+				fmt.Printf("%s exposes no actions (cross-island action delegation is deny-all)\n", args[0])
+				return nil
+			}
+			fmt.Println(strings.Join(actions, "\n"))
+			return nil
+		},
+	}
+}
+
+func newLinkActionCmd() *cobra.Command {
+	var fromIsland, fromAgent, topic, params string
+	cmd := &cobra.Command{
+		Use:   "action <to-island> <to-agent> <action> --topic <t>",
+		Short: "Request a named action on another island (pre-authorized runs; else queued).",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if fromIsland == "" {
+				fromIsland = os.Getenv("DEJIMA_PROJECT_NAME")
+			}
+			if fromIsland == "" {
+				return fmt.Errorf("no sender island: pass --from (or run inside an island)")
+			}
+			if topic == "" {
+				return fmt.Errorf("--topic is required")
+			}
+			if fromAgent == "" {
+				fromAgent = os.Getenv("DEJIMA_AGENT_ID")
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			resp, err := c.RequestLinkAction(cmd.Context(), fromIsland, api.LinkActionRequest{
+				To: args[0], ToAgent: args[1], Action: args[2], Topic: topic, Params: params, FromAgent: fromAgent,
+			})
+			if err != nil {
+				return err
+			}
+			if resp.Status == "pending" {
+				fmt.Printf("queued for operator approval (id %s)\n", resp.Pending)
+			} else {
+				fmt.Printf("action %q delivered to %s/%s\n", args[2], args[0], args[1])
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&fromIsland, "from", "", "requesting island (default: $DEJIMA_PROJECT_NAME)")
+	cmd.Flags().StringVar(&fromAgent, "from-agent", "", "requesting agent id (default: $DEJIMA_AGENT_ID)")
+	cmd.Flags().StringVar(&topic, "topic", "", "the granted topic")
+	cmd.Flags().StringVar(&params, "params", "", "optional typed params for the action")
+	return cmd
+}
+
+func newLinkApprovalsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "approvals",
+		Short: "List cross-island action requests awaiting approval (operator).",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			pending, err := c.ListPendingActions(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if len(pending) == 0 {
+				fmt.Println("no pending action approvals")
+				return nil
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tFROM\tTO\tACTION\tTOPIC")
+			for _, p := range pending {
+				fmt.Fprintf(tw, "%s\t%s/%s\t%s/%s\t%s\t%s\n", p.ID, p.From, p.FromAgent, p.To, p.ToAgent, p.Action, p.Topic)
+			}
+			return tw.Flush()
+		},
+	}
+}
+
+func newLinkApproveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "approve <id>",
+		Short: "Approve and execute a pending action (operator).",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.ApproveAction(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("approved + executed %s\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newLinkDenyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "deny <id>",
+		Short: "Deny a pending action (operator).",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.DenyAction(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("denied %s\n", args[0])
+			return nil
+		},
+	}
 }

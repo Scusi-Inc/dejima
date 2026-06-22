@@ -27,6 +27,19 @@ type Message struct {
 	// another island over a brokered link (Lane 5). nil for ordinary intra-island
 	// messages. Agents cannot set it — see DeliverExternal vs Send.
 	Origin *Origin `json:"origin,omitempty"`
+	// Action, when non-nil, marks this as a cross-island ACTION delegation (Lane 5
+	// Phase 3) rather than free-form info: a NAMED, typed operation the recipient
+	// island exposed, authorized by the daemon's action gate. Set only by
+	// DeliverAction. The recipient runs its handler for Action.Type — it must not
+	// interpret Payload as a free-form prompt.
+	Action *MessageAction `json:"action,omitempty"`
+}
+
+// MessageAction is a named, typed action invocation carried by a cross-island
+// action delegation. Type is one of the recipient island's exposed action types.
+type MessageAction struct {
+	Type   string `json:"type"`
+	Params string `json:"params,omitempty"`
 }
 
 // Origin marks a message that entered this island's mailbox from ANOTHER island
@@ -86,6 +99,28 @@ func (s *Store) DeliverExternal(island, sourceIsland, from, to, topic, payload s
 	m := Message{
 		Seq: s.seq, Island: island, From: from, To: to, Topic: topic, Payload: payload, Time: s.now(),
 		Origin: &Origin{SourceIsland: sourceIsland, CrossIsland: true},
+	}
+	q := append(s.byIsl[island], m)
+	if len(q) > s.max {
+		q = q[len(q)-s.max:]
+	}
+	s.byIsl[island] = q
+	return m
+}
+
+// DeliverAction appends a cross-island ACTION delegation into `island`'s mailbox
+// (Lane 5 Phase 3): a named, typed operation (actionType/params) the daemon's
+// action gate authorized. Like DeliverExternal it stamps Origin; it additionally
+// sets the structured Action field. Distinct from Send/DeliverExternal so only
+// the gated action path can mark a message as an action.
+func (s *Store) DeliverAction(island, sourceIsland, from, to, topic, actionType, params string) Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq++
+	m := Message{
+		Seq: s.seq, Island: island, From: from, To: to, Topic: topic, Time: s.now(),
+		Origin: &Origin{SourceIsland: sourceIsland, CrossIsland: true},
+		Action: &MessageAction{Type: actionType, Params: params},
 	}
 	q := append(s.byIsl[island], m)
 	if len(q) > s.max {

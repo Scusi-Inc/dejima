@@ -710,6 +710,111 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/link/actions:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [link]
+      summary: List the action types this island exposes for cross-island delegation
+      operationId: listExposedActions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkExposedResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/link/actions/{action}:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - { name: action, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [link]
+      summary: Expose a named action type (operator)
+      operationId: exposeAction
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkExposedResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [link]
+      summary: Stop exposing an action type (operator)
+      operationId: unexposeAction
+      responses:
+        "204": { description: Unexposed }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/link/action:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [link]
+      summary: Request a named action on another island (deny-all; per-action approval)
+      description: >
+        The path island is the requester (token-pinned). Deny-all: requires a link
+        grant for the channel AND the destination to expose the action. A
+        pre-authorized action (in the grant's Actions allowlist) executes
+        immediately (201, status "executed"); otherwise it is queued for operator
+        approval (202, status "pending") and a link.action-pending event fires.
+        Never a free-form prompt — only named, exposed action types.
+      operationId: requestAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LinkActionRequest" }
+      responses:
+        "201":
+          description: Executed (pre-authorized)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkActionResponse" }
+        "202":
+          description: Queued for operator approval
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkActionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: No grant, or the action is not exposed by the destination
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/link/actions:
+    get:
+      tags: [link]
+      summary: List cross-island action requests awaiting operator approval
+      operationId: listPendingActions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkPendingResponse" }
+  /v1/link/actions/{id}/approve:
+    parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+    post:
+      tags: [link]
+      summary: Approve and execute a pending action (operator; owner/operator only)
+      operationId: approveAction
+      responses:
+        "200":
+          description: Executed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkActionResponse" }
+        "404": { description: Unknown or expired (fail-closed) }
+        "409": { description: The grant or exposed action changed; refused }
+  /v1/link/actions/{id}/deny:
+    parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+    post:
+      tags: [link]
+      summary: Deny a pending action (operator; owner/operator only)
+      operationId: denyAction
+      responses:
+        "204": { description: Denied }
+        "404": { description: Unknown or expired }
   /v1/islands/{name}/mcp/grants:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -1515,6 +1620,18 @@ components:
         time: { type: string, format: date-time }
         origin:
           $ref: "#/components/schemas/MailboxOrigin"
+        action:
+          $ref: "#/components/schemas/MailboxAction"
+    MailboxAction:
+      type: object
+      description: >
+        Present only on a cross-island ACTION delegation (Lane 5 Phase 3): a NAMED,
+        typed operation the recipient island exposed, authorized by the daemon's
+        action gate. The recipient runs its handler for Type — never interpreting
+        the payload as a free-form prompt.
+      properties:
+        type: { type: string }
+        params: { type: string }
     MailboxOrigin:
       type: object
       description: >
@@ -1536,6 +1653,7 @@ components:
         from: { type: string, description: Source island }
         to: { type: string, description: Destination island }
         topic: { type: string, description: Named channel }
+        actions: { type: array, items: { type: string }, description: "Phase 3 pre-authorized action types on this channel; empty = info-only" }
     LinkGrant:
       type: object
       properties:
@@ -1557,6 +1675,42 @@ components:
         topic: { type: string }
         payload: { type: string }
         from_agent: { type: string, description: Sending agent id (optional) }
+    LinkActionRequest:
+      type: object
+      required: [to, to_agent, topic, action]
+      properties:
+        to: { type: string, description: Destination island }
+        to_agent: { type: string, description: Destination agent id }
+        topic: { type: string, description: The granted channel }
+        action: { type: string, description: Named action type the destination exposed }
+        params: { type: string, description: Optional typed params }
+        from_agent: { type: string }
+    LinkActionResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [executed, pending] }
+        pending: { type: string, description: Pending approval id when status is "pending" }
+    LinkExposedResponse:
+      type: object
+      properties:
+        island: { type: string }
+        actions: { type: array, items: { type: string } }
+    LinkActionPending:
+      type: object
+      properties:
+        id: { type: string }
+        from: { type: string }
+        from_agent: { type: string }
+        to: { type: string }
+        to_agent: { type: string }
+        topic: { type: string }
+        action: { type: string }
+        params: { type: string }
+        created_at: { type: string, format: date-time }
+    LinkPendingResponse:
+      type: object
+      properties:
+        pending: { type: array, items: { $ref: "#/components/schemas/LinkActionPending" } }
     IslandInfo:
       type: object
       properties:
