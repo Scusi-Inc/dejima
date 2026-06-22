@@ -1,12 +1,16 @@
 # Agent lanes
 
-## Wave 0.6 (ready now — not inter-island)
+## Wave 0.6
 
 | Lane | Brief | Prompt to give the agent |
 |---|---|---|
 | Completeness (adapters · Port read-norm · macOS Shortcuts · observability) | `docs/lanes/0.6-completeness.md` | "Read `docs/lanes/0.6-completeness.md` and follow it — it's your full brief." |
+| 5 — Inter-island exchange (design: `docs/inter-island-exchange-spec.md`) | `docs/lanes/lane-5-inter-island.md` | "Read `docs/lanes/lane-5-inter-island.md` and follow it — it's your full brief." |
+| 5 (Phase 3.5) — wake-on-message + recipient contract | `docs/lanes/lane-5-phase-3.5-wake.md` | "Read `docs/lanes/lane-5-phase-3.5-wake.md` and follow it — it's your full brief." |
 
-Inter-agent/inter-island exchange (**Lane 5**) is design-gated — not in this batch.
+**Lane 5 status:** Phases 1–3 shipped (mailbox #24, info link #25, action gate #27);
+Phase 3.5 (wake + recipient contract) is the active piece; Phase 4 (A2A discovery)
+is optional. The whole inter-island wave awaits Minion live-verify before a `v0.6.0` tag.
 
 ## Wave 0.5 (shipped)
 
