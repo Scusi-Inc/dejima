@@ -178,6 +178,21 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 ---
 
+## 🔭 Later / exploratory (NOT launch-blocking)
+
+Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
+
+- **Ambient / monitoring agents** — scheduled, long-running monitor/assistant agents (repo
+  watch, email/feedback triage, competition + news/industry digests), run under the owner's
+  real identity (not the `dejimaqa` test account), with **brokered + audited** access to
+  real accounts (Gmail/web/repo via MCP/Port). Right agent per job (Letta for memory-heavy
+  monitors, Hermes/Gmail-MCP for email, OpenClaw Home Island as coordinator — not Claude
+  Code, which is for coding). The enabling new primitive is a **scheduler** (cron-wake
+  islands, the time-driven twin of wake-on-message); actions route through Lane 5's
+  action-delegation gate. Design + phasing: [`ambient-agents-design.md`](ambient-agents-design.md).
+
+---
+
 ## 🧹 Housekeeping (one-off, when next at the host)
 
 A finished lane agent left a worktree squatting the `master` branch ref
