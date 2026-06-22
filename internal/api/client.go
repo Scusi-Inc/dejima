@@ -20,6 +20,7 @@ import (
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
+	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/providercreds"
@@ -258,6 +259,40 @@ func (c *Client) PollMailbox(ctx context.Context, island, agent string, since in
 	}
 	var out MailboxPollResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GrantLink authorizes a directional inter-island info channel (operator-only).
+func (c *Client) GrantLink(ctx context.Context, req LinkGrantRequest) (*link.Grant, error) {
+	var out link.Grant
+	if err := c.do(ctx, http.MethodPost, "/v1/links", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RevokeLink drops a link grant (operator-only).
+func (c *Client) RevokeLink(ctx context.Context, from, to, topic string) error {
+	q := url.Values{"from": {from}, "to": {to}, "topic": {topic}}
+	return c.do(ctx, http.MethodDelete, "/v1/links?"+q.Encode(), nil, nil)
+}
+
+// ListLinks returns every link grant (operator-only).
+func (c *Client) ListLinks(ctx context.Context) ([]link.Grant, error) {
+	var out LinksResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/links", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Grants, nil
+}
+
+// SendLink sends an info message from island to a specific agent in another
+// island over a granted channel; it's delivered into that agent's mailbox.
+func (c *Client) SendLink(ctx context.Context, island string, req LinkSendRequest) (*mailbox.Message, error) {
+	var out mailbox.Message
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(island)+"/link/send", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

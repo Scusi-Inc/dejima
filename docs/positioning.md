@@ -39,6 +39,13 @@ first-class infrastructure, separate from both the model and the UI.**
 - **Containment-first.** Each island is isolated by the kernel: its own `$HOME`,
   git config, credentials, network. Islands cannot see each other. The namesake
   is a *quarantined* trading post — isolation is the identity, not a feature.
+  **Brokered exception (added 2026-06).** Islands are blind *by default*;
+  cross-island exchange exists only as an explicit, operator-granted, scoped,
+  **audited** channel — info flows freely once a channel is granted, **actions
+  only with per-action approval**. The default stays deny-all and the daemon is
+  the only broker (no island↔island socket); the grant is the exception, never an
+  ambient bus or mutual visibility. See
+  [`inter-island-exchange-spec.md`](inter-island-exchange-spec.md).
 - **Neutral and headless.** The same HTTP/websocket API the CLI uses is the one
   anyone builds on. No UI is privileged. No agent is privileged (Claude Code and
   Codex bundled; others via custom image).
@@ -58,11 +65,12 @@ first-class infrastructure, separate from both the model and the UI.**
   (ambient access to everything). See "the core tension" below.
 - **Not a UI or an end-user product.** The TUI/CLI is a reference client, not the
   product surface. If it can be a thin client of the API, it stays thin.
-- **Not an orchestrator / swarm engine.** Multi-agent *collaboration* and
-  cross-island channels are deliberately out of scope (a context-bleed vector).
-  Real value tends to come from 1–3 persistent, well-contextualized agents, not
-  27 chatty ones. Orchestration is the wrapper's job, driving N islands via the
-  API.
+- **Not an orchestrator / swarm engine.** Cross-island channels are **deny-all by
+  default** — they exist only as explicit, operator-granted, audited grants (info
+  freely; actions gated per-action), never an open bus or ambient mutual
+  visibility (the context-bleed vector). Free-form multi-agent *orchestration*
+  stays the wrapper's job, driving N islands via the API. Real value tends to come
+  from 1–3 persistent, well-contextualized agents, not 27 chatty ones.
 - **Not a model host.** No bundled LLM weights. The agents are the models, and
   they run inside islands. Any natural-language control reuses credentials the
   user already has.
@@ -129,4 +137,5 @@ If **no** — it requires engine-level access, containment guarantees, or the
 persistence/session substrate itself — it may belong here.
 
 See [`roadmap.md`](roadmap.md) for how this rule has already shaped scope
-(observability, auth-stops-at-roles, no-bundled-LLM, no inter-island comms).
+(observability, auth-stops-at-roles, no-bundled-LLM, brokered-only inter-island
+comms — deny-all default, info-with-grant, actions-with-per-action-approval).

@@ -256,6 +256,20 @@ func GitHubIslandConfigDir(name string) (string, error) {
 	return dir, nil
 }
 
+// LinksDir returns ~/.dejima/links — the daemon's store of inter-island link
+// grants (Lane 5, Phase 2). Created 0700.
+func LinksDir() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, "links")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // LLMSecretsDir returns ~/.dejima/secrets/llm — the daemon's store of LLM
 // provider credentials (provider→api_key) and the per-island provider configs
 // materialized from them. Created 0700.

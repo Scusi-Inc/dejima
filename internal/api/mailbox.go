@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/project"
@@ -45,6 +46,14 @@ func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Payload == "" {
 		writeError(w, http.StatusBadRequest, errors.New("payload is required"))
+		return
+	}
+	// Belt-and-suspenders: cross-island provenance is the structured Origin field
+	// (set only by the daemon's DeliverExternal), but also reserve a "link:"
+	// sender prefix so a local agent can't dress an intra-island message up to
+	// look like it arrived over a link.
+	if strings.HasPrefix(req.From, "link:") {
+		writeError(w, http.StatusBadRequest, errors.New(`"from" may not start with the reserved "link:" prefix`))
 		return
 	}
 	msg := s.mailbox.Send(name, req.From, req.To, req.Topic, req.Payload)

@@ -73,16 +73,21 @@ var tokenRouteAccess = map[string]tokenAccess{
 	// until the route exists the router matches no pattern and it stays denied.
 	"POST /v1/mcp/call": accessTokenOwn,
 
-	"GET /v1/islands/{name}":                 accessOwnIsland, // status
-	"GET /v1/islands/{name}/events":          accessOwnIsland,
-	"GET /v1/islands/{name}/logs":            accessOwnIsland,
-	"GET /v1/islands/{name}/port/scopes":     accessOwnIsland, // list own grants only
-	"POST /v1/islands/{name}/port/intake":    accessOwnIsland,
-	"POST /v1/islands/{name}/port/export":    accessOwnIsland,
-	"POST /v1/islands/{name}/port/write":     accessOwnIsland,
-	"POST /v1/islands/{name}/exec":           accessOwnIsland,
-	"POST /v1/islands/{name}/mailbox":        accessOwnIsland, // intra-island agent messaging (Lane 5 P1)
-	"GET /v1/islands/{name}/mailbox":         accessOwnIsland,
+	"GET /v1/islands/{name}":              accessOwnIsland, // status
+	"GET /v1/islands/{name}/events":       accessOwnIsland,
+	"GET /v1/islands/{name}/logs":         accessOwnIsland,
+	"GET /v1/islands/{name}/port/scopes":  accessOwnIsland, // list own grants only
+	"POST /v1/islands/{name}/port/intake": accessOwnIsland,
+	"POST /v1/islands/{name}/port/export": accessOwnIsland,
+	"POST /v1/islands/{name}/port/write":  accessOwnIsland,
+	"POST /v1/islands/{name}/exec":        accessOwnIsland,
+	"POST /v1/islands/{name}/mailbox":     accessOwnIsland, // intra-island agent messaging (Lane 5 P1)
+	"GET /v1/islands/{name}/mailbox":      accessOwnIsland,
+	// Inter-island link send (Lane 5 P2): an island sends only AS itself; the gate
+	// (deny-all) decides whether it lands, delivered into the recipient's mailbox.
+	// Grant/revoke is operator-only (absent here); there is no link-inbox route —
+	// recipients read their normal mailbox.
+	"POST /v1/islands/{name}/link/send":      accessOwnIsland,
 	"GET /v1/islands/{name}/files/{path...}": accessOwnIsland,
 	"PUT /v1/islands/{name}/files/{path...}": accessOwnIsland,
 }
