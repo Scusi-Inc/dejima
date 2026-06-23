@@ -9,13 +9,15 @@ each item maps to the tier that should own it; the Lane 6 agent fills in real st
 **Tier:** `T1` CI unit/handler/`teatest` (no Docker) · `T2` Docker integration · `T3`
 macOS-host (Mac mini) · `T4` real-agent smoke.
 **Now (current coverage, conservative — Lane 6 reconciles):** `A` automated (unit or
-`integration.sh`) · `M` manual verify today · `▢` none yet.
+`integration.sh`) · `A*` **wired** in the Tier-3/Tier-4 suite, awaiting its first live
+Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the nightly
+`workflow_dispatch`) · `M` manual verify today · `▢` none yet.
 
 ---
 
 ## 1. Island lifecycle
 - [x] `init` / `new` / `create` — create an island from a repo · CLI/API/TUI · T2 · A
-- [ ] create from a private repo (GitHub creds) · T2/T4 · M
+- [ ] create from a private repo (GitHub creds) · T2/T4 · A* (tier4/agent-smoke.sh; bot repo)
 - [x] `ls` / `list` — list islands + states · CLI/API/TUI · T1/T2 · A
 - [x] `status <name>` / `info <island>` — status + details · CLI/API · T2 · A
 - [ ] `GET workspace-ready` — readiness gate · API · T2 · ▢
@@ -46,7 +48,7 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 ## 3. Sessions, terminals, attach
 - [ ] `attach <id>` / island `session` (WS) — interactive attach · API/CLI · T2/T3 · M
 - [ ] per-agent `session` (WS) · API · T2 · M
-- [ ] **terminal auto-reconnect** — drop link (daemon restart / sleep-wake) → reattaches, doesn't close · T3 · M
+- [ ] **terminal auto-reconnect** — drop link (daemon restart / sleep-wake) → reattaches, doesn't close · T3 · A* (tier3/safe.sh)
 - [ ] multi-attach (two clients, same session) · T3 · M
 - [ ] terminal resize propagation · T3 · M
 - [x] `exec <name> -- <cmd>` — one-shot exec · CLI/API · T2 · A
@@ -55,8 +57,8 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 
 ## 4. Repo / git integration
 - [ ] clone repo into island on create · T2 · M
-- [ ] `push` — push island work · CLI · T2/T4 · M
-- [ ] GitHub identity used for clone/push (per-island) · T4 · M
+- [ ] `push` — push island work · CLI · T2/T4 · A* (tier4/agent-smoke.sh; lenient)
+- [ ] GitHub identity used for clone/push (per-island) · T4 · A* (tier4/agent-smoke.sh; bot identity)
 - [ ] unpushed-work detection (feeds the purge guard) · T2 · M
 
 ## 5. Port (host-file brokering)
@@ -101,9 +103,9 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] gate re-checked at approval time (revoked grant → refused) · T1 · A
 - [ ] fail-closed: TTL expiry + queue dropped on daemon restart · T1 · A
 - [ ] `link.action`/`link.deny`/`link.approve` ledgered w/ actor · T2 · A
-- [ ] **wake-on-message** (P3.5): idle agent nudged at turn boundary · T3 · ▢
-- [ ] wake: busy agent NOT interrupted mid-turn · T3 · ▢
-- [ ] wake: hibernated recipient island wakes on message · T3 · ▢
+- [ ] **wake-on-message** (P3.5): idle agent nudged at turn boundary · T3 · ▢ (needs real-adapter live run; tier4 exercises the inject seam)
+- [ ] wake: busy agent NOT interrupted mid-turn · T3 · ▢ (real-adapter live run; the key P3.5 unknown)
+- [ ] wake: hibernated recipient island wakes on message · T3 · ▢ (real-adapter live run)
 - [ ] hard-interrupt routed through the action gate (not a flag) · T3 · ▢
 - [ ] `mailbox.arrival` event carries flags only (no body) · T1 · A
 - [ ] recipient acts only on daemon-stamped `Action` messages · T4 · ▢
@@ -133,7 +135,7 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] `auth` claude set/status (`credentials/claude`) · CLI/API · T2 · M
 - [ ] github set/list/rm + `/repos` (`credentials/github`) · CLI/API · T2/T4 · M
 - [ ] `provider set/rm/list` (masked, no keys leaked) · CLI/API · T2 · M
-- [ ] **Keychain** storage on macOS (no plaintext in config) · T3 · ▢
+- [ ] **Keychain** storage on macOS (no plaintext in config) · T3 · A* (tier3/safe.sh)
 - [ ] per-agent provider key injection (`<PROVIDER>_API_KEY`) · T2/T4 · M
 - [ ] missing-key health surfaced · T2 · M
 
@@ -142,21 +144,21 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] `events/subscriptions` list/rm · CLI/API · T2 · M
 - [ ] event stream (`/v1/islands/{name}/events`, SSE/WS) · API · T2 · M
 - [ ] HMAC `X-Dejima-Signature` on delivery · T2/T3 · M
-- [ ] webhook secret stored in Keychain (no plaintext) · T3 · ▢
+- [ ] webhook secret stored in Keychain (no plaintext) · T3 · A* (tier3/safe.sh)
 
 ## 13. Onboarding & host setup (macOS)
 - [ ] `onboard` adaptive first-run (configured/unreachable/fresh-host/generic) · T1/T3 · M
 - [ ] `onboard` connection-failure offer (one-shot troubleshooter) · T3 · M
-- [ ] `onboard --provision-host` — full 6-phase wizard · T3 · M
+- [ ] `onboard --provision-host` — full 6-phase wizard · T3 · A* (tier3/system.sh; idempotent --yes, opt-in)
 - [ ]   …disables sleep (pmset), Remote Login, PATH · T3 · M
-- [ ]   …installs Homebrew/Tailscale/Docker (idempotent, resumable) · T3 · M
-- [ ]   …`service install --system --audit` + reboot survival · T3 · M
+- [ ]   …installs Homebrew/Tailscale/Docker (idempotent, resumable) · T3 · A* (tier3/system.sh asserts no re-install)
+- [ ]   …`service install --system --audit` + reboot survival · T3 · A* (tier3/system.sh; reboot double-gated)
 - [ ]   …`--yes` non-interactive + `--reset` · T1/T3 · A(unit)/M
 - [ ] `doctor` (+ `--fix` undersized Docker VM #23) · CLI · T3 · M
 - [ ] `connect <name>` / `enroll` — client enrollment · CLI · T3 · M
 
 ## 14. Service / daemon / admin
-- [ ] `service install/uninstall/restart` (--system/--user/--tcp/--token-tcp/--audit) · T3 · M
+- [ ] `service install/uninstall/restart` (--system/--user/--tcp/--token-tcp/--audit) · T3 · A* (tier3/system.sh; install→verify→uninstall, opt-in)
 - [ ] `update` client + daemon (gates on releases; source = pull+make+restart) · T3 · M
 - [ ] `admin/update` route · API · T3 · M
 - [ ] `image build` / `image` · CLI/API · T2 · M
@@ -164,11 +166,11 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] `healthz`, `overview`, `clients` · API · T1/T2 · M
 - [ ] `sessions/revoke` (owner) · API · T3 · M
 - [ ] `/metrics` (Prometheus) · API · T1/T2 · A
-- [ ] idle auto-hibernate (`DEJIMAD_IDLE_HIBERNATE`) fires + wakes · T3 · ▢
+- [ ] idle auto-hibernate (`DEJIMAD_IDLE_HIBERNATE`) fires + wakes · T3 · A* (tier3/safe.sh)
 
 ## 15. SSH façade
 - [ ] `ssh authorize/revoke` account-keys (`ssh/account-keys`) · CLI/API · T3 · M
-- [ ] shell + sftp land in `/workspace` · T3 · M
+- [ ] shell + sftp land in `/workspace` · T3 · A* (tier3/safe.sh plumbing; full landing via tier3/system.sh --ssh install)
 - [ ] VS Code Remote-SSH · T3 · M
 
 ## 16. Home Islands & adapters

@@ -18,7 +18,7 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration test-tier3-safe test-tier3-system test-tier4 lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
@@ -128,6 +128,26 @@ test:
 # in a throwaway $HOME and purges its test islands + daemon on exit.
 test-integration:
 	./scripts/integration.sh
+
+# Tier-3 macOS-host suite — run as the `dejimaqa` test user on the Mac-mini
+# self-hosted runner (its OWN dejimad + colima, never the operator's). The safe
+# target mutates nothing on the host (Keychain secret storage, idle hibernate,
+# terminal reconnect, SSH-façade plumbing). The system target installs a
+# system-wide LaunchDaemon / runs onboard --provision-host and is OPT-IN only —
+# it no-ops unless DEJIMA_RUN_SYSTEM=1 (and never reboots unless DEJIMA_RUN_REBOOT=1).
+# See docs/testing/dejimaqa-runner-setup.md.
+test-tier3-safe:
+	./scripts/tier3/safe.sh
+
+test-tier3-system:
+	./scripts/tier3/system.sh
+
+# Tier-4 real-agent smoke — launches a REAL agent and asserts it ran / produced
+# a commit (never exact LLM output). Secret-gated: no-ops with a notice unless
+# TEST_AGENT_KEY is set; pushes to the bot repo when TEST_GH_TOKEN/TEST_GH_OWNER
+# /TEST_GH_REPO are present.
+test-tier4:
+	./scripts/tier4/agent-smoke.sh
 
 lint:
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed; skipping"; exit 0; }
