@@ -60,7 +60,20 @@
        alt="The Dejima TUI: a live dashboard listing islands (dejima, janus, wildfire) and the agents running in each — with status, memory and CPU use, and a detail panel for the selected island.">
 </figure>
 
-<h2 id="why-dejima">Why Dejima</h2>
+<section id="is-it-for-me" class="fit-under-shot">
+  <h2>Is Dejima right for you?</h2>
+  <div class="fitcheck">
+    <div class="fit-actions">
+      <button type="button" id="fit-copy" class="copy-btn">Copy prompt</button>
+      <a id="fit-claude" class="deeplink" href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+      <a id="fit-chatgpt" class="deeplink" href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+      <span class="fit-hint">Opens in your own AI — nothing is sent to us.</span>
+    </div>
+    <textarea id="fit-prompt" class="fit-prompt" rows="8" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
+  </div>
+</section>
+
+<h2 id="why-dejima">The hard parts of running agents, already handled</h2>
 <p><strong>You shouldn't have to become an infrastructure engineer to run agents safely.</strong> That usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
 <ul>
   <li><strong>Ease.</strong> One line installs it; <code>dejima init</code> and you've got a sandboxed agent running in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same one command.</li>
@@ -69,30 +82,33 @@
 </ul>
 <p class="small">Running agents for a team that has to <em>prove</em> what they did? See <a href="teams.html">Dejima for teams →</a></p>
 
-<h2>How it compares</h2>
+<h2>The isolation of a cloud sandbox, on hardware you own</h2>
 <p>You're probably weighing Dejima against however you run agents today. Here's where it lands:</p>
 <div class="table-scroll">
 <table class="compare">
   <tr>
     <th>What you need</th>
     <th>Dejima</th>
+    <th>Coder</th>
+    <th>E2B</th>
+    <th>Rivet</th>
     <th>tmux + SSH</th>
     <th>A dev container</th>
-    <th>A cloud sandbox</th>
   </tr>
-  <tr><td>Isolated workspace per project</td><td><strong>✓</strong></td><td>✗</td><td>✓</td><td>✓</td></tr>
-  <tr><td>Several agents at once, one dashboard</td><td><strong>✓</strong></td><td>manual</td><td>✗</td><td>~</td></tr>
-  <tr><td>Each agent walled off from host &amp; each other</td><td><strong>✓</strong></td><td>✗</td><td>~ (from host)</td><td>✓</td></tr>
-  <tr><td>Survives disconnect, multi-device</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>✓</td></tr>
-  <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✗</td></tr>
-  <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td></tr>
-  <tr><td>Curated MCP servers, brokered &amp; audited</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td></tr>
-  <tr><td>Up in minutes, nothing to build</td><td><strong>✓</strong></td><td>~</td><td>✓</td><td>~</td></tr>
+  <tr><td>Isolated workspace per project</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>✓</td></tr>
+  <tr><td>Several agents at once, one dashboard</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>✗</td><td>manual</td><td>✗</td></tr>
+  <tr><td>Each agent walled off from host &amp; each other</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>~ (from host)</td></tr>
+  <tr><td>Survives disconnect, multi-device</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>~</td><td>✓</td><td>✗</td></tr>
+  <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>~</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Self-hosted without a platform team (no Kubernetes)</td><td><strong>✓</strong></td><td>✗</td><td>~</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
+  <tr><td>Curated MCP servers, brokered &amp; audited</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
+  <tr><td>Up in minutes, nothing to build</td><td><strong>✓</strong></td><td>✗</td><td>~</td><td>~</td><td>~</td><td>✓</td></tr>
 </table>
 </div>
-<p class="small">Dejima is built around tmux — it runs tmux inside each island and adds the layer above: isolation, a whole fleet on one dashboard, lifecycle controls, and an audit trail.</p>
+<p class="small"><strong>~</strong> = partial or do-it-yourself. Dejima runs tmux inside each island and adds the layer above it: isolation, a fleet on one dashboard, lifecycle controls, and an audit trail. <strong>Coder</strong> is the closest — self-hosted, parallel agents, audit logging — but it's a Kubernetes-era platform built for enterprise platform teams; Dejima is that idea sized for one person and a Mac mini. <strong>E2B</strong>'s Firecracker microVMs isolate as strongly or stronger — the difference isn't isolation, it's that with Dejima your code, files, and credentials never leave a box you own. <strong>Rivet</strong> is lightweight and self-hostable but it's agent <em>infrastructure</em> (an SDK), not a fleet dashboard you operate.</p>
 
-<h2 id="architecture">How it works</h2>
+<h2 id="architecture">One host. Many sealed islands.</h2>
 <pre><code>        CLI · TUI · your app                 (you drive it)
                     │
                     │  websocket + HTTP API · over Tailscale
@@ -111,7 +127,7 @@
 <p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other. Islands can't see each other; that blindness is the security boundary.</p>
 <p class="bundled-note"><strong>Two kinds of agents.</strong> <strong>Terminal</strong> agents are CLIs you attach to (Claude Code, Codex) — a host-side bridge connects your session to the agent's tmux inside, so it survives disconnect and multiple devices share one screen. <strong>Headless</strong> agents run on their own (an SDK loop, a worker) — output captured to <code>dejima logs</code>. Both get the same isolation, lifecycle, events, and one-API management.</p>
 
-<h2 id="features">Features</h2>
+<h2 id="features">Everything you need to run a fleet safely</h2>
 <ul>
   <li><strong>Isolated islands</strong> — one container per project; own <code>$HOME</code>, credentials, network. Islands can't see each other.</li>
   <li><strong>Multiple agents per island</strong> — N agents share workspace + tool-auth, each on its own git worktree.</li>
@@ -127,18 +143,6 @@
   <li><strong>Self-hosted</strong> — Mac mini / VPS / cloud VM; identical behavior, over Tailscale.</li>
 </ul>
 
-<section id="is-it-for-me">
-  <h2>Is Dejima right for you?</h2>
-  <div class="fitcheck">
-    <p class="plain">Not sure it fits? Open this prompt in your own Claude or ChatGPT — it'll ask about your setup, then give you a candid take. Nothing is sent to us; we don't run a model here.</p>
-    <div class="fit-actions">
-      <button type="button" id="fit-copy" class="copy-btn">Copy prompt</button>
-      <a id="fit-claude" class="deeplink" href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
-      <a id="fit-chatgpt" class="deeplink" href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
-    </div>
-    <textarea id="fit-prompt" class="fit-prompt" rows="18" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
-  </div>
-</section>
 
 <section class="cta-band">
   <h2>Run a fleet on your own box</h2>
