@@ -1,5 +1,23 @@
 # Agent lanes
 
+## Launch wave (Show HN gate — full plan: `strategy/launch-tasklist.md`)
+
+Gate sequence: **0 → {A ∥ B ∥ C} → launch.** Lanes A, B, C are independent — start
+in parallel. Lane 0 is the human-owned virgin-Mac test substrate that proves A and B.
+
+| Lane | Brief | Prompt to give the agent |
+|---|---|---|
+| 0 — Virgin-Mac test substrate (**human-owned**, not an agent) | `docs/lanes/lane-0-test-substrate.md` | n/a — run the proof procedures the A/B PRs ship |
+| A — Bulletproof install + first-run (P0.1, the gate) | `docs/lanes/lane-a-install.md` | "Read `docs/lanes/lane-a-install.md` and follow it — it's your full brief." |
+| B — Uninstall that doesn't nuke agents (P0.2) | `docs/lanes/lane-b-uninstall.md` | "Read `docs/lanes/lane-b-uninstall.md` and follow it — it's your full brief." |
+| C — Grants API: unified per-island grants view (P0.3) | `docs/lanes/lane-c-grants-api.md` | "Read `docs/lanes/lane-c-grants-api.md` and follow it — it's your full brief." |
+
+**Note on Lane C:** the per-resource grant endpoints (port/capability/mcp/links) already
+exist over the daemon API — the "MCP is CLI-only" premise is stale. Lane C is the thinner
+unified-view + OpenAPI-parity + deny-all-verification job. See the brief's "Reality check".
+
+---
+
 Parallel work briefs so up to four agents (each in its own island/worktree) can
 build the committed queue without colliding. See `docs/roadmap.md` →
 "Committed build queue" and "Parallel lanes" for the plan, gates, and shared seams.
