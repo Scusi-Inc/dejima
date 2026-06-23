@@ -181,6 +181,22 @@ func printLocalDaemonHelp(d daemonDiagnosis) {
 	fmt.Fprintln(os.Stderr, "  More: dejima doctor")
 }
 
+// reportSetupIncomplete prints, after a setup flow that left no reachable LOCAL
+// daemon, the same classified diagnosis the daemon-unreachable help uses —
+// framed as "setup isn't finished." Stderr, so it survives a piped stdout.
+func reportSetupIncomplete() {
+	d := diagnoseLocalDaemon()
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, bold("Setup isn't finished — dejimad isn't reachable yet."))
+	fmt.Fprintln(os.Stderr, "  "+d.Cause)
+	if len(d.Steps) > 0 {
+		fmt.Fprintln(os.Stderr, "  Finish setup, then re-run `dejima onboard`:")
+		for _, s := range d.Steps {
+			fmt.Fprintln(os.Stderr, "    • "+s)
+		}
+	}
+}
+
 // renderDaemonHelp formats the diagnosis for the TUI's island pane — shown in
 // place of the bare "(daemon unreachable?)" line when the local daemon is down.
 func renderDaemonHelp(d daemonDiagnosis) string {
