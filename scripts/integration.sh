@@ -34,6 +34,9 @@ set -uo pipefail
 
 # ---------------------------------------------------------------------------
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# PASS/FAIL are the tally counters; report.sh (sourced below) reads and updates
+# them. shellcheck can't see that through source=/dev/null, hence the disable.
+# shellcheck disable=SC2034
 PASS=0 FAIL=0
 step(){ printf '\n\033[1m• %s\033[0m\n' "$*"; }
 die(){ printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -41,7 +44,10 @@ die(){ printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2; exit 1; }
 # DEJIMA_REPORT is set). report.sh defines feature(), and pass()/fail() that
 # tally per-feature as well as globally — source it so those versions win.
 DEJIMA_SUITE="${DEJIMA_SUITE:-tier2-integration}"
-# shellcheck source=scripts/lib/report.sh
+# report.sh is sourced at runtime; source=/dev/null stops shellcheck from
+# trying to follow it (the CI lint job runs without -x and lints report.sh on
+# its own line — see .github/workflows/ci.yml).
+# shellcheck source=/dev/null
 . "$REPO_ROOT/scripts/lib/report.sh"
 
 assert_eq(){ if [ "$1" = "$2" ]; then pass "$3"; else fail "$3 — got [$1] want [$2]"; fi; }
