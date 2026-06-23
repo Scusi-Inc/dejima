@@ -53,6 +53,31 @@ func TestAgentGlyphKind(t *testing.T) {
 	}
 }
 
+// TestAgentStatus locks in the normalized state vocabulary and its precedence:
+// an orchestration error or an error signal outranks everything; a pending
+// "needs you" outranks liveness; a dead session reads "stopped"; a live one is
+// "idle" only once it reports task-complete, else "working".
+func TestAgentStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		a    api.AgentInfo
+		want string
+	}{
+		{"orchestration error", api.AgentInfo{State: "running", Error: "worktree add failed"}, "error"},
+		{"error signal", api.AgentInfo{State: "running", AgentState: &api.AgentStateInfo{Latest: "error"}}, "error"},
+		{"needs you outranks running", api.AgentInfo{State: "running", AgentState: &api.AgentStateInfo{Latest: "waiting-for-input"}}, "needs you"},
+		{"stopped session", api.AgentInfo{State: "stopped"}, "stopped"},
+		{"empty session is not running", api.AgentInfo{State: ""}, "stopped"},
+		{"task-complete is idle", api.AgentInfo{State: "running", AgentState: &api.AgentStateInfo{Latest: "task-complete"}}, "idle"},
+		{"running, no signal, is working", api.AgentInfo{State: "running"}, "working"},
+	}
+	for _, c := range cases {
+		if got, _ := agentStatus(c.a); got != c.want {
+			t.Errorf("%s: agentStatus = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // TestRenderListGlyphs renders the list and asserts each kind shows up. The
 // rendered output is logged so the visual can be eyeballed with `go test -v`.
 func TestRenderListGlyphs(t *testing.T) {
@@ -67,7 +92,9 @@ func TestRenderListGlyphs(t *testing.T) {
 		"Backend         codex",        // …and shows its type in the aligned type column
 		glyphHeadless + " headless",    // headless box, unlabeled
 		"·a1", "·a2", "·a3",            // id rides along as a muted handle
-		"·a1  up 1h", // running agent shows compact uptime
+		"·a1  up 1h",     // running agent shows compact uptime
+		"needs you",      // a1's waiting-for-input normalized to the call-to-action word
+		"·a2", "stopped", // a2 is a stopped session
 		"+ add agent",
 		"+ new island",
 	} {

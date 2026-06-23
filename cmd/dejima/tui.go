@@ -773,6 +773,7 @@ var (
 	styleHibernate = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
 	styleErrored   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
 	styleWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
+	styleNeedsYou  = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Bold(true) // the one call-to-action state — bold so it pops out of a quiet fleet
 	styleFooter    = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
 )
 
@@ -963,22 +964,41 @@ const (
 	glyphHeadless = "■" // headless agent — supervised background process, logs only
 )
 
+// agentStatus normalizes an agent's session liveness (State), last emitted
+// signal (AgentState.Latest), and any orchestration Error into one legible,
+// colored word. It is the single source of truth for state across the UI: the
+// row signal, the glyph color (agentGlyph), and the detail panel all read from
+// it, so the word and the color can never disagree. "needs you" is the only
+// call-to-action state, rendered bold (styleNeedsYou) so it pops out of a fleet
+// of quietly-working agents.
+func agentStatus(a api.AgentInfo) (string, lipgloss.Style) {
+	latest := ""
+	if a.AgentState != nil {
+		latest = a.AgentState.Latest
+	}
+	switch {
+	case a.Error != "" || latest == "error":
+		return "error", styleErrored
+	case latest == "waiting-for-input":
+		return "needs you", styleNeedsYou
+	case a.State != "running":
+		return "stopped", styleHibernate
+	case latest == "task-complete":
+		return "idle", styleHibernate
+	default:
+		return "working", styleRunning
+	}
+}
+
 // agentGlyph renders an agent's kind glyph colored by its state: the shape says
-// terminal vs headless, the color says running / idle / needs-you / error.
+// terminal vs headless (stable identity), the color (from agentStatus) says how
+// it's doing — working / idle / needs-you / error / stopped.
 func agentGlyph(a api.AgentInfo) string {
 	g := glyphTerminal
 	if !a.Attachable {
 		g = glyphHeadless
 	}
-	style := styleHibernate // gray: idle / stopped (also the default)
-	switch {
-	case a.Error != "":
-		style = styleErrored
-	case a.AgentState != nil && a.AgentState.Latest == "waiting-for-input":
-		style = styleWaiting
-	case a.State == "running":
-		style = styleRunning
-	}
+	_, style := agentStatus(a)
 	return style.Render(g)
 }
 
@@ -994,7 +1014,8 @@ func agentDisplayName(a api.AgentInfo) string {
 }
 
 // agentRowText renders one agent's list line: state-colored kind glyph, name
-// (label/type), the agent's type, the muted id handle, then the latest signal.
+// (label/type), the agent's type, the muted id handle + uptime, then the
+// normalized state word (agentStatus), colored to match the glyph.
 // The type column lines up with the island rows' status column (offset 23). A
 // label-less agent's name already *is* its type, so the type column is left
 // blank rather than repeating it.
@@ -1009,12 +1030,8 @@ func agentRowText(a api.AgentInfo) string {
 	if a.State == "running" && !a.CreatedAt.IsZero() {
 		meta += styleMuted.Render("  up " + timeAgo(a.CreatedAt))
 	}
-	sig := ""
-	if a.Error != "" {
-		sig = "  " + styleErrored.Render("error")
-	} else if a.AgentState != nil && a.AgentState.Latest != "" {
-		sig = "  " + a.AgentState.Latest
-	}
+	statusText, statusStyle := agentStatus(a)
+	sig := "  " + statusStyle.Render(statusText)
 	return fmt.Sprintf("%s %-14s  %s  %s%s",
 		agentGlyph(a),
 		truncate(agentDisplayName(a), 14),
@@ -1135,11 +1152,13 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		kind = "headless — background process, logs only"
 	}
 	b.WriteString(fmt.Sprintf("kind:      %s %s\n", agentGlyph(a), styleMuted.Render(kind)))
-	state := a.State
-	if state == "" {
-		state = "—"
+	statusText, statusStyle := agentStatus(a)
+	b.WriteString(fmt.Sprintf("state:     %s\n", statusStyle.Render(statusText)))
+	session := a.State
+	if session == "" {
+		session = "—"
 	}
-	b.WriteString(fmt.Sprintf("session:   %s\n", state))
+	b.WriteString(fmt.Sprintf("session:   %s\n", styleMuted.Render(session)))
 	if !a.CreatedAt.IsZero() {
 		b.WriteString(fmt.Sprintf("uptime:    %s\n", humanDuration(time.Since(a.CreatedAt))))
 	}
@@ -1271,9 +1290,9 @@ func (m tuiModel) renderHelp() string {
 		"%s island   %s terminal agent   %s headless agent", "●", glyphTerminal, glyphHeadless)))
 	b.WriteString("\n  ")
 	b.WriteString(styleMuted.Render("color = state: ") +
-		styleRunning.Render("running") + styleMuted.Render(" · ") +
-		styleHibernate.Render("idle") + styleMuted.Render(" · ") +
-		styleWaiting.Render("needs you") + styleMuted.Render(" · ") +
+		styleRunning.Render("working") + styleMuted.Render(" · ") +
+		styleHibernate.Render("idle/stopped") + styleMuted.Render(" · ") +
+		styleNeedsYou.Render("needs you") + styleMuted.Render(" · ") +
 		styleErrored.Render("error"))
 	b.WriteString("\n\n")
 
