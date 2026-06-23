@@ -1,30 +1,54 @@
 #!/usr/bin/env bash
-# Dejima end-to-end integration test — runs against a LIVE Docker host.
+# Dejima end-to-end integration test — the DETERMINISTIC FULL-FEATURE RUN.
 #
-# Verifies the full Port (brokered host-file access) plumbing plus create-time
-# multi-agent seeding, against real containers:
-#   · scope grant / deny-all
-#   · intake (host -> island copy) incl. nested paths and a custom dest
-#   · traversal guards (../ escape and symlink-escape are REFUSED)
-#   · export (island -> host staging)
-#   · Ledger: every crossing recorded, hash chain verifies, tamper is detected
+# A single dispatch exercises every Tier-2 feature once, in a sensible order,
+# against real containers, with clear per-feature pass/fail:
+#   · bootstrap: build, daemon up, island image, create
+#   · lifecycle: ls/status/exec/hibernate/wake/upgrade
+#   · Port (brokered host-file access): scope grant / deny-all; intake (host ->
+#     island) incl. nested paths + custom dest; traversal guards (../ + symlink
+#     escape REFUSED); export (island -> host); read-write; Ledger record +
+#     hash-chain verify + tamper detection; audit jsonl/csv export
+#   · MCP brokering: deny-all / grant / brokered call / ledger / revoke
 #   · multi-agent: `init --agent X --agent Y` seeds both, a2 worktree reconciles
+#   · clone an island's workspace into a new island
+#   · inter-island exchange: link/msg, action gate, approve/deny, ledger
+#   · purge unpushed-work guard + force-purge override
+#   · capability brokering: deny-all / grant / list / revoke
+#   · provider credentials: set / list (masked) / rm
+#   · team tokens + role enforcement (viewer denied purge, allowed reads)
+#   · webhooks: events catalog / subscribe / ls / rm
+#   · activity feed · panic brake (engage/status/clear) · doctor health check
 #
 # It runs in a throwaway $HOME so it never touches your real ~/.dejima, and it
 # purges the test islands + daemon on exit.
 #
-# Usage:   scripts/integration.sh
+# Structured reporting: set DEJIMA_REPORT=<path> to also emit a machine-readable
+# JSON summary (pass/fail per feature) for the CI artifact + issue-on-failure
+# step. See scripts/lib/report.sh and docs/testing/full-suite-design.md.
+#
+# Usage:   scripts/integration.sh   (optionally: DEJIMA_REPORT=report.json …)
 # Requires: docker (running), go, git. ~Several minutes on first run (image build).
 
 set -uo pipefail
 
 # ---------------------------------------------------------------------------
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# PASS/FAIL are the tally counters; report.sh (sourced below) reads and updates
+# them. shellcheck can't see that through source=/dev/null, hence the disable.
+# shellcheck disable=SC2034
 PASS=0 FAIL=0
-pass(){ printf '  \033[32m✓\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
-fail(){ printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 step(){ printf '\n\033[1m• %s\033[0m\n' "$*"; }
 die(){ printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2; exit 1; }
+# Structured per-feature reporting (feature/pass/fail tally + JSON summary when
+# DEJIMA_REPORT is set). report.sh defines feature(), and pass()/fail() that
+# tally per-feature as well as globally — source it so those versions win.
+DEJIMA_SUITE="${DEJIMA_SUITE:-tier2-integration}"
+# report.sh is sourced at runtime; source=/dev/null stops shellcheck from
+# trying to follow it (the CI lint job runs without -x and lints report.sh on
+# its own line — see .github/workflows/ci.yml).
+# shellcheck source=/dev/null
+. "$REPO_ROOT/scripts/lib/report.sh"
 
 assert_eq(){ if [ "$1" = "$2" ]; then pass "$3"; else fail "$3 — got [$1] want [$2]"; fi; }
 assert_has(){ if printf '%s' "$1" | grep -qF -- "$2"; then pass "$3"; else fail "$3 — missing [$2]"; fi; }
@@ -92,6 +116,7 @@ cleanup(){
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
+feature "bootstrap (build/daemon/image/create)"
 step "Build dejima + dejimad"
 ( cd "$REPO_ROOT" && go build -o "$BIN/dejima" ./cmd/dejima && go build -o "$BIN/dejimad" ./cmd/dejimad ) \
   || die "build failed"
@@ -125,6 +150,7 @@ pass "island $ISLAND created and running"
 # against the real container. These are the verbs the manual Minion pass walks;
 # automating them here shrinks that queue.
 # ---------------------------------------------------------------------------
+feature "lifecycle (ls/status/exec/hibernate/wake/upgrade)"
 step "Lifecycle: ls + status show the island"
 LS="$(dejima ls 2>&1)"
 assert_has "$LS" "$ISLAND" "island appears in \`dejima ls\`"
@@ -166,6 +192,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+feature "port — host-file brokering (scope/intake/export/rw/traversal/ledger)"
 step "Scope: deny-all before any grant"
 expect_err_match "intake refused before any scope is granted" "no Port scope" \
   dejima port intake "$ISLAND" "vault:note.md"
@@ -281,6 +308,7 @@ expect_err_match "intake refused after revoke" "no Port scope" \
 # broker spawns the server program on the daemon host and speaks JSON-RPC over
 # its stdio, so it exercises the real grant/call/ledger path with no container
 # round-trip. See docs/mcp-broker-spec.md.
+feature "mcp brokering (deny-all/grant/call/ledger/revoke)"
 step "MCP broker: build a mock stdio MCP server (host-curated)"
 # A minimal newline-delimited JSON-RPC 2.0 MCP server, stdlib-only so it builds
 # anywhere `go` runs (no python/jq dependency — Minion is macOS).
@@ -378,6 +406,7 @@ expect_err_match "call refused after revoke" "not granted" \
   dejima mcp call "$ISLAND" mock --method tools/list
 
 # ---------------------------------------------------------------------------
+feature "multi-agent create-time seeding"
 step "Multi-agent: seed two agents at create time"
 dejima init --name "$ISLAND_MULTI" --repo "$REPO" --local-copy --agent claude-code --agent codex \
   >/dev/null 2>&1 || die "multi-agent island create failed"
@@ -409,6 +438,7 @@ fi
 # Clone — a byte-for-byte copy of an island's workspace into fresh volumes; the
 # clone starts deny-all (Port grants are NOT carried over). See `dejima clone`.
 # ---------------------------------------------------------------------------
+feature "clone an island"
 step "Clone: duplicate an island's workspace into a new island"
 # Leave a marker in the source workspace so we can prove the copy is faithful.
 dejima exec "$ISLAND" -- sh -c 'echo cloned-content > /workspace/clone-marker.txt' >/dev/null 2>&1 \
@@ -432,6 +462,7 @@ fi
 # action is delivered immediately when pre-authorized, else queued for operator
 # approval. See docs/inter-island-exchange-spec.md.
 # ---------------------------------------------------------------------------
+feature "inter-island exchange (link/msg/action-gate/approve/deny/ledger)"
 step "Inter-island: create two islands A and B"
 dejima init --name "$ISLAND_A" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
   >/dev/null 2>&1 || die "island A create failed"
@@ -509,6 +540,7 @@ expect_ok "ledger chain verifies with link.* entries" dejima audit --verify
 # is refused unless forced. The guard is what stops an accidental purge from
 # silently dropping an agent's work.
 # ---------------------------------------------------------------------------
+feature "purge unpushed-work guard + force-purge"
 step "Purge guard: unpushed work blocks a plain purge, --force overrides"
 dejima init --name "$ISLAND_GUARD" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
   >/dev/null 2>&1 || die "guard island create failed"
@@ -522,7 +554,118 @@ expect_ok "force-purge overrides the guard" dejima purge "$ISLAND_GUARD" --force
 expect_fail "guard island is gone after force-purge" dejima status "$ISLAND_GUARD"
 
 # ---------------------------------------------------------------------------
-printf '\n\033[1m──────── results ────────\033[0m\n'
-printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ] || { printf '\033[31mINTEGRATION TEST FAILED\033[0m\n'; exit 1; }
+# Capability brokering — host actions are deny-all until granted; a grant shows
+# up in the list and a revoke returns to deny-all. Every decision is ledgered.
+# ---------------------------------------------------------------------------
+feature "capability brokering (deny-all/grant/list/revoke + ledger)"
+step "Capability: deny-all before any grant"
+CAP_EMPTY="$(dejima cap list "$ISLAND" 2>&1)"
+assert_has "$CAP_EMPTY" "deny-all" "no grant → deny-all (no host actions reachable)"
+step "Capability: grant a target, see it listed, then revoke"
+expect_ok "cap grant" dejima cap grant "$ISLAND" script
+CAP_LS="$(dejima cap list "$ISLAND" 2>&1)"
+assert_has "$CAP_LS" "script" "granted capability appears in the list"
+expect_ok "cap revoke" dejima cap revoke "$ISLAND" script
+CAP_GONE="$(dejima cap list "$ISLAND" 2>&1)"
+assert_has "$CAP_GONE" "deny-all" "revoke returns to deny-all"
+
+# ---------------------------------------------------------------------------
+# Provider credentials — set / list (masked) / remove. The key is never echoed
+# back; only metadata (provider name) is listed.
+# ---------------------------------------------------------------------------
+feature "provider credentials (set/list-masked/rm)"
+step "Provider: none configured initially"
+PROV_EMPTY="$(dejima provider ls 2>&1)"
+assert_has "$PROV_EMPTY" "no providers configured" "fresh daemon has no provider creds"
+step "Provider: set, list (masked), and remove"
+expect_ok "provider set" dejima provider set anthropic --key "sk-itest-do-not-use"
+PROV_LS="$(dejima provider ls 2>&1)"
+assert_has "$PROV_LS" "anthropic" "set provider is listed"
+if printf '%s' "$PROV_LS" | grep -qF "sk-itest-do-not-use"; then
+  fail "provider ls leaked the raw key"
+else
+  pass "provider ls does not leak the raw key (masked)"
+fi
+expect_ok "provider rm" dejima provider rm anthropic
+
+# ---------------------------------------------------------------------------
+# Team tokens + roles — mint a viewer token and confirm role enforcement: a
+# viewer is denied a purge but allowed a read (ls). Owner-equivalent local
+# listener mints; the scoped bearer is presented via DEJIMA_TOKEN.
+# ---------------------------------------------------------------------------
+feature "team tokens + role enforcement (viewer denied purge, allowed reads)"
+step "Token: create an operator + a viewer token"
+expect_ok "token create (operator)" dejima token create --role operator --label itest-op
+VIEWER_OUT="$(dejima token create --role viewer --label itest-viewer 2>&1)"
+assert_has "$VIEWER_OUT" "viewer" "viewer token minted"
+VIEWER_SECRET="$(printf '%s\n' "$VIEWER_OUT" | sed -n 's/.*secret:[[:space:]]*\([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
+TOK_LS="$(dejima token ls 2>&1)"
+assert_has "$TOK_LS" "viewer" "minted tokens are listed"
+if [ -n "$VIEWER_SECRET" ]; then
+  step "Token: the viewer role is read-only (ls allowed, purge denied)"
+  expect_ok "viewer allowed a read (ls)" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima ls
+  expect_fail "viewer denied a purge" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima purge "$ISLAND"
+else
+  fail "could not parse the viewer token secret to test role enforcement"
+fi
+
+# ---------------------------------------------------------------------------
+# Webhooks — subscribe to events, see the subscription listed, unsubscribe. The
+# event-type catalog is enumerable via `webhook events`.
+# ---------------------------------------------------------------------------
+feature "webhooks (events catalog/subscribe/ls/rm)"
+step "Webhook: the event-type catalog is non-empty"
+WH_EVENTS="$(dejima webhook events 2>&1)"
+if [ -n "$(printf '%s' "$WH_EVENTS" | tr -d '[:space:]')" ]; then
+  pass "webhook events lists known event types"
+else
+  fail "webhook events returned nothing"
+fi
+step "Webhook: subscribe → ls → rm"
+WH_SUB="$(dejima webhook subscribe --url https://itest.invalid/hook 2>&1)"
+assert_has "$WH_SUB" "subscribed" "subscription created"
+WH_ID="$(printf '%s\n' "$WH_SUB" | sed -n 's/^subscribed:[[:space:]]*\([^ ]*\).*/\1/p' | head -1)"
+WH_LS="$(dejima webhook ls 2>&1)"
+assert_has "$WH_LS" "itest.invalid" "subscription appears in the list"
+if [ -n "$WH_ID" ]; then expect_ok "webhook rm" dejima webhook rm "$WH_ID"; else fail "could not parse the webhook id"; fi
+
+# ---------------------------------------------------------------------------
+# Activity feed — the curated who-did-what timeline. After all the brokered ops
+# above, the feed (or its always-on broker records) is reachable and exits 0.
+# ---------------------------------------------------------------------------
+feature "activity feed"
+step "Activity: the curated feed is reachable"
+expect_ok "activity feed exits 0" dejima activity
+
+# ---------------------------------------------------------------------------
+# Panic brake — engage stops every island and blocks auto-restart; status
+# reports it; clear restarts. Exercised last (before purge guard's own island)
+# so it doesn't interfere with the lifecycle assertions above.
+# ---------------------------------------------------------------------------
+feature "panic emergency brake (engage/status/clear)"
+step "Panic: status is clear, engage, status engaged, clear"
+PANIC0="$(dejima panic --status 2>&1)"
+assert_has "$PANIC0" "not engaged" "panic starts disengaged"
+expect_ok "panic engage" dejima panic --reason itest-drill
+PANIC1="$(dejima panic --status 2>&1)"
+assert_has "$PANIC1" "ENGAGED" "panic reports engaged after engaging"
+expect_ok "panic clear" dejima panic --clear
+
+# ---------------------------------------------------------------------------
+# Doctor — the host/daemon health check runs and reports. It's diagnostic only
+# (no --fix here), so it must exit 0 against a healthy isolated daemon.
+# ---------------------------------------------------------------------------
+feature "doctor health check"
+step "Doctor: diagnostic run reports health"
+DOC="$(dejima doctor 2>&1)"
+if [ -n "$(printf '%s' "$DOC" | tr -d '[:space:]')" ]; then
+  pass "doctor produced a health report"
+else
+  fail "doctor produced no output"
+fi
+
+# ---------------------------------------------------------------------------
+# Print the per-feature rollup and (when DEJIMA_REPORT is set) write the JSON
+# summary as a CI artifact. Exits non-zero if any feature failed.
+report_summary || { printf '\033[31mINTEGRATION TEST FAILED\033[0m\n'; exit 1; }
 printf '\033[32mALL GREEN\033[0m\n'
