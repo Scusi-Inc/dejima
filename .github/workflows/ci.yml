@@ -57,6 +57,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
           shellcheck scripts/integration.sh \
+            scripts/lib/report.sh \
+            scripts/report-to-issue.sh \
             scripts/tier3/lib.sh \
             scripts/tier3/safe.sh \
             scripts/tier3/system.sh \
