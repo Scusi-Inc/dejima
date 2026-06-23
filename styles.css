@@ -78,6 +78,11 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .hero-platforms { display: inline-block; color: var(--muted); font-size: 0.95rem;
   margin-top: 0.4rem; letter-spacing: 0.02em; }
 .hero-cta { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
+.demo-shot { margin: 1.6rem 0; }
+.demo-shot img { display: block; width: 100%; height: auto;
+  border: 1px solid var(--border); border-radius: 8px; }
+.demo-shot figcaption { margin-top: 0.55rem; font-size: 0.85rem; color: var(--muted);
+  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .btn-primary { background: var(--accent); color: var(--bg); text-decoration: none;
   padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
 .btn-primary:hover { background: var(--hover); color: var(--bg); }
@@ -90,12 +95,6 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
   background: transparent; }
 .proof-tile h3 { margin: 0 0 0.4rem; font-size: 1.0rem; color: var(--hover); }
 .proof-tile p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
-.safety { background: var(--card-hover-bg); border: 1px solid var(--border);
-  border-left: 3px solid var(--accent); border-radius: 8px;
-  padding: 1.3rem 1.5rem; margin: 0 0 2.6rem; }
-.safety h2 { margin: 0 0 0.6rem; text-transform: none; letter-spacing: normal;
-  font-size: 1.25rem; color: var(--hover); }
-.safety p { margin: 0; color: var(--fg); }
 
 /* Generic cards (used by teams/build) -------------------------------- */
 .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.4rem 0; }
