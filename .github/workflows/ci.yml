@@ -44,15 +44,20 @@ jobs:
         with:
           version: v2.12.2
 
-  # shellcheck keeps the Tier-2 integration suite (scripts/integration.sh, run
-  # live on a Docker host) lint-clean on every PR even though CI can't execute it
-  # — a broken edit to the suite is caught here, not later on the Docker host.
+  # shellcheck keeps the live test suites (the Tier-2 integration suite plus the
+  # Tier-3/Tier-4 scripts run on the Mac-mini runner) lint-clean on every PR even
+  # though CI can't execute them — a broken edit is caught here, not later on the
+  # runner. The tier3/tier4 scripts `source` lib.sh, so point shellcheck at it.
   shellcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: shellcheck integration suite
+      - name: shellcheck the live test suites
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
-          shellcheck scripts/integration.sh
+          shellcheck scripts/integration.sh \
+            scripts/tier3/lib.sh \
+            scripts/tier3/safe.sh \
+            scripts/tier3/system.sh \
+            scripts/tier4/agent-smoke.sh

@@ -1,33 +1,41 @@
 name: nightly
 
 # ============================================================================
-# DISABLED SCAFFOLD — Tiers 2–4 of the automated test harness (Phases B–C).
+# Live test tiers (Lane 6 Phase B) — Tier-2 Docker integration, the Tier-3
+# macOS-host suite, and the Tier-4 real-agent smoke.
 #
-# This workflow is intentionally NOT wired to run yet: it has no `schedule` and
-# no `push`/`pull_request` triggers, so it only ever appears under "Run workflow"
-# (workflow_dispatch) and every job is gated behind `if: false`. It exists so
-# Phase B drops in cleanly — flip the gates + add the schedule, don't author from
-# scratch. See docs/testing/automated-test-harness.md and
-# docs/lanes/lane-6-test-harness.md.
+# TRIGGER POLICY — workflow_dispatch ONLY. There is intentionally NO `schedule:`
+# cron and no push/PR trigger: every job here runs real code on the Mac-mini
+# self-hosted runner, so turning on unattended nightly auto-runs is the
+# OPERATOR's explicit decision, not the harness author's. To enable nightly
+# auto-runs later, uncomment the `schedule:` block below — deliberately.
 #
-# What each tier needs before it can be enabled (Phase B/C operator setup):
-#   · Tier 2 (Docker integration): a Linux Docker host — either a GitHub-hosted
-#     runner with Docker, or a small self-hosted Linux box. Runs
-#     scripts/integration.sh end to end.
-#   · Tier 3 (macOS host): a self-hosted runner on the Mac mini (a dedicated test
-#     user), label e.g. `macos-mini`. service install / onboard / Keychain /
-#     idle-hibernate / terminal-reconnect / SSH-façade.
-#   · Tier 4 (real-agent smoke): a throwaway agent credential (TEST_AGENT_KEY) +
-#     a throwaway GitHub account/repo/PAT (TEST_GH_TOKEN). Kept lenient.
+# RUNNER — all live jobs target the `dejimaqa` self-hosted runner on the Minion
+# Mac mini (label `macos-mini`), which has its OWN colima Docker + its OWN
+# dejimad, a throwaway bot GitHub account, and scoped sudo (dejima / pmset /
+# systemsetup / launchctl). See docs/testing/dejimaqa-runner-setup.md. Tier-2
+# runs there too for now (it has colima); it can move to a dedicated Linux
+# runner later — see the note on the `integration` job.
 #
-# Secrets to add for the live tiers (Phase B/C): TEST_GH_TOKEN, TEST_AGENT_KEY,
-# and optionally TEST_TS_AUTHKEY (or loopback the Tailscale path).
+# SECRETS — TEST_GH_TOKEN / TEST_AGENT_KEY (repo secrets) + TEST_GH_OWNER
+# (repo var). A job whose required secret is MISSING skips with a notice rather
+# than failing, so a partially-provisioned runner still goes green.
 # ============================================================================
 
 on:
-  workflow_dispatch: {}
-  # TODO(phase-b): enable the nightly schedule once a Docker host + the Mac-mini
-  # self-hosted runner are registered. Until then this stays manual-only.
+  workflow_dispatch:
+    inputs:
+      run_system_tests:
+        description: "Run the SYSTEM-MUTATING Tier-3 checks (service install --system, onboard --provision-host). Installs->verifies->uninstalls. Default off."
+        type: boolean
+        default: false
+      run_reboot_test:
+        description: "Within the system tests, also exercise reboot survival. DANGEROUS: only with physical/remote access to recover the runner. Default off."
+        type: boolean
+        default: false
+  # TODO(operator): to enable unattended nightly auto-runs, uncomment this
+  # schedule. This executes code on the Mac mini every night — enable it
+  # deliberately, not by default.
   # schedule:
   #   - cron: "0 7 * * *" # 07:00 UTC nightly
 
@@ -36,10 +44,15 @@ permissions:
 
 jobs:
   # --- Tier 2: Docker integration -------------------------------------------
+  # Runs scripts/integration.sh end to end against the runner's colima Docker.
+  # NOTE: pinned to the Mac-mini runner for now because that's where colima
+  # lives. It has no secret dependency, so it always runs. It can later move to
+  # a dedicated `[self-hosted, linux, docker]` runner to free the mini for the
+  # genuinely-macOS Tier-3 work — just change `runs-on`.
   integration:
     name: tier2-integration (Docker)
-    if: false # TODO(phase-b): flip to a Docker-capable runner check + enable
-    runs-on: ubuntu-latest # TODO(phase-b): a Docker host (hosted-with-docker or self-hosted Linux)
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -50,37 +63,72 @@ jobs:
       - name: run the Tier-2 integration matrix
         run: make test-integration
 
-  # --- Tier 3: macOS-host suite ---------------------------------------------
-  macos-host:
-    name: tier3-macos-host (Mac mini)
-    if: false # TODO(phase-b): flip once the self-hosted macOS runner is registered
-    runs-on: [self-hosted, macos-mini] # TODO(phase-b): the dedicated test-user runner
+  # --- Tier 3 (safe): macOS-host, no system mutation ------------------------
+  # Keychain secret storage, idle hibernate->wake, terminal auto-reconnect,
+  # SSH-façade plumbing. Runs against dejimaqa's OWN dejimad + colima; mutates
+  # nothing on the host. No secret dependency -> always runs.
+  macos-host-safe:
+    name: tier3-macos-host-safe (Mac mini)
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 30
+    env:
+      # A short idle window so the auto-hibernate reaper fires within the job's
+      # poll budget (the safe suite exercises both the fire and the wake halves).
+      DEJIMAD_IDLE_HIBERNATE: "2m"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      # TODO(phase-b): service install --system --audit + reboot survival, onboard
-      # --provision-host (--yes --reset), Keychain credential storage, idle
-      # auto-hibernate + wake, terminal auto-reconnect, and the SSH façade. These
-      # need real macOS + launchd, hence the self-hosted Mac-mini runner.
-      - name: tier-3 macOS-host suite
-        run: |
-          echo "TODO(phase-b): macOS-host suite (service/onboard/Keychain/idle/ssh)"
+      - name: tier-3 safe macOS-host suite
+        run: make test-tier3-safe
 
-  # --- Tier 4: real-agent smoke ---------------------------------------------
-  agent-smoke:
-    name: tier4-agent-smoke
-    if: false # TODO(phase-c): flip once TEST_AGENT_KEY + TEST_GH_TOKEN exist
-    runs-on: ubuntu-latest # TODO(phase-c): Docker host or the Mac mini
-    # env:
-    #   TEST_AGENT_KEY: ${{ secrets.TEST_AGENT_KEY }}
-    #   TEST_GH_TOKEN:  ${{ secrets.TEST_GH_TOKEN }}
+  # --- Tier 3 (system-mutating): OPT-IN only --------------------------------
+  # service install --system --audit (-> verify -> uninstall), onboard
+  # --provision-host --yes (idempotent), reboot survival (double-gated). Only
+  # runs when the operator sets run_system_tests=true on the dispatch; the
+  # reboot itself needs run_reboot_test=true on top. Refuses to clobber a
+  # pre-existing aoos system daemon.
+  macos-host-system:
+    name: tier3-macos-host-system (Mac mini, opt-in)
+    needs: macos-host-safe
+    if: ${{ inputs.run_system_tests }}
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 30
+    env:
+      DEJIMA_RUN_SYSTEM: "1"
+      DEJIMA_RUN_REBOOT: ${{ inputs.run_reboot_test && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
-      # TODO(phase-c): launch an agent on a throwaway repo, give it a trivial task,
-      # assert it ran / produced a commit + pushed (never assert exact LLM output),
-      # then exercise an inter-island message. Lenient by design.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: tier-3 system-mutating macOS-host suite
+        run: make test-tier3-system
+
+  # --- Tier 4: real-agent smoke ---------------------------------------------
+  # Launches a REAL agent, gives it a trivial task, asserts a commit, pushes to
+  # the bot repo, runs one inter-island message. Lenient (never asserts exact
+  # LLM output). SKIPS WITH A NOTICE when TEST_AGENT_KEY is missing.
+  agent-smoke:
+    name: tier4-agent-smoke (Mac mini)
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 30
+    env:
+      TEST_AGENT_KEY: ${{ secrets.TEST_AGENT_KEY }}
+      TEST_GH_TOKEN: ${{ secrets.TEST_GH_TOKEN }}
+      TEST_GH_OWNER: ${{ vars.TEST_GH_OWNER }}
+      # Optional: the sandbox repo in the bot account to create the island from.
+      # Defaults inside the script if unset (falls back to a local seed).
+      TEST_GH_REPO: ${{ vars.TEST_GH_REPO }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: skip notice when the agent key is missing
+        if: ${{ env.TEST_AGENT_KEY == '' }}
+        run: echo "::notice::TEST_AGENT_KEY not set — skipping the Tier-4 real-agent smoke"
       - name: tier-4 real-agent smoke
-        run: |
-          echo "TODO(phase-c): real-agent smoke (launch + trivial task + push)"
+        if: ${{ env.TEST_AGENT_KEY != '' }}
+        run: make test-tier4
