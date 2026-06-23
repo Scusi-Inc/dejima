@@ -29,10 +29,12 @@ REPORT="${1:-report.json}"
 RUN_URL="${RUN_URL:-${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}}"
 LABEL="${ISSUE_LABEL:-test-failure}"
 
+# Temp files for the (bash-3.2-safe) body assembly; cleaned on exit. Inlined
+# rather than a function so shellcheck doesn't flag the handler as unreachable
+# (SC2317) — they're always set ("" until mktemp), so `rm -f` is a safe no-op.
 DETAIL_FILE=""
 BODY_FILE=""
-cleanup() { [ -n "$DETAIL_FILE" ] && rm -f "$DETAIL_FILE"; [ -n "$BODY_FILE" ] && rm -f "$BODY_FILE"; return 0; }
-trap cleanup EXIT
+trap 'rm -f "$DETAIL_FILE" "$BODY_FILE"' EXIT
 
 if [ ! -f "$REPORT" ]; then
   echo "::notice::no report at $REPORT — skipping issue filing"
