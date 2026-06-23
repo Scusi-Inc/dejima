@@ -86,6 +86,7 @@
   <tr><td>Survives disconnect, multi-device</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>✓</td></tr>
   <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✗</td></tr>
   <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td></tr>
+  <tr><td>Curated MCP servers, brokered &amp; audited</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td></tr>
   <tr><td>Up in minutes, nothing to build</td><td><strong>✓</strong></td><td>~</td><td>✓</td><td>~</td></tr>
 </table>
 </div>
@@ -118,6 +119,7 @@
   <li><strong>Persistent sessions</strong> — survive disconnect, sleep, device switch; multiple devices share one screen.</li>
   <li><strong>Lifecycle verbs</strong> — <code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>.</li>
   <li><strong>Brokered host-file access (Port)</strong> — grant an island scoped, read-only host folders; deny-all by default.</li>
+  <li><strong>Brokered MCP servers</strong> — grant an island host-curated MCP servers through a fixed method allow-list; deny-all, every call ledgered.</li>
   <li><strong>Tamper-evident ledger</strong> — every brokered file crossing is hash-chained; verify with <code>dejima audit --verify</code>.</li>
   <li><strong>Home Islands</strong> — run a 24/7 assistant daemon contained, not naked on the host.</li>
   <li><strong>HTTP/WebSocket API</strong> — one control surface for CLI, TUI, dashboards, bots.</li>
