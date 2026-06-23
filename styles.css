@@ -51,7 +51,6 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .pill { display: inline-block; padding: 0.15rem 0.55rem; border: 1px solid var(--border);
   border-radius: 999px; font-size: 0.75rem; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.05em; }
-.pill + .pill { margin-left: 0.35rem; }
 .coming { display: inline-block; padding: 0.1rem 0.5rem; border: 1px solid var(--accent);
   border-radius: 999px; font-size: 0.7rem; color: var(--accent); text-transform: uppercase;
   letter-spacing: 0.05em; vertical-align: middle; margin-left: 0.5rem; }
