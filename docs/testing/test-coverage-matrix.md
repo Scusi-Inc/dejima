@@ -21,7 +21,7 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 - [ ] `GET workspace-ready` — readiness gate · API · T2 · ▢
 - [x] `clone <name> <new-name>` — duplicate an island · T2 · A
 - [x] `hibernate <name>` — stop container, keep state · CLI/API/TUI · T2 · A
-- [ ] `wake <name>` — resume hibernated island · T2 · M
+- [x] `wake <name>` — resume hibernated island · T1/T2 · A
 - [ ] `reset <name>` — reset island · T2 · M
 - [x] `upgrade [name]` — re-pull base image / migrate · T2 · A
 - [x] `purge <name>` — destroy island · CLI/API/TUI · T2 · A
