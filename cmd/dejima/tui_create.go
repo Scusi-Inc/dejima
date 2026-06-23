@@ -86,6 +86,7 @@ type creatorModel struct {
 	// resolved selection
 	resolution   reposrc.Resolution
 	picker       agentPicker            // agent type (and headless command) chooser
+	keyGap       map[string]bool        // agent types needing an unconfigured LLM key (picker annotation)
 	agents       []api.AgentSpecRequest // seeded agents; element 0 is the primary
 	pickingExtra bool                   // true while the picker is adding a non-primary agent
 	nameInput    string
@@ -134,6 +135,7 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 		existing:     m.islands,
 		statusCache:  map[string]reposrc.Status{},
 		imageMissing: m.overview != nil && !m.overview.IslandImagePresent,
+		keyGap:       m.agentKeyGap,
 	}
 	m.creator = c
 	if cfg.RepoRoot == "" {
@@ -896,7 +898,7 @@ func (c *creatorModel) viewSource(b *strings.Builder) {
 func (c *creatorModel) viewAgent(b *strings.Builder) {
 	b.WriteString(styleMuted.Render(c.resolution.Note))
 	b.WriteString("\n\n")
-	c.picker.view(b, "Agent")
+	c.picker.view(b, "Agent", c.keyGap)
 }
 
 // viewAgents renders the seeded-agent roster: the primary plus any extras, with
