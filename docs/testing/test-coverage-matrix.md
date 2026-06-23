@@ -24,7 +24,7 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [x] `clone <name> <new-name>` — duplicate an island · T2 · A
 - [x] `hibernate <name>` — stop container, keep state · CLI/API/TUI · T2 · A
 - [x] `wake <name>` — resume hibernated island · T1/T2 · A
-- [ ] `reset <name>` — reset island · T2 · M
+- [x] `reset <name>` — reset island · T1/T2 · A (T1: CLI `reset --force`)
 - [x] `upgrade [name]` — re-pull base image / migrate · T2 · A
 - [x] `purge <name>` — destroy island · CLI/API/TUI · T2 · A
 - [x] purge **unpushed-work guard** — refuse/confirm when commits unpushed · T2 · A
@@ -37,10 +37,10 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 ## 2. Agents
 - [x] `agent add <island>` — add an agent (own git worktree/branch) · CLI/API/TUI · T2 · A
 - [x] `agent ls/list <island>` — list agents + states · CLI/API · T2 · A
-- [ ] `agent rm <island> <agent-id>` — remove agent (worktree cleanup) · CLI/API/TUI · T2 · M
-- [ ] `agent config` get/set (`PATCH .../config`) · CLI/API · T2 · M
+- [x] `agent rm <island> <agent-id>` — remove agent (worktree cleanup) · CLI/API/TUI · T1/T2 · A
+- [x] `agent config` get/set (`PATCH .../config`) · CLI/API · T1/T2 · A
 - [ ] `relabel-agent` / `agent relabel` — rename · TUI/CLI · T2 · M
-- [ ] `agent open <island> [id]` — open agent UI/url · CLI · T2 · M
+- [x] `agent open <island> [id]` — open agent UI/url · CLI · T1/T2 · A
 - [x] `agent-types` / `types` — capability discovery · CLI/API · T1 · A
 - [ ] per-agent **idle-seconds** metric emitted · API(`/metrics`) · T2 · A
 - [ ] agent worktree isolation (no cross-agent file collision) · T2 · M
@@ -52,7 +52,7 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [ ] multi-attach (two clients, same session) · T3 · M
 - [ ] terminal resize propagation · T3 · M
 - [x] `exec <name> -- <cmd>` — one-shot exec · CLI/API · T2 · A
-- [ ] host `terminals` create/ls/rm/relabel + `session` (owner-only) · CLI/API/TUI · T3 · M
+- [x] host `terminals` create/ls/rm/relabel + `session` (owner-only) · CLI/API/TUI · T1/T3 · A (T1: CLI new/ls/rm/relabel; session over WS = T3)
 - [ ] clean detach (Ctrl-b d) exits without killing the agent · T3 · M
 
 ## 4. Repo / git integration
@@ -75,14 +75,14 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [ ] macOS Shortcuts intake path · T3 · M
 
 ## 6. Capabilities
-- [ ] `cap grant/revoke/list <island> <target>` · CLI/API · T2 · A
+- [x] `cap grant/revoke/list <island> <target>` · CLI/API · T1/T2 · A
 - [ ] `capabilities/execute` (in-island token) · API · T2 · A
 - [ ] deny-all default + `capability.*` ledger · T2 · A
 - [ ] Linux `script` adapter · T2 · A
 - [ ] macOS Apple Shortcuts adapter · T3 · M
 
 ## 7. MCP brokering
-- [ ] `mcp grant/revoke/list <island> <server>` · CLI/API · T2 · A
+- [x] `mcp grant/revoke/list <island> <server>` · CLI/API · T1/T2 · A (T1: CLI list/deny-all)
 - [ ] `mcp call <island> <server>` / `mcp/call` (in-island token) · API · T2 · A
 - [ ] deny-all default + `mcp.*` ledger · T2 · A
 - [ ] stdio broker spawns/relays the server · T2 · M
@@ -94,11 +94,11 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [ ] `msg send/poll` (intra-island mailbox) · CLI/API · T1/T2 · A
 - [ ] island broadcast (`to` empty) · T2 · A
 - [ ] structured provenance `Origin{source_island,cross_island}`, unforgeable · T1/T2 · A
-- [ ] `link expose/unexpose/exposed` (action types) · CLI/API · T2 · A
+- [x] `link expose/unexpose/exposed` (action types) · CLI/API · T1/T2 · A (T1: CLI expose→unexpose)
 - [ ] `link action` request — deny-all + `{B exposes} ∩ {grant.Actions}` · T2 · A
 - [ ] pre-authorized action → executes immediately · T2 · A
 - [ ] non-pre-authorized → `pending` + `link.action-pending` webhook · T2 · A
-- [ ] `link approvals/approve/deny` (operator only) · CLI/API · T2 · A
+- [x] `link approvals/approve/deny` (operator only) · CLI/API · T1/T2 · A (T1: approve/deny routes wired)
 - [ ] **agent can never self-approve** (token listener lacks the route) · T1/T2 · A
 - [ ] gate re-checked at approval time (revoked grant → refused) · T1 · A
 - [ ] fail-closed: TTL expiry + queue dropped on daemon restart · T1 · A
@@ -116,12 +116,12 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [ ] `audit --verify` (tamper-evident hash chain) · T1/T2 · A
 - [ ] `audit --export jsonl|csv` · T2 · A
 - [ ] optional HMAC keying · T2 · M
-- [ ] `activity` feed (curated, who+agent did what) · CLI/API · T2 · A
+- [x] `activity` feed (curated, who+agent did what) · CLI/API · T1/T2 · A
 - [ ] identity attribution (actor/role on each record) · T1/T2 · A
 - [x] TUI audit pane (`A`) · T1(teatest) · A
 
 ## 10. Team auth, tokens, roles
-- [ ] `token` create/ls/rm (`/v1/tokens`) — owner only · CLI/API · T1/T2 · A
+- [x] `token` create/ls/rm (`/v1/tokens`) — owner only · CLI/API · T1/T2 · A
 - [ ] roles owner > operator > viewer enforced per route · T1 · A
 - [ ] per-island token scope (in-scope ok, out-of-scope denied) · T1/T2 · A
 - [ ] scoped token denied global ops; allowed global reads · T1 · A
@@ -132,16 +132,16 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [ ] exchange-down (no-token on trusted listener = owner) · T1 · A
 
 ## 11. Credentials
-- [ ] `auth` claude set/status (`credentials/claude`) · CLI/API · T2 · M
+- [x] `auth` claude set/status (`credentials/claude`) · CLI/API · T1/T2 · A (T1: `auth status` reads daemon cred state)
 - [ ] github set/list/rm + `/repos` (`credentials/github`) · CLI/API · T2/T4 · M
-- [ ] `provider set/rm/list` (masked, no keys leaked) · CLI/API · T2 · M
+- [x] `provider set/rm/list` (masked, no keys leaked) · CLI/API · T1/T2 · A
 - [ ] **Keychain** storage on macOS (no plaintext in config) · T3 · A* (tier3/safe.sh)
 - [ ] per-agent provider key injection (`<PROVIDER>_API_KEY`) · T2/T4 · M
 - [ ] missing-key health surfaced · T2 · M
 
 ## 12. Webhooks & events
-- [ ] `webhook subscribe` (`events/subscribe`) — url/secret/event · CLI/API · T2 · M
-- [ ] `events/subscriptions` list/rm · CLI/API · T2 · M
+- [x] `webhook subscribe` (`events/subscribe`) — url/secret/event · CLI/API · T1/T2 · A
+- [x] `events/subscriptions` list/rm · CLI/API · T1/T2 · A
 - [ ] event stream (`/v1/islands/{name}/events`, SSE/WS) · API · T2 · M
 - [ ] HMAC `X-Dejima-Signature` on delivery · T2/T3 · M
 - [ ] webhook secret stored in Keychain (no plaintext) · T3 · A* (tier3/safe.sh)
@@ -161,10 +161,10 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [ ] `service install/uninstall/restart` (--system/--user/--tcp/--token-tcp/--audit) · T3 · A* (tier3/system.sh; install→verify→uninstall, opt-in)
 - [ ] `update` client + daemon (gates on releases; source = pull+make+restart) · T3 · M
 - [ ] `admin/update` route · API · T3 · M
-- [ ] `image build` / `image` · CLI/API · T2 · M
-- [ ] `panic` engage/clear/status · CLI/API/TUI · T2 · M
-- [ ] `healthz`, `overview`, `clients` · API · T1/T2 · M
-- [ ] `sessions/revoke` (owner) · API · T3 · M
+- [x] `image build` / `image` · CLI/API · T1/T2 · A (T1: API build route)
+- [x] `panic` engage/clear/status · CLI/API/TUI · T1/T2 · A (T1: CLI status→engage→status→clear)
+- [x] `healthz`, `overview`, `clients` · API · T1/T2 · A (T1: CLI overview/clients)
+- [x] `sessions/revoke` (owner) · API · T1/T3 · A (T1: route; full session teardown = T3)
 - [ ] `/metrics` (Prometheus) · API · T1/T2 · A
 - [ ] idle auto-hibernate (`DEJIMAD_IDLE_HIBERNATE`) fires + wakes · T3 · A* (tier3/safe.sh)
 

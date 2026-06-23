@@ -15,58 +15,16 @@
 #          api <METHOD> <path>       e.g.  api POST /v1/islands/{name}/hibernate
 #
 # See docs/testing/coverage-gate.md.
+#
+# The entries below are host-mutating, interactive, or network-bound and cannot
+# be exercised hermetically in CI (no Docker, no real macOS host, no terminal).
+# They are owned by the live tier-3 suites on the Mac-mini runner — see
+# scripts/tier3/ and docs/testing/test-coverage-matrix.md §13/§14/§15.
 
-api DELETE /v1/credentials/providers/{provider}
-api DELETE /v1/events/subscriptions/{id}
-api DELETE /v1/tokens/{id}
-api GET /v1/agent-types
-api GET /v1/clients
-api GET /v1/credentials/providers
-api GET /v1/events/subscriptions
-api PATCH /v1/islands/{name}/agents/{id}/config
-api POST /v1/image/build
-api POST /v1/islands/{name}/hibernate
-api POST /v1/islands/{name}/upgrade
-api POST /v1/link/actions/{id}/approve
-api POST /v1/link/actions/{id}/deny
-api POST /v1/sessions/revoke
-api PUT /v1/credentials/providers/{provider}
-cli activity
-cli agent config
-cli agent open
-cli agent rm
-cli auth push
-cli auth status
-cli cap grant
-cli cap list
-cli cap revoke
-cli clients
-cli cp
-cli link unexpose
-cli logout-all
-cli mcp list
-cli onboard
-cli overview
-cli panic
-cli provider ls
-cli provider rm
-cli reset
-cli service status
-cli service uninstall
-cli ssh authorize
-cli ssh config
-cli ssh enroll
-cli ssh info
-cli ssh list
-cli ssh revoke
-cli term ls
-cli term new
-cli term relabel
-cli term rm
-cli token revoke
-cli tui
-cli uninstall
-cli update
-cli webhook events
-cli webhook ls
-cli webhook rm
+cli auth push         # pushes host Claude/GitHub creds — needs a logged-in host
+cli onboard           # --provision-host wizard mutates the macOS host (tier3)
+cli service uninstall # removes the launchd/systemd daemon service (tier3)
+cli ssh enroll        # writes client SSH keys + ~/.ssh/config on the host
+cli tui               # launches the interactive bubbletea TUI (teatest covers the model)
+cli uninstall         # removes the installed dejima binary + service from the host
+cli update            # self-update: queries GitHub releases + replaces the binary
