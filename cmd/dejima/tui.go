@@ -83,6 +83,13 @@ type tuiModel struct {
 	detail   *api.IslandInfo
 	events_  []events.Event
 
+	// Setup-readiness snapshot (fetched once at Init) so the UI can warn about a
+	// missing credential BEFORE an island is created rather than at first agent
+	// attach. setupChecked guards against a false warning before the fetch lands.
+	setupChecked bool
+	claudeSeeded bool            // daemon can seed new islands with Claude creds
+	agentKeyGap  map[string]bool // agent type → requires an LLM provider key, none configured for it
+
 	selected  int
 	grouped   bool // group the island list by repo (toggled with `p`)
 	width     int
@@ -441,7 +448,7 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 func (m tuiModel) Init() tea.Cmd {
 	// Title the dashboard's own terminal tab "dejima" (session tabs it spawns are
 	// titled "<island>-<agent>"); see openAgentWindow.
-	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
+	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
 // latestReleaseMsg carries the newest published release tag (or "" on any
@@ -586,6 +593,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.daemonUpdate = daemonUpdateAvailable(m.latestRelease, msg)
 		}
 		return m, m.fetchTerminalsCmd() // nil (no-op) unless host terminals are on
+
+	case setupReadinessMsg:
+		m.setupChecked = true
+		m.claudeSeeded = msg.claudeSeeded
+		m.agentKeyGap = msg.keyGap
+		return m, nil
 
 	case latestReleaseMsg:
 		if msg.latest != "" {
@@ -2249,7 +2262,13 @@ func (m tuiModel) renderList(_ int) (string, int) {
 			}
 			return styleErrored.Render("error: "+m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)"), -1
 		}
-		return styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`"), -1
+		body := styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`")
+		// Nudge missing Claude creds before the first island, so claude-code/codex
+		// agents don't start unauthenticated and fail at first attach.
+		if m.setupChecked && !m.claudeSeeded {
+			body += "\n\n" + styleWaiting.Render("⚠ no Claude credentials yet — run `dejima auth push` (from a machine where\n  `claude` is logged in) so claude-code/codex agents start authenticated.")
+		}
+		return body, -1
 	}
 
 	byName := make(map[string]api.IslandInfo, len(m.islands))
