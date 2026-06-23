@@ -117,6 +117,7 @@
     <li><a href="#credentials">Credentials &amp; GitHub identities</a></li>
     <li><a href="#port">Brokered host files (Port)</a></li>
     <li><a href="#capabilities">Capability brokering</a></li>
+    <li><a href="#mcp">MCP brokering</a></li>
     <li><a href="#terminals">Host terminals</a></li>
     <li><a href="#safety">Safety switch (panic)</a></li>
     <li><a href="#admin">Operator: self-update</a></li>
@@ -419,6 +420,19 @@ POST { "type": "headless", "cmd": "python loop.py" } // supervised process
 <div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/capabilities/execute</span><span class="desc">Run a granted capability (in-island token)</span></div>
 <pre><code>POST { "target": "send-imessage", "args": { "to": "...", "body": "..." } }</code></pre>
 <p>Reachable by an island's own token only, against a granted target; deny-all and ledgered. No shell, no free-form commands.</p>
+
+<!-- ============================================================ -->
+<h2 id="mcp">MCP brokering</h2>
+<p>The same deny-all, ledgered pattern for <strong>Model Context Protocol servers</strong>. The operator curates host-side MCP servers; an island can call one only once it's been granted, and only through a fixed method allow-list (<code>tools/list</code>, <code>tools/call</code>, <code>resources/*</code>, <code>prompts/*</code>). The broker execs the registered server with fixed argv — never via a shell — speaks JSON-RPC over stdio, and records every grant, revoke, call, and denial in the <code>mcp.*</code> ledger (params SHA-256-hashed). CLI: <code>dejima mcp grant|revoke|list|call</code>.</p>
+
+<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/mcp/grants</span><span class="desc">List an island's granted MCP servers</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/mcp/grants</span><span class="desc">Grant a server (operator)</span></div>
+<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/islands/{name}/mcp/grants/{server}</span><span class="desc">Revoke a grant</span></div>
+<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/mcp/call</span><span class="desc">One brokered JSON-RPC call against a granted server</span></div>
+<pre><code>POST { "island": "web", "server": "files", "method": "tools/call",
+       "params": { "name": "fetch", "arguments": { "url": "..." } } }
+// → { "ok": true, "is_error": false, "result": {...}, "ledger_seq": 1024 }</code></pre>
+<p>Grants are the operator's act; an in-island token can spend a grant but never widen it. Disallowed methods, oversized payloads, and ungranted servers are rejected (<code>400</code>/<code>403</code>) and the denial is ledgered.</p>
 
 <!-- ============================================================ -->
 <h2 id="terminals">Host terminals</h2>
