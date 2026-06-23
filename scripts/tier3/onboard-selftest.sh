@@ -25,7 +25,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 
 DEJIMA_SUITE="${DEJIMA_SUITE:-tier3-onboard-selftest}"
-# shellcheck source=scripts/lib/report.sh
+# report.sh is sourced at runtime; source=/dev/null keeps shellcheck (run
+# without -x in CI) from flagging SC1091.
+# shellcheck source=/dev/null
 . "$REPO_ROOT/scripts/lib/report.sh"
 skip(){ printf '  \033[33m∼\033[0m %s (skipped)\n' "$*"; }
 

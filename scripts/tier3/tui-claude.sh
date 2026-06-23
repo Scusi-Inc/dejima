@@ -27,7 +27,9 @@ REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 
 # Reporting + tally helpers (feature/pass/fail/report_summary).
 DEJIMA_SUITE="${DEJIMA_SUITE:-tier3-tui-claude}"
-# shellcheck source=scripts/lib/report.sh
+# report.sh is sourced at runtime; source=/dev/null keeps shellcheck (run
+# without -x in CI) from flagging SC1091.
+# shellcheck source=/dev/null
 . "$REPO_ROOT/scripts/lib/report.sh"
 skip(){ printf '  \033[33m∼\033[0m %s (skipped)\n' "$*"; }
 
