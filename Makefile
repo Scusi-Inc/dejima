@@ -120,12 +120,13 @@ dejimad:
 test:
 	$(GO) test ./...
 
-# test-integration runs the full Tier-2 end-to-end suite against a LIVE Docker
-# host: lifecycle (ls/status/exec/hibernate/wake/upgrade/clone) + the purge
-# unpushed-work guard, Port (intake/export/traversal/ledger), MCP (grant/call/
-# ledger/revoke), audit (record/verify/export), and inter-island (deny-all/grant/
-# message/action/approve/deny). Requires docker (running), go, and git. It runs
-# in a throwaway $HOME and purges its test islands + daemon on exit.
+# test-integration runs the DETERMINISTIC FULL-FEATURE Tier-2 suite against a
+# LIVE Docker host — one dispatch exercises every feature once with per-feature
+# pass/fail: lifecycle, Port, MCP, multi-agent, clone, inter-island, the purge
+# guard, capability brokering, provider creds, token roles, webhooks, activity,
+# panic, and doctor. Set DEJIMA_REPORT=<path> to also emit the JSON summary
+# (pass/fail per feature) for the CI artifact + issue-on-failure step. Requires
+# docker (running), go, git. Runs in a throwaway $HOME; purges islands + daemon.
 test-integration:
 	./scripts/integration.sh
 

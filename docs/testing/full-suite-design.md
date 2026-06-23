@@ -49,6 +49,25 @@ Each run emits a **structured summary** (pass/fail per feature + the Claude UX f
 CI artifact, and **auto-files/updates a GitHub issue on failure** with the failing detail —
 so the orchestrator reads results + repros via `gh`, no log-scraping.
 
+### Implementation
+
+`scripts/lib/report.sh` is the shared reporting layer the live suites source. It adds:
+
+- `feature "<name>"` — opens a feature block (also prints the bold banner), and
+- `pass`/`fail` versions that tally per-feature **and** globally, capturing the first
+  failure detail per feature, then
+- `report_summary` — prints the per-feature rollup and, when `DEJIMA_REPORT=<path>` is set,
+  writes a machine-readable JSON summary `{suite, passed, failed, features:[{name, status,
+  passed, failed, detail}]}` (emitted by hand — no `jq` dependency on the runner). It returns
+  non-zero if any feature failed.
+
+`scripts/integration.sh` is the **deterministic full-feature run**: a single dispatch
+exercises every Tier-2 feature once, in order, each tagged with `feature` so the JSON has one
+row per feature. The CI step uploads that JSON as an artifact and, on failure, opens/updates a
+GitHub issue from it (the `.github/workflows` wiring is reviewed separately — it's the one part
+the harness author does not self-merge). The same `report.sh` is reusable by the tier3/tier4
+suites by setting their own `DEJIMA_SUITE`.
+
 ## Triggering (already exists)
 
 No missing piece for the deterministic suite: `gh workflow run nightly.yml -f …` triggers a
