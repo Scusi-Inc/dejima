@@ -18,9 +18,7 @@
 
 <header>
   <a class="brand" href="index.html"><img src="assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
-  <span class="pill">alpha</span>
-  <span class="pill">free</span>
-  <span class="pill">open source</span>
+  <span class="pill">alpha · free · open source</span>
 </header>
 
 <nav class="topnav" aria-label="Site">
@@ -33,12 +31,11 @@
 </nav>
 
 <section class="hero">
-  <p class="hero-eyebrow">Safely run AI coding agents on hardware you own.</p>
+  <p class="hero-eyebrow">Safely run AI coding agents anywhere.</p>
   <h1 class="hero-h">A fleet of agents. None of the worry.</h1>
-  <p class="hero-sub">Run them on your Mac mini, your VPS, or a cloud VM in your own account — never on our servers.</p>
   <div class="hero-cta">
     <a class="btn-primary" href="quickstart.html">Run it yourself →</a>
-    <a class="btn-ghost" href="#self-host">Why self-hosted</a>
+    <a class="btn-ghost" href="#why-dejima">Why Dejima</a>
   </div>
 </section>
 
@@ -53,7 +50,7 @@
   </div>
   <div class="proof-tile">
     <h3>Up in minutes</h3>
-    <p>One line installs it; Dejima manages the containers, sessions, and logins for you. No infrastructure to build, no tmux to wrangle.</p>
+    <p>One line installs it — on your Mac mini, a VPS, or your own cloud VM. Dejima manages the containers, sessions, and logins for you. No infrastructure to build, no tmux to wrangle.</p>
   </div>
 </section>
 
@@ -62,8 +59,13 @@
   <p>Hand an agent a long, autonomous task and walk away. Each one runs in its own walled-off space — we call it an <strong>island</strong> — sandboxed from your real machine and from every other agent. If one gets confused, prompt-injected, or just goes rogue, the blast radius stops at its island: your laptop, your credentials, and your other projects are untouched. And every time an agent reaches outside its box to touch a host file, Dejima brokers it and writes it to a tamper-proof log. That's the peace of mind — you don't have to babysit.</p>
 </section>
 
-<h2 id="self-host">Why self-hosted</h2>
-<p>The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong>. Egress is yours to set; auth is your Tailscale identity, not a vendor account; <code>dejima purge</code> erases an island when you're done. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't — nobody runs your agents but you.</p>
+<h2 id="why-dejima">Why Dejima</h2>
+<p>Running agents safely usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
+<ul>
+  <li><strong>Ease.</strong> One line installs it; <code>dejima init</code> and you've got a sandboxed agent running in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same one command.</li>
+  <li><strong>Security.</strong> Every agent is walled off from your machine, your files, and the other agents; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
+  <li><strong>Audit.</strong> Every privileged crossing is written to a tamper-evident, hash-chained ledger you can read, export, and verify — so you can <em>prove</em> what an agent did, not just hope.</li>
+</ul>
 <p class="small">Running agents for a team that has to <em>prove</em> what they did? See <a href="teams.html">Dejima for teams →</a></p>
 
 <h2>How it compares</h2>
