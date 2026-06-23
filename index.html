@@ -36,7 +36,7 @@
   <h1 class="hero-h">Infrastructure for your agents.<br>None of the worry.</h1>
   <div class="hero-cta">
     <a class="btn-primary" href="quickstart.html">Run it yourself →</a>
-    <a class="btn-ghost" href="#why-dejima">Why Dejima</a>
+    <a class="btn-ghost" href="#is-it-for-me">Ask AI if it fits</a>
   </div>
 </section>
 
@@ -61,7 +61,7 @@
 </section>
 
 <h2 id="why-dejima">Why Dejima</h2>
-<p>Running agents safely usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
+<p><strong>You shouldn't have to become an infrastructure engineer to run agents safely.</strong> That usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
 <ul>
   <li><strong>Ease.</strong> One line installs it; <code>dejima init</code> and you've got a sandboxed agent running in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same one command.</li>
   <li><strong>Security.</strong> Every agent is walled off from your machine, your files, and the other agents; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
@@ -128,14 +128,13 @@
 <section id="is-it-for-me">
   <h2>Is Dejima right for you?</h2>
   <div class="fitcheck">
-    <p class="plain">Not sure it fits? Fill in your situation below, then open it in your own Claude or ChatGPT for a candid take. Nothing is sent to us — we don't run a model here.</p>
-    <textarea id="fit-prompt" class="fit-prompt" rows="18" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
+    <p class="plain">Not sure it fits? Open this prompt in your own Claude or ChatGPT — it'll ask about your setup, then give you a candid take. Nothing is sent to us; we don't run a model here.</p>
     <div class="fit-actions">
       <button type="button" id="fit-copy" class="copy-btn">Copy prompt</button>
       <a id="fit-claude" class="deeplink" href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
       <a id="fit-chatgpt" class="deeplink" href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
-      <span class="fit-hint">Gemini &amp; other models: copy, then paste.</span>
     </div>
+    <textarea id="fit-prompt" class="fit-prompt" rows="18" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
   </div>
 </section>
 
@@ -196,11 +195,16 @@
     "- Brokered, deny-by-default host-file access with a tamper-evident audit log.",
     "- Fine for a SINGLE agent on one project too — running a fleet is optional, not required.",
     "",
-    "My situation: <describe what you're doing, your hardware/OS, how many agents and",
-    "projects, solo or team, and any privacy/compliance constraints>",
+    "Before you answer, INTERVIEW me about my use case. Ask these one at a time and wait",
+    "for my reply before moving on:",
+    "- What are you building, and on what OS / hardware (Mac mini, Linux box, cloud VM)?",
+    "- How many agents and projects do you run at once? Solo, or on a team?",
+    "- Any privacy, NDA, or compliance constraints on your code?",
+    "- How do you run agents today (tmux + SSH, devcontainers, a cloud sandbox, nothing yet)?",
     "",
-    "Question: given what Dejima actually does (per the pages above), is it a good fit for",
-    "me? Be candid about where it isn't, and suggest alternatives if it's not a match."
+    "Once you have my answers, give a candid verdict: given what Dejima actually does (per the",
+    "pages above), is it a good fit for me? Be honest about where it isn't, and suggest",
+    "alternatives if it's not a match."
   ].join("\n");
 
   btn.addEventListener('click', function () {
