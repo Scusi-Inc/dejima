@@ -75,18 +75,18 @@
 <table class="compare">
   <tr>
     <th>What you need</th>
-    <th>tmux + SSH</th>
-    <th>A devcontainer</th>
-    <th>A cloud sandbox</th>
     <th>Dejima</th>
+    <th>tmux + SSH</th>
+    <th>A dev container</th>
+    <th>A cloud sandbox</th>
   </tr>
-  <tr><td>Isolated workspace per project</td><td>✗</td><td>✓</td><td>✓</td><td><strong>✓</strong></td></tr>
-  <tr><td>Several agents at once, one dashboard</td><td>manual</td><td>✗</td><td>~</td><td><strong>✓</strong></td></tr>
-  <tr><td>Each agent walled off from host &amp; each other</td><td>✗</td><td>~ (from host)</td><td>✓</td><td><strong>✓</strong></td></tr>
-  <tr><td>Survives disconnect, multi-device</td><td>✓</td><td>✗</td><td>✓</td><td><strong>✓</strong></td></tr>
-  <tr><td>Runs where you put it — local or your own cloud</td><td>✓</td><td>✓</td><td>✗</td><td><strong>✓</strong></td></tr>
-  <tr><td>Audit log of host-file access</td><td>✗</td><td>✗</td><td>✗</td><td><strong>✓</strong></td></tr>
-  <tr><td>Up in minutes, nothing to build</td><td>~</td><td>✓</td><td>~</td><td><strong>✓</strong></td></tr>
+  <tr><td>Isolated workspace per project</td><td><strong>✓</strong></td><td>✗</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Several agents at once, one dashboard</td><td><strong>✓</strong></td><td>manual</td><td>✗</td><td>~</td></tr>
+  <tr><td>Each agent walled off from host &amp; each other</td><td><strong>✓</strong></td><td>✗</td><td>~ (from host)</td><td>✓</td></tr>
+  <tr><td>Survives disconnect, multi-device</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>✓</td></tr>
+  <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✗</td></tr>
+  <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td></tr>
+  <tr><td>Up in minutes, nothing to build</td><td><strong>✓</strong></td><td>~</td><td>✓</td><td>~</td></tr>
 </table>
 </div>
 <p class="small">Dejima is built around tmux — it runs tmux inside each island and adds the layer above: isolation, a whole fleet on one dashboard, lifecycle controls, and an audit trail.</p>

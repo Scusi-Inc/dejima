@@ -114,9 +114,17 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0.8rem 0; }
 .table-scroll table { margin: 0; }
 .compare { min-width: 640px; }
-.compare td:last-child { color: var(--fg); }
-.compare th:last-child { color: var(--accent); }
 .compare th:not(:first-child), .compare td:not(:first-child) { text-align: center; }
+/* Dejima is the first option column and is emphasised. */
+.compare td:nth-child(2) { color: var(--fg); }
+.compare th:nth-child(2) { color: var(--accent); }
+/* Pin the criteria + Dejima columns so they stay put while the
+   alternative columns scroll on narrow screens. */
+.compare th:first-child, .compare td:first-child {
+  position: sticky; left: 0; z-index: 1; background: var(--bg); min-width: 11rem; }
+.compare th:nth-child(2), .compare td:nth-child(2) {
+  position: sticky; left: 11rem; z-index: 1; background: var(--bg);
+  box-shadow: 1px 0 0 var(--border); }
 
 /* Deep-link buttons -------------------------------------------------- */
 .deeplink { background: transparent; color: var(--accent); border: 1px solid var(--accent);
