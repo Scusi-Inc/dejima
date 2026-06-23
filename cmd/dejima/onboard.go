@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,15 +44,20 @@ func newOnboardCmd() *cobra.Command {
 				if err := runProvisionHost(cmd.Context(), yes, reset); err != nil {
 					return err
 				}
-				_ = writeDismissalMarker()
+				if !markSetupDoneIfHealthy(cmd.Context()) {
+					return errSetupIncomplete
+				}
 				return nil
 			}
 			if err := runOnboarding(cmd.Context()); err != nil {
 				return err
 			}
-			// Explicit `dejima onboard` also dismisses the first-run prompt —
-			// the user has clearly seen the wizard.
-			_ = writeDismissalMarker()
+			// Explicit `dejima onboard` dismisses the first-run prompt only if the
+			// daemon is actually reachable — otherwise we'd cache a half-setup the
+			// user can never re-trigger guided help for.
+			if !markSetupDoneIfHealthy(cmd.Context()) {
+				return errSetupIncomplete
+			}
 			return nil
 		},
 	}
@@ -125,13 +131,13 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 			if err := runProvisionHost(ctx, false, false); err != nil {
 				return false, err
 			}
-			_ = writeDismissalMarker()
+			markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up; else the prompt returns next run
 			return true, nil
 		case "g", "G":
 			if err := runOnboarding(ctx); err != nil {
 				return false, err
 			}
-			_ = writeDismissalMarker()
+			markSetupDoneIfHealthy(ctx)
 			return true, nil
 		case "N", "never":
 			fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
@@ -161,7 +167,7 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 		if err := runOnboarding(ctx); err != nil {
 			return false, err
 		}
-		_ = writeDismissalMarker()
+		markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up
 		return true, nil
 	case "N", "never":
 		fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
@@ -258,6 +264,53 @@ func writeDismissalMarker() error {
 		return err
 	}
 	return os.WriteFile(p, []byte("dismissed\n"), 0o600)
+}
+
+// errSetupIncomplete is returned by the explicit `dejima onboard` command when
+// the wizard finished but dejimad still isn't reachable — a non-zero exit so a
+// scripted `--provision-host --yes` / CI run sees the failure. The actionable
+// detail is printed by markSetupDoneIfHealthy first; this is just the footer.
+var errSetupIncomplete = errors.New("setup incomplete — dejimad is not reachable (see the steps above)")
+
+// daemonHealthy reports whether the daemon for the *current target* answers a
+// health check quickly. This is the single source of truth for "did setup
+// actually work?" — distinct from "the wizard printed all its steps."
+func daemonHealthy(ctx context.Context) bool {
+	c, err := client()
+	if err != nil {
+		return false
+	}
+	hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return c.Health(hctx) == nil
+}
+
+// markSetupDoneIfHealthy is the honest end of every setup flow. It records the
+// run as done (writes the first-run dismissal marker) ONLY if dejimad is now
+// reachable. When it isn't, it leaves the marker UNWRITTEN — so the first-run
+// prompt returns next time rather than stranding the user on a cached half-setup
+// (the exact failure that bit the dejimaqa box) — and prints the concrete next
+// step. Returns whether setup is verified working.
+func markSetupDoneIfHealthy(ctx context.Context) bool {
+	if daemonHealthy(ctx) {
+		_ = writeDismissalMarker()
+		fmt.Println()
+		fmt.Println(bold("✅ Setup verified — dejimad is reachable."))
+		return true
+	}
+	if resolveHost() == "" {
+		// Local host: reuse the daemon-unreachable diagnosis, framed as "setup
+		// isn't finished" (probes the socket + service manager for the real cause).
+		reportSetupIncomplete()
+	} else {
+		host := resolveHost()
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, bold("Setup isn't finished — can't reach "+host+" yet."))
+		fmt.Fprintln(os.Stderr, "  Verify Tailscale is up here and the host exposes TCP, then re-run `dejima onboard`:")
+		fmt.Fprintln(os.Stderr, "    • on the HOST:  dejima service install --tcp :7273")
+		fmt.Fprintln(os.Stderr, "    • diagnose:     dejima doctor")
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

@@ -196,7 +196,10 @@ func runProvisionHost(ctx context.Context, yes, reset bool) error {
 	}
 
 	printProvManual(pc)
-	fmt.Println(bold("✅ Provisioning complete."))
+	// The authoritative "did it actually work?" verdict comes from the caller's
+	// markSetupDoneIfHealthy, which checks the daemon answers. Don't print an
+	// unconditional success banner here that could contradict it.
+	fmt.Println(bold("Provisioning steps complete — verifying the daemon…"))
 	return nil
 }
 
