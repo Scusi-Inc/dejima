@@ -83,11 +83,16 @@ type tuiModel struct {
 	detail   *api.IslandInfo
 	events_  []events.Event
 
-	selected       int
-	grouped        bool // group the island list by repo (toggled with `p`)
-	width          int
-	height         int
-	lastError      string
+	selected  int
+	grouped   bool // group the island list by repo (toggled with `p`)
+	width     int
+	height    int
+	lastError string
+	// daemonHelp, when non-nil, is an actionable diagnosis of a *local*
+	// daemon-unreachable failure (why dejimad isn't up + how to fix it). Computed
+	// once when the connection error arrives — service.Detect() shells out, so it
+	// must not run per render — and cleared the moment a list load succeeds.
+	daemonHelp     *daemonDiagnosis
 	lastNotice     string // transient success hint (e.g. ssh setup); shown until replaced
 	sshHost        string // resolved SSH-façade host (cached from overview; see overviewMsg)
 	sshPort        string // resolved SSH-façade port
@@ -554,6 +559,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case listMsg:
 		m.islands = sortIslands(msg)
 		m.lastError = ""
+		m.daemonHelp = nil // a successful load means the daemon is back
 		if n := m.rowCount(); m.selected >= n {
 			m.selected = n - 1
 		}
@@ -701,6 +707,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		if msg.err != nil {
 			m.lastError = msg.err.Error()
+			// A local daemon that's gone unreachable: attach a one-shot, actionable
+			// diagnosis (computed here, not in the renderer, since it shells out).
+			if m.activeHost == "" && isConnectionError(msg.err) {
+				d := diagnoseLocalDaemon()
+				m.daemonHelp = &d
+			}
 		}
 		return m, nil
 
@@ -2232,6 +2244,9 @@ func (m tuiModel) scrollDetail(pages int) tuiModel {
 func (m tuiModel) renderList(_ int) (string, int) {
 	if len(m.islands) == 0 {
 		if m.lastError != "" {
+			if m.daemonHelp != nil {
+				return renderDaemonHelp(*m.daemonHelp), -1
+			}
 			return styleErrored.Render("error: "+m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)"), -1
 		}
 		return styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`"), -1

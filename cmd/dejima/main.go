@@ -48,16 +48,24 @@ func main() {
 	}
 }
 
-// maybeOfferConnectionHelp offers a one-time troubleshooting walkthrough the
-// first time a command can't reach the daemon AND DEJIMA_HOST is set (i.e. this
-// machine is a client pointed at a host that isn't answering). It fires at most
-// once (a marker file), so a host that's down doesn't nag on every command.
+// maybeOfferConnectionHelp surfaces help when a command can't reach the daemon.
+// For a local-socket target it prints a direct diagnosis of why dejimad isn't up
+// and the steps to fix it. For a remote target (DEJIMA_HOST or an active
+// profile) it offers a one-time interactive troubleshooting walkthrough, firing
+// at most once (a marker file) so a host that's down doesn't nag every command.
 func maybeOfferConnectionHelp(err error) {
 	if err == nil || !isConnectionError(err) {
 		return
 	}
-	if strings.TrimSpace(os.Getenv("DEJIMA_HOST")) == "" {
-		return // only the client-pointed-at-a-host case; a local socket failure is different
+	// A client pointed at a remote host gets the interactive tailnet/TCP
+	// troubleshooter below. A local socket failure is a different problem —
+	// dejimad on *this* machine isn't up — so give a direct, actionable read of
+	// why and how to fix it (the steps are the answer, no prompt needed).
+	if resolveHost() == "" {
+		if term.IsTerminal(int(os.Stderr.Fd())) {
+			printLocalDaemonHelp(diagnoseLocalDaemon())
+		}
+		return
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return
