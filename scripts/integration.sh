@@ -67,6 +67,10 @@ export DOCKER_CONFIG="${DOCKER_CONFIG:-$REAL_HOME/.docker}"
 BIN="$TMP/bin"; mkdir -p "$BIN"; export PATH="$BIN:$PATH"
 ISLAND="itest-port"
 ISLAND_MULTI="itest-multi"
+ISLAND_CLONE="itest-clone"
+ISLAND_A="itest-a"
+ISLAND_B="itest-b"
+ISLAND_GUARD="itest-guard"
 DAEMON_PID=""
 # The --local-copy seed is bind-mounted into the Docker VM, so it must live on a
 # path Docker shares. macOS shares /Users by default but NOT /var/folders (where
@@ -76,8 +80,9 @@ REPO="$REPO_DIR/repo"
 
 cleanup(){
   set +e
-  [ -n "$DAEMON_PID" ] && dejima purge "$ISLAND"       -f >/dev/null 2>&1
-  [ -n "$DAEMON_PID" ] && dejima purge "$ISLAND_MULTI"  -f >/dev/null 2>&1
+  for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD"; do
+    [ -n "$DAEMON_PID" ] && dejima purge "$isl" -f >/dev/null 2>&1
+  done
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
   # The isolated HOME holds a read-only Go module cache ($HOME/go/pkg/mod);
   # make the tree writable before removing it so cleanup exits silently.
@@ -114,6 +119,51 @@ mkdir -p "$REPO"
 dejima init --name "$ISLAND" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
   >/dev/null 2>&1 || die "island create failed (see $TMP/dejimad.log)"
 pass "island $ISLAND created and running"
+
+# ---------------------------------------------------------------------------
+# Lifecycle — list/status/exec, and the hibernate→wake→upgrade→reset verbs
+# against the real container. These are the verbs the manual Minion pass walks;
+# automating them here shrinks that queue.
+# ---------------------------------------------------------------------------
+step "Lifecycle: ls + status show the island"
+LS="$(dejima ls 2>&1)"
+assert_has "$LS" "$ISLAND" "island appears in \`dejima ls\`"
+ST="$(dejima status "$ISLAND" 2>&1)"
+assert_has "$ST" "$ISLAND" "\`dejima status\` shows the island"
+
+step "Lifecycle: exec runs a command inside the island"
+EX="$(dejima exec "$ISLAND" -- sh -c 'echo exec-works' 2>/dev/null)"
+assert_eq "$EX" "exec-works" "exec returns the command's stdout"
+
+step "Lifecycle: hibernate stops the container, wake brings it back"
+expect_ok "hibernate" dejima hibernate "$ISLAND"
+# After hibernate the container is not running; exec should fail until woken.
+expect_fail "exec refused while hibernated" dejima exec "$ISLAND" -- true
+expect_ok "wake" dejima wake "$ISLAND"
+# Poll for the woken container to accept exec again.
+woke=""
+for _ in $(seq 1 30); do
+  if dejima exec "$ISLAND" -- true >/dev/null 2>&1; then woke=1; break; fi
+  sleep 1
+done
+if [ -n "$woke" ]; then pass "exec works again after wake"; else fail "island never became exec-able after wake"; fi
+
+step "Lifecycle: upgrade recreates on the current image (state preserved)"
+# Write a workspace marker, upgrade, and confirm it survives the recreate.
+dejima exec "$ISLAND" -- sh -c 'echo survive > /workspace/marker.txt' >/dev/null 2>&1 \
+  || die "could not write workspace marker"
+expect_ok "upgrade" dejima upgrade "$ISLAND"
+upgraded=""
+for _ in $(seq 1 30); do
+  if dejima exec "$ISLAND" -- test -f /workspace/marker.txt >/dev/null 2>&1; then upgraded=1; break; fi
+  sleep 1
+done
+if [ -n "$upgraded" ]; then
+  GOT="$(dejima exec "$ISLAND" -- cat /workspace/marker.txt 2>/dev/null)"
+  assert_eq "$GOT" "survive" "workspace survived the upgrade recreate"
+else
+  fail "island never came back exec-able after upgrade"
+fi
 
 # ---------------------------------------------------------------------------
 step "Scope: deny-all before any grant"
@@ -203,6 +253,12 @@ assert_has "$AUDIT" "port.grant"   "grant recorded in ledger"
 assert_has "$AUDIT" "trade.read"   "intake recorded as trade.read"
 assert_has "$AUDIT" "trade.export" "export recorded as trade.export"
 expect_ok "hash chain verifies clean" dejima audit --verify
+
+step "Audit export: jsonl + csv stream the filtered records"
+JSONL="$(dejima audit --export jsonl 2>/dev/null)"
+assert_has "$JSONL" '"type":"port.grant"' "jsonl export contains the port.grant record"
+CSV="$(dejima audit --export csv 2>/dev/null)"
+assert_has "$CSV" "port.grant" "csv export contains the port.grant record"
 
 step "Ledger locking: tampering is DETECTED"
 cp "$LEDGER" "$TMP/ledger.bak"
@@ -348,6 +404,122 @@ else
   printf '  daemon log (worktree/reconcile/clone lines):\n'
   grep -iE "worktree|ensure agent|reconcile|clone|seed|not a git" "$TMP/dejimad.log" 2>/dev/null | tail -20 | sed 's/^/    /'
 fi
+
+# ---------------------------------------------------------------------------
+# Clone — a byte-for-byte copy of an island's workspace into fresh volumes; the
+# clone starts deny-all (Port grants are NOT carried over). See `dejima clone`.
+# ---------------------------------------------------------------------------
+step "Clone: duplicate an island's workspace into a new island"
+# Leave a marker in the source workspace so we can prove the copy is faithful.
+dejima exec "$ISLAND" -- sh -c 'echo cloned-content > /workspace/clone-marker.txt' >/dev/null 2>&1 \
+  || die "could not write clone marker"
+expect_ok "clone island" dejima clone "$ISLAND" "$ISLAND_CLONE"
+cloned=""
+for _ in $(seq 1 60); do
+  if dejima exec "$ISLAND_CLONE" -- test -f /workspace/clone-marker.txt >/dev/null 2>&1; then cloned=1; break; fi
+  sleep 1
+done
+if [ -n "$cloned" ]; then
+  GOT="$(dejima exec "$ISLAND_CLONE" -- cat /workspace/clone-marker.txt 2>/dev/null)"
+  assert_eq "$GOT" "cloned-content" "clone carried the source workspace"
+else
+  fail "clone never became exec-able with the copied workspace (waited 60s)"
+fi
+
+# ---------------------------------------------------------------------------
+# Inter-island exchange (Lane 5) — cross-island is deny-all; a channel exists
+# only as an explicit, directional, operator-granted A→B grant on a topic. An
+# action is delivered immediately when pre-authorized, else queued for operator
+# approval. See docs/inter-island-exchange-spec.md.
+# ---------------------------------------------------------------------------
+step "Inter-island: create two islands A and B"
+dejima init --name "$ISLAND_A" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
+  >/dev/null 2>&1 || die "island A create failed"
+dejima init --name "$ISLAND_B" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
+  >/dev/null 2>&1 || die "island B create failed"
+# The recipient agent id (headless primary) on B, for addressed sends.
+B_AGENT="$(dejima agent ls "$ISLAND_B" 2>/dev/null | awk 'NR==2{print $1}')"
+[ -n "$B_AGENT" ] || B_AGENT="a1"
+pass "islands A + B created (B primary agent: $B_AGENT)"
+
+step "Inter-island: deny-all before any grant"
+expect_err_match "send refused before any grant" "deny-all" \
+  dejima link send "$ISLAND_B" "$B_AGENT" "hi" --from "$ISLAND_A" --topic ops
+
+step "Inter-island: grant a directional channel + deliver an info message"
+expect_ok "grant A→B/ops" dejima link grant "$ISLAND_A" "$ISLAND_B" --topic ops
+LINKS="$(dejima link ls 2>&1)"
+assert_has "$LINKS" "$ISLAND_A" "grant appears in \`link ls\`"
+assert_has "$LINKS" "ops"       "grant topic recorded"
+expect_ok "send over the granted channel" \
+  dejima link send "$ISLAND_B" "$B_AGENT" "hello B" --from "$ISLAND_A" --from-agent a1 --topic ops
+# The message lands in B's ordinary mailbox, stamped cross-island.
+INBOX="$(dejima msg poll --island "$ISLAND_B" --agent "$B_AGENT" 2>&1)"
+assert_has "$INBOX" "hello B" "cross-island message delivered into B's mailbox"
+
+step "Inter-island: directional — the reverse channel is NOT implied"
+expect_err_match "reverse send refused" "deny-all" \
+  dejima link send "$ISLAND_A" a1 "reply" --from "$ISLAND_B" --topic ops
+
+step "Inter-island: action gate — exposed + pre-authorized executes; else queues"
+# An action not exposed by B is refused even with a channel grant.
+expect_fail "unexposed action refused" \
+  dejima link action "$ISLAND_B" "$B_AGENT" deploy --from "$ISLAND_A" --topic ops
+expect_ok "B exposes deploy" dejima link expose "$ISLAND_B" deploy
+EXPOSED="$(dejima link exposed "$ISLAND_B" 2>&1)"
+assert_has "$EXPOSED" "deploy" "exposed action listed"
+# Exposed but not pre-authorized on the grant → queued for operator approval.
+ACT="$(dejima link action "$ISLAND_B" "$B_AGENT" deploy --from "$ISLAND_A" --topic ops 2>&1)"
+assert_has "$ACT" "queued" "non-pre-authorized action is queued"
+APPROVALS="$(dejima link approvals 2>&1)"
+assert_has "$APPROVALS" "deploy" "queued action appears in operator approvals"
+# Approve it → executes and delivers as a typed action.
+PID="$(dejima link approvals 2>/dev/null | awk 'NR==2{print $1}')"
+if [ -n "$PID" ]; then
+  expect_ok "operator approves the queued action" dejima link approve "$PID"
+else
+  fail "could not read a pending action id to approve"
+fi
+
+step "Inter-island: deny path — a queued action can be denied (fail-closed)"
+ACT2="$(dejima link action "$ISLAND_B" "$B_AGENT" deploy --from "$ISLAND_A" --topic ops 2>&1)"
+assert_has "$ACT2" "queued" "second action queued"
+PID2="$(dejima link approvals 2>/dev/null | awk 'NR==2{print $1}')"
+if [ -n "$PID2" ]; then
+  expect_ok "operator denies the queued action" dejima link deny "$PID2"
+  expect_fail "approving a denied id fails closed" dejima link approve "$PID2"
+else
+  fail "could not read a pending action id to deny"
+fi
+
+step "Inter-island: revoke → back to deny-all"
+expect_ok "revoke A→B/ops" dejima link revoke "$ISLAND_A" "$ISLAND_B" --topic ops
+expect_err_match "send refused after revoke" "deny-all" \
+  dejima link send "$ISLAND_B" "$B_AGENT" "hi" --from "$ISLAND_A" --topic ops
+
+step "Inter-island: every decision is ledgered + chain still verifies"
+XAUDIT="$(dejima audit 2>&1)"
+assert_has "$XAUDIT" "link.grant"   "grant recorded as link.grant"
+assert_has "$XAUDIT" "link.message" "delivery recorded as link.message"
+assert_has "$XAUDIT" "link.deny"    "refused send recorded as link.deny"
+expect_ok "ledger chain verifies with link.* entries" dejima audit --verify
+
+# ---------------------------------------------------------------------------
+# Purge unpushed-work guard — purging an island with unpushed/uncommitted work
+# is refused unless forced. The guard is what stops an accidental purge from
+# silently dropping an agent's work.
+# ---------------------------------------------------------------------------
+step "Purge guard: unpushed work blocks a plain purge, --force overrides"
+dejima init --name "$ISLAND_GUARD" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
+  >/dev/null 2>&1 || die "guard island create failed"
+# Create an unpushed commit inside the island's workspace.
+dejima exec "$ISLAND_GUARD" -- sh -c \
+  'cd /workspace && git config user.email t@t && git config user.name t && echo work > unpushed.txt && git add -A && git commit -qm unpushed' \
+  >/dev/null 2>&1 || die "could not create unpushed commit in the guard island"
+expect_err_match "plain purge refused with unpushed work" "--force" \
+  dejima purge "$ISLAND_GUARD"
+expect_ok "force-purge overrides the guard" dejima purge "$ISLAND_GUARD" --force
+expect_fail "guard island is gone after force-purge" dejima status "$ISLAND_GUARD"
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1m──────── results ────────\033[0m\n'
