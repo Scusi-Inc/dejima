@@ -90,6 +90,11 @@ type creatorModel struct {
 	pickingExtra bool                   // true while the picker is adding a non-primary agent
 	nameInput    string
 	creating     bool
+	// imageMissing is true when the daemon has no island image yet, so this
+	// create will trigger a one-time multi-minute base-image build. Used to set
+	// that expectation up front instead of leaving the user staring at a silent
+	// "provisioning…". Only set when we positively know (overview loaded).
+	imageMissing bool
 }
 
 // --- messages -------------------------------------------------------------
@@ -124,10 +129,11 @@ type ghReposMsg struct {
 func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 	cfg, _ := clientcfg.Load()
 	c := &creatorModel{
-		client:      m.client,
-		daemonLocal: resolveHost() == "",
-		existing:    m.islands,
-		statusCache: map[string]reposrc.Status{},
+		client:       m.client,
+		daemonLocal:  resolveHost() == "",
+		existing:     m.islands,
+		statusCache:  map[string]reposrc.Status{},
+		imageMissing: m.overview != nil && !m.overview.IslandImagePresent,
 	}
 	m.creator = c
 	if cfg.RepoRoot == "" {
@@ -731,7 +737,11 @@ func (c *creatorModel) view(width int) string {
 		b.WriteString("\n\n")
 		b.WriteString(styleMuted.Render(c.resolution.Note))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("cloning the repo and starting the agent; it opens when ready."))
+		if c.imageMissing {
+			b.WriteString(styleMuted.Render("building the base image (first time, a few minutes), then cloning the repo\nand starting the agent; it opens when ready."))
+		} else {
+			b.WriteString(styleMuted.Render("cloning the repo and starting the agent; it opens when ready."))
+		}
 	}
 
 	if c.err != "" {
@@ -921,6 +931,9 @@ func (c *creatorModel) viewName(b *strings.Builder) {
 	b.WriteString(styleMuted.Render(fmt.Sprintf("%s · %s", summary, c.resolution.Note)))
 	b.WriteString("\n\n")
 	b.WriteString("island name: " + styleAccent.Render(c.nameInput+"_"))
+	if c.imageMissing {
+		b.WriteString("\n\n" + styleWaiting.Render("ℹ first island — this also builds the base image (one-time, a few minutes)."))
+	}
 	b.WriteString("\n\n" + styleMuted.Render("[⏎] create & connect   [esc] back"))
 }
 
