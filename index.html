@@ -56,7 +56,7 @@
 </section>
 
 <section class="safety">
-  <h2>Let them run</h2>
+  <h2>No infrastructure to babysit</h2>
   <p>You don't want to become an infrastructure engineer — hand-building sandboxes, locking down credentials, wiring up networking, juggling tmux and SSH just to keep an agent from touching something it shouldn't. That's Dejima's job. Every agent lives in its own walled-off <strong>island</strong>, so if one gets prompt-injected or goes off the rails, the blast radius stops there: your laptop, your credentials, and your other projects stay untouched. Set it up once, then let them run.</p>
 </section>
 
@@ -89,7 +89,7 @@
   <tr><td>Up in minutes, nothing to build</td><td>~</td><td>✓</td><td>~</td><td><strong>✓</strong></td></tr>
 </table>
 </div>
-<p class="small">Dejima isn't a replacement for tmux — it uses tmux inside each island. It's the layer above that adds isolation, a whole fleet on one dashboard, lifecycle controls, and an audit trail. <strong>~</strong> = partial or do-it-yourself.</p>
+<p class="small">Dejima is built around tmux — it runs tmux inside each island and adds the layer above: isolation, a whole fleet on one dashboard, lifecycle controls, and an audit trail.</p>
 
 <h2 id="architecture">How it works</h2>
 <pre><code>        CLI · TUI · your app                 (you drive it)
