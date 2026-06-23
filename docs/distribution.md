@@ -92,12 +92,11 @@ secret on `aoos/dejima`. The `@dejima` scope must exist on that account/org
 (create the org once on npm). The next tag then publishes both `dejima` (CLI) and
 `@dejima/sdk`.
 
-### 4. Pick a license
+### 4. License — ✅ done (Apache-2.0)
 
-`LICENSE`, the formula, and `npm/package.json` all say `Pre-public-release`.
-Choose a real license (e.g. Apache-2.0 / MIT for OSS, or a source-available
-license) and set it in all three before publishing. Required for npm/brew
-metadata and for any future homebrew-core submission.
+`LICENSE` is the full Apache-2.0 text (Copyright 2026 Scusi Inc.), with a `NOTICE`
+file, and the `license` field is `Apache-2.0` across the CLI/SDK packages and the
+formula generator. Published packages pick this up on the next tag.
 
 ### 5. (Fast-follow) Notarize the macOS binaries
 
