@@ -61,7 +61,8 @@ func TestRenderListGlyphs(t *testing.T) {
 	bare := plain(out)
 	for _, want := range []string{
 		glyphTerminal + " claude-code", // unlabeled terminal → leads with type
-		glyphTerminal + " Backend",     // labeled terminal → leads with the label, not "codex"
+		glyphTerminal + " Backend",     // labeled terminal → leads with the label
+		"Backend         codex",        // …and shows its type in the aligned type column
 		glyphHeadless + " headless",    // headless box, unlabeled
 		"·a1", "·a2", "·a3",            // id rides along as a muted handle
 		"+ add agent",
@@ -71,8 +72,9 @@ func TestRenderListGlyphs(t *testing.T) {
 			t.Errorf("rendered list missing %q\n%s", want, bare)
 		}
 	}
-	// The label supersedes the type in the row; the bare type shouldn't appear.
-	if strings.Contains(bare, "codex") {
-		t.Errorf("labeled agent should show its label, not type %q\n%s", "codex", bare)
+	// A label-less agent's name already is its type — the type column stays
+	// blank rather than repeating it, so "claude-code" appears exactly once.
+	if n := strings.Count(bare, "claude-code"); n != 1 {
+		t.Errorf("unlabeled agent should not repeat its type: %q appears %d×, want 1\n%s", "claude-code", n, bare)
 	}
 }

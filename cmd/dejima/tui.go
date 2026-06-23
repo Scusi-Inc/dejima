@@ -993,17 +993,28 @@ func agentDisplayName(a api.AgentInfo) string {
 	return a.Type
 }
 
-// agentRowText renders one agent's list line: kind glyph, name (label/type),
-// the muted id handle, then the latest signal.
+// agentRowText renders one agent's list line: state-colored kind glyph, name
+// (label/type), the agent's type, the muted id handle, then the latest signal.
+// The type column lines up with the island rows' status column (offset 23). A
+// label-less agent's name already *is* its type, so the type column is left
+// blank rather than repeating it.
 func agentRowText(a api.AgentInfo) string {
+	typ := a.Type
+	if a.Label == "" {
+		typ = ""
+	}
 	sig := ""
 	if a.Error != "" {
 		sig = "  " + styleErrored.Render("error")
 	} else if a.AgentState != nil && a.AgentState.Latest != "" {
 		sig = "  " + a.AgentState.Latest
 	}
-	return fmt.Sprintf("%s %s  %s%s",
-		agentGlyph(a), truncate(agentDisplayName(a), 18), styleMuted.Render("·"+a.ID), sig)
+	return fmt.Sprintf("%s %-14s  %s  %s%s",
+		agentGlyph(a),
+		truncate(agentDisplayName(a), 14),
+		styleMuted.Render(fmt.Sprintf("%-11s", typ)),
+		styleMuted.Render("·"+a.ID),
+		sig)
 }
 
 func (m tuiModel) renderDetail(_ int) string {
@@ -1367,7 +1378,8 @@ func shortStatus(isl api.IslandInfo, transient string) string {
 	if isl.Stats != nil && isl.Container == "running" {
 		parts = append(parts, fmt.Sprintf("%s · %.0f%%", humanBytes(isl.Stats.MemoryUsageBytes), isl.Stats.CPUPercent))
 	}
-	parts = append(parts, isl.Agent)
+	// Per-agent type belongs on each agent row, not here — an island's first
+	// agent's type says nothing about the rest. (See agentRowText.)
 	return strings.Join(parts, " · ")
 }
 
