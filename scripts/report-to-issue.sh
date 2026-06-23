@@ -15,12 +15,24 @@
 #
 # Requires: gh (authenticated; GH_TOKEN/GITHUB_TOKEN in CI), python3 (for robust
 # JSON parsing — already a runner dependency for the parity check).
+#
+# PORTABILITY: the self-hosted macOS runner ships bash 3.2, whose parser scans
+# for matching quotes *inside* `$( … )` command substitution even within a
+# heredoc body — so `BODY="$(cat <<EOF … the run's … EOF)"` blows up with
+# "unexpected EOF while looking for matching '" on the apostrophe. We therefore
+# build the issue body in a temp file with a plain (non-substitution) heredoc and
+# printf, then pass it via `--body-file` — safe on bash 3.2.
 
 set -uo pipefail
 
 REPORT="${1:-report.json}"
 RUN_URL="${RUN_URL:-${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}}"
 LABEL="${ISSUE_LABEL:-test-failure}"
+
+DETAIL_FILE=""
+BODY_FILE=""
+cleanup() { [ -n "$DETAIL_FILE" ] && rm -f "$DETAIL_FILE"; [ -n "$BODY_FILE" ] && rm -f "$BODY_FILE"; return 0; }
+trap cleanup EXIT
 
 if [ ! -f "$REPORT" ]; then
   echo "::notice::no report at $REPORT — skipping issue filing"
@@ -54,8 +66,11 @@ if [ "$FAILED" -eq 0 ]; then
   exit 0
 fi
 
-# Build the failing-feature detail (markdown table rows) from the JSON.
-DETAIL="$(python3 - "$REPORT" <<'PY'
+# Build the failing-feature detail (markdown table rows) into a temp file. The
+# python heredoc is a plain redirection on a simple command — NOT inside `$( )` —
+# so bash 3.2 parses it correctly regardless of quotes in the detail strings.
+DETAIL_FILE="$(mktemp)"
+python3 - "$REPORT" >"$DETAIL_FILE" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 rows = []
@@ -66,27 +81,26 @@ for f in d.get("features", []):
             (f.get("detail", "") or "").replace("|", "\\|")))
 print("\n".join(rows) if rows else "| (no per-feature detail) | | |")
 PY
-)"
 
-BODY="$(cat <<EOF
-The **${SUITE}** suite failed: **${FAILED} feature(s)** failed, ${PASSED} passed.
-
-Run: ${RUN_URL}
-
-| feature | tally | first failure |
-| --- | --- | --- |
-${DETAIL}
-
-_Filed automatically by \`scripts/report-to-issue.sh\` from the run's structured summary. This issue auto-closes when the suite is green again._
-EOF
-)"
+# Assemble the issue body in a temp file with printf. Literal apostrophes and
+# (escaped) backticks inside double quotes are safe here — no command
+# substitution, no heredoc-in-`$( )` — so this parses on bash 3.2.
+BODY_FILE="$(mktemp)"
+{
+  printf '%s\n\n' "The **${SUITE}** suite failed: **${FAILED} feature(s)** failed, ${PASSED} passed."
+  printf '%s\n\n' "Run: ${RUN_URL}"
+  printf '%s\n' "| feature | tally | first failure |"
+  printf '%s\n' "| --- | --- | --- |"
+  cat "$DETAIL_FILE"
+  printf '\n%s\n' "_Filed automatically by \`scripts/report-to-issue.sh\` from the run's structured summary. This issue auto-closes when the suite is green again._"
+} >"$BODY_FILE"
 
 if [ -n "$EXISTING" ]; then
-  gh issue comment "$EXISTING" --body "$BODY" >/dev/null 2>&1 \
+  gh issue comment "$EXISTING" --body-file "$BODY_FILE" >/dev/null 2>&1 \
     && echo "updated issue #$EXISTING ($FAILED failing features)" \
     || echo "::warning::failed to comment on issue #$EXISTING"
 else
-  gh issue create --title "$TITLE" --label "$LABEL" --body "$BODY" >/dev/null 2>&1 \
+  gh issue create --title "$TITLE" --label "$LABEL" --body-file "$BODY_FILE" >/dev/null 2>&1 \
     && echo "opened a new test-failure issue for ${SUITE}" \
     || echo "::warning::failed to open the test-failure issue (label '$LABEL' may need creating)"
 fi
