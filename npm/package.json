@@ -2,7 +2,7 @@
   "name": "dejima",
   "version": "0.5.0",
   "description": "CLI for Dejima — run a fleet of isolated AI coding agents on hardware you own.",
-  "license": "Pre-public-release",
+  "license": "Apache-2.0",
   "bin": {
     "dejima": "bin/dejima.js"
   },
