@@ -102,9 +102,13 @@ if [ -n "$EXISTING" ]; then
     && echo "updated issue #$EXISTING ($FAILED failing features)" \
     || echo "::warning::failed to comment on issue #$EXISTING"
 else
+  # `gh issue create --label` fails outright if the label doesn't exist — which
+  # silently broke the whole report-back channel on a repo that never created it.
+  # Ensure it first (--force is idempotent: create or no-op, never errors).
+  gh label create "$LABEL" --color C5DEF5 --description "Automated test-suite failure (report-to-issue.sh)" --force >/dev/null 2>&1 || true
   gh issue create --title "$TITLE" --label "$LABEL" --body-file "$BODY_FILE" >/dev/null 2>&1 \
     && echo "opened a new test-failure issue for ${SUITE}" \
-    || echo "::warning::failed to open the test-failure issue (label '$LABEL' may need creating)"
+    || echo "::warning::failed to open the test-failure issue for ${SUITE}"
 fi
 
 # This script is a reporter — it never changes the job's outcome. The suite's own
