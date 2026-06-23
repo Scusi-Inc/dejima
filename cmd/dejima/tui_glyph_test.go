@@ -25,8 +25,10 @@ func sampleModel() tuiModel {
 		Container: "running",
 		Agents: []api.AgentInfo{
 			{ID: "a1", Type: "claude-code", Attachable: true, State: "running",
+				CreatedAt:  time.Now().Add(-90 * time.Minute),
 				AgentState: &api.AgentStateInfo{Latest: "waiting-for-input", UpdatedAt: time.Unix(0, 0)}},
-			{ID: "a2", Type: "codex", Label: "Backend", Attachable: true, State: "stopped"},
+			{ID: "a2", Type: "codex", Label: "Backend", Attachable: true, State: "stopped",
+				CreatedAt: time.Now().Add(-90 * time.Minute)},
 			{ID: "a3", Type: "headless", Attachable: false, State: "running", Error: "worktree add failed"},
 		},
 	}}
@@ -65,6 +67,7 @@ func TestRenderListGlyphs(t *testing.T) {
 		"Backend         codex",        // …and shows its type in the aligned type column
 		glyphHeadless + " headless",    // headless box, unlabeled
 		"·a1", "·a2", "·a3",            // id rides along as a muted handle
+		"·a1  up 1h", // running agent shows compact uptime
 		"+ add agent",
 		"+ new island",
 	} {
@@ -76,5 +79,10 @@ func TestRenderListGlyphs(t *testing.T) {
 	// blank rather than repeating it, so "claude-code" appears exactly once.
 	if n := strings.Count(bare, "claude-code"); n != 1 {
 		t.Errorf("unlabeled agent should not repeat its type: %q appears %d×, want 1\n%s", "claude-code", n, bare)
+	}
+	// Uptime shows only for a running agent with a known CreatedAt: a1 qualifies;
+	// a2 is stopped and a3 has a zero CreatedAt, so neither should show "up".
+	if n := strings.Count(bare, " up "); n != 1 {
+		t.Errorf("uptime should show once (running + known CreatedAt): %q appears %d×, want 1\n%s", " up ", n, bare)
 	}
 }

@@ -1003,6 +1003,12 @@ func agentRowText(a api.AgentInfo) string {
 	if a.Label == "" {
 		typ = ""
 	}
+	// id handle, then uptime while the agent is up (bare age would read as
+	// uptime for a stopped agent, which it isn't — the glyph already greys out).
+	meta := styleMuted.Render("·" + a.ID)
+	if a.State == "running" && !a.CreatedAt.IsZero() {
+		meta += styleMuted.Render("  up " + timeAgo(a.CreatedAt))
+	}
 	sig := ""
 	if a.Error != "" {
 		sig = "  " + styleErrored.Render("error")
@@ -1013,7 +1019,7 @@ func agentRowText(a api.AgentInfo) string {
 		agentGlyph(a),
 		truncate(agentDisplayName(a), 14),
 		styleMuted.Render(fmt.Sprintf("%-11s", typ)),
-		styleMuted.Render("·"+a.ID),
+		meta,
 		sig)
 }
 
