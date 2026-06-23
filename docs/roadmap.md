@@ -57,6 +57,91 @@ none blocking.
 
 ---
 
+## 🗺️ 2026-06-23 scoping session — roadmap items + GTM (not yet built)
+
+Output of a roadmap-scoping pass (scope verdicts against the containment thesis;
+GTM corrections from a verified competitive research run). Strategy detail lives
+in the gitignored `/strategy/` docs; this is the committable summary.
+
+### Substrate / TUI items (scoped, pending)
+- [ ] **Global host-terminal band (TUI).** Builds on merged `feat/host-terminals`
+  (host tmux + `/v1/terminals*` + TUI "Host" section). Refinement: a **pinned
+  collapsible band above the island list** (collapsed = count + running indicator
+  + hotkey; expand → list; attach). Global hotkey must summon it even while
+  attached inside an island terminal. "Recover" = re-list/reattach (tmux survives
+  restart/reconnect). **Reconsider the deferred `dejima term` / `dejima host shell`
+  CLI** (headless parity; all ledgered).
+- [ ] **Multi-server: `-p/--profile NAME` ephemeral launch flag.** Profiles +
+  TUI switcher already exist (`clientcfg`, `tui_switch.go`). Add `dejima -p cloud`
+  to launch a TUI/CLI pre-pointed at a named profile — MUST be ephemeral (must NOT
+  write `active_profile`, else concurrent TUIs stomp shared state). Also closes the
+  headless `--host` gap. 1 dejima = 1 server holds; fleet cockpit stays a wrapper.
+  Thin CLI parity (`dejima profile add/ls/switch`) is post-launch.
+- [ ] **Per-island scope picker + unified "grants" TUI view.** Pick which host
+  dir(s)/drive(s) an island can see at create + add/remove on a running island
+  (Port grants); default deny-all; make "what can this island touch" glanceable.
+  Same surface should show MCP grants + inter-island links (one trust view).
+  Local-laptop containment ("keep agents off my private files") is the consumer wedge.
+- [ ] **MCP in the TUI.** MCP brokering is CLI-only today (`dejima mcp …`); surface
+  grant/revoke/list + activity in the unified grants view above (it's a security surface).
+- [ ] **Update-bar lifecycle states** on the existing announcement bar: green
+  "updated" (auto-fades) / orange "restart to apply" (sticky) / red "failed"
+  (sticky, retry). Green fades; orange+red persist.
+- [ ] **host→island image-paste bridge** + ship tmux passthrough config
+  (`allow-passthrough on` + extended-keys — also fixes Shift+Enter/notifications).
+  Container has no host clipboard, so paste must be brokered host-side into the
+  island intake dir + a `Read <path>` reference injected. App-level, on-thesis.
+
+### Lifecycle items (scoped, pending — neither a launch blocker)
+- [ ] **Uninstall that doesn't nuke agents — flag, NO default.** Today `uninstall`
+  always purges all islands (deletes volumes); `--keep-data` keeps config but still
+  destroys volumes. Bare `uninstall` should refuse and force a choice:
+  `--keep-islands` (remove wrapper, keep volumes+config; reinstall resumes — easy,
+  it's restart mechanics) vs `--purge-all` (nuke). **Priority flavor = the *unwind/
+  exit ramp*** (extract volumes → plain host dirs so repos/agents keep working
+  WITHOUT Dejima) = the no-lock-in / sovereignty trust story. Fix misleading `--keep-data`.
+- [ ] **Entry-ramp onboarding** (mirror of the exit ramp): a guided "adopt my
+  existing project(s)" wizard wrapping the existing `--local-copy` + auto
+  credential-bind primitives. `dejima onboard` is host-setup-only today.
+- [ ] **Brokered inbound (only on demand).** Islands are inbound-sealed (no port
+  publishing) by design; Claude-Code-via-API is fine (all outbound). If a real
+  inbound-webhook need arises, broker it via the Lane 5 **mailbox** (host receiver
+  → island mailbox), not raw port-publishing. Keeps "Dejima invisible to usage."
+- [ ] **In-app feedback** = `dejima feedback` → public GitHub issue, version+OS
+  only, no logs, shown-before-send, ledgered. (Private needs a backend → off-thesis.)
+- [ ] **Install/active-user metrics** via aggregate registry stats (npm/PyPI/GitHub
+  release downloads) + counting the existing update-check pings server-side (no new
+  client IDs, disclosed, `--no-update-check` opt-out). Homebrew *tap* installs are invisible.
+
+### GTM / launch (decided)
+- **Segment: bottom-up solo devs → startups; not chasing Coder's enterprise tier yet.**
+- **TUI is enough for launch** (HN-led dev wedge); a local web UI over the existing
+  API is the GUI fast-follow if PH/broader audience warrants. No native app.
+- **Show HN primary**, dev channels secondary, ProductHunt deferred. Install must be flawless.
+- **Pre-launch work = polish/reliability/narrative, NOT features** (substrate shipped).
+  Tier-1: bulletproof install + first-run; no-lost-work (ship `--keep-islands`);
+  multi-agent "aha" in first session. Tier-2: visible "run agents without fear"
+  hook (scope picker/grants view); agents-they-use OOTB; solo-flavored landing page.
+- **#1 launch action:** build 2 demo GIFs (multi-agent dashboard + containment
+  "denied + ledger") — fixes site "hobby" feel, IS the Show HN centerpiece, and shows
+  the one differentiator that survives scrutiny. Plus fix the hero-copy regression.
+
+### Competitive corrections (verified research, 2026-06-23 — see `/strategy/`)
+- **Coder is the closest direct competitor** ("Coder Agents", self-hosted/air-gap/
+  model-agnostic + Premium-gated AI Governance). **CORRECTION: do NOT claim
+  "Coder = heavy/K8s" (refuted) or that nothing leaves its perimeter (refuted).**
+- **Rivet** has the strongest universal-API (1 API → 6 CLIs) but `sandbox-agent` has
+  **zero isolation of its own**; `agentOS` is in-process V8/WASM (lighter than containers).
+- **Isolation strength is NOT our moat** — E2B uses Firecracker microVM (stronger than
+  our Docker). **Anchor the pitch on sovereignty (code never leaves) + provable
+  governance (brokered host-file access + tamper-evident ledger), never "we isolate harder."**
+- **Moat (structurally uncopyable):** brokered-file + tamper-evident ledger (nobody else);
+  self-owned + multi-vendor-agents + neither code nor reasoning leaves; free governance.
+- microVM (LOW for single-tenant wedge) and inbound preview URLs (MEDIUM, mailbox answer)
+  are the only near-table-stakes gaps; neither blocks launch.
+
+---
+
 ## v1 (current — dogfood phase)
 
 The v1 vertical slice. Buildable, testable. Real-world dogfood pending.
