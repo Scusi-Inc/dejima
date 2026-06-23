@@ -140,6 +140,22 @@ in the gitignored `/strategy/` docs; this is the committable summary.
 - microVM (LOW for single-tenant wedge) and inbound preview URLs (MEDIUM, mailbox answer)
   are the only near-table-stakes gaps; neither blocks launch.
 
+### Positioning calls (Rivet / agentOS / our own apps)
+- **Why solo picks Dejima:** Coder = a platform you deploy; Rivet = a library you build on;
+  **Dejima = a tool you just run.** Solo wants the last (agents without fear, one dashboard, minutes).
+- **Build our own management apps ON Dejima, not Rivet** — Rivet doesn't provide sovereignty/
+  governance; building on it inherits a cloud-sandbox dep or means rebuilding Dejima. Don't put
+  the moat on a competitor's primitive. (Rule: sovereignty/governance → Dejima; speed/scale/embed → Rivet.)
+- **Compose, don't substitute:** run Rivet `sandbox-agent` inside a Dejima island for its
+  universal multi-CLI driver — that's API ergonomics, NOT speed (6ms = agentOS isolates, not used in a container).
+- **One-API-drives-many-CLIs:** invest NARROWLY (normalized control/event API over our
+  first-class agents — serves the build-apps-on-Dejima goal); don't chase Rivet's 6-CLI breadth; compose for breadth.
+- **"agentOS" is a misnomer** (theirs is a fast execution sandbox); Dejima is the one that
+  behaves like an OS for agents (isolation + FS permission model + lifecycle + audit). Internal
+  frame only — don't fight for the label publicly; position on "run any agents on your own box, sandboxed and provable."
+- **Site: not an overhaul** — bones are good; launch needs hero-regression fix + the 2 GIFs +
+  confident headers + compare-table framing. Brand-spine/island-diagram = fast-follow.
+
 ---
 
 ## v1 (current — dogfood phase)
