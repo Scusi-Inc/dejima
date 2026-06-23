@@ -47,22 +47,32 @@ after the **Release testing & verification** checklist passes on a live host (Mi
 
 The things only you can do (on Minion / as owner), in priority order:
 
-1. **Live-verify the inter-island wave → then cut `v0.6.0`.** Follow
-   [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md):
-   deny-all → grant → cross-island message → action approve/deny → fail-closed →
-   **wake-on-message (does Claude Code actually wake from the tmux nudge + from
-   hibernation?)**. All pass → tag `v0.6.0`.
-2. **Clear the standing Minion backlog** (onboarding wizard, terminal auto-reconnect,
-   Keychain secrets, idle auto-hibernate, viewer-token scope) — see the Release-testing
-   checklist below + the Operator verification queue.
-3. **SDK publish:** claim the `dejima` name on **PyPI** + **npm**, add repo secrets
+1. **Inter-island live-verify (catch-up — it's already shipping).** Follow
+   [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md): deny-all →
+   grant → cross-island message → action approve/deny → fail-closed → **wake-on-message (does
+   Claude Code actually wake from the tmux nudge / from hibernation?)**. NB: the inter-island
+   flow has shipped *unverified on a live host* since 0.5.1, so this is risk-reduction on live
+   code, **not a release gate**. Optional after: cut **`0.6.0`** as a cosmetic semver marker
+   (binary is identical to 0.5.3).
+2. **First Phase-B live test run.** `workflow_dispatch` the **nightly** workflow on the
+   `macos-mini` runner with defaults → expect Tier-2 + Tier-3-safe green, Tier-4 green-or-skip.
+   Add input `run_system_tests=true` for the service-install/onboard checks; `run_reboot_test=true`
+   (recovery access only) for reboot survival. See [`lanes/lane-6-phase-b.md`](lanes/lane-6-phase-b.md).
+3. **Runner boot-persistence** (next week / physical access). FileVault is off, so enable
+   auto-login for `dejimaqa` (fix the `sysadminctl` error-22 via the manual `kcpassword` method)
+   + `svc.sh install`; until then the runner survives disconnects via `run.sh`-in-tmux (not
+   reboots). See [`testing/dejimaqa-runner-setup.md`](testing/dejimaqa-runner-setup.md).
+4. **Clear the standing Minion backlog** (onboarding wizard, terminal auto-reconnect, Keychain
+   secrets, idle auto-hibernate, viewer-token scope) — see the Release-testing checklist below +
+   the Operator verification queue. **Phase-B automates most of these once it's been run.**
+5. **SDK publish:** claim the `dejima` name on **PyPI** + **npm**, add repo secrets
    `PYPI_API_TOKEN` / `NPM_TOKEN`, then push a `v*` tag (or `workflow_dispatch`).
-4. **Housekeeping:** remove the stray `.agents/d7` worktree (see Housekeeping below).
-5. **Automated test harness (only when you want the live tiers):** create the test
-   accounts/keys in [`testing/automated-test-harness.md`](testing/automated-test-harness.md)
-   → "Operator setup" — a dedicated macOS test user + a GitHub Actions self-hosted runner,
-   a throwaway GitHub account/PAT/test repo, and a throwaway agent key. **Phase A (the
-   per-PR CI tests) needs none of this** and can start immediately.
+6. **Housekeeping:** remove the stray `.agents/d7` worktree (see Housekeeping below).
+
+*(✅ Done this session — the test-harness operator setup: a dedicated macOS `dejimaqa` user,
+a caged self-hosted runner, its own colima Docker, the bot GitHub account +
+`TEST_GH_TOKEN`/`TEST_GH_OWNER` + `TEST_AGENT_KEY`. Lane 6 Phase A + B are authored + merged;
+only the live dispatch run (#2) remains to exercise them.)*
 
 ---
 
