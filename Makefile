@@ -18,7 +18,7 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration test-tier3-safe test-tier3-system test-tier4 lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration test-tier3-safe test-tier3-system test-tier3-tui-claude test-tier3-onboard-selftest test-tier4 lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
@@ -142,6 +142,19 @@ test-tier3-safe:
 
 test-tier3-system:
 	./scripts/tier3/system.sh
+
+# Phase-C2 live UX checks (Mac-mini runner). Both SKIP cleanly without their
+# gates so they never red a partially-provisioned runner.
+# - tui-claude: walks the real TUI in tmux and has Claude judge each frame.
+#   Needs TEST_AGENT_KEY (+ tmux). See scripts/tier3/tui-claude.sh.
+# - onboard-selftest: times `onboard --provision-host --yes` (asserts < 5 min,
+#   idempotent) and has Claude critique the setup UX. Mutating, so gated behind
+#   DEJIMA_RUN_SYSTEM=1; the Claude critique needs TEST_AGENT_KEY.
+test-tier3-tui-claude:
+	./scripts/tier3/tui-claude.sh
+
+test-tier3-onboard-selftest:
+	./scripts/tier3/onboard-selftest.sh
 
 # Tier-4 real-agent smoke — launches a REAL agent and asserts it ran / produced
 # a commit (never exact LLM output). Secret-gated: no-ops with a notice unless
