@@ -236,9 +236,9 @@ func apiReferenced(corpus string, op apiOp) bool {
 
 // --- waivers ---------------------------------------------------------------
 
-// loadWaivers reads testdata/coverage_waivers.txt: one entry per line, blank
-// lines and #-comments ignored. CLI entries are "cli <command path>"; API
-// entries are "api METHOD /path".
+// loadWaivers reads testdata/coverage_waivers.txt: one entry per line; blank
+// lines, full-line #-comments, and trailing inline #-comments are ignored. CLI
+// entries are "cli <command path>"; API entries are "api METHOD /path".
 func loadWaivers(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, "cmd", "dejima", "testdata", "coverage_waivers.txt"))
@@ -247,8 +247,13 @@ func loadWaivers(t *testing.T, root string) map[string]bool {
 	}
 	out := map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
+		// Strip a trailing inline comment ("cli tui   # interactive") so entries
+		// can be documented in place, then trim.
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" {
 			continue
 		}
 		out[line] = true
