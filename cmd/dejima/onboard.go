@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,7 +29,7 @@ import (
 // newOnboardCmd is the explicit re-entry into the wizard. Always runs,
 // regardless of whether the dismissal marker exists.
 func newOnboardCmd() *cobra.Command {
-	var provisionHost, yes, reset bool
+	var provisionHost, yes, reset, newHost bool
 	cmd := &cobra.Command{
 		Use:   "onboard",
 		Short: "Walk through Dejima setup (run anytime to (re)configure).",
@@ -38,8 +39,21 @@ func newOnboardCmd() *cobra.Command {
 			"`--provision-host` (macOS) runs the full host-provisioning wizard: a fresh " +
 			"Mac mini → working Dejima agent server in one command (never-sleep power " +
 			"settings, Homebrew/Tailscale/Docker, then the daemon). Resumable; --yes runs " +
-			"non-interactively; --reset starts the provisioning from scratch.",
+			"non-interactively; --reset starts the provisioning from scratch.\n\n" +
+			"`--new-host` guides setting up a SEPARATE fresh Mac mini as a host from this " +
+			"machine: the pre-SSH steps (account, Remote Login, the headless Tailscale " +
+			"auth-key route) and the handoff to `--provision-host`.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if newHost {
+				// The zero-to-host guide sets up a DIFFERENT machine, not this one,
+				// so there's no local daemon to health-check — just record that
+				// onboarding was seen.
+				if err := runNewHostGuide(cmd.Context()); err != nil {
+					return err
+				}
+				_ = writeDismissalMarker()
+				return nil
+			}
 			if provisionHost {
 				if err := runProvisionHost(cmd.Context(), yes, reset); err != nil {
 					return err
@@ -64,6 +78,7 @@ func newOnboardCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&provisionHost, "provision-host", false, "run the macOS host-provisioning wizard (fresh Mac mini → Dejima agent server)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "with --provision-host: auto-confirm scriptable steps, skip GUI pauses (collect them into a checklist)")
 	cmd.Flags().BoolVar(&reset, "reset", false, "with --provision-host: clear saved progress and start the provisioning from scratch")
+	cmd.Flags().BoolVar(&newHost, "new-host", false, "guide setting up a SEPARATE fresh Mac mini as a host (the pre-SSH steps + handoff)")
 	return cmd
 }
 
@@ -332,9 +347,10 @@ func runOnboarding(ctx context.Context) error {
 	fmt.Println("  3) Both — server here AND use the CLI from here too")
 	fmt.Println("  4) Just exploring — show me the install options")
 	fmt.Println("  5) Make this host reachable from other devices (Tailscale SSH + remote Dejima)")
+	fmt.Println("  6) Set up a SEPARATE fresh Mac mini as a host (from here — I don't have one yet)")
 	fmt.Println()
 
-	switch readSingleKey("Choice [1/2/3/4/5]: ") {
+	switch readSingleKey("Choice [1/2/3/4/5/6]: ") {
 	case "1":
 		return printServerInstall(ctx, env, false)
 	case "2":
@@ -345,10 +361,126 @@ func runOnboarding(ctx context.Context) error {
 		return printOverview()
 	case "5":
 		return setupRemoteAccess(ctx, env)
+	case "6":
+		return runNewHostGuide(ctx)
 	default:
 		fmt.Println("No choice made. Re-run anytime with `dejima onboard`.")
 		return nil
 	}
+}
+
+// runNewHostGuide walks turning a SEPARATE fresh Mac mini into a Dejima host
+// from THIS machine — the "zero-to-host" steps that happen before
+// `onboard --provision-host` can even be reached: first boot + an account,
+// Remote Login, getting on the network (notably the headless Tailscale auth-key
+// route, since a headless mini has no browser to log in), then the handoff.
+//
+// The pre-SSH bits are inherently manual (the macOS Setup Assistant is GUI-only
+// on first boot); from SSH-reachable onward it hands off to --provision-host.
+// Driving that remote provision over SSH from here is a planned follow-up; for
+// now we print the exact remote commands (personalized if a host is given).
+func runNewHostGuide(ctx context.Context) error {
+	fmt.Println()
+	fmt.Println(bold("Set up a fresh Mac mini as a Dejima host (from this machine)"))
+	fmt.Println()
+	fmt.Println("A Mac mini's first boot is GUI-only, so the first steps are hands-on; once")
+	fmt.Println("you can SSH in, `dejima onboard --provision-host` does the rest.")
+	fmt.Println()
+
+	fmt.Println(bold("1. First boot") + " (on the mini, with a monitor + keyboard for setup)")
+	fmt.Println("   • Power on, complete the macOS Setup Assistant.")
+	fmt.Println("   • Create an admin account and NOTE its shortname + password — you SSH in as it.")
+	fmt.Println()
+
+	fmt.Println(bold("2. Enable Remote Login (SSH)") + " on the mini")
+	fmt.Println("   • System Settings → General → Sharing → Remote Login → ON")
+	fmt.Println("   • (or in a terminal on the mini: `sudo systemsetup -setremotelogin on`)")
+	fmt.Println()
+
+	fmt.Println(bold("3. Get the mini on your network"))
+	fmt.Println("   Recommended — Tailscale (reachable anywhere, no port-forwarding):")
+	fmt.Println("     • Install: `brew install --cask tailscale` (or https://tailscale.com/download)")
+	fmt.Println("     • HEADLESS mini (no browser to log in)? Use a pre-auth key — generate one at")
+	fmt.Println("       https://login.tailscale.com/admin/settings/keys, then on the mini:")
+	fmt.Println("         `sudo tailscale up --ssh --auth-key=tskey-auth-xxxxx`")
+	fmt.Println("       Its name becomes <hostname>.<tailnet>.ts.net.")
+	fmt.Println("   Or LAN only:")
+	fmt.Println("     • Find its IP on the mini: `ipconfig getifaddr en0` (Wi-Fi: `en1`)")
+	fmt.Println()
+
+	// Personalize the rest if the user can name the host + account now.
+	host := strings.TrimSpace(readSingleKey("The mini's Tailscale name or IP (blank to skip): "))
+	user := ""
+	if host != "" {
+		user = strings.TrimSpace(readSingleKey("The admin account shortname on the mini (blank to skip): "))
+	}
+	fmt.Println()
+
+	sshTarget := "<admin>@<mini-name-or-ip>"
+	if host != "" {
+		if user != "" {
+			sshTarget = user + "@" + host
+		} else {
+			sshTarget = host
+		}
+	}
+
+	fmt.Println(bold("4. Confirm you can reach it from here"))
+	fmt.Printf("   • `ssh %s`  (accept the host key on first connect)\n", sshTarget)
+	if host != "" {
+		if probeSSH(ctx, host) {
+			fmt.Println("   ✓ port 22 is open on the mini")
+		} else {
+			fmt.Println("   (couldn't confirm port 22 yet — finish steps 2–3 above, then retry)")
+		}
+	}
+	fmt.Println()
+
+	fmt.Println(bold("5. Install Dejima on the mini and provision it"))
+	fmt.Println("   On the mini (over SSH or at its keyboard):")
+	fmt.Println("     curl -fsSL https://dejima.tech/install.sh | bash")
+	fmt.Println("     dejima onboard --provision-host")
+	fmt.Println("   That handles never-sleep power settings, Homebrew/Docker/Tailscale, and")
+	fmt.Println("   installs the daemon as a boot service.")
+	fmt.Println()
+
+	fmt.Println(bold("6. Back here — point your CLI at it"))
+	if host != "" {
+		fmt.Printf("   export DEJIMA_HOST=%s:7273 && dejima ls\n", host)
+	} else {
+		fmt.Println("   export DEJIMA_HOST=<mini-name-or-ip>:7273 && dejima ls")
+	}
+	fmt.Println()
+	fmt.Println("(Coming soon: running step 5 for you over SSH from this machine.)")
+	return nil
+}
+
+// sshProbeHost normalizes a user-entered host to a bare host for probeSSH:
+// strips a trailing :port if one was appended (net.SplitHostPort), and leaves a
+// bare IPv6 literal or a plain name/IP untouched. Pure, so it's unit-tested in
+// place of the inherently environment-dependent network dial.
+func sshProbeHost(host string) string {
+	host = strings.TrimSpace(host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h // had a :port (or bracketed IPv6 + port) → bare host
+	}
+	return host // no port — a plain name/IP or bare IPv6 like ::1
+}
+
+// probeSSH best-effort reports whether port 22 is open on host, to give the
+// new-host guide immediate "yes you can reach it" feedback. Never fatal.
+func probeSSH(ctx context.Context, host string) bool {
+	h := sshProbeHost(host)
+	if h == "" {
+		return false
+	}
+	d := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(h, "22"))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // ---------------------------------------------------------------------------
