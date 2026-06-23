@@ -1,0 +1,72 @@
+# Coverage-gate waivers — a one-way RATCHET, not a parking lot.
+#
+# Each line is surface (a CLI command or an API operation) that has NO referencing
+# test yet. The coverage gate (cmd/dejima/coverage_gate_test.go) credits these as
+# "known, tracked gaps" so the gate is green, while still FAILING on any NEW
+# untested command/op that is not listed here.
+#
+# Rules enforced by the gate itself:
+#   - Add a test for an entry, then DELETE its line. (A waived entry that gains a
+#     test is flagged as a STALE waiver and fails CI — the ratchet only tightens.)
+#   - A line that matches no current command/op is an ORPHAN waiver and fails CI.
+#   - Adding a NEW line is a deliberate, reviewed act — prefer writing the test.
+#
+# Format:  cli <command path>        e.g.  cli agent config
+#          api <METHOD> <path>       e.g.  api POST /v1/islands/{name}/hibernate
+#
+# See docs/testing/coverage-gate.md.
+
+api DELETE /v1/credentials/providers/{provider}
+api DELETE /v1/events/subscriptions/{id}
+api DELETE /v1/tokens/{id}
+api GET /v1/agent-types
+api GET /v1/clients
+api GET /v1/credentials/providers
+api GET /v1/events/subscriptions
+api PATCH /v1/islands/{name}/agents/{id}/config
+api POST /v1/image/build
+api POST /v1/islands/{name}/hibernate
+api POST /v1/islands/{name}/upgrade
+api POST /v1/link/actions/{id}/approve
+api POST /v1/link/actions/{id}/deny
+api POST /v1/sessions/revoke
+api PUT /v1/credentials/providers/{provider}
+cli activity
+cli agent config
+cli agent open
+cli agent rm
+cli auth push
+cli auth status
+cli cap grant
+cli cap list
+cli cap revoke
+cli clients
+cli cp
+cli link unexpose
+cli logout-all
+cli mcp list
+cli onboard
+cli overview
+cli panic
+cli provider ls
+cli provider rm
+cli reset
+cli service status
+cli service uninstall
+cli ssh authorize
+cli ssh config
+cli ssh enroll
+cli ssh info
+cli ssh list
+cli ssh revoke
+cli term ls
+cli term new
+cli term relabel
+cli term rm
+cli token revoke
+cli tui
+cli uninstall
+cli update
+cli webhook events
+cli webhook ls
+cli webhook rm
