@@ -62,4 +62,6 @@ jobs:
             scripts/tier3/lib.sh \
             scripts/tier3/safe.sh \
             scripts/tier3/system.sh \
+            scripts/tier3/tui-claude.sh \
+            scripts/tier3/onboard-selftest.sh \
             scripts/tier4/agent-smoke.sh
