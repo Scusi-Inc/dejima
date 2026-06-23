@@ -1,0 +1,86 @@
+name: nightly
+
+# ============================================================================
+# DISABLED SCAFFOLD — Tiers 2–4 of the automated test harness (Phases B–C).
+#
+# This workflow is intentionally NOT wired to run yet: it has no `schedule` and
+# no `push`/`pull_request` triggers, so it only ever appears under "Run workflow"
+# (workflow_dispatch) and every job is gated behind `if: false`. It exists so
+# Phase B drops in cleanly — flip the gates + add the schedule, don't author from
+# scratch. See docs/testing/automated-test-harness.md and
+# docs/lanes/lane-6-test-harness.md.
+#
+# What each tier needs before it can be enabled (Phase B/C operator setup):
+#   · Tier 2 (Docker integration): a Linux Docker host — either a GitHub-hosted
+#     runner with Docker, or a small self-hosted Linux box. Runs
+#     scripts/integration.sh end to end.
+#   · Tier 3 (macOS host): a self-hosted runner on the Mac mini (a dedicated test
+#     user), label e.g. `macos-mini`. service install / onboard / Keychain /
+#     idle-hibernate / terminal-reconnect / SSH-façade.
+#   · Tier 4 (real-agent smoke): a throwaway agent credential (TEST_AGENT_KEY) +
+#     a throwaway GitHub account/repo/PAT (TEST_GH_TOKEN). Kept lenient.
+#
+# Secrets to add for the live tiers (Phase B/C): TEST_GH_TOKEN, TEST_AGENT_KEY,
+# and optionally TEST_TS_AUTHKEY (or loopback the Tailscale path).
+# ============================================================================
+
+on:
+  workflow_dispatch: {}
+  # TODO(phase-b): enable the nightly schedule once a Docker host + the Mac-mini
+  # self-hosted runner are registered. Until then this stays manual-only.
+  # schedule:
+  #   - cron: "0 7 * * *" # 07:00 UTC nightly
+
+permissions:
+  contents: read
+
+jobs:
+  # --- Tier 2: Docker integration -------------------------------------------
+  integration:
+    name: tier2-integration (Docker)
+    if: false # TODO(phase-b): flip to a Docker-capable runner check + enable
+    runs-on: ubuntu-latest # TODO(phase-b): a Docker host (hosted-with-docker or self-hosted Linux)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # The suite builds dejima/dejimad itself, builds the island image on first
+      # run, and purges its throwaway islands + daemon on exit.
+      - name: run the Tier-2 integration matrix
+        run: make test-integration
+
+  # --- Tier 3: macOS-host suite ---------------------------------------------
+  macos-host:
+    name: tier3-macos-host (Mac mini)
+    if: false # TODO(phase-b): flip once the self-hosted macOS runner is registered
+    runs-on: [self-hosted, macos-mini] # TODO(phase-b): the dedicated test-user runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # TODO(phase-b): service install --system --audit + reboot survival, onboard
+      # --provision-host (--yes --reset), Keychain credential storage, idle
+      # auto-hibernate + wake, terminal auto-reconnect, and the SSH façade. These
+      # need real macOS + launchd, hence the self-hosted Mac-mini runner.
+      - name: tier-3 macOS-host suite
+        run: |
+          echo "TODO(phase-b): macOS-host suite (service/onboard/Keychain/idle/ssh)"
+
+  # --- Tier 4: real-agent smoke ---------------------------------------------
+  agent-smoke:
+    name: tier4-agent-smoke
+    if: false # TODO(phase-c): flip once TEST_AGENT_KEY + TEST_GH_TOKEN exist
+    runs-on: ubuntu-latest # TODO(phase-c): Docker host or the Mac mini
+    # env:
+    #   TEST_AGENT_KEY: ${{ secrets.TEST_AGENT_KEY }}
+    #   TEST_GH_TOKEN:  ${{ secrets.TEST_GH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      # TODO(phase-c): launch an agent on a throwaway repo, give it a trivial task,
+      # assert it ran / produced a commit + pushed (never assert exact LLM output),
+      # then exercise an inter-island message. Lenient by design.
+      - name: tier-4 real-agent smoke
+        run: |
+          echo "TODO(phase-c): real-agent smoke (launch + trivial task + push)"
