@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dejima — safely run a fleet of AI coding agents on hardware you own</title>
-<meta name="description" content="Safely run a fleet of AI coding agents (Claude Code, Codex, and more) on hardware you own — each sandboxed from your machine and the rest, with no infrastructure to build. Self-hosted, open-source, up in minutes.">
+<title>Dejima — secure infrastructure for AI coding agents on hardware you own</title>
+<meta name="description" content="Dejima is self-hosted infrastructure for AI coding agents (Claude Code, Codex, and more). Each agent is sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
 <meta property="og:title" content="Dejima">
-<meta property="og:description" content="Safely run a fleet of AI coding agents on hardware you own — each sandboxed from your machine and the rest, with no infrastructure to build. Self-hosted, open-source, up in minutes.">
+<meta property="og:description" content="Self-hosted infrastructure for AI coding agents. Each one sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
 <meta property="og:image" content="https://raw.githubusercontent.com/aoos/dejima/master/assets/logo.png">
 <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
 <link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
@@ -32,8 +32,8 @@
 </nav>
 
 <section class="hero">
-  <h1 class="hero-h">A fleet of agents. None of the worry.</h1>
-  <p class="hero-sub">Easily spin up and safely run AI coding agents anywhere.<br><span class="hero-platforms">Mac mini · Linux box · Cloud</span></p>
+  <p class="hero-eyebrow">Manage a fleet of agents on your Mac mini, Linux box, local folder, or cloud.</p>
+  <h1 class="hero-h">Infrastructure for your agents. None of the worry.</h1>
   <div class="hero-cta">
     <a class="btn-primary" href="quickstart.html">Run it yourself →</a>
     <a class="btn-ghost" href="#why-dejima">Why Dejima</a>
@@ -42,22 +42,22 @@
 
 <section class="proof" aria-label="What you get">
   <div class="proof-tile">
-    <h3>Manage a fleet</h3>
-    <p>Several Claude Code / Codex agents at once, each in its own workspace, all on one live dashboard — status, logs, and what each one's working on, without the tmux sprawl.</p>
+    <h3>Secure sandboxing</h3>
+    <p>Rogue agents can't break out. Each one is sealed in its own walled-off island, with no reach into your machine, your credentials, or the other agents. If it gets prompt-injected or goes off the rails, the blast radius stops there. Host access is deny-all, granted file by file.</p>
   </div>
   <div class="proof-tile">
-    <h3>Sandboxed by default</h3>
-    <p>Each agent is sealed in its own container — no reach into your real machine, your credentials, or the other agents. Host access is deny-all, granted file by file.</p>
+    <h3>Centralized control &amp; insights</h3>
+    <p>Live dashboard for all of your agents. Run several Claude Code or Codex agents at once, each in its own workspace. Watch status, logs, and what each one is working on, then start, stop, or steer the whole fleet from one place.</p>
   </div>
   <div class="proof-tile">
     <h3>Up and running in minutes</h3>
-    <p>Dejima is the substrate — it turns a Mac mini, or any box, into a secure agent host, so you skip the containers, networking, and session plumbing entirely. One line installs it; you're driving an agent in minutes, not days.</p>
+    <p>Guided setup, then always ready. Install Dejima and run <code>dejima init</code> to get a sandboxed agent on your Mac mini, a Linux box, a local folder, or your own cloud. It handles the containers, sessions, and logins for you, and sessions survive disconnects, so you pick up from any device.</p>
   </div>
 </section>
 
 <section class="safety">
-  <h2>Let them run</h2>
-  <p>Hand an agent a long, autonomous task and walk away. Each one works inside its own walled-off <strong>island</strong> — so if it gets prompt-injected or goes off the rails, the blast radius stops there. Your laptop, your credentials, your other projects: untouched. That's the point — you don't have to babysit.</p>
+  <h2>No infrastructure to babysit</h2>
+  <p>You don't want to become an infrastructure engineer — hand-building sandboxes, locking down credentials, wiring up networking, juggling tmux and SSH just to keep an agent from touching something it shouldn't. That's Dejima's job. Every agent lives in its own walled-off <strong>island</strong>, so if one gets prompt-injected or goes off the rails, the blast radius stops there: your laptop, your credentials, and your other projects stay untouched. Set it up once, then let them run.</p>
 </section>
 
 <h2 id="why-dejima">Why Dejima</h2>
@@ -89,7 +89,7 @@
   <tr><td>Up in minutes, nothing to build</td><td>~</td><td>✓</td><td>~</td><td><strong>✓</strong></td></tr>
 </table>
 </div>
-<p class="small">Dejima isn't a replacement for tmux — it uses tmux inside each island. It's the layer above that adds isolation, a whole fleet on one dashboard, lifecycle controls, and an audit trail. <strong>~</strong> = partial or do-it-yourself.</p>
+<p class="small">Dejima is built around tmux — it runs tmux inside each island and adds the layer above: isolation, a whole fleet on one dashboard, lifecycle controls, and an audit trail.</p>
 
 <h2 id="architecture">How it works</h2>
 <pre><code>        CLI · TUI · your app                 (you drive it)
