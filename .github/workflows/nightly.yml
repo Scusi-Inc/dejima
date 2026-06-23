@@ -53,15 +53,50 @@ jobs:
     name: tier2-integration (Docker)
     runs-on: [self-hosted, macos-mini]
     timeout-minutes: 45
+    # issues: write so the failure reporter can open/update the tracking issue.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: stable
       # The suite builds dejima/dejimad itself, builds the island image on first
-      # run, and purges its throwaway islands + daemon on exit.
-      - name: run the Tier-2 integration matrix
+      # run, and purges its throwaway islands + daemon on exit. DEJIMA_REPORT
+      # makes it also emit the structured per-feature JSON summary. We capture
+      # the suite's exit status (continue-on-error) so the artifact + issue steps
+      # always run, then re-assert it at the end so a real failure still reds the
+      # job.
+      - name: run the deterministic full-feature suite
+        id: suite
+        continue-on-error: true
+        env:
+          DEJIMA_REPORT: ${{ github.workspace }}/report.json
         run: make test-integration
+      # Structured summary as a CI artifact — the orchestrator reads pass/fail
+      # per feature without scraping logs.
+      - name: upload the structured run summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tier2-integration-report
+          path: report.json
+          if-no-files-found: warn
+      # On failure, open/update a GitHub issue from the summary; on a clean run,
+      # close any open one. The reporter never changes the job outcome.
+      - name: file/update the test-failure issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/report-to-issue.sh "${{ github.workspace }}/report.json"
+      # Re-assert the suite's real outcome so a failure still fails the job.
+      - name: reflect the suite's exit status
+        if: steps.suite.outcome == 'failure'
+        run: |
+          echo "::error::the Tier-2 full-feature suite failed — see the run summary artifact + the tracking issue"
+          exit 1
 
   # --- Tier 3 (safe): macOS-host, no system mutation ------------------------
   # Keychain secret storage, idle hibernate->wake, terminal auto-reconnect,
@@ -132,3 +167,47 @@ jobs:
       - name: tier-4 real-agent smoke
         if: ${{ env.TEST_AGENT_KEY != '' }}
         run: make test-tier4
+
+  # --- Phase C2: live TUI-drive + Claude screen-analysis --------------------
+  # Walks the REAL TUI in tmux and has Claude judge each captured frame
+  # (LLM-as-UX-judge). SKIPS WITH A NOTICE when TEST_AGENT_KEY is missing (the
+  # judge needs the Claude API key). No system mutation; throwaway daemon.
+  tui-claude:
+    name: c2-tui-claude (Mac mini)
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 20
+    env:
+      TEST_AGENT_KEY: ${{ secrets.TEST_AGENT_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: skip notice when the agent key is missing
+        if: ${{ env.TEST_AGENT_KEY == '' }}
+        run: echo "::notice::TEST_AGENT_KEY not set — skipping the C2 TUI-Claude screen analysis"
+      - name: live TUI-drive + Claude screen analysis
+        if: ${{ env.TEST_AGENT_KEY != '' }}
+        run: make test-tier3-tui-claude
+
+  # --- Phase C2: onboarding self-test (timer + Claude UX critique) -----------
+  # Times `onboard --provision-host --yes` (< 5 min, idempotent) and has Claude
+  # critique the setup UX. MUTATING — only runs when run_system_tests=true, after
+  # the system suite has provisioned the host (so the run is idempotent). The
+  # Claude critique additionally needs TEST_AGENT_KEY.
+  onboard-selftest:
+    name: c2-onboard-selftest (Mac mini, opt-in)
+    needs: macos-host-system
+    if: ${{ inputs.run_system_tests }}
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 15
+    env:
+      DEJIMA_RUN_SYSTEM: "1"
+      TEST_AGENT_KEY: ${{ secrets.TEST_AGENT_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: onboarding self-test (timer + Claude UX critique)
+        run: make test-tier3-onboard-selftest
