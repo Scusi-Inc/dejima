@@ -184,11 +184,11 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [x] island list + navigation (j/k/up/down/pgup/pgdn) · T1 · A
 - [x] agent menu, drill-in/out · T1 · A
 - [x] confirm pop-up renders centered + requires typing the island/agent **name** · T1 · A
-- [ ] confirm covers uncommitted/unpushed warning in the same pop-up · T1/T3 · ▢
+- [x] confirm covers uncommitted/unpushed warning in the same pop-up · T1/T3 · A (T1: guarded purge → force-purge confirm names the lost work)
 - [x] action menu (`m`): hibernate/wake/reset/upgrade/purge/recreate/relabel/remove-agent/setup-ssh · T1 · A
 - [ ] manual deletion of agents/islands via menu (no stall) · T1/T3 · M
 - [x] `A` audit pane · `U` update (client/daemon) · `S` setup-ssh · `?` help · T1 · A
-- [ ] new-tab launches with manual names · T1/T3 · M
+- [x] new-tab launches with manual names · T1/T3 · A (T1: windowLabel title/label fallbacks)
 - [ ] live TUI smoke over a real session (tmux+expect) · T3 · ▢
 
 ## 18. SDK & clients
