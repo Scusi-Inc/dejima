@@ -200,6 +200,17 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   Code, which is for coding). The enabling new primitive is a **scheduler** (cron-wake
   islands, the time-driven twin of wake-on-message); actions route through Lane 5's
   action-delegation gate. Design + phasing: [`ambient-agents-design.md`](ambient-agents-design.md).
+- **Randomized soak / combination "backbone"** — the stress layer above the deterministic
+  full-feature suite: run *valid* lifecycle/agent/Port/link op-sequences in random orders +
+  combinations, repeatedly, with invariant checks after each (no orphan containers/worktrees,
+  daemon healthy, ledger verifies, no zombies). Catches state bugs the happy-path suite
+  misses. Build after the deterministic suite ([`testing/full-suite-design.md`](testing/full-suite-design.md)).
+- **Multi-host / distributed (discuss later)** — running agents across *multiple* hosts
+  (several Mac minis / servers / cloud). Today Dejima manages one host, so a fleet-of-hosts
+  is a wrapper-app concern. Open question worth a deliberate decision: should the substrate
+  natively **federate hosts** (a "fleet of hosts" alongside the "fleet of agents on one
+  host"), or stay single-host and leave cross-host orchestration to a control plane above?
+  Relates to inter-island exchange (cross-host would extend it). Park for a design talk.
 
 ---
 
