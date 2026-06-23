@@ -79,7 +79,13 @@ later "fix-loop" enhancement — see the harness backbone notes.
 
 - **Phase C (now):** the thorough deterministic suite — full CLI coverage, teatest for every
   screen, the **API+CLI coverage gate** (freshness), structured reporting.
-- **Phase C2 (next):** live TUI-drive + **Claude screen-analysis** + the onboarding UX
-  self-test (timer + Claude judgment).
+- **Phase C2 (built — `scripts/tier3/tui-claude.sh`, `scripts/tier3/onboard-selftest.sh`):**
+  live TUI-drive + **Claude screen-analysis** (walk the real TUI in tmux, `capture-pane` each
+  frame, feed it to Claude as a UX judge — `make test-tier3-tui-claude`, gated behind
+  `TEST_AGENT_KEY`) + the onboarding UX self-test (`make test-tier3-onboard-selftest`: times
+  `onboard --provision-host --yes` under a 5-minute budget, asserts idempotency, and has
+  Claude critique "dead-simple? friction?" — gated behind `DEJIMA_RUN_SYSTEM` + `TEST_AGENT_KEY`).
+  Both skip cleanly without their gates. The two nightly jobs that invoke them are a
+  `.github/workflows` change for the orchestrator to add.
 - **Later (roadmap):** the randomized **soak/combination backbone**; the adaptive **QA-agent
   fix-loop** over the inter-island channel.
