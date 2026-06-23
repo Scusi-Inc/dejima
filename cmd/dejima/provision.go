@@ -300,6 +300,17 @@ func provPhaseTooling(pc *provCtx) error {
 		brewAvail = true
 	}
 
+	// Hard gate: Homebrew is the package manager every later install uses. If it
+	// isn't available (the install above failed or was declined), stop HERE with
+	// the root cause — rather than cascading into confusing "command not found"
+	// failures when we brew-install Tailscale/Docker below and in later phases.
+	// Resumable: fix Homebrew, then re-run to pick up from this phase.
+	if !brewAvail {
+		return fmt.Errorf("need Homebrew for the rest of setup, but it isn't available — " +
+			"the install above failed or was declined. Install it, then re-run:\n" +
+			`      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`)
+	}
+
 	// Tailscale — the remote-access substrate (and how other devices reach the host).
 	if _, err := exec.LookPath("tailscale"); err != nil {
 		fmt.Println()
@@ -380,6 +391,15 @@ func provPhaseTooling(pc *provCtx) error {
 		}
 	}
 	pc.env = detectEnv() // re-probe; later phases depend on docker/tailscale state
+
+	// Hard gate: islands need a reachable container engine. Stop at the source if
+	// Docker still isn't up, rather than letting it resurface as a disconnected
+	// "docker not reachable" in the VM-sizing and daemon-install phases.
+	if !dockerReachable() {
+		return fmt.Errorf("the Docker engine isn't reachable yet — finish Docker Desktop's first launch " +
+			"(open /Applications/Docker.app and wait for its engine), then re-run. " +
+			"on a headless Mac, use colima instead: `brew install colima docker && colima start`")
+	}
 	return nil
 }
 
