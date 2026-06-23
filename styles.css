@@ -75,6 +75,8 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .hero-h { font-size: 2.1rem; line-height: 1.15; letter-spacing: -0.02em;
   color: var(--hover); margin: 0 0 0.8rem; font-weight: 700; text-transform: none; }
 .hero-sub { font-size: 1.15rem; color: var(--fg); max-width: 38rem; margin: 0 0 1.4rem; }
+.hero-platforms { display: inline-block; color: var(--muted); font-size: 0.95rem;
+  margin-top: 0.4rem; letter-spacing: 0.02em; }
 .hero-cta { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
 .btn-primary { background: var(--accent); color: var(--bg); text-decoration: none;
   padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
