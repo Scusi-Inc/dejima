@@ -1011,6 +1011,23 @@ func agentStatus(a api.AgentInfo) (string, lipgloss.Style) {
 	}
 }
 
+// attachedIndicator renders a compact "someone's driving this" badge — a
+// presence dot plus the viewer count when more than one client is attached. It
+// stays empty (and silent) when nobody's watching, so a quiet fleet reads
+// quiet. The detail panel lists who and for how long; this is the at-a-glance
+// cue. Rendered in accent so it's noticeable without competing with the amber
+// "needs you" state.
+func attachedIndicator(attached []api.PresenceEntry) string {
+	n := len(attached)
+	if n == 0 {
+		return ""
+	}
+	if n == 1 {
+		return styleAccent.Render("◉")
+	}
+	return styleAccent.Render(fmt.Sprintf("◉%d", n))
+}
+
 // agentGlyph renders an agent's kind glyph colored by its state: the shape says
 // terminal vs headless (stable identity), the color (from agentStatus) says how
 // it's doing — working / idle / needs-you / error / stopped.
@@ -1050,6 +1067,9 @@ func agentRowText(a api.AgentInfo) string {
 	meta := styleMuted.Render("·" + a.ID)
 	if a.State == "running" && !a.CreatedAt.IsZero() {
 		meta += styleMuted.Render("  up " + timeAgo(a.CreatedAt))
+	}
+	if v := attachedIndicator(a.Attached); v != "" {
+		meta += "  " + v
 	}
 	statusText, statusStyle := agentStatus(a)
 	sig := "  " + statusStyle.Render(statusText)
@@ -1308,7 +1328,8 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString(styleHeader.Render("Glyphs"))
 	b.WriteString("\n  ")
 	b.WriteString(styleMuted.Render(fmt.Sprintf(
-		"%s island   %s terminal agent   %s headless agent", "●", glyphTerminal, glyphHeadless)))
+		"%s island   %s terminal agent   %s headless agent   ", "●", glyphTerminal, glyphHeadless)) +
+		styleAccent.Render("◉") + styleMuted.Render(" attached (someone's driving)"))
 	b.WriteString("\n  ")
 	b.WriteString(styleMuted.Render("color = state: ") +
 		styleRunning.Render("working") + styleMuted.Render(" · ") +

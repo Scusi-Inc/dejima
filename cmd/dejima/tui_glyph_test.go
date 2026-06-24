@@ -27,6 +27,7 @@ func sampleModel() tuiModel {
 		Agents: []api.AgentInfo{
 			{ID: "a1", Type: "claude-code", Attachable: true, State: "running",
 				CreatedAt:  time.Now().Add(-90 * time.Minute),
+				Attached:   []api.PresenceEntry{{Label: "austin", JoinedAt: time.Unix(0, 0)}},
 				AgentState: &api.AgentStateInfo{Latest: "waiting-for-input", UpdatedAt: time.Unix(0, 0)}},
 			{ID: "a2", Type: "codex", Label: "Backend", Attachable: true, State: "stopped",
 				CreatedAt: time.Now().Add(-90 * time.Minute)},
@@ -79,6 +80,22 @@ func TestAgentStatus(t *testing.T) {
 	}
 }
 
+// TestAttachedIndicator: silent when nobody's watching, a bare dot for one
+// viewer, dot+count for several.
+func TestAttachedIndicator(t *testing.T) {
+	if got := plain(attachedIndicator(nil)); got != "" {
+		t.Errorf("no viewers should be silent, got %q", got)
+	}
+	one := []api.PresenceEntry{{Label: "austin"}}
+	if got := plain(attachedIndicator(one)); got != "◉" {
+		t.Errorf("one viewer = %q, want %q", got, "◉")
+	}
+	two := []api.PresenceEntry{{Label: "austin"}, {Label: "sam"}}
+	if got := plain(attachedIndicator(two)); got != "◉2" {
+		t.Errorf("two viewers = %q, want %q", got, "◉2")
+	}
+}
+
 // TestRenderListNoWrap guards the layout against the wrap bug: a full agent row
 // is wider than a narrow pane, and lipgloss would wrap it onto a second line,
 // shredding the tree. renderList must clip each line to the pane width instead.
@@ -96,8 +113,8 @@ func TestRenderListNoWrap(t *testing.T) {
 // rendered output is logged so the visual can be eyeballed with `go test -v`.
 func TestRenderListGlyphs(t *testing.T) {
 	m := sampleModel()
-	out := m.renderList(60)
-	t.Logf("\n%s", out) // visible under -v
+	out := m.renderList(80) // wide enough that no row clips
+	t.Logf("\n%s", out)     // visible under -v
 
 	bare := plain(out)
 	for _, want := range []string{
@@ -107,9 +124,10 @@ func TestRenderListGlyphs(t *testing.T) {
 		glyphHeadless + " headless",    // headless box, unlabeled
 		"·a1", "·a2", "·a3",            // id rides along as a muted handle
 		"·a1  up 1h",     // running agent shows compact uptime
+		"◉",              // a1 has an attached viewer → presence badge
 		"needs you",      // a1's waiting-for-input normalized to the call-to-action word
 		"·a2", "stopped", // a2 is a stopped session
-		"+ add agent",
+		"├ ", "└ + add agent", // tree connectors group the island's children
 		"+ new island",
 	} {
 		if !strings.Contains(bare, want) {
