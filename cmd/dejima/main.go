@@ -2,9 +2,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1274,7 +1276,7 @@ func newShellCmd() *cobra.Command {
 			if info.Repo != "" {
 				waitForWorkspaceReady(cmd.Context(), c, name)
 			}
-			return runInShellSession(cmd.Context(), c, name, label)
+			return runInShellSession(cmd.Context(), c, name, label, false) // bare CLI — no dashboard to summon back to
 		},
 	}
 	cmd.Flags().StringVar(&label, "as", "", "client label shown in presence (default: $HOSTNAME or 'cli')")
@@ -1326,22 +1328,32 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) {
 // runSession is the websocket ↔ local-stdio bridge driving `dejima connect`.
 // An empty agentID attaches to the island's primary agent.
 func runSession(ctx context.Context, c *api.Client, name, agentID, label string) error {
-	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, false, func(ctx context.Context) (*websocket.Conn, error) {
+		return c.DialAgentSession(ctx, name, agentID, label)
+	})
+}
+
+// runSessionSummonable is runSession with the summon chord (Ctrl-\) enabled — used
+// when the attach was launched from the TUI, so the chord can return there.
+func runSessionSummonable(ctx context.Context, c *api.Client, name, agentID, label string) error {
+	return runSessionLoop(ctx, true, func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialAgentSession(ctx, name, agentID, label)
 	})
 }
 
 // runTerminalSession attaches the local terminal to a host terminal's session.
-func runTerminalSession(ctx context.Context, c *api.Client, id, label string) error {
-	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
+// summonable enables the summon chord (true when launched from the TUI).
+func runTerminalSession(ctx context.Context, c *api.Client, id, label string, summonable bool) error {
+	return runSessionLoop(ctx, summonable, func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialTerminalSession(ctx, id, label)
 	})
 }
 
 // runInShellSession attaches the local terminal to an island's in-island shell —
-// a contained bash session at /workspace inside the container.
-func runInShellSession(ctx context.Context, c *api.Client, name, label string) error {
-	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
+// a contained bash session at /workspace inside the container. summonable=true
+// when launched from the TUI so the Ctrl-\ chord returns to the dashboard.
+func runInShellSession(ctx context.Context, c *api.Client, name, label string, summonable bool) error {
+	return runSessionLoop(ctx, summonable, func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialIslandShell(ctx, name, label)
 	})
 }
@@ -1354,7 +1366,33 @@ const (
 	sessExitClean                      // server closed cleanly (detach / agent exited / server error)
 	sessExitStdinEOF                   // local stdin closed (the terminal window went away)
 	sessExitCtx                        // the caller's context was cancelled (Ctrl-C)
+	sessExitSummon                     // the summon chord was pressed — break out to the dashboard
 )
+
+// summonChord is the byte that breaks out of an attached session back into the
+// dashboard (with the host-terminal band open). Ctrl-\ (0x1c): tmux's prefix is
+// Ctrl-b and shells/vim don't bind it, so it's a safe in-session escape. Only
+// honored when the session was launched from the TUI (summonable); a bare
+// `dejima connect` forwards it like any other byte.
+const summonChord = 0x1c
+
+// errSummonBand signals that an attached session ended because the user pressed
+// the summon chord — runTUI re-enters the dashboard instead of exiting.
+var errSummonBand = errors.New("summon band")
+
+// splitOnSummon scans a stdin chunk for the summon chord. If present (and the
+// session is summonable), it returns the bytes before the chord and summon=true,
+// so the caller forwards the prefix and then breaks out. Otherwise summon=false
+// and the chunk is forwarded unchanged.
+func splitOnSummon(b []byte, summonable bool) (before []byte, summon bool) {
+	if !summonable {
+		return b, false
+	}
+	if i := bytes.IndexByte(b, summonChord); i >= 0 {
+		return b[:i], true
+	}
+	return b, false
+}
 
 // classifySessionClose decides, from a websocket read error, whether to exit or
 // reconnect. A clean server-initiated NormalClosure means we're done — that's a
@@ -1378,7 +1416,7 @@ func classifySessionClose(err error, ctx context.Context) sessReason {
 // so a daemon restart, the host sleeping, or a network blip no longer closes the
 // terminal out from under you when you next type. Stdin is read by one long-lived
 // goroutine that outlives individual connections; raw mode is entered once.
-func runSessionLoop(ctx context.Context, dial func(context.Context) (*websocket.Conn, error)) error {
+func runSessionLoop(ctx context.Context, summonable bool, dial func(context.Context) (*websocket.Conn, error)) error {
 	// The first dial surfaces real errors (auth, no such island/agent) directly —
 	// no reconnect spinner on a connect that was never going to work.
 	conn, err := dial(ctx)
@@ -1388,8 +1426,12 @@ func runSessionLoop(ctx context.Context, dial func(context.Context) (*websocket.
 
 	stdinFd := int(os.Stdin.Fd())
 	if term.IsTerminal(stdinFd) {
-		fmt.Fprintln(os.Stderr, "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. "+
-			"Session keeps running; this client auto-reconnects if the link drops.")
+		hint := "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. " +
+			"Session keeps running; this client auto-reconnects if the link drops."
+		if summonable {
+			hint += " Summon the dashboard: Ctrl-\\."
+		}
+		fmt.Fprintln(os.Stderr, hint)
 		oldState, rerr := term.MakeRaw(stdinFd)
 		if rerr != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
@@ -1424,7 +1466,12 @@ func runSessionLoop(ctx context.Context, dial func(context.Context) (*websocket.
 	}()
 
 	for {
-		if runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone) != sessReconnect {
+		switch runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone, summonable) {
+		case sessReconnect:
+			// fall through to the reconnect path below
+		case sessExitSummon:
+			return errSummonBand
+		default:
 			return nil
 		}
 		if term.IsTerminal(stdinFd) {
@@ -1473,7 +1520,7 @@ func reconnectSession(ctx context.Context, dial func(context.Context) (*websocke
 // runOneSessionConn pumps one connection until it ends, returning why. The
 // websocket is closed on return; stdin/resize are owned by the caller's
 // long-lived reader, so a reconnect resumes without re-reading the terminal.
-func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}) sessReason {
+func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}, summonable bool) sessReason {
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer conn.Close(websocket.StatusNormalClosure, "")
@@ -1524,9 +1571,16 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 		case r := <-readReason:
 			return r
 		case b := <-stdinCh:
-			// A write failure means this conn is dead; keep selecting — the read
-			// pump delivers the authoritative close reason momentarily.
-			_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(b)})
+			// The summon chord (Ctrl-\) breaks out to the dashboard: forward any
+			// keystrokes before it, then end the session with sessExitSummon. The
+			// deferred NormalClosure detaches cleanly — the tmux session lives on.
+			before, summon := splitOnSummon(b, summonable)
+			if len(before) > 0 {
+				_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(before)})
+			}
+			if summon {
+				return sessExitSummon
+			}
 		}
 	}
 }
