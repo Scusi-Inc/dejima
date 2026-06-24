@@ -115,6 +115,12 @@
 <p class="small"><strong>~</strong> = partial or do-it-yourself. Dejima runs tmux inside each island and adds the layer above it: isolation, a fleet on one dashboard, lifecycle controls, and an audit trail. <strong>Coder</strong> is the closest — self-hosted, parallel agents, audit logging — but it's a Kubernetes-era platform built for enterprise platform teams; Dejima is that idea sized for one person and a Mac mini. <strong>E2B</strong>'s Firecracker microVMs isolate as strongly or stronger — the difference isn't isolation, it's that with Dejima your code, files, and credentials never leave a box you own. <strong>Rivet</strong> is lightweight and self-hostable but it's agent <em>infrastructure</em> (an SDK), not a fleet dashboard you operate.</p>
 
 <h2 id="architecture">One host. Many sealed islands.</h2>
+<figure class="demo-shot diagram">
+  <img src="assets/architecture.png" width="1120" loading="lazy"
+       alt="How Dejima works: you drive it from a CLI, TUI, or your own app over a websocket + HTTP API on Tailscale. That reaches the Dejima host — a Mac mini, VPS, or cloud VM — which holds islands: 'web' running claude-code, codex, and a headless agent; 'api' running codex and claude-code. Each island is one container with a shared home and credentials; each agent gets its own git worktree, sandboxed from the host and the other agents.">
+</figure>
+<details class="ascii-fallback">
+  <summary>Text version</summary>
 <pre><code>        CLI · TUI · your app                 (you drive it)
                     │
                     │  websocket + HTTP API · over Tailscale
@@ -130,6 +136,7 @@
 │ per island: one container · shared home + credentials          │
 │ per agent:  own git worktree · sandboxed from host & others    │
 └────────────────────────────────────────────────────────────────┘</code></pre>
+</details>
 <p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other. Islands can't see each other; that blindness is the security boundary.</p>
 <p class="bundled-note"><strong>Two kinds of agents.</strong> <strong>Terminal</strong> agents are CLIs you attach to (Claude Code, Codex) — a host-side bridge connects your session to the agent's tmux inside, so it survives disconnect and multiple devices share one screen. <strong>Headless</strong> agents run on their own (an SDK loop, a worker) — output captured to <code>dejima logs</code>. Both get the same isolation, lifecycle, events, and one-API management.</p>
 
@@ -156,7 +163,11 @@
   <a class="btn-primary" href="quickstart.html">Get started →</a>
 </section>
 
-<p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation.</em></p>
+<figure class="demo-shot brand-figure">
+  <img src="assets/brand-island.png" width="1120" loading="lazy"
+       alt="The Dejima metaphor: your machine (holding your files and credentials) connects to a fan-shaped island by a single gated bridge — the broker, one controlled crossing. The agents live contained on the island, and every crossing is written to a tamper-evident ledger.">
+</figure>
+<p class="historical"><em>Dejima was an artificial island built in 1636 in Nagasaki Bay to serve as a quarantined trading post for foreigners during Japan's period of isolation — one gated bridge to the mainland, every crossing logged. Your agents run the same way: contained on the island, reaching your machine only through a broker that records what crossed.</em></p>
 
 <footer class="footer">
   <span class="footer-brand">Dejima</span>

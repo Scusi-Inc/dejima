@@ -83,6 +83,10 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
   border: 1px solid var(--border); border-radius: 8px; }
 .demo-shot figcaption { margin-top: 0.55rem; font-size: 0.85rem; color: var(--muted);
   display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.ascii-fallback { margin-top: 0.5rem; }
+.ascii-fallback > summary { color: var(--muted); font-size: 0.85rem; cursor: pointer; }
+.ascii-fallback > summary:hover { color: var(--accent); }
+.ascii-fallback pre { margin-top: 0.7rem; }
 .btn-primary { background: var(--accent); color: var(--bg); text-decoration: none;
   padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
 .btn-primary:hover { background: var(--hover); color: var(--bg); }
