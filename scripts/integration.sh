@@ -548,8 +548,12 @@ dejima init --name "$ISLAND_GUARD" --repo "$REPO" --local-copy --agent headless 
 dejima exec "$ISLAND_GUARD" -- sh -c \
   'cd /workspace && git config user.email t@t && git config user.name t && echo work > unpushed.txt && git add -A && git commit -qm unpushed' \
   >/dev/null 2>&1 || die "could not create unpushed commit in the guard island"
+# The CLI now gates a plain purge behind a type-the-island-name confirmation, so
+# feed the name on stdin to get PAST it and exercise the DAEMON's unpushed-work
+# guard — the layer that emits the `--force` hint.
+purge_confirmed(){ printf '%s\n' "$1" | dejima purge "$1"; }
 expect_err_match "plain purge refused with unpushed work" "--force" \
-  dejima purge "$ISLAND_GUARD"
+  purge_confirmed "$ISLAND_GUARD"
 expect_ok "force-purge overrides the guard" dejima purge "$ISLAND_GUARD" --force
 expect_fail "guard island is gone after force-purge" dejima status "$ISLAND_GUARD"
 
@@ -598,7 +602,9 @@ step "Token: create an operator + a viewer token"
 expect_ok "token create (operator)" dejima token create --role operator --label itest-op
 VIEWER_OUT="$(dejima token create --role viewer --label itest-viewer 2>&1)"
 assert_has "$VIEWER_OUT" "viewer" "viewer token minted"
-VIEWER_SECRET="$(printf '%s\n' "$VIEWER_OUT" | sed -n 's/.*secret:[[:space:]]*\([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
+# Parse the secret from the stable `export DEJIMA_TOKEN=<hex>` line (the bearer
+# secret is printed bare on its own line, with no "secret:" prefix).
+VIEWER_SECRET="$(printf '%s\n' "$VIEWER_OUT" | sed -n 's/.*DEJIMA_TOKEN=\([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
 TOK_LS="$(dejima token ls 2>&1)"
 assert_has "$TOK_LS" "viewer" "minted tokens are listed"
 if [ -n "$VIEWER_SECRET" ]; then
