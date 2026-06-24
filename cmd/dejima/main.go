@@ -208,9 +208,11 @@ func newRootCmd() *cobra.Command {
 		newPanicCmd(),
 		newUninstallCmd(),
 		newCloneCmd(),
+		newEjectCmd(),
 		newUpgradeCmd(),
 		newExecCmd(),
 		newCpCmd(),
+		newPasteCmd(),
 		newPortCmd(),
 		newCapCmd(),
 		newLinkCmd(),
@@ -230,8 +232,10 @@ func newRootCmd() *cobra.Command {
 		newOverviewCmd(),
 		newDoctorCmd(),
 		newOnboardCmd(),
+		newAdoptCmd(),
 		newUpdateCmd(),
 		newTUICmd(),
+		newFeedbackCmd(),
 	)
 	return cmd
 }

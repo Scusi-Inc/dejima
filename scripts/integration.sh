@@ -39,7 +39,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC2034
 PASS=0 FAIL=0
 step(){ printf '\n\033[1m• %s\033[0m\n' "$*"; }
-die(){ printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2; exit 1; }
+# die prints the failure AND dumps the tail of the daemon log to stderr, so a
+# fatal (e.g. island create failed) is diagnosable straight from the terminal
+# output — no scrolling a tmux pane or hunting a temp file. $TMP may be unset for
+# very-early failures (before the daemon starts); guard for it.
+die(){
+	printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2
+	if [ -n "${TMP:-}" ] && [ -f "$TMP/dejimad.log" ]; then
+		printf '\033[31m--- last 50 daemon-log lines ---\033[0m\n' >&2
+		tail -50 "$TMP/dejimad.log" >&2
+		printf '\033[31m--- end daemon log ---\033[0m\n' >&2
+	fi
+	exit 1
+}
 # Structured per-feature reporting (feature/pass/fail tally + JSON summary when
 # DEJIMA_REPORT is set). report.sh defines feature(), and pass()/fail() that
 # tally per-feature as well as globally — source it so those versions win.
@@ -119,22 +131,51 @@ DAEMON_PID=""
 REPO_DIR="$REAL_HOME/.cache/dejima-itest-$$"
 REPO="$REPO_DIR/repo"
 
+# force_remove_itest_docker tears down every test island's docker objects
+# DIRECTLY (no daemon needed). A crashed/Ctrl-C'd run kills the daemon before
+# `dejima purge` can run, orphaning `dejima-itest-*` containers — then the next
+# run's `docker run --name` fails with exit 125 ("name already in use"). Scoped
+# to the exact itest-* names so real islands are never touched.
+force_remove_itest_docker(){
+  local isl
+  for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD" "$ISLAND_READOPT"; do
+    docker rm -f "dejima-$isl" >/dev/null 2>&1 || true
+    docker volume rm -f "dejima-$isl-workspace" "dejima-$isl-home" >/dev/null 2>&1 || true
+    docker network rm "dejima-net-$isl" >/dev/null 2>&1 || true
+  done
+}
+
 cleanup(){
   set +e
   for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD" "$ISLAND_READOPT"; do
     [ -n "$DAEMON_PID" ] && dejima purge "$isl" -f >/dev/null 2>&1
   done
-  # The re-adopt feature can leave a named volume behind on a mid-run failure
-  # (that's the whole point — keep-islands keeps it). Sweep it in cleanup so a
-  # crashed run doesn't strand a docker volume.
-  docker volume rm -f "dejima-$ISLAND_READOPT-workspace" "dejima-$ISLAND_READOPT-home" >/dev/null 2>&1
+  # Backstop the graceful purge above with a direct docker teardown, so a run
+  # that dies before/while the daemon is up still leaves no orphaned containers
+  # or volumes to collide with the next run.
+  force_remove_itest_docker
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
+  # Preserve the daemon log at a STABLE path before nuking $TMP, so a failure can
+  # be diagnosed by `cat`-ing one file instead of scrolling a tmux pane.
+  # Use REAL_HOME, not the isolated $HOME (which is $TMP/home — about to be rm'd).
+  cp -f "$TMP/dejimad.log" "$REAL_HOME/dejima-itest-dejimad.log" 2>/dev/null \
+    && echo "daemon log saved to $REAL_HOME/dejima-itest-dejimad.log"
   # The isolated HOME holds a read-only Go module cache ($HOME/go/pkg/mod);
   # make the tree writable before removing it so cleanup exits silently.
   chmod -R u+w "$TMP" 2>/dev/null
   rm -rf "$TMP" "${REPO_DIR:-}"
 }
+# EXIT alone misses Ctrl-C: an uncaught SIGINT terminates the script WITHOUT
+# running the EXIT trap, so a hand-interrupted run wouldn't save the daemon log
+# (or tear down islands). Make INT/TERM exit cleanly, which fires the EXIT trap
+# (cleanup) exactly once.
 trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+# Startup sweep: clear any dejima-itest-* docker objects a previously interrupted
+# run left behind, so the first `docker run --name` doesn't 125 on a name
+# conflict. No-op (silenced) when docker isn't up yet — bootstrap checks that.
+force_remove_itest_docker
 
 # ---------------------------------------------------------------------------
 feature "bootstrap (build/daemon/image/create)"
@@ -565,10 +606,13 @@ feature "purge unpushed-work guard + force-purge"
 step "Purge guard: unpushed work blocks a plain purge, --force overrides"
 dejima init --name "$ISLAND_GUARD" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
   >/dev/null 2>&1 || die "guard island create failed"
-# Create an unpushed commit inside the island's workspace.
-dejima exec "$ISLAND_GUARD" -- sh -c \
-  'cd /workspace && git config user.email t@t && git config user.name t && echo work > unpushed.txt && git add -A && git commit -qm unpushed' \
-  >/dev/null 2>&1 || die "could not create unpushed commit in the guard island"
+# Leave UNCOMMITTED work in the workspace. The daemon's guard counts
+# `git status --porcelain` lines, so an untracked file makes the tree dirty
+# (DirtyFiles>0). NOTE: a local *commit* on a branch with no upstream would NOT
+# trip the guard — the tree is clean and Ahead needs an upstream — which is a
+# separate product gap (committed-but-nowhere-pushed work isn't flagged).
+dejima exec "$ISLAND_GUARD" -- sh -c 'echo work > /workspace/uncommitted.txt' \
+  >/dev/null 2>&1 || die "could not create uncommitted work in the guard island"
 # The CLI now gates a plain purge behind a type-the-island-name confirmation, so
 # feed the name on stdin to get PAST it and exercise the DAEMON's unpushed-work
 # guard — the layer that emits the `--force` hint.
