@@ -2158,14 +2158,21 @@ func newPanicCmd() *cobra.Command {
 				}
 				return nil
 			case clear:
-				st, err := c.ClearPanic(ctx)
+				// Restart-all can take a while; bound it generously — the client now
+				// honors the context deadline rather than the 30s default.
+				lctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+				defer cancel()
+				st, err := c.ClearPanic(lctx)
 				if err != nil {
 					return err
 				}
 				fmt.Printf("panic cleared — restarted %s\n", countNoun(st.Affected, "island"))
 				return nil
 			default:
-				st, err := c.Panic(ctx, reason)
+				// Stop-all sweeps every island; allow more than the 30s default.
+				lctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+				defer cancel()
+				st, err := c.Panic(lctx, reason)
 				if err != nil {
 					return err
 				}

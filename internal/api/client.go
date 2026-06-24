@@ -101,6 +101,29 @@ func (c *Client) DaemonHost() string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
+	return c.doVia(ctx, c.httpc, method, path, in, out)
+}
+
+// doLong is do() for operations whose legitimate duration can exceed the 30s
+// default client timeout: island clone (copies two volumes via throwaway
+// containers) and panic engage/clear (stops or restarts EVERY island in turn).
+// http.Client.Timeout is a HARD cap that overrides the request context — so
+// those callers' generous contexts (clone passes 5m) were silently truncated to
+// 30s and the op failed mid-flight on a real host. This path uses a
+// no-fixed-timeout client so the caller's context deadline is the only bound.
+// Callers MUST pass a ctx that carries a deadline.
+func (c *Client) doLong(ctx context.Context, method, path string, in, out any) error {
+	return c.doVia(ctx, c.longHTTPClient(), method, path, in, out)
+}
+
+// longHTTPClient shares the transport (so the unix-socket dialer + connection
+// pooling still apply) but carries NO fixed Timeout, leaving the request context
+// as the sole deadline. See doLong.
+func (c *Client) longHTTPClient() *http.Client {
+	return &http.Client{Transport: c.httpc.Transport}
+}
+
+func (c *Client) doVia(ctx context.Context, hc *http.Client, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		buf, err := json.Marshal(in)
@@ -119,7 +142,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	resp, err := c.httpc.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("daemon unreachable: %w (is dejimad running?)", err)
 	}
@@ -629,7 +652,8 @@ func (c *Client) DeleteIsland(ctx context.Context, name string, force bool) erro
 // PANIC flag is written so the daemon won't auto-start them on restart.
 func (c *Client) Panic(ctx context.Context, reason string) (*PanicResponse, error) {
 	var out PanicResponse
-	if err := c.do(ctx, http.MethodPost, "/v1/panic", PanicRequest{Reason: reason}, &out); err != nil {
+	// doLong: panic stops every island in turn, which can exceed the 30s default.
+	if err := c.doLong(ctx, http.MethodPost, "/v1/panic", PanicRequest{Reason: reason}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -639,7 +663,8 @@ func (c *Client) Panic(ctx context.Context, reason string) (*PanicResponse, erro
 // running.
 func (c *Client) ClearPanic(ctx context.Context) (*PanicResponse, error) {
 	var out PanicResponse
-	if err := c.do(ctx, http.MethodDelete, "/v1/panic", nil, &out); err != nil {
+	// doLong: clearing restarts every running island in turn — same slow class.
+	if err := c.doLong(ctx, http.MethodDelete, "/v1/panic", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -658,7 +683,8 @@ func (c *Client) PanicStatus(ctx context.Context) (*PanicResponse, error) {
 // volumes (credentials and git history come along).
 func (c *Client) CloneIsland(ctx context.Context, name, newName string) (*IslandInfo, error) {
 	var out IslandInfo
-	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/clone", CloneIslandRequest{NewName: newName}, &out); err != nil {
+	// doLong: copies two volumes via throwaway containers — routinely > 30s.
+	if err := c.doLong(ctx, http.MethodPost, "/v1/islands/"+name+"/clone", CloneIslandRequest{NewName: newName}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
