@@ -1946,6 +1946,7 @@ var (
 	styleHibernate = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
 	styleErrored   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
 	styleWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
+	styleNeedsYou  = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Bold(true) // the one call-to-action state — bold so it pops out of a quiet fleet
 	styleFooter    = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
 	// styleBroadcast is the attention bar for the header's top line: amber
 	// background, near-black bold text. Amber, not red — an update is attention,
@@ -2245,13 +2246,18 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderBody(headerHeight int) string {
-	leftW := m.width / 2
+	// The island/agent list is the information-dense star of the dashboard, so
+	// give it the larger share (~4/7) — a full agent row (name + type + uptime +
+	// state) runs wide. The detail pane keeps a floor so it stays readable; on a
+	// narrow terminal the detail floor wins and the list gives way.
+	leftW := m.width * 4 / 7
+	rightW := m.width - leftW - 4
+	if rightW < 28 {
+		rightW = 28
+		leftW = m.width - rightW - 4
+	}
 	if leftW < 30 {
 		leftW = 30
-	}
-	rightW := m.width - leftW - 4
-	if rightW < 20 {
-		rightW = 20
 	}
 	// -5 = 3 footer lines (health strip + two key-hint rows) + the body pane's
 	// top/bottom border.
@@ -2357,7 +2363,7 @@ func (m tuiModel) scrollDetail(pages int) tuiModel {
 	return m
 }
 
-func (m tuiModel) renderList(_ int) (string, int) {
+func (m tuiModel) renderList(width int) (string, int) {
 	if len(m.islands) == 0 {
 		if m.lastError != "" {
 			if m.daemonHelp != nil {
@@ -2409,11 +2415,12 @@ func (m tuiModel) renderList(_ int) (string, int) {
 		case rowNewIsland:
 			line = styleAccent.Render("+ new island")
 		case rowAddAgent:
-			line = "   " + styleMuted.Render("+ add agent")
+			// Caps the island's child group (└); agent rows above it branch (├).
+			line = "   " + styleMuted.Render("└ + add agent")
 		case rowAgent:
 			isl := byName[row.island]
 			a := agentByID(isl, row.agentID)
-			line = "   └ " + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
+			line = "   " + styleMuted.Render("├ ") + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
 		case rowTerminal:
 			t, _ := m.terminalByID(row.termID)
 			line = terminalRowText(t)
@@ -2443,7 +2450,16 @@ func (m tuiModel) renderList(_ int) (string, int) {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	return b.String(), selLine
+	// Clip each row to the pane width instead of letting lipgloss wrap it — a
+	// wrapped agent row spills onto a second line, shreds the tree, and (worse)
+	// throws off the selLine→viewport math below. MaxWidth is ANSI-aware, so the
+	// embedded colors survive, and truncation never changes the line count, so
+	// selLine stays valid.
+	out := b.String()
+	if width > 0 {
+		out = lipgloss.NewStyle().MaxWidth(width).Render(out)
+	}
+	return out, selLine
 }
 
 // agentByID finds an agent within an island, or returns a zero value.
@@ -2469,8 +2485,52 @@ const (
 // a local const so the TUI doesn't import internal/handlers for one string.
 const agentTypeShell = "shell"
 
+// agentStatus normalizes an agent's last emitted signal (AgentState.Latest),
+// credential readiness (AuthState), session liveness (State), and any
+// orchestration Error into one legible, colored word. It is the single source
+// of truth for agent state across the UI — the row signal, the glyph color
+// (agentGlyph), and the detail panel all read from it, so the word and the
+// color can never disagree. "needs you" is the one call-to-action state,
+// rendered bold (styleNeedsYou) so it pops out of a fleet of quiet agents.
+//
+// State and Restarts are probed only for the detail view (agentInfos live=true);
+// in the island list they're empty. So liveness words (working/idle/stopped/
+// crash-loop) appear only once State is known — in the list we degrade to the
+// shim signal (needs you / done / error / no model key), and otherwise return
+// "" with a muted style, matching the list's "state not probed" reality. An
+// empty word means the row shows no state token and the glyph stays neutral.
+func agentStatus(a api.AgentInfo) (string, lipgloss.Style) {
+	latest := ""
+	if a.AgentState != nil {
+		latest = a.AgentState.Latest
+	}
+	switch {
+	case a.Error != "" || latest == "error":
+		return "error", styleErrored
+	case a.State == "exited":
+		return "exited", styleErrored // session alive but the agent process died
+	case latest == "waiting-for-input":
+		return "needs you", styleNeedsYou
+	case a.AuthState == "missing-provider-auth":
+		return "no model key", styleWaiting // will fail at first task — flag it
+	case a.State == "running" && a.Restarts >= 3:
+		return "crash-loop", styleWaiting // supervised but crash-looping (e.g. OOM)
+	case a.State == "stopped":
+		return "stopped", styleHibernate
+	case a.State == "running" && latest == "task-complete":
+		return "idle", styleHibernate
+	case a.State == "running":
+		return "working", styleRunning
+	case latest == "task-complete":
+		return "done", styleHibernate // list view: liveness unknown, last signal was done
+	default:
+		return "", styleHibernate // unknown (list, no signal yet) — neutral glyph, no word
+	}
+}
+
 // agentGlyph renders an agent's kind glyph colored by its state: the shape says
-// terminal vs AI-agent vs headless, the color says running / idle / needs-you / error.
+// terminal vs AI-agent vs headless (stable identity); the color comes from
+// agentStatus, so the glyph and the row's state word always agree.
 func agentGlyph(a api.AgentInfo) string {
 	g := glyphAgent // attachable AI agents (claude-code, codex, custom interactive)
 	switch {
@@ -2479,19 +2539,7 @@ func agentGlyph(a api.AgentInfo) string {
 	case !a.Attachable:
 		g = glyphHeadless // background process
 	}
-	style := styleHibernate // gray: idle / stopped (also the default)
-	switch {
-	case a.Error != "":
-		style = styleErrored
-	case a.State == "exited":
-		style = styleErrored // session alive but the agent process died
-	case a.AgentState != nil && a.AgentState.Latest == "waiting-for-input":
-		style = styleWaiting
-	case a.State == "running" && a.Restarts >= 3:
-		style = styleWaiting // supervised but crash-looping (e.g. OOM) — flag it
-	case a.State == "running":
-		style = styleRunning
-	}
+	_, style := agentStatus(a)
 	return style.Render(g)
 }
 
@@ -2517,25 +2565,53 @@ func terminalRowText(t hostterm.Terminal) string {
 }
 
 // agentRowText renders one agent's list line: kind glyph, name (label, or id
-// when unlabeled), then the latest signal. The id isn't repeated when a label
-// is present — it stays available in the detail view — unless ambiguous is set,
-// meaning another agent in the same island shares this display name, in which
-// case the muted id is appended so the two rows aren't indistinguishable.
+// when unlabeled), a muted meta cluster (type, uptime, a presence dot), then the
+// normalized state word (agentStatus), colored to match the glyph. The id isn't
+// repeated when a label is present — it stays available in the detail view —
+// unless ambiguous is set, meaning another agent in the same island shares this
+// display name, in which case the muted id is appended so the two rows aren't
+// indistinguishable.
 func agentRowText(a api.AgentInfo, ambiguous bool) string {
-	sig := ""
-	switch {
-	case a.Error != "":
-		sig = "  " + styleErrored.Render("error")
-	case a.AuthState == "missing-provider-auth":
-		sig = "  " + styleWaiting.Render("⚠ no model key")
-	case a.AgentState != nil && a.AgentState.Latest != "":
-		sig = "  " + a.AgentState.Latest
-	}
-	name := truncate(agentDisplayName(a), 18)
+	name := fmt.Sprintf("%-14s", truncate(agentDisplayName(a), 14))
 	if ambiguous {
-		name = truncate(agentDisplayName(a), 12) + " " + styleMuted.Render(a.ID)
+		// rare: append the disambiguating id. The trailing columns shift for
+		// these rows, which is fine — they're deliberately distinct.
+		name = truncate(agentDisplayName(a), 10) + " " + styleMuted.Render(a.ID)
 	}
-	return fmt.Sprintf("%s %s%s", agentGlyph(a), name, sig)
+	// Muted meta: the agent type, plus uptime/age unless the session is known to
+	// be down. (State is unprobed in the list, so we show age there too; the
+	// state word, not this, is what says whether it's actually running.)
+	meta := a.Type
+	if a.State != "stopped" && a.State != "exited" && !a.CreatedAt.IsZero() {
+		meta += "  up " + timeAgo(a.CreatedAt)
+	}
+	metaStr := styleMuted.Render(meta)
+	if v := attachedIndicator(a.Attached); v != "" {
+		metaStr += "  " + v
+	}
+	status, statusStyle := agentStatus(a)
+	statusStr := ""
+	if status != "" {
+		statusStr = "  " + statusStyle.Render(status)
+	}
+	return fmt.Sprintf("%s %s  %s%s", agentGlyph(a), name, metaStr, statusStr)
+}
+
+// attachedIndicator renders a compact "someone's driving this" badge — a
+// presence dot plus the viewer count when more than one client is attached. It
+// stays empty (and silent) when nobody's watching, so a quiet fleet reads
+// quiet. The detail panel lists who and for how long; this is the at-a-glance
+// cue. Rendered in accent so it's noticeable without competing with the amber
+// "needs you" state.
+func attachedIndicator(attached []api.PresenceEntry) string {
+	switch n := len(attached); n {
+	case 0:
+		return ""
+	case 1:
+		return styleAccent.Render("◉")
+	default:
+		return styleAccent.Render(fmt.Sprintf("◉%d", n))
+	}
 }
 
 // labelIsAmbiguous reports whether another agent in the same island renders to
@@ -2707,6 +2783,9 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		kind = "headless — background process, logs only"
 	}
 	b.WriteString(fmt.Sprintf("kind:      %s %s\n", agentGlyph(a), styleMuted.Render(kind)))
+	if sw, ss := agentStatus(a); sw != "" {
+		b.WriteString(fmt.Sprintf("state:     %s\n", ss.Render(sw)))
+	}
 	state := a.State
 	switch a.State {
 	case "":
@@ -2875,12 +2954,13 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString(styleHeader.Render("Glyphs"))
 	b.WriteString("\n  ")
 	b.WriteString(styleMuted.Render(fmt.Sprintf(
-		"%s island   %s terminal agent   %s headless agent", "●", glyphTerminal, glyphHeadless)))
+		"%s island   %s AI agent   %s shell   %s headless   ", "●", glyphAgent, glyphTerminal, glyphHeadless)) +
+		styleAccent.Render("◉") + styleMuted.Render(" attached (someone's driving)"))
 	b.WriteString("\n  ")
 	b.WriteString(styleMuted.Render("color = state: ") +
-		styleRunning.Render("running") + styleMuted.Render(" · ") +
-		styleHibernate.Render("idle") + styleMuted.Render(" · ") +
-		styleWaiting.Render("needs you") + styleMuted.Render(" · ") +
+		styleRunning.Render("working") + styleMuted.Render(" · ") +
+		styleHibernate.Render("idle/stopped") + styleMuted.Render(" · ") +
+		styleNeedsYou.Render("needs you") + styleMuted.Render(" · ") +
 		styleErrored.Render("error"))
 	b.WriteString("\n\n")
 
@@ -3130,7 +3210,8 @@ func shortStatus(isl api.IslandInfo, transient string) string {
 	if isl.Stats != nil && isl.Container == "running" {
 		parts = append(parts, fmt.Sprintf("%s · %.0f%%", humanBytes(isl.Stats.MemoryUsageBytes), isl.Stats.CPUPercent))
 	}
-	parts = append(parts, isl.Agent)
+	// Per-agent type belongs on each agent row, not here — an island's first
+	// agent's type says nothing about the rest. (See agentRowText.)
 	return strings.Join(parts, " · ")
 }
 
