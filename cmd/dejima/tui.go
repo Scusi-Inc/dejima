@@ -1059,6 +1059,34 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r := m.currentRow(); r.kind == rowAgent {
 			m.confirm = &confirmPrompt{verb: "remove-agent", island: r.island, answer: "", agent: r.agentID}
 		}
+	case "[", "]":
+		// Reorder the highlighted agent within its island (cosmetic). `[` moves it
+		// up/earlier, `]` down/later; the cursor follows the agent.
+		r := m.currentRow()
+		if r.kind != rowAgent {
+			return m, nil
+		}
+		isl, ok := m.islandByName(r.island)
+		if !ok {
+			return m, nil
+		}
+		idx := -1
+		for i, a := range isl.Agents {
+			if a.ID == r.agentID {
+				idx = i
+				break
+			}
+		}
+		delta := -1
+		if msg.String() == "]" {
+			delta = 1
+		}
+		// No-op at the ends.
+		if idx < 0 || (delta < 0 && idx == 0) || (delta > 0 && idx == len(isl.Agents)-1) {
+			return m, nil
+		}
+		m.selected += delta // agent rows are contiguous + in order, so the cursor follows
+		return m, m.moveAgentCmd(r.island, r.agentID, delta)
 	case "e":
 		// Rename: island rows set a cosmetic display title; agent rows relabel.
 		// Both are cosmetic — the island Name slug and the agent id are unchanged.
@@ -1297,6 +1325,16 @@ func (m tuiModel) removeAgentCmd(name, agentID string) tea.Cmd {
 		defer cancel()
 		err := m.client.RemoveAgent(ctx, name, agentID)
 		return opCompleteMsg{name: name, verb: "remove-agent", err: err}
+	}
+}
+
+// moveAgentCmd reorders an agent within its island by delta positions.
+func (m tuiModel) moveAgentCmd(name, agentID string, delta int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := m.client.MoveAgent(ctx, name, agentID, delta)
+		return opCompleteMsg{name: name, verb: "reorder agent", err: err}
 	}
 }
 
@@ -2812,6 +2850,7 @@ func (m tuiModel) renderHelp() string {
 		{"p", "group the island list by repo — multi-agent projects read as one"},
 		{"+", "add an agent — Claude Code, Codex, a terminal, or a headless command"},
 		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
+		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
 		{"PgUp/PgDn", "scroll the detail panel (events, agents) — Ctrl-u/Ctrl-d also work"},

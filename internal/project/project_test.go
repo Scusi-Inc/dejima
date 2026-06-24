@@ -1,6 +1,7 @@
 package project
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
@@ -175,6 +176,41 @@ func TestAddRemoveAgent(t *testing.T) {
 	}
 	if pa := p.PrimaryAgent(); pa == nil || pa.ID != "a2" {
 		t.Errorf("PrimaryAgent() = %+v, want a2", pa)
+	}
+}
+
+func TestMoveAgent(t *testing.T) {
+	order := func(p *Project) string {
+		ids := make([]string, len(p.Agents))
+		for i, a := range p.Agents {
+			ids[i] = a.ID
+		}
+		return strings.Join(ids, ",")
+	}
+	mk := func() *Project {
+		return &Project{Agents: []AgentSpec{{ID: "a1"}, {ID: "a2"}, {ID: "a3"}}}
+	}
+
+	p := mk()
+	if !p.MoveAgent("a3", -1) || order(p) != "a1,a3,a2" {
+		t.Errorf("move a3 up one: order=%q moved-ok unexpected", order(p))
+	}
+	p = mk()
+	if !p.MoveAgent("a1", +1) || order(p) != "a2,a1,a3" {
+		t.Errorf("move a1 down one: order=%q", order(p))
+	}
+	p = mk()
+	// Clamp past the end: a3 down is a no-op (already last).
+	if p.MoveAgent("a3", +1) || order(p) != "a1,a2,a3" {
+		t.Errorf("move last down should be a no-op: order=%q", order(p))
+	}
+	p = mk()
+	// Big negative delta clamps to the front.
+	if !p.MoveAgent("a3", -5) || order(p) != "a3,a1,a2" {
+		t.Errorf("move a3 to front: order=%q", order(p))
+	}
+	if p.MoveAgent("nope", -1) {
+		t.Error("MoveAgent(missing) returned true")
 	}
 }
 
