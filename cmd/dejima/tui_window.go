@@ -12,7 +12,11 @@ import (
 // in the current environment. The Enter key uses this to choose between
 // "open in a new window" (default) and "attach in-place, replacing the TUI"
 // (the graceful fallback).
-func canOpenNewWindow() bool {
+// canOpenNewWindow reports whether we can spawn a sibling window/tab for an
+// attach. It's a var so tests can force the in-process (quit-to-attach) path
+// deterministically regardless of GOOS (darwin/windows would otherwise always
+// be true, and macOS would try to script Terminal).
+var canOpenNewWindow = func() bool {
 	return os.Getenv("TMUX") != "" || goruntime.GOOS == "darwin" || goruntime.GOOS == "windows"
 }
 

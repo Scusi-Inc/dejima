@@ -455,6 +455,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/ssh/account-keys", s.handleAuthorizeAccountKey)
 	mux.HandleFunc("GET /v1/ssh/account-keys", s.handleListAccountKeys)
 	mux.HandleFunc("GET /v1/islands/{name}/session", s.sessionWS)
+	mux.HandleFunc("GET /v1/islands/{name}/shell/session", s.islandShellWS)
 	mux.HandleFunc("GET /v1/islands/{name}/agents", s.listAgents)
 	mux.HandleFunc("POST /v1/islands/{name}/agents", s.addAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}", s.getAgent)

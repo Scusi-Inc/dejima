@@ -998,6 +998,29 @@ func (c *Client) DialAgentSession(ctx context.Context, name, agentID, label stri
 	return conn, nil
 }
 
+// DialIslandShell opens a websocket against an island's in-island shell — a
+// contained interactive bash session at /workspace inside the container. Shared
+// and resumable; not tied to an agent.
+func (c *Client) DialIslandShell(ctx context.Context, name, label string) (*websocket.Conn, error) {
+	q := url.Values{}
+	if label != "" {
+		q.Set("label", label)
+	}
+	wsBase := c.base
+	if len(wsBase) > 4 && wsBase[:4] == "http" {
+		wsBase = "ws" + wsBase[4:]
+	}
+	wsURL := wsBase + "/v1/islands/" + name + "/shell/session"
+	if encoded := q.Encode(); encoded != "" {
+		wsURL += "?" + encoded
+	}
+	conn, _, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
+	if err != nil {
+		return nil, fmt.Errorf("dial island shell: %w", err)
+	}
+	return conn, nil
+}
+
 // wsDialOptions builds the websocket dial options, carrying the bearer token in
 // an Authorization header when set. Without this, a token-authenticated client's
 // session/terminal attach would arrive header-less and be treated by roleAuth as

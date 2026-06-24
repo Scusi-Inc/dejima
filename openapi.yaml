@@ -365,6 +365,15 @@ paths:
       x-websocket: true
       responses:
         "101": { description: Switching Protocols (WebSocket) }
+  /v1/islands/{name}/shell/session:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [agents]
+      summary: "WebSocket PTY stream for the island's contained shell at /workspace (shared, resumable; not an agent). NOTE: WebSocket upgrade — see SessionEnvelope."
+      operationId: islandShellWS
+      x-websocket: true
+      responses:
+        "101": { description: Switching Protocols (WebSocket) }
   /v1/islands/{name}/exec:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
