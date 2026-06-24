@@ -28,6 +28,7 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/version"
 )
 
 const (
@@ -1639,6 +1640,10 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		DesiredState: project.StateRunning,
 		CreatedAt:    now,
 		LastUsedAt:   now,
+		// Version-skew stamp: the daemon build this island's container is created
+		// against. Compared later (doctor / ls / detail) to the running daemon to
+		// flag an island built from a stale image whose /opt shims may be old.
+		BuiltVersion: version.Version,
 	}
 	p.EnsureAgents()                             // mirror the scalar agent into Agents[0] for new islands
 	p.SetPrimaryID(project.PrimaryAgentID(name)) // fresh island: island-letter primary id (p1), not the legacy a1 back-fill
@@ -2233,6 +2238,14 @@ func (s *Server) upgradeIsland(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p.LastUsedAt = time.Now().UTC()
+	// Re-stamp the version skew marker: the container was just recreated against
+	// the current image, so the island is now level with this daemon build (and
+	// its /opt shims are fresh). Back-fill BuiltVersion too for islands created
+	// before the stamp existed, so provenance is no longer "unknown" after upgrade.
+	p.UpgradedVersion = version.Version
+	if p.BuiltVersion == "" {
+		p.BuiltVersion = version.Version
+	}
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -2329,7 +2342,34 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	info.Attached = s.islandPresence(p.Name)
 	info.AgentState = s.islandAgentState(p.Name)
 	info.Agents = s.agentInfos(ctx, p, false)
+	info.BuiltVersion = p.BuiltVersion
+	info.UpgradedVersion = p.UpgradedVersion
+	// Zero-heartbeat liveness: a running island that has never emitted a single
+	// agent-state event, past a short grace window, is the direct broken-shim
+	// signal (a stale socket→TCP notify hook no-ops silently). We use the rollup
+	// AgentState (any agent suffices); LastUsedAt is the most recent
+	// boot/recreate/upgrade time available without a per-container engine probe.
+	running := info.Container == string(runtime.StatusRunning)
+	info.NeverHeardFrom = neverHeardFrom(running, info.AgentState, p.LastUsedAt, time.Now())
 	return info
+}
+
+// heartbeatGrace is how long a freshly (re)started island is given to emit its
+// first agent-state heartbeat before a continued silence is treated as a broken
+// shim. Generous enough to cover a slow clone + agent warm-up, short relative to
+// the 18h the motivating incident went unnoticed.
+const heartbeatGrace = 10 * time.Minute
+
+// neverHeardFrom decides the zero-heartbeat liveness flag: a running island that
+// has emitted NO agent-state event (agentState nil) and whose last
+// boot/recreate (sinceTime, from LastUsedAt) is older than heartbeatGrace. A
+// just-started island, a hibernated one, or one with a zero reference time is
+// never flagged. Pure, so the grace logic is unit-tested without a runtime.
+func neverHeardFrom(running bool, agentState *AgentStateInfo, sinceTime, now time.Time) bool {
+	if !running || agentState != nil || sinceTime.IsZero() {
+		return false
+	}
+	return now.Sub(sinceTime) > heartbeatGrace
 }
 
 // agentInfos builds the per-agent public view. When live is true, each agent's
