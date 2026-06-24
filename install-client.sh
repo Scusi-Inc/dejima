@@ -74,7 +74,8 @@ else
   info "warning: SHA256SUMS not found; skipping checksum verification"
 fi
 
-tar -xzf "$tmp/$asset" -C "$tmp"
+tar -xzf "$tmp/$asset" -C "$tmp" || fail "couldn't unpack $asset (corrupt download?) — re-run to retry."
+[[ -f "$tmp/dejima" ]] || fail "the downloaded archive didn't contain a 'dejima' binary — re-run to retry, or report this at https://github.com/${REPO}/issues."
 
 # --- install (client only) ------------------------------------------------
 install_bin() {

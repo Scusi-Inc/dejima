@@ -107,7 +107,21 @@ async function main() {
   fs.mkdirSync(binDir, { recursive: true });
 
   console.log(`dejima: downloading ${asset} …`);
-  const tarball = await get(`${base}/${asset}`);
+  let tarball;
+  try {
+    tarball = await get(`${base}/${asset}`);
+  } catch (e) {
+    // A 404 here almost always means there's no published Release for this exact
+    // version/platform yet (or the tag isn't out). Say so plainly instead of
+    // surfacing a raw "HTTP 404" the way a generic failure would.
+    if (/HTTP 404/.test(e.message)) {
+      throw new Error(
+        `no prebuilt binary for this version/platform yet — ${asset} isn't in ` +
+          `release ${tag}.\n  See https://github.com/${REPO}/releases for what's published.`
+      );
+    }
+    throw e;
+  }
   await verifyChecksum(tarball);
 
   // Unpack with the system tar. bsdtar (Windows 10+ `tar.exe`) reads .zip too;
