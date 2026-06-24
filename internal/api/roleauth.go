@@ -79,6 +79,7 @@ var roleRouteCap = map[string]roleCap{
 	"GET /v1/islands/{name}/port/scopes":       capRead,
 	"GET /v1/islands/{name}/capability/grants": capRead,
 	"GET /v1/islands/{name}/mcp/grants":        capRead,
+	"GET /v1/islands/{name}/grants":            capRead, // unified per-island grants view (Lane C)
 	"GET /v1/credentials/claude":               capRead, // status only, no secret
 	"GET /v1/credentials/github":               capRead, // identities, no tokens
 	"GET /v1/credentials/github/{name}/repos":  capRead,
