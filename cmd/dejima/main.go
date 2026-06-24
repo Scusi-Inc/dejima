@@ -208,6 +208,7 @@ func newRootCmd() *cobra.Command {
 		newPanicCmd(),
 		newUninstallCmd(),
 		newCloneCmd(),
+		newEjectCmd(),
 		newUpgradeCmd(),
 		newExecCmd(),
 		newCpCmd(),
