@@ -15,7 +15,8 @@ import (
 // from the action menu). It shows, for one island, everything it can reach —
 // host files (Port), MCP servers, inter-island links, and capabilities — so an
 // operator can confirm at a glance what an island is and isn't allowed to touch.
-// Read-only: granting/revoking lives in the CLI (`dejima port|mcp|link …`).
+// Read-only: granting/revoking lives in the CLI (`dejima port|mcp|link …`). The
+// data is fetched once on open from the daemon's aggregate grants endpoint.
 type grantsView struct {
 	island  string
 	loading bool
