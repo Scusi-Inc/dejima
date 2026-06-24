@@ -39,7 +39,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC2034
 PASS=0 FAIL=0
 step(){ printf '\n\033[1m• %s\033[0m\n' "$*"; }
-die(){ printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2; exit 1; }
+# die prints the failure AND dumps the tail of the daemon log to stderr, so a
+# fatal (e.g. island create failed) is diagnosable straight from the terminal
+# output — no scrolling a tmux pane or hunting a temp file. $TMP may be unset for
+# very-early failures (before the daemon starts); guard for it.
+die(){
+	printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2
+	if [ -n "${TMP:-}" ] && [ -f "$TMP/dejimad.log" ]; then
+		printf '\033[31m--- last 50 daemon-log lines ---\033[0m\n' >&2
+		tail -50 "$TMP/dejimad.log" >&2
+		printf '\033[31m--- end daemon log ---\033[0m\n' >&2
+	fi
+	exit 1
+}
 # Structured per-feature reporting (feature/pass/fail tally + JSON summary when
 # DEJIMA_REPORT is set). report.sh defines feature(), and pass()/fail() that
 # tally per-feature as well as globally — source it so those versions win.
@@ -131,8 +143,9 @@ cleanup(){
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
   # Preserve the daemon log at a STABLE path before nuking $TMP, so a failure can
   # be diagnosed by `cat`-ing one file instead of scrolling a tmux pane.
-  cp -f "$TMP/dejimad.log" "$HOME/dejima-itest-dejimad.log" 2>/dev/null \
-    && echo "daemon log saved to $HOME/dejima-itest-dejimad.log"
+  # Use REAL_HOME, not the isolated $HOME (which is $TMP/home — about to be rm'd).
+  cp -f "$TMP/dejimad.log" "$REAL_HOME/dejima-itest-dejimad.log" 2>/dev/null \
+    && echo "daemon log saved to $REAL_HOME/dejima-itest-dejimad.log"
   # The isolated HOME holds a read-only Go module cache ($HOME/go/pkg/mod);
   # make the tree writable before removing it so cleanup exits silently.
   chmod -R u+w "$TMP" 2>/dev/null
