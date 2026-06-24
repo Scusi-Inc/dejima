@@ -231,6 +231,7 @@ func newRootCmd() *cobra.Command {
 		newOverviewCmd(),
 		newDoctorCmd(),
 		newOnboardCmd(),
+		newAdoptCmd(),
 		newUpdateCmd(),
 		newTUICmd(),
 		newFeedbackCmd(),
