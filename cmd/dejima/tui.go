@@ -112,11 +112,18 @@ type tuiModel struct {
 	// connectTerminal, when set on quit, attaches to a host terminal instead of
 	// an island (a shell on the daemon host).
 	connectTerminal string
-	terminals       []hostterm.Terminal // host terminals (empty unless the daemon enables them)
-	confirm         *confirmPrompt
-	menu            *actionMenu       // non-nil while the per-row action menu is open
-	dirtyOps        map[string]string // name → "hibernating" etc. (transient hint)
-	building        bool              // island image build in flight
+
+	// Host-terminal band (pinned above the island list). bandFocused implies
+	// bandExpanded; collapsing clears both (auto-collapse on blur). bandSel is
+	// the cursor within the expanded band (terminals, then the "+ new" row).
+	bandExpanded bool
+	bandFocused  bool
+	bandSel      int
+	terminals    []hostterm.Terminal // host terminals (empty unless the daemon enables them)
+	confirm      *confirmPrompt
+	menu         *actionMenu       // non-nil while the per-row action menu is open
+	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
+	building     bool              // island image build in flight
 
 	help         bool            // help overlay visible
 	helpAdvanced bool            // advanced section of the help overlay expanded
@@ -547,6 +554,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if n := m.rowCount(); m.selected >= n && n > 0 {
 			m.selected = n - 1
 		}
+		// Keep the band cursor in range when a terminal is added/removed.
+		if m.bandSel >= m.bandRowCount() {
+			m.bandSel = m.bandRowCount() - 1
+		}
 		return m, nil
 
 	case terminalCreatedMsg:
@@ -895,6 +906,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	// The host-terminal band owns keys while focused (expanded + driving). After
+	// the confirm guard, so a band-opened "close terminal" confirm takes keys.
+	if m.bandFocused {
+		return m.bandKey(msg)
+	}
 
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -907,6 +923,16 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openAuditView()
 	case "n":
 		return m.openCreator()
+	case "`":
+		// Toggle + focus the pinned host-terminal band (above the island list).
+		if m.hostTerminalsEnabled() {
+			m.bandExpanded = true
+			m.bandFocused = true
+			if m.bandSel >= m.bandRowCount() {
+				m.bandSel = 0
+			}
+		}
+		return m, nil
 	case "t":
 		// New host terminal (uncontained shell on the daemon host) + attach.
 		if m.hostTerminalsEnabled() {
@@ -1067,9 +1093,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirm = &confirmPrompt{verb: "build-image"}
 		}
 	case "d":
-		if r := m.currentRow(); r.kind == rowTerminal {
-			m.confirm = &confirmPrompt{verb: "remove-terminal", agent: r.termID}
-		} else if name := m.selectedName(); name != "" {
+		if name := m.selectedName(); name != "" {
 			m.confirm = &confirmPrompt{verb: "purge", island: name}
 		}
 	case "S":
@@ -1320,7 +1344,6 @@ type treeRow struct {
 	kind    rowKind
 	island  string
 	agentID string
-	termID  string // for rowTerminal
 }
 
 // hostTerminalsEnabled reports whether the daemon offers host terminals (so the
@@ -1372,14 +1395,9 @@ func (m tuiModel) visibleRows() []treeRow {
 		}
 	}
 	rows = append(rows, treeRow{kind: rowNewIsland})
-	// Host section: operator terminals on the daemon host (uncontained). Only
-	// when the daemon enables them.
-	if m.hostTerminalsEnabled() {
-		for _, t := range m.terminals {
-			rows = append(rows, treeRow{kind: rowTerminal, termID: t.ID})
-		}
-		rows = append(rows, treeRow{kind: rowNewTerminal})
-	}
+	// Host terminals (operator shells on the daemon host) used to live at the
+	// tail of this list; they now have their own pinned band above it. See
+	// renderBand / bandKey.
 	return rows
 }
 
@@ -1407,16 +1425,6 @@ func (m tuiModel) orderedIslands() []api.IslandInfo {
 		out = append(out, g...)
 	}
 	return out
-}
-
-// terminalByID finds a loaded host terminal by id.
-func (m tuiModel) terminalByID(id string) (hostterm.Terminal, bool) {
-	for _, t := range m.terminals {
-		if t.ID == id {
-			return t, true
-		}
-	}
-	return hostterm.Terminal{}, false
 }
 
 // islandDisplay is the user-facing island name: its Title if set, else the slug.
@@ -1528,12 +1536,6 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 			}},
 			actionMenuItem{label: "Rename (relabel)", key: "e"},
 			actionMenuItem{label: "Remove agent", key: "X", danger: true},
-		)
-	case rowTerminal:
-		title = "host terminal"
-		items = append(items,
-			actionMenuItem{label: "Attach", key: "o"},
-			actionMenuItem{label: "Close terminal", key: "d", danger: true},
 		)
 	default:
 		return m, false
@@ -1764,11 +1766,6 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 		return m.openCreator()
 	case rowAddAgent:
 		return m.openAgentAdder(row.island)
-	case rowTerminal:
-		m.connectTerminal = row.termID // attach in this terminal (host shell)
-		return m, tea.Quit
-	case rowNewTerminal:
-		return m, m.createTerminalCmd("")
 	}
 	name := row.island
 	if name == "" {
@@ -1949,8 +1946,13 @@ func (m tuiModel) View() string {
 	}
 
 	footer := m.renderFooter()
-	body := m.renderBody(hh)
-
+	// The pinned host-terminal band sits between the header and the island list;
+	// the body sizes off (header + band) height so nothing is pushed off-screen.
+	band, bandH := m.renderBand(m.width - 2)
+	body := m.renderBody(hh + bandH)
+	if band != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, header, band, body, footer)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
@@ -2280,14 +2282,8 @@ func (m tuiModel) renderList(_ int) (string, int) {
 	b.WriteString(styleHeader.Render("Islands"))
 	b.WriteString("\n\n")
 	selLine := -1
-	hostHeaderDone := false
 	lastRepo := "\x00" // sentinel so the first group always prints its header
 	for i, row := range m.visibleRows() {
-		// The Host section gets its own (cautionary) header before its first row.
-		if (row.kind == rowTerminal || row.kind == rowNewTerminal) && !hostHeaderDone {
-			b.WriteString("\n" + styleHeader.Render("Host") + " " + styleMuted.Render("· not contained") + "\n\n")
-			hostHeaderDone = true
-		}
 		// Grouped view: a muted repo header before each repo group's first island.
 		// Injected like the Host header — an extra line that doesn't consume a row
 		// index, so the cursor mapping is unaffected.
@@ -2311,11 +2307,6 @@ func (m tuiModel) renderList(_ int) (string, int) {
 			isl := byName[row.island]
 			a := agentByID(isl, row.agentID)
 			line = "   └ " + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
-		case rowTerminal:
-			t, _ := m.terminalByID(row.termID)
-			line = terminalRowText(t)
-		case rowNewTerminal:
-			line = styleMuted.Render("+ new terminal")
 		default: // rowIsland
 			isl, ok := byName[row.island]
 			if !ok {
@@ -2413,6 +2404,107 @@ func terminalRowText(t hostterm.Terminal) string {
 	return fmt.Sprintf("%s %-14s %s", glyphTerminal, truncate(name, 14), styleMuted.Render(t.ID))
 }
 
+// bandRowCount is the number of selectable rows in the expanded band: one per
+// terminal, plus the trailing "+ new terminal" affordance.
+func (m tuiModel) bandRowCount() int { return len(m.terminals) + 1 }
+
+// renderBand draws the pinned host-terminal band that sits above the island
+// list, and returns it with its height in lines (0 when host terminals are off,
+// so the caller adds no rows). Collapsed it's a single summary line; focused it
+// expands to the terminal list + a "+ new terminal" row, with bandSel
+// highlighted. Rows are clipped (never wrapped) to width, like the island list.
+func (m tuiModel) renderBand(width int) (string, int) {
+	if !m.hostTerminalsEnabled() {
+		return "", 0
+	}
+	n := len(m.terminals)
+	clip := func(s string) string {
+		if width > 0 {
+			return lipgloss.NewStyle().MaxWidth(width).Render(s)
+		}
+		return s
+	}
+
+	if !m.bandExpanded {
+		dot := styleMuted.Render("○")
+		count := "no terminals"
+		if n > 0 {
+			dot = styleRunning.Render("●")
+			s := ""
+			if n != 1 {
+				s = "s"
+			}
+			count = fmt.Sprintf("%d terminal%s", n, s)
+		}
+		line := fmt.Sprintf("%s %s %s %s   %s",
+			styleHeader.Render("⌨ Host"), dot, styleMuted.Render(count),
+			styleMuted.Render("· not contained"), styleMuted.Render("[`] expand"))
+		return clip(line), 1
+	}
+
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("⌨ Host terminals") + " " +
+		styleMuted.Render("· not contained") + "   " + styleMuted.Render("[`] collapse") + "\n")
+	for i, t := range m.terminals {
+		line := "  " + terminalRowText(t)
+		if i == m.bandSel {
+			line = styleSelected.Render("▶ " + terminalRowText(t))
+		}
+		b.WriteString(clip(line) + "\n")
+	}
+	newRow := "  " + styleMuted.Render("+ new terminal")
+	if m.bandSel == n {
+		newRow = styleSelected.Render("▶ + new terminal")
+	}
+	b.WriteString(clip(newRow))
+	// height = header + n terminal rows + the new-terminal row
+	return b.String(), n + 2
+}
+
+// bandKey drives the focused host-terminal band: navigate the terminals + the
+// "+ new terminal" row, attach (⏎), create, close (d/X), relabel (e), and
+// collapse-on-blur (esc / backtick). Reuses the same commands as the old inline
+// Host rows, so terminal behavior is unchanged — only its home moved.
+func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.terminals)
+	collapse := func() (tea.Model, tea.Cmd) {
+		m.bandExpanded, m.bandFocused = false, false
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "`", "left", "q":
+		return collapse()
+	case "j", "down":
+		if m.bandSel < m.bandRowCount()-1 {
+			m.bandSel++
+		}
+		return m, nil
+	case "k", "up":
+		if m.bandSel > 0 {
+			m.bandSel--
+		}
+		return m, nil
+	case "g", "home":
+		m.bandSel = 0
+		return m, nil
+	case "G", "end":
+		m.bandSel = m.bandRowCount() - 1
+		return m, nil
+	case "enter", "o":
+		if m.bandSel >= n { // the "+ new terminal" row
+			return m, m.createTerminalCmd("")
+		}
+		m.connectTerminal = m.terminals[m.bandSel].ID // attach (resumes live tmux)
+		return m, tea.Quit
+	case "d", "X":
+		if m.bandSel < n {
+			m.confirm = &confirmPrompt{verb: "remove-terminal", agent: m.terminals[m.bandSel].ID}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
 // agentRowText renders one agent's list line: kind glyph, name (label, or id
 // when unlabeled), then the latest signal. The id isn't repeated when a label
 // is present — it stays available in the detail view — unless ambiguous is set,
@@ -2458,22 +2550,6 @@ func (m tuiModel) renderDetail(_ int) string {
 	if m.currentRow().kind == rowAddAgent {
 		return styleTitle.Render("+ Add agent") + "\n\n" +
 			styleMuted.Render("Press ⏎ to add an agent to "+styleAccent.Render(m.selectedName())+styleMuted.Render(".\nClaude Code, Codex, a terminal, or a headless command."))
-	}
-	if m.currentRow().kind == rowNewTerminal {
-		return styleTitle.Render("+ New terminal") + "\n\n" +
-			styleMuted.Render("Press ⏎ (or ") + styleAccent.Render("t") + styleMuted.Render(") to open a shell ") +
-			styleErrored.Render("on the daemon host — NOT contained") + styleMuted.Render(".\nResumable; reattach anytime.")
-	}
-	if r := m.currentRow(); r.kind == rowTerminal {
-		t, _ := m.terminalByID(r.termID)
-		name := t.Label
-		if name == "" {
-			name = t.ID
-		}
-		return styleTitle.Render("Host terminal · "+name) + "\n\n" +
-			styleErrored.Render("⚠ A shell on the daemon host — NOT contained.") + "\n\n" +
-			styleMuted.Render(fmt.Sprintf("id:        %s\n", t.ID)) +
-			styleMuted.Render("Press ⏎ to attach (resumes the live session); [d] to close.")
 	}
 	if m.detail == nil {
 		if name := m.selectedName(); name != "" {
@@ -2680,7 +2756,7 @@ func (m tuiModel) renderFooter() string {
 	// listed in the ⏎ menu and in [?] help.
 	term := ""
 	if m.hostTerminalsEnabled() {
-		term = "[t] terminal   "
+		term = "[`] terminals   "
 	}
 	keys1 := "[n] new   " + term + "[s] settings   [?] help   [q] quit"
 	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll
