@@ -5,6 +5,7 @@ package clientcfg
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -50,6 +51,78 @@ func (c Config) ActiveHost() (host string, ok bool) {
 		}
 	}
 	return "", false
+}
+
+// LookupProfile resolves a profile by name to its daemon host, reading nothing
+// but the in-memory config. The synthetic "local" name (and "") resolve to the
+// empty host (the local Unix socket). This is the *ephemeral* lookup behind the
+// `-p/--profile` launch flag: it never touches ActiveProfile, so selecting a
+// profile for one invocation can't stomp the persistent choice shared by
+// concurrent TUIs. An unknown name is an error (vs ActiveHost's silent
+// fall-back), because an explicit `-p typo` should fail loudly, not connect
+// somewhere unexpected.
+func (c Config) LookupProfile(name string) (host string, err error) {
+	if name == "" || name == "local" {
+		return "", nil
+	}
+	for _, p := range c.Profiles {
+		if p.Name == name {
+			return p.Host, nil
+		}
+	}
+	return "", fmt.Errorf("no profile named %q (use `dejima profile ls` to see saved profiles)", name)
+}
+
+// AddProfile saves a new connection target and persists it. It is the store
+// half of the TUI add-flow, factored out so the CLI (`dejima profile add`) and
+// the TUI share one code path. A duplicate name is rejected so two profiles
+// can't shadow each other in lookups.
+func AddProfile(name, host string) error {
+	if name == "" {
+		return fmt.Errorf("profile name is required")
+	}
+	if name == "local" {
+		return fmt.Errorf("%q is reserved for the local socket", name)
+	}
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	for _, p := range cfg.Profiles {
+		if p.Name == name {
+			return fmt.Errorf("a profile named %q already exists", name)
+		}
+	}
+	cfg.Profiles = append(cfg.Profiles, Profile{Name: name, Host: host})
+	return Save(cfg)
+}
+
+// SwitchProfile persists name as the active profile — the same write the TUI
+// switcher makes. Unlike LookupProfile (ephemeral), this *does* mutate
+// active_profile in client.json, which is the whole point of `switch` vs `-p`.
+// The synthetic "local" clears the active profile (back to the Unix socket).
+// An unknown name is rejected so `switch` can't leave a dangling reference.
+func SwitchProfile(name string) error {
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	if name == "" || name == "local" {
+		cfg.ActiveProfile = ""
+		return Save(cfg)
+	}
+	found := false
+	for _, p := range cfg.Profiles {
+		if p.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("no profile named %q (use `dejima profile ls` to see saved profiles)", name)
+	}
+	cfg.ActiveProfile = name
+	return Save(cfg)
 }
 
 func configPath() (string, error) {
