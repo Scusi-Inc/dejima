@@ -52,6 +52,55 @@ die(){
 	fi
 	exit 1
 }
+
+# with_progress LABEL CMD...: run CMD, and on an interactive terminal show a live
+# "⏳ LABEL… (Ns)" elapsed counter on one line — proof the step is busy, not
+# blocked on input — cleared when CMD finishes. On a non-TTY (CI) it prints one
+# plain line and runs CMD directly (no spinner spam in logs). CMD's exit status
+# is preserved. Use it to wrap the silent multi-second steps (go build).
+with_progress(){
+	local label="$1"; shift
+	if [ ! -t 2 ]; then
+		printf '  … %s\n' "$label" >&2
+		"$@"
+		return $?
+	fi
+	"$@" &
+	local pid=$! s=0
+	while kill -0 "$pid" 2>/dev/null; do
+		printf '\r\033[K  \033[2m⏳ %s… (%ds)\033[0m' "$label" "$s" >&2
+		sleep 1
+		s=$((s + 1))
+	done
+	wait "$pid"
+	local rc=$?
+	printf '\r\033[K' >&2
+	return "$rc"
+}
+
+# build_dejima_binaries compiles the CLI + daemon into $BIN (shared by bootstrap
+# and the re-adopt reinstall step).
+build_dejima_binaries(){
+	( cd "$REPO_ROOT" && go build -o "$BIN/dejima" ./cmd/dejima && go build -o "$BIN/dejimad" ./cmd/dejimad )
+}
+
+# wait_for_daemon polls for the dejimad unix socket (up to ~10s), showing a live
+# elapsed tick on a TTY so the wait isn't mistaken for a hang. 0 once the socket
+# appears, non-zero on timeout.
+wait_for_daemon(){
+	local label="${1:-starting dejimad}" i=0
+	while [ "$i" -lt 50 ]; do
+		if [ -S "$HOME/.dejima/dejimad.sock" ]; then
+			[ -t 2 ] && printf '\r\033[K' >&2
+			return 0
+		fi
+		[ -t 2 ] && printf '\r\033[K  \033[2m⏳ %s… (%ds)\033[0m' "$label" "$((i / 5))" >&2
+		sleep 0.2
+		i=$((i + 1))
+	done
+	[ -t 2 ] && printf '\r\033[K' >&2
+	[ -S "$HOME/.dejima/dejimad.sock" ]
+}
 # Structured per-feature reporting (feature/pass/fail tally + JSON summary when
 # DEJIMA_REPORT is set). report.sh defines feature(), and pass()/fail() that
 # tally per-feature as well as globally — source it so those versions win.
@@ -90,6 +139,30 @@ command -v docker >/dev/null || die "docker not found / not running"
 command -v go     >/dev/null || die "go not found"
 command -v git    >/dev/null || die "git not found"
 docker info >/dev/null 2>&1   || die "docker daemon not reachable"
+
+# Live-island guard. This suite churns Docker (creates/purges islands + throwaway
+# `docker run`s) on whatever engine `docker` points at, and recovering a wedged
+# engine means `colima restart` — which stops EVERY container on that VM. If real
+# (non-itest) dejima islands are present, this engine is shared with live work
+# (e.g. aoos's agents on aoos's colima): refuse, and point at the isolated
+# dejimaqa test account (its own colima).
+#
+# Skipped in CI ($GITHUB_ACTIONS): on the dejimaqa runner every dejima container
+# is a test artifact — including OTHER suites' non-itest islands (c2's
+# dejima-tui-*, the agent smoke's) that may linger after a failed job — so a real
+# refusal there would be a false positive. DEJIMA_ITEST_ALLOW_LIVE=1 also
+# overrides, for a knowing operator on a non-CI host.
+if [ "${DEJIMA_ITEST_ALLOW_LIVE:-}" != "1" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
+  live_islands="$(docker ps -a --filter label=dejima.project --format '{{.Names}}' 2>/dev/null | grep -v '^dejima-itest-' || true)"
+  if [ -n "$live_islands" ]; then
+    printf '\033[31mFATAL: live dejima islands are present on this Docker engine:\033[0m\n' >&2
+    printf '%s\n' "$live_islands" | sed 's/^/  - /' >&2
+    printf 'This suite churns Docker and recovering a wedged engine needs a colima restart,\n' >&2
+    printf 'which would STOP those islands. Run it on the isolated dejimaqa test account\n' >&2
+    printf '(its own colima), or set DEJIMA_ITEST_ALLOW_LIVE=1 to override.\n' >&2
+    exit 1
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Install-channel sanity (Lane A). No Docker needed; runs first so a broken
@@ -180,15 +253,13 @@ force_remove_itest_docker
 # ---------------------------------------------------------------------------
 feature "bootstrap (build/daemon/image/create)"
 step "Build dejima + dejimad"
-( cd "$REPO_ROOT" && go build -o "$BIN/dejima" ./cmd/dejima && go build -o "$BIN/dejimad" ./cmd/dejimad ) \
-  || die "build failed"
+with_progress "compiling dejima + dejimad" build_dejima_binaries || die "build failed"
 pass "binaries built into $BIN"
 
 step "Start dejimad (isolated HOME=$HOME)"
 dejimad --foreground >"$TMP/dejimad.log" 2>&1 &
 DAEMON_PID=$!
-for _ in $(seq 1 50); do [ -S "$HOME/.dejima/dejimad.sock" ] && break; sleep 0.2; done
-[ -S "$HOME/.dejima/dejimad.sock" ] || die "daemon socket never appeared (see $TMP/dejimad.log)"
+wait_for_daemon || die "daemon socket never appeared (see $TMP/dejimad.log)"
 dejima audit >/dev/null 2>&1 || die "daemon not responding"
 pass "daemon up (pid $DAEMON_PID)"
 
@@ -778,12 +849,10 @@ VOLDATA="$(docker run --rm -v "$WS_VOL":/ws:ro dejima/island:latest sh -c 'cat /
 assert_eq "$VOLDATA" "readopt-survives" "workspace data persists in the kept volume"
 
 step "Fresh install re-adopts: rebuild binaries, restart daemon, re-create island"
-( cd "$REPO_ROOT" && go build -o "$BIN/dejima" ./cmd/dejima && go build -o "$BIN/dejimad" ./cmd/dejimad ) \
-  || die "reinstall build failed"
+with_progress "recompiling dejima + dejimad" build_dejima_binaries || die "reinstall build failed"
 dejimad --foreground >>"$TMP/dejimad.log" 2>&1 &
 DAEMON_PID=$!
-for _ in $(seq 1 50); do [ -S "$HOME/.dejima/dejimad.sock" ] && break; sleep 0.2; done
-[ -S "$HOME/.dejima/dejimad.sock" ] || die "daemon socket never reappeared after reinstall"
+wait_for_daemon "restarting dejimad" || die "daemon socket never reappeared after reinstall"
 # The kept config means the daemon already knows this island; re-creating it
 # binds the SAME named volume (deterministic name) — re-adoption.
 READOPT_LS="$(dejima ls 2>&1)"

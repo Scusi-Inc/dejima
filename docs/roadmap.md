@@ -205,6 +205,17 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   combinations, repeatedly, with invariant checks after each (no orphan containers/worktrees,
   daemon healthy, ledger verifies, no zombies). Catches state bugs the happy-path suite
   misses. Build after the deterministic suite ([`testing/full-suite-design.md`](testing/full-suite-design.md)).
+- **Island PID-1 unification — retire "primary" entirely** *(target pre-1.0)* — the TUI/CLI
+  no longer has a privileged "primary" agent (Enter on an island opens a contained shell;
+  agents are explicit), but the container entrypoint still is: a *headless-first* island runs
+  its first agent as PID 1, so that one agent can't be freely removed and the island can't be
+  agent-less. Fix: always use the keepalive (`tail -f /dev/null`) entrypoint and launch every
+  agent — interactive *and* headless — through the supervised `docker exec` path that already
+  exists for non-primary agents, so no agent is ever special. Feasible (it deletes a special
+  case rather than adding capability) but touches the island lifecycle (provision/wake/
+  entrypoint/logs), so it wants live verification. Migration is lazy-on-recreate (interactive
+  islands convert for free; headless-first need a recreate to avoid double-launch). Full
+  design + migration plan: [`island-pid1-unification.md`](island-pid1-unification.md).
 - **Multi-host / distributed (discuss later)** — running agents across *multiple* hosts
   (several Mac minis / servers / cloud). Today Dejima manages one host, so a fleet-of-hosts
   is a wrapper-app concern. Open question worth a deliberate decision: should the substrate
