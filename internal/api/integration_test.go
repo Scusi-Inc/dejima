@@ -553,10 +553,27 @@ func TestMultiAgentLifecycle(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// The primary agent cannot be removed.
+	// Any agent is removable now — including the (interactive) first agent. An
+	// island may have zero agents: its tail -f keepalive (PID 1) outlives them,
+	// and you shell in. No privileged "primary".
 	rr = do(t, h, http.MethodDelete, "/v1/islands/proj/agents/p1", "")
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("remove interactive first agent: got %d, want 204", rr.Code)
+	}
+}
+
+// TestRemoveHeadlessFirstAgentRefused: a headless first agent IS the container's
+// PID 1 (start.sh runs it as the main process), so removing it would stop the
+// island — the daemon refuses with 409 and points to hibernate/purge.
+func TestRemoveHeadlessFirstAgentRefused(t *testing.T) {
+	h, _ := newTestServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"hl","agent":"headless","cmd":"sleep infinity"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create headless island: %d %s", rr.Code, rr.Body.String())
+	}
+	// "hl" → agent id prefix "h" → first agent "h1".
+	rr := do(t, h, http.MethodDelete, "/v1/islands/hl/agents/h1", "")
 	if rr.Code != http.StatusConflict {
-		t.Errorf("remove primary: got %d, want 409", rr.Code)
+		t.Errorf("remove headless PID-1 agent: got %d, want 409 (body: %s)", rr.Code, rr.Body.String())
 	}
 }
 

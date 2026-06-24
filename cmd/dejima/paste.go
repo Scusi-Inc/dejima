@@ -45,7 +45,7 @@ func newPasteCmd() *cobra.Command {
 			"Clipboard-image capture is host-platform-specific (macOS today). Where it isn't " +
 			"supported, save the image to a file and use `dejima cp ./img.png <island>:" +
 			pasteIntakeDir + "/img.png` instead.\n\n" +
-			"  dejima paste myrepo            # into the primary agent\n" +
+			"  dejima paste myrepo            # into the island's first interactive agent\n" +
 			"  dejima paste myrepo/reviewer   # into a specific agent",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -98,7 +98,7 @@ func newPasteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&agentID, "agent", "", "target agent id (default: the island's primary interactive agent)")
+	cmd.Flags().StringVar(&agentID, "agent", "", "target agent id (default: the island's first interactive agent)")
 	cmd.Flags().BoolVar(&noInject, "no-inject", false, "stage the image but don't inject a `Read` line")
 	return cmd
 }

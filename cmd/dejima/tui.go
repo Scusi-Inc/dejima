@@ -1052,12 +1052,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openAgentAdder(r.island)
 		}
 	case "X":
-		// Remove the selected agent (agent rows only; never the last one).
+		// Remove the selected agent (agent rows only). An island may have zero
+		// agents — you can still shell into it. The daemon enforces the one
+		// exception (a headless first agent that is the container's PID 1) and
+		// surfaces it as an error here.
 		if r := m.currentRow(); r.kind == rowAgent {
-			if isl, ok := m.islandByName(r.island); ok && len(isl.Agents) <= 1 {
-				m.lastError = "can't remove the only agent — purge the island instead"
-				return m, nil
-			}
 			m.confirm = &confirmPrompt{verb: "remove-agent", island: r.island, answer: "", agent: r.agentID}
 		}
 	case "e":
