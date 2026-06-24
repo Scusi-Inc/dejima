@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -25,6 +26,8 @@ func sampleModel() tuiModel {
 		Container: "running",
 		Agents: []api.AgentInfo{
 			{ID: "a1", Type: "claude-code", Attachable: true, State: "running",
+				CreatedAt:  time.Now().Add(-90 * time.Minute),
+				Attached:   []api.PresenceEntry{{Label: "austin", JoinedAt: time.Unix(0, 0)}},
 				AgentState: &api.AgentStateInfo{Latest: "waiting-for-input", UpdatedAt: time.Unix(0, 0)}},
 			{ID: "a2", Type: "codex", Label: "Backend", Attachable: true, State: "stopped"},
 			{ID: "a3", Type: "headless", Attachable: false, State: "running", Error: "worktree add failed"},
@@ -81,30 +84,90 @@ func TestAgentRowDisambiguatesDuplicateLabels(t *testing.T) {
 	}
 }
 
+// TestAgentStatus locks in the normalized state vocabulary and its precedence,
+// including the master-side states (exited / crash-loop / no model key) and the
+// graceful degradation when State is unprobed (the island list): liveness words
+// appear only once State is known; otherwise we fall back to the shim signal or
+// an empty word (neutral glyph, no token).
+func TestAgentStatus(t *testing.T) {
+	want := func(name string, a api.AgentInfo, w string) {
+		if got, _ := agentStatus(a); got != w {
+			t.Errorf("%s: agentStatus = %q, want %q", name, got, w)
+		}
+	}
+	want("orchestration error", api.AgentInfo{State: "running", Error: "boom"}, "error")
+	want("exited", api.AgentInfo{State: "exited"}, "exited")
+	want("needs you outranks running", api.AgentInfo{State: "running", AgentState: &api.AgentStateInfo{Latest: "waiting-for-input"}}, "needs you")
+	want("missing key", api.AgentInfo{State: "running", AuthState: "missing-provider-auth"}, "no model key")
+	want("crash-loop", api.AgentInfo{State: "running", Restarts: 4}, "crash-loop")
+	want("stopped", api.AgentInfo{State: "stopped"}, "stopped")
+	want("running task-complete is idle", api.AgentInfo{State: "running", AgentState: &api.AgentStateInfo{Latest: "task-complete"}}, "idle")
+	want("running no signal is working", api.AgentInfo{State: "running"}, "working")
+	// List view (State unprobed = ""): degrade to the shim signal, never claim
+	// "stopped" just because liveness wasn't probed.
+	want("list waiting", api.AgentInfo{AgentState: &api.AgentStateInfo{Latest: "waiting-for-input"}}, "needs you")
+	want("list done", api.AgentInfo{AgentState: &api.AgentStateInfo{Latest: "task-complete"}}, "done")
+	want("list unknown is blank", api.AgentInfo{}, "")
+}
+
+// TestAttachedIndicator: silent when nobody's watching, a bare dot for one
+// viewer, dot+count for several.
+func TestAttachedIndicator(t *testing.T) {
+	if got := plain(attachedIndicator(nil)); got != "" {
+		t.Errorf("no viewers should be silent, got %q", got)
+	}
+	if got := plain(attachedIndicator([]api.PresenceEntry{{Label: "a"}})); got != "◉" {
+		t.Errorf("one viewer = %q, want ◉", got)
+	}
+	if got := plain(attachedIndicator([]api.PresenceEntry{{Label: "a"}, {Label: "b"}})); got != "◉2" {
+		t.Errorf("two viewers = %q, want ◉2", got)
+	}
+}
+
+// TestRenderListNoWrap guards the layout against the wrap bug: a full agent row
+// is wider than a narrow pane, and lipgloss would wrap it onto a second line —
+// shredding the tree and desyncing the selLine→viewport math. renderList must
+// clip each line to the pane width instead.
+func TestRenderListNoWrap(t *testing.T) {
+	const w = 40 // narrower than a full agent row
+	out, _ := sampleModel().renderList(w)
+	for _, ln := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(ln); got > w {
+			t.Errorf("row exceeds pane width %d (=%d), would wrap: %q", w, got, plain(ln))
+		}
+	}
+}
+
 // TestRenderListGlyphs renders the list and asserts each kind shows up. The
 // rendered output is logged so the visual can be eyeballed with `go test -v`.
 func TestRenderListGlyphs(t *testing.T) {
 	m := sampleModel()
-	out, _ := m.renderList(60)
-	t.Logf("\n%s", out) // visible under -v
+	out, _ := m.renderList(80) // wide enough that no row clips
+	t.Logf("\n%s", out)        // visible under -v
 
 	bare := plain(out)
 	for _, want := range []string{
 		glyphAgent + " a1",      // unlabeled AI agent → leads with its id, not type
-		glyphAgent + " Backend", // labeled AI agent → leads with the label, not "codex"
+		glyphAgent + " Backend", // labeled AI agent → leads with the label
 		glyphHeadless + " a3",   // unlabeled headless → leads with its id
-		"+ add agent",
+		"codex",                 // …with the type demoted to the muted meta column
+		"up 1h",                 // a1 running with a known CreatedAt → uptime
+		"◉",                     // a1 has an attached viewer → presence badge
+		"needs you",             // a1's waiting-for-input normalized to the call-to-action word
+		"stopped",               // a2 session is stopped
+		"├ ", "└ + add agent",   // tree connectors group the island's children
 		"+ new island",
 	} {
 		if !strings.Contains(bare, want) {
 			t.Errorf("rendered list missing %q\n%s", want, bare)
 		}
 	}
-	// The label supersedes the type in the row; the bare type shouldn't appear.
-	if strings.Contains(bare, "codex") {
-		t.Errorf("labeled agent should show its label, not type %q\n%s", "codex", bare)
+	// The label still leads for a labeled agent — type rides along as meta, it
+	// does not replace the label.
+	if strings.Contains(bare, glyphAgent+" codex") {
+		t.Errorf("labeled agent should lead with its label, not its type\n%s", bare)
 	}
-	// Unlabeled agents lead with the id now, not the type name.
+	// Unlabeled agents lead with the id, not the type name.
 	if strings.Contains(bare, glyphAgent+" claude-code") {
 		t.Errorf("unlabeled agent should lead with its id, not its type\n%s", bare)
 	}
