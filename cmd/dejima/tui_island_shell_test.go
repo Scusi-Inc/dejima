@@ -8,10 +8,13 @@ import (
 
 // TestEnterOpensShellVsAgent locks in the new navigation: Enter on an island row
 // opens the island's contained shell (connectShell), NOT an agent; Enter on an
-// agent row attaches that agent. TMUX is cleared so activateRow takes the
-// in-process (quit-to-attach) path deterministically rather than a new window.
+// agent row attaches that agent. We force the in-process (quit-to-attach) path
+// so the assertion holds on every GOOS (on darwin/windows canOpenNewWindow is
+// otherwise always true and would take the new-window branch).
 func TestEnterOpensShellVsAgent(t *testing.T) {
-	t.Setenv("TMUX", "")
+	orig := canOpenNewWindow
+	canOpenNewWindow = func() bool { return false }
+	defer func() { canOpenNewWindow = orig }()
 
 	islands := []api.IslandInfo{{
 		Name:      "myrepo",
