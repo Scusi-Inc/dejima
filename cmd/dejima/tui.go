@@ -135,6 +135,7 @@ type tuiModel struct {
 	resEditor    *resourceEditor // non-nil while the per-island resources overlay is open
 	modelEditor  *modelEditor    // non-nil while the per-agent model/provider/key overlay is open
 	audit        *auditView      // non-nil while the audit-ledger viewer is open (opened with `A`)
+	grants       *grantsView     // non-nil while the island-grants trust view is open (opened with `T`)
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -646,6 +647,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case grantsLoadedMsg:
+		if m.grants != nil {
+			m.grants.applyLoaded(msg)
+		}
+		return m, nil
+
 	case resourcesUpdatedMsg:
 		if m.resEditor != nil {
 			m.resEditor.busy = false
@@ -873,6 +880,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.audit != nil {
 		return m.auditKey(msg)
 	}
+	// The island-grants trust view owns keys while open.
+	if m.grants != nil {
+		return m.grantsKey(msg)
+	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
 		switch msg.String() {
@@ -905,6 +916,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "A":
 		// Audit-ledger viewer (chain-verification + recent governance activity).
 		return m.openAuditView()
+	case "T":
+		// Trust surface — what the highlighted island can reach (Port · MCP ·
+		// links · capabilities). Agent rows inherit their island's grants.
+		return m.openGrantsView(m.selectedName())
 	case "n":
 		return m.openCreator()
 	case "t":
@@ -1496,6 +1511,9 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		items = append(items, actionMenuItem{label: "Resources… (memory · OOM priority)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openResourceEditor(islandName)
 		}})
+		items = append(items, actionMenuItem{label: "Grants… (what it can reach)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openGrantsView(islandName)
+		}})
 		if m.overview != nil && m.overview.SSHAddr != "" {
 			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", key: "S"})
 		}
@@ -1525,6 +1543,9 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		items = append(items,
 			actionMenuItem{label: "Model / provider / key…", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 				return mm.openModelEditor(agentIsland, agentRowID)
+			}},
+			actionMenuItem{label: "Grants… (what its island can reach)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+				return mm.openGrantsView(agentIsland)
 			}},
 			actionMenuItem{label: "Rename (relabel)", key: "e"},
 			actionMenuItem{label: "Remove agent", key: "X", danger: true},
@@ -1945,6 +1966,10 @@ func (m tuiModel) View() string {
 	}
 	if m.audit != nil {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderAuditView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.grants != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderGrantsView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 
@@ -2799,6 +2824,7 @@ func (m tuiModel) renderHelp() string {
 		{"s", "settings — editor · group-by-repo · connection target (server)"},
 		{"p", "toggle group-by-repo (also in settings)"},
 		{"A", "audit ledger — chain-verification + recent governance activity"},
+		{"T", "grants — what the highlighted island can reach (Port · MCP · links · caps)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
