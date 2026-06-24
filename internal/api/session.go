@@ -430,3 +430,181 @@ func sendEnvelope(ctx context.Context, conn *websocket.Conn, env SessionEnvelope
 	}
 	return conn.Write(ctx, websocket.MessageText, data)
 }
+
+// serveTmuxWS runs the WebSocket↔PTY pump for a presence-free tmux session —
+// host terminals and in-island shells, which (unlike agent sessions) need no
+// per-agent presence tracking. attach opens the PTY at the negotiated size;
+// maxSize supplies a fallback size when the client sends no resize (so a sizeless
+// attach can't shrink a shared window — see sessionWS). It owns the WebSocket
+// from Accept through close. logName/key label the attach/detach log line.
+func (s *Server) serveTmuxWS(
+	w http.ResponseWriter, r *http.Request, logName, key string,
+	attach func(ctx context.Context, rows, cols uint16) (*bridge.PTYSession, error),
+	maxSize func(ctx context.Context) (uint16, uint16, bool),
+) {
+	label := r.URL.Query().Get("label")
+	if label == "" {
+		label = "anonymous"
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		s.log.Error(logName+" ws accept", "err", err)
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	s.log.Info(logName+" attached", "key", key, "label", label)
+	defer s.log.Info(logName+" detached", "key", key, "label", label)
+
+	type wsRead struct {
+		env *SessionEnvelope
+		err error
+	}
+	envCh := make(chan wsRead)
+	go func() {
+		defer close(envCh)
+		for {
+			_, data, rerr := conn.Read(ctx)
+			if rerr != nil {
+				select {
+				case envCh <- wsRead{err: rerr}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			var env SessionEnvelope
+			if json.Unmarshal(data, &env) != nil {
+				continue
+			}
+			select {
+			case envCh <- wsRead{env: &env}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	var (
+		initRows, initCols uint16
+		pending            *SessionEnvelope
+	)
+	select {
+	case rd := <-envCh:
+		if rd.err == nil && rd.env != nil {
+			if rd.env.Type == "resize" {
+				initRows, initCols = rd.env.Rows, rd.env.Cols
+			} else {
+				pending = rd.env
+			}
+		}
+	case <-time.After(500 * time.Millisecond):
+	case <-ctx.Done():
+		return
+	}
+	if (initRows == 0 || initCols == 0) && maxSize != nil {
+		if rr, cc, ok := maxSize(ctx); ok {
+			initRows, initCols = rr, cc
+		}
+	}
+
+	sess, err := attach(ctx, initRows, initCols)
+	if err != nil {
+		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
+		return
+	}
+	defer sess.Close()
+
+	_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "hello"})
+	if pending != nil {
+		applyEnvelope(sess, pending)
+	}
+
+	// PTY → websocket pump.
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := sess.Read(buf)
+			if n > 0 {
+				if sendEnvelope(ctx, conn, SessionEnvelope{Type: "data", B64: encodeB64(buf[:n])}) != nil {
+					cancel()
+					return
+				}
+			}
+			if rerr != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	// Websocket → PTY pump.
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case rd, ok := <-envCh:
+			if !ok || rd.err != nil {
+				return
+			}
+			if !applyEnvelope(sess, rd.env) {
+				return
+			}
+		}
+	}
+}
+
+// islandShellSession is the tmux session name for an island's shared in-island
+// shell — the contained "terminal at this island" the dashboard opens on Enter.
+const islandShellSession = "dejima-shell"
+
+// islandShellWS attaches an interactive shell at /workspace inside the island's
+// container: a single shared tmux session (create-or-attach), resumable and
+// multi-client, NOT modeled as an agent. Operator-only (see roleauth).
+func (s *Server) islandShellWS(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	status, err := s.rt.Status(r.Context(), p.ContainerName())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if status != runtime.StatusRunning {
+		writeError(w, http.StatusConflict,
+			fmt.Errorf("island %q is %s; wake it first with `dejima wake %s`", name, status, name))
+		return
+	}
+	if err := s.ensureIslandShell(r.Context(), p); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	container := p.ContainerName()
+	s.serveTmuxWS(w, r, "island shell", name,
+		func(ctx context.Context, rows, cols uint16) (*bridge.PTYSession, error) {
+			return bridge.AttachToTmux(ctx, "docker", container, islandShellSession, rows, cols)
+		},
+		func(ctx context.Context) (uint16, uint16, bool) {
+			return bridge.MaxClientSize(ctx, "docker", container, islandShellSession)
+		})
+}
+
+// ensureIslandShell starts the in-island shell's tmux session at /workspace if
+// it isn't already running. Idempotent: a "duplicate session" (it already
+// exists) is success — that's the resume case.
+func (s *Server) ensureIslandShell(ctx context.Context, p *project.Project) error {
+	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"tmux", "new-session", "-d", "-s", islandShellSession, "-c", "/workspace"})
+	if err != nil {
+		return fmt.Errorf("create in-island shell: %w", err)
+	}
+	if code != 0 && !strings.Contains(stderr, "duplicate session") {
+		return fmt.Errorf("create in-island shell: %s", strings.TrimSpace(stderr))
+	}
+	return nil
+}

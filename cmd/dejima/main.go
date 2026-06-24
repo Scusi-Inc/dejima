@@ -196,6 +196,7 @@ func newRootCmd() *cobra.Command {
 		newProfileCmd(),
 		newHomeCmd(),
 		newConnectCmd(),
+		newShellCmd(),
 		newLsCmd(),
 		newAgentCmd(),
 		newMsgCmd(),
@@ -1239,6 +1240,42 @@ func newConnectCmd() *cobra.Command {
 	return cmd
 }
 
+func newShellCmd() *cobra.Command {
+	var label string
+	cmd := &cobra.Command{
+		Use:   "shell <name>",
+		Short: "Open a shell at an island (contained, at /workspace).",
+		Long: "Attach an interactive bash shell INSIDE the island's container at /workspace — " +
+			"the same place its agents run, so git, installs, and the repo are all right there. " +
+			"It's a single shared, resumable tmux session per island (detach with Ctrl-b then d); " +
+			"it is not an agent. This is what the dashboard opens when you press Enter on an island.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			if label == "" {
+				label = defaultLabel()
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			info, err := c.GetIsland(cmd.Context(), name)
+			if err != nil {
+				return err
+			}
+			if info.Container != "running" {
+				return fmt.Errorf("island %q is not running (container: %s); `dejima wake %s` first", name, info.Container, name)
+			}
+			if info.Repo != "" {
+				waitForWorkspaceReady(cmd.Context(), c, name)
+			}
+			return runInShellSession(cmd.Context(), c, name, label)
+		},
+	}
+	cmd.Flags().StringVar(&label, "as", "", "client label shown in presence (default: $HOSTNAME or 'cli')")
+	return cmd
+}
+
 // splitIslandAgent parses an "<island>/<agent>" argument into its parts. A bare
 // "<island>" returns an empty agent (meaning the primary).
 func splitIslandAgent(arg string) (island, agent string) {
@@ -1293,6 +1330,14 @@ func runSession(ctx context.Context, c *api.Client, name, agentID, label string)
 func runTerminalSession(ctx context.Context, c *api.Client, id, label string) error {
 	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialTerminalSession(ctx, id, label)
+	})
+}
+
+// runInShellSession attaches the local terminal to an island's in-island shell —
+// a contained bash session at /workspace inside the container.
+func runInShellSession(ctx context.Context, c *api.Client, name, label string) error {
+	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
+		return c.DialIslandShell(ctx, name, label)
 	})
 }
 

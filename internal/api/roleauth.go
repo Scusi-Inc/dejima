@@ -106,6 +106,7 @@ var roleRouteCap = map[string]roleCap{
 	"PATCH /v1/islands/{name}/agents/{id}":                 capOperate,
 	"PATCH /v1/islands/{name}/agents/{id}/config":          capOperate,
 	"GET /v1/islands/{name}/session":                       capOperate, // interactive attach (control)
+	"GET /v1/islands/{name}/shell/session":                 capOperate, // in-island contained shell at /workspace
 	"GET /v1/islands/{name}/agents/{id}/session":           capOperate,
 	"POST /v1/islands/{name}/exec":                         capOperate,
 	"GET /v1/islands/{name}/files/{path...}":               capOperate, // reading workspace files is beyond "observe"

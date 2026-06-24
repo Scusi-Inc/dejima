@@ -49,6 +49,10 @@ func runTUI(ctx context.Context) error {
 		return err
 	}
 	final := finalRaw.(tuiModel)
+	if final.connectShell != "" {
+		// Open a contained shell at the island (/workspace inside its container).
+		return runInShellSession(ctx, final.client, final.connectShell, defaultLabel())
+	}
 	if final.connectTerminal != "" {
 		// Attach to a host terminal (uncontained shell on the daemon host).
 		return runTerminalSession(ctx, final.client, final.connectTerminal, defaultLabel())
@@ -112,11 +116,14 @@ type tuiModel struct {
 	// connectTerminal, when set on quit, attaches to a host terminal instead of
 	// an island (a shell on the daemon host).
 	connectTerminal string
-	terminals       []hostterm.Terminal // host terminals (empty unless the daemon enables them)
-	confirm         *confirmPrompt
-	menu            *actionMenu       // non-nil while the per-row action menu is open
-	dirtyOps        map[string]string // name → "hibernating" etc. (transient hint)
-	building        bool              // island image build in flight
+	// connectShell, when set on quit, opens a contained shell at that island
+	// (/workspace inside its container) — what Enter on an island row does.
+	connectShell string
+	terminals    []hostterm.Terminal // host terminals (empty unless the daemon enables them)
+	confirm      *confirmPrompt
+	menu         *actionMenu       // non-nil while the per-row action menu is open
+	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
+	building     bool              // island image build in flight
 
 	help         bool            // help overlay visible
 	helpAdvanced bool            // advanced section of the help overlay expanded
@@ -1812,6 +1819,18 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 		m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
 		return m, nil
 	}
+	// Enter on an island row opens a contained shell at /workspace — not an
+	// agent. (Agents are opened by hitting Enter on their own row.)
+	if row.agentID == "" {
+		if canOpenNewWindow() {
+			if err := m.openAgentWindow("shell", name, "", "", nil); err != nil {
+				m.lastError = err.Error()
+			}
+			return m, nil
+		}
+		m.connectShell = name
+		return m, tea.Quit
+	}
 	if m.isHeadlessAgent(name, row.agentID) {
 		return m.openAgentLogs(name, row.agentID)
 	}
@@ -2787,7 +2806,7 @@ func (m tuiModel) renderHelp() string {
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
 		{"t", "new host terminal — an uncontained shell on the daemon host (if enabled)"},
-		{"⏎ / o", "open the highlighted island/agent — its session in a new tab (or run the affordance)"},
+		{"⏎ / o", "island → a shell at /workspace (contained); agent → its session; in a new tab (or run the affordance)"},
 		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh setup, purge…)"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
@@ -2805,7 +2824,7 @@ func (m tuiModel) renderHelp() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. Expand one with [space], then [+] add agents (interactive or a\nheadless background command). Headless agents have no screen — ⏎ opens their logs."))
+	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens a shell at /workspace (inside the\ncontainer); ⏎ on an agent opens that agent. Expand one with [space], then [+]\nadd agents. Headless agents have no screen — ⏎ opens their logs."))
 	b.WriteString("\n\n")
 	b.WriteString(styleHeader.Render("Glyphs"))
 	b.WriteString("\n  ")
