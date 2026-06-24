@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/creack/pty"
+
+	"github.com/aoos/dejima/internal/hosttmux"
 )
 
 // PTYSession is one PTY-backed `docker exec` attached to the in-container tmux
@@ -79,7 +81,7 @@ func HostPTY(ctx context.Context, cmd []string, rows, cols uint16) (*PTYSession,
 // AttachToHostTmux attaches (creating if absent) to a tmux session on the daemon
 // host — the operator host-terminal equivalent of AttachToTmux.
 func AttachToHostTmux(ctx context.Context, tmuxSession string, rows, cols uint16) (*PTYSession, error) {
-	return HostPTY(ctx, []string{"tmux", "new-session", "-A", "-s", tmuxSession}, rows, cols)
+	return HostPTY(ctx, hosttmux.NewSessionArgs("new-session", "-A", "-s", tmuxSession), rows, cols)
 }
 
 // Wait reaps the underlying `docker exec` and returns its exit code. Call it
