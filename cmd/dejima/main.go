@@ -230,6 +230,7 @@ func newRootCmd() *cobra.Command {
 		newOnboardCmd(),
 		newUpdateCmd(),
 		newTUICmd(),
+		newFeedbackCmd(),
 	)
 	return cmd
 }
