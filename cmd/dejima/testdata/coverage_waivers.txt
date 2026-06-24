@@ -24,5 +24,4 @@
 cli auth push         # pushes host Claude/GitHub creds — needs a logged-in host
 cli service uninstall # removes the launchd/systemd daemon service (tier3)
 cli ssh enroll        # writes client SSH keys + ~/.ssh/config on the host
-cli uninstall         # removes the installed dejima binary + service from the host
 cli update            # self-update: queries GitHub releases + replaces the binary

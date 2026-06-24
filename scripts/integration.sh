@@ -39,7 +39,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC2034
 PASS=0 FAIL=0
 step(){ printf '\n\033[1m• %s\033[0m\n' "$*"; }
-die(){ printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2; exit 1; }
+# die prints the failure AND dumps the tail of the daemon log to stderr, so a
+# fatal (e.g. island create failed) is diagnosable straight from the terminal
+# output — no scrolling a tmux pane or hunting a temp file. $TMP may be unset for
+# very-early failures (before the daemon starts); guard for it.
+die(){
+	printf '\033[31mFATAL: %s\033[0m\n' "$*" >&2
+	if [ -n "${TMP:-}" ] && [ -f "$TMP/dejimad.log" ]; then
+		printf '\033[31m--- last 50 daemon-log lines ---\033[0m\n' >&2
+		tail -50 "$TMP/dejimad.log" >&2
+		printf '\033[31m--- end daemon log ---\033[0m\n' >&2
+	fi
+	exit 1
+}
 # Structured per-feature reporting (feature/pass/fail tally + JSON summary when
 # DEJIMA_REPORT is set). report.sh defines feature(), and pass()/fail() that
 # tally per-feature as well as globally — source it so those versions win.
@@ -53,8 +65,11 @@ DEJIMA_SUITE="${DEJIMA_SUITE:-tier2-integration}"
 assert_eq(){ if [ "$1" = "$2" ]; then pass "$3"; else fail "$3 — got [$1] want [$2]"; fi; }
 assert_has(){ if printf '%s' "$1" | grep -qF -- "$2"; then pass "$3"; else fail "$3 — missing [$2]"; fi; }
 # expect_ok / expect_fail: run a command, assert its exit status, never abort.
-expect_ok(){ local d="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$d"; else fail "$d — command failed: $*"; fi; }
-expect_fail(){ local d="$1"; shift; if "$@" >/dev/null 2>&1; then fail "$d — expected failure but it succeeded"; else pass "$d"; fi; }
+# Capture the command's output and surface it (squashed to one line) in the
+# failure detail, so a red feature is self-explanatory in the run summary + the
+# filed tracking issue instead of needing the daemon log to diagnose.
+expect_ok(){ local d="$1"; shift; local out rc; out="$("$@" 2>&1)"; rc=$?; out="$(printf '%s' "$out" | tr '\n' ' ')"; if [ "$rc" -eq 0 ]; then pass "$d"; else fail "$d — command failed (rc=$rc): $* — ${out}"; fi; }
+expect_fail(){ local d="$1"; shift; local out rc; out="$("$@" 2>&1)"; rc=$?; out="$(printf '%s' "$out" | tr '\n' ' ')"; if [ "$rc" -eq 0 ]; then fail "$d — expected failure but it succeeded; output: ${out}"; else pass "$d"; fi; }
 # expect_err_match <desc> <substring> <cmd...>: assert the command FAILS *and*
 # its output contains <substring> — so an unrelated non-zero exit can't pass for
 # a security guard. Used for traversal/deny-all refusals.
@@ -108,6 +123,7 @@ ISLAND_CLONE="itest-clone"
 ISLAND_A="itest-a"
 ISLAND_B="itest-b"
 ISLAND_GUARD="itest-guard"
+ISLAND_READOPT="itest-readopt"
 DAEMON_PID=""
 # The --local-copy seed is bind-mounted into the Docker VM, so it must live on a
 # path Docker shares. macOS shares /Users by default but NOT /var/folders (where
@@ -115,18 +131,51 @@ DAEMON_PID=""
 REPO_DIR="$REAL_HOME/.cache/dejima-itest-$$"
 REPO="$REPO_DIR/repo"
 
+# force_remove_itest_docker tears down every test island's docker objects
+# DIRECTLY (no daemon needed). A crashed/Ctrl-C'd run kills the daemon before
+# `dejima purge` can run, orphaning `dejima-itest-*` containers — then the next
+# run's `docker run --name` fails with exit 125 ("name already in use"). Scoped
+# to the exact itest-* names so real islands are never touched.
+force_remove_itest_docker(){
+  local isl
+  for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD" "$ISLAND_READOPT"; do
+    docker rm -f "dejima-$isl" >/dev/null 2>&1 || true
+    docker volume rm -f "dejima-$isl-workspace" "dejima-$isl-home" >/dev/null 2>&1 || true
+    docker network rm "dejima-net-$isl" >/dev/null 2>&1 || true
+  done
+}
+
 cleanup(){
   set +e
-  for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD"; do
+  for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD" "$ISLAND_READOPT"; do
     [ -n "$DAEMON_PID" ] && dejima purge "$isl" -f >/dev/null 2>&1
   done
+  # Backstop the graceful purge above with a direct docker teardown, so a run
+  # that dies before/while the daemon is up still leaves no orphaned containers
+  # or volumes to collide with the next run.
+  force_remove_itest_docker
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
+  # Preserve the daemon log at a STABLE path before nuking $TMP, so a failure can
+  # be diagnosed by `cat`-ing one file instead of scrolling a tmux pane.
+  # Use REAL_HOME, not the isolated $HOME (which is $TMP/home — about to be rm'd).
+  cp -f "$TMP/dejimad.log" "$REAL_HOME/dejima-itest-dejimad.log" 2>/dev/null \
+    && echo "daemon log saved to $REAL_HOME/dejima-itest-dejimad.log"
   # The isolated HOME holds a read-only Go module cache ($HOME/go/pkg/mod);
   # make the tree writable before removing it so cleanup exits silently.
   chmod -R u+w "$TMP" 2>/dev/null
   rm -rf "$TMP" "${REPO_DIR:-}"
 }
+# EXIT alone misses Ctrl-C: an uncaught SIGINT terminates the script WITHOUT
+# running the EXIT trap, so a hand-interrupted run wouldn't save the daemon log
+# (or tear down islands). Make INT/TERM exit cleanly, which fires the EXIT trap
+# (cleanup) exactly once.
 trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+# Startup sweep: clear any dejima-itest-* docker objects a previously interrupted
+# run left behind, so the first `docker run --name` doesn't 125 on a name
+# conflict. No-op (silenced) when docker isn't up yet — bootstrap checks that.
+force_remove_itest_docker
 
 # ---------------------------------------------------------------------------
 feature "bootstrap (build/daemon/image/create)"
@@ -557,10 +606,13 @@ feature "purge unpushed-work guard + force-purge"
 step "Purge guard: unpushed work blocks a plain purge, --force overrides"
 dejima init --name "$ISLAND_GUARD" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
   >/dev/null 2>&1 || die "guard island create failed"
-# Create an unpushed commit inside the island's workspace.
-dejima exec "$ISLAND_GUARD" -- sh -c \
-  'cd /workspace && git config user.email t@t && git config user.name t && echo work > unpushed.txt && git add -A && git commit -qm unpushed' \
-  >/dev/null 2>&1 || die "could not create unpushed commit in the guard island"
+# Leave UNCOMMITTED work in the workspace. The daemon's guard counts
+# `git status --porcelain` lines, so an untracked file makes the tree dirty
+# (DirtyFiles>0). NOTE: a local *commit* on a branch with no upstream would NOT
+# trip the guard — the tree is clean and Ahead needs an upstream — which is a
+# separate product gap (committed-but-nowhere-pushed work isn't flagged).
+dejima exec "$ISLAND_GUARD" -- sh -c 'echo work > /workspace/uncommitted.txt' \
+  >/dev/null 2>&1 || die "could not create uncommitted work in the guard island"
 # The CLI now gates a plain purge behind a type-the-island-name confirmation, so
 # feed the name on stdin to get PAST it and exercise the DAEMON's unpushed-work
 # guard — the layer that emits the `--force` hint.
@@ -681,6 +733,76 @@ if [ -n "$(printf '%s' "$DOC" | tr -d '[:space:]')" ]; then
   pass "doctor produced a health report"
 else
   fail "doctor produced no output"
+fi
+
+# ---------------------------------------------------------------------------
+# Uninstall --keep-islands re-adoption — the Lane B acceptance bar. Prove that
+# `dejima uninstall --keep-islands` removes the daemon + binaries but KEEPS the
+# island's named volume + ~/.dejima config, and that a *fresh install*
+# (rebuild + restart daemon) re-adopts the pre-existing island by name with its
+# workspace data intact. Runs LAST: it tears the daemon + binaries down, then
+# stands a fresh one up — so it must follow every other feature.
+# ---------------------------------------------------------------------------
+feature "uninstall --keep-islands + re-adopt (Lane B acceptance bar)"
+
+step "Re-adopt: create a dedicated island and write a workspace marker"
+dejima init --name "$ISLAND_READOPT" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
+  >/dev/null 2>&1 || die "re-adopt island create failed (see $TMP/dejimad.log)"
+dejima exec "$ISLAND_READOPT" -- sh -c 'echo readopt-survives > /workspace/keep.txt' >/dev/null 2>&1 \
+  || die "could not write re-adopt marker"
+WS_VOL="dejima-$ISLAND_READOPT-workspace"
+CFG="$HOME/.dejima/projects/$ISLAND_READOPT/config.toml"
+expect_ok "workspace volume exists before uninstall" docker volume inspect "$WS_VOL"
+if [ -f "$CFG" ]; then pass "island config exists before uninstall"; else fail "island config missing before uninstall"; fi
+
+step "Bare uninstall refuses without an explicit choice (no destructive default)"
+expect_err_match "bare uninstall refuses" "explicit choice" dejima uninstall --yes
+# The refusal must NOT have touched anything.
+expect_ok "volume still present after refusal" docker volume inspect "$WS_VOL"
+
+step "uninstall --keep-islands: remove daemon + binaries, KEEP volume + config"
+# This stops the island container, uninstalls the (no-op in-test) service, and
+# removes the test binaries — but must leave the named volume + ~/.dejima alone.
+dejima uninstall --keep-islands --yes >"$TMP/uninstall.log" 2>&1 || true
+# The foreground test daemon isn't a real service, so kill it explicitly to
+# emulate the service stop that --keep-islands performs in production.
+[ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1; wait "$DAEMON_PID" 2>/dev/null; DAEMON_PID=""
+expect_ok "named volume survived --keep-islands" docker volume inspect "$WS_VOL"
+if [ -f "$CFG" ]; then pass "the .dejima config survived --keep-islands"; else fail "config was deleted by --keep-islands (it must be kept)"; fi
+# Prove the *data* in the kept volume is intact, independent of any container.
+VOLDATA="$(docker run --rm -v "$WS_VOL":/ws:ro dejima/island:latest sh -c 'cat /ws/keep.txt' 2>/dev/null)"
+assert_eq "$VOLDATA" "readopt-survives" "workspace data persists in the kept volume"
+
+step "Fresh install re-adopts: rebuild binaries, restart daemon, re-create island"
+( cd "$REPO_ROOT" && go build -o "$BIN/dejima" ./cmd/dejima && go build -o "$BIN/dejimad" ./cmd/dejimad ) \
+  || die "reinstall build failed"
+dejimad --foreground >>"$TMP/dejimad.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 50); do [ -S "$HOME/.dejima/dejimad.sock" ] && break; sleep 0.2; done
+[ -S "$HOME/.dejima/dejimad.sock" ] || die "daemon socket never reappeared after reinstall"
+# The kept config means the daemon already knows this island; re-creating it
+# binds the SAME named volume (deterministic name) — re-adoption.
+READOPT_LS="$(dejima ls 2>&1)"
+if printf '%s' "$READOPT_LS" | grep -qF -- "$ISLAND_READOPT"; then
+  pass "fresh daemon already lists the kept island (config re-adopted)"
+else
+  # Config-less daemons re-adopt on (re)create; bind the same volume by name.
+  dejima init --name "$ISLAND_READOPT" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
+    >/dev/null 2>&1 || die "re-create after reinstall failed"
+fi
+# Wake/recreate the container so it mounts the pre-existing volume, then confirm
+# the workspace marker written BEFORE the uninstall is still there.
+dejima wake "$ISLAND_READOPT" >/dev/null 2>&1 || true
+readopted=""
+for _ in $(seq 1 30); do
+  if dejima exec "$ISLAND_READOPT" -- test -f /workspace/keep.txt >/dev/null 2>&1; then readopted=1; break; fi
+  sleep 1
+done
+if [ -n "$readopted" ]; then
+  GOT="$(dejima exec "$ISLAND_READOPT" -- cat /workspace/keep.txt 2>/dev/null)"
+  assert_eq "$GOT" "readopt-survives" "re-adopted island's workspace survived the uninstall→reinstall round-trip"
+else
+  fail "island never became exec-able after re-adoption"
 fi
 
 # ---------------------------------------------------------------------------

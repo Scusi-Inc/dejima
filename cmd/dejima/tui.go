@@ -135,6 +135,7 @@ type tuiModel struct {
 	resEditor    *resourceEditor // non-nil while the per-island resources overlay is open
 	modelEditor  *modelEditor    // non-nil while the per-agent model/provider/key overlay is open
 	audit        *auditView      // non-nil while the audit-ledger viewer is open (opened with `A`)
+	scope        *scopeView      // non-nil while the Port scope-picker is open (opened with `P`)
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -646,6 +647,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case scopesLoadedMsg:
+		if m.scope != nil && m.scope.island == msg.island {
+			m.scope.applyLoaded(msg)
+		}
+		return m, nil
+
+	case scopeMutatedMsg:
+		if m.scope != nil && m.scope.island == msg.island {
+			m.scope.busy = false
+			if msg.err != nil {
+				m.scope.errText = msg.verb + ": " + msg.err.Error()
+				return m, nil
+			}
+			// Reload so the list reflects the grant/revoke immediately.
+			m.scope.loading = true
+			return m, m.loadScopesCmd(msg.island)
+		}
+		return m, nil
+
 	case resourcesUpdatedMsg:
 		if m.resEditor != nil {
 			m.resEditor.busy = false
@@ -873,6 +893,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.audit != nil {
 		return m.auditKey(msg)
 	}
+	// The Port scope-picker owns keys while open.
+	if m.scope != nil {
+		return m.scopeKey(msg)
+	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
 		switch msg.String() {
@@ -905,6 +929,13 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "A":
 		// Audit-ledger viewer (chain-verification + recent governance activity).
 		return m.openAuditView()
+	case "P":
+		// Port scope-picker for the selected island (brokered host-file grants).
+		// Capital P; lowercase p is group-by-repo.
+		if name := m.selectedName(); name != "" {
+			return m.openScopeView(name)
+		}
+		return m, nil
 	case "n":
 		return m.openCreator()
 	case "t":
@@ -1496,6 +1527,9 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		items = append(items, actionMenuItem{label: "Resources… (memory · OOM priority)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openResourceEditor(islandName)
 		}})
+		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openScopeView(islandName)
+		}})
 		if m.overview != nil && m.overview.SSHAddr != "" {
 			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", key: "S"})
 		}
@@ -1946,6 +1980,10 @@ func (m tuiModel) View() string {
 	}
 	if m.audit != nil {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderAuditView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.scope != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderScopeView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 
@@ -2879,6 +2917,7 @@ func (m tuiModel) renderHelp() string {
 		{"s", "settings — editor · group-by-repo · connection target (server)"},
 		{"p", "toggle group-by-repo (also in settings)"},
 		{"A", "audit ledger — chain-verification + recent governance activity"},
+		{"P", "Port scopes — brokered host-file grants (add/revoke; deny-all by default)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
