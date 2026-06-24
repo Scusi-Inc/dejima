@@ -225,7 +225,7 @@ cd ~/.dejima-src
 make setup        # detect Docker → build → install → image → service → doctor
 ```
 
-`make setup` itself is just `scripts/setup.sh`; the one-liner is `scripts/install.sh` which adds the prereq-bootstrap + checkout step in front of it. Either is fine.
+`make setup` itself is just `scripts/setup.sh`; the one-liner is `install.sh` (repo root, served at `dejima.tech/install.sh`) which adds the prereq-bootstrap + checkout step in front of it. Either is fine.
 
 ## Future install paths (roadmap)
 

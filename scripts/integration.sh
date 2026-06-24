@@ -77,6 +77,19 @@ command -v git    >/dev/null || die "git not found"
 docker info >/dev/null 2>&1   || die "docker daemon not reachable"
 
 # ---------------------------------------------------------------------------
+# Install-channel sanity (Lane A). No Docker needed; runs first so a broken
+# install path (the #1 clean-Mac failure mode) is caught before the heavier,
+# slower container suite below. The end-to-end virgin-Mac proof is the separate
+# human-run Lane 0 procedure; this is the part we can automate.
+# ---------------------------------------------------------------------------
+feature "install channels (curl|sh / brew / npm consistency)"
+if bash "$REPO_ROOT/scripts/install-channels-check.sh"; then
+  pass "install-channel consistency check"
+else
+  fail "install-channel consistency check (see output above)"
+fi
+
+# ---------------------------------------------------------------------------
 # Isolated environment + cleanup
 # ---------------------------------------------------------------------------
 TMP="$(mktemp -d)"
