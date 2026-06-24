@@ -138,7 +138,12 @@ cleanup(){
   chmod -R u+w "$TMP" 2>/dev/null
   rm -rf "$TMP" "${REPO_DIR:-}"
 }
+# EXIT alone misses Ctrl-C: an uncaught SIGINT terminates the script WITHOUT
+# running the EXIT trap, so a hand-interrupted run wouldn't save the daemon log
+# (or tear down islands). Make INT/TERM exit cleanly, which fires the EXIT trap
+# (cleanup) exactly once.
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 # ---------------------------------------------------------------------------
 feature "bootstrap (build/daemon/image/create)"
