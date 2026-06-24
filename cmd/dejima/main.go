@@ -211,6 +211,7 @@ func newRootCmd() *cobra.Command {
 		newUpgradeCmd(),
 		newExecCmd(),
 		newCpCmd(),
+		newPasteCmd(),
 		newPortCmd(),
 		newCapCmd(),
 		newLinkCmd(),
