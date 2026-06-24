@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -43,21 +44,39 @@ func runTUI(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	m := initialTUIModel(c)
-	finalRaw, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
-	if err != nil {
-		return err
+	// The dashboard runs in a loop with attached sessions: normally an attach
+	// quits the TUI into the raw bridge and a detach exits to the shell, but the
+	// summon chord (Ctrl-\) ends a session with errSummonBand, which brings us
+	// back here with the host-terminal band open instead of exiting.
+	summonReturn := false
+	for {
+		m := initialTUIModel(c)
+		if summonReturn {
+			m.bandExpanded, m.bandFocused = true, true
+		}
+		finalRaw, rerr := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+		if rerr != nil {
+			return rerr
+		}
+		final := finalRaw.(tuiModel)
+		c = final.client // the switcher may have swapped the client mid-session
+
+		var sessErr error
+		switch {
+		case final.connectTerminal != "":
+			// Attach to a host terminal (uncontained shell on the daemon host).
+			sessErr = runTerminalSession(ctx, c, final.connectTerminal, defaultLabel(), true)
+		case final.connectTo != "":
+			sessErr = runConnectFromTUI(ctx, c, final.connectTo, final.connectAgent)
+		default:
+			return nil // the user quit the dashboard — leave dejima
+		}
+		if errors.Is(sessErr, errSummonBand) {
+			summonReturn = true
+			continue // re-enter the dashboard with the band open
+		}
+		return sessErr // normal detach / error → exit to the shell, as before
 	}
-	final := finalRaw.(tuiModel)
-	if final.connectTerminal != "" {
-		// Attach to a host terminal (uncontained shell on the daemon host).
-		return runTerminalSession(ctx, final.client, final.connectTerminal, defaultLabel())
-	}
-	if final.connectTo != "" {
-		// Use the model's client, which may have been swapped via the switcher.
-		return runConnectFromTUI(ctx, final.client, final.connectTo, final.connectAgent)
-	}
-	return nil
 }
 
 func runConnectFromTUI(ctx context.Context, c *api.Client, name, agentID string) error {
@@ -68,7 +87,8 @@ func runConnectFromTUI(ctx context.Context, c *api.Client, name, agentID string)
 	if info.Container != "running" {
 		return fmt.Errorf("island %q is %s; `dejima wake %s` first", name, info.Container, name)
 	}
-	return runSession(ctx, c, name, agentID, defaultLabel())
+	// Launched from the TUI, so the summon chord (Ctrl-\) can return there.
+	return runSessionSummonable(ctx, c, name, agentID, defaultLabel())
 }
 
 // ---------------------------------------------------------------------------
@@ -112,11 +132,18 @@ type tuiModel struct {
 	// connectTerminal, when set on quit, attaches to a host terminal instead of
 	// an island (a shell on the daemon host).
 	connectTerminal string
-	terminals       []hostterm.Terminal // host terminals (empty unless the daemon enables them)
-	confirm         *confirmPrompt
-	menu            *actionMenu       // non-nil while the per-row action menu is open
-	dirtyOps        map[string]string // name → "hibernating" etc. (transient hint)
-	building        bool              // island image build in flight
+
+	// Host-terminal band (pinned above the island list). bandFocused implies
+	// bandExpanded; collapsing clears both (auto-collapse on blur). bandSel is
+	// the cursor within the expanded band (terminals, then the "+ new" row).
+	bandExpanded bool
+	bandFocused  bool
+	bandSel      int
+	terminals    []hostterm.Terminal // host terminals (empty unless the daemon enables them)
+	confirm      *confirmPrompt
+	menu         *actionMenu       // non-nil while the per-row action menu is open
+	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
+	building     bool              // island image build in flight
 
 	help         bool            // help overlay visible
 	helpAdvanced bool            // advanced section of the help overlay expanded
@@ -143,6 +170,16 @@ type tuiModel struct {
 	// failure that vanished in 2s is exactly the bug #22's reporting was meant to
 	// kill, so it gets its own non-transient slot.
 	updateError string
+	// updateApplied is a GREEN, self-fading success banner (e.g. the daemon
+	// updated and is restarting itself — no user action needed). It clears on a
+	// fade tick keyed by applyToken so a newer banner is never wiped early.
+	updateApplied string
+	applyToken    int
+	// restartPending is an ORANGE, sticky banner for an update that landed but
+	// needs the user to act before it takes effect — the client binary updated,
+	// but this running process is still the old one until they relaunch. Stays
+	// until restart or an explicit [esc] dismiss.
+	restartPending string
 }
 
 type confirmPrompt struct {
@@ -352,6 +389,27 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
+// updateNoticeTTL is how long a green "updated" banner shows before it fades.
+const updateNoticeTTL = 5 * time.Second
+
+// updateNoticeFadedMsg fires updateNoticeTTL after a green success banner is
+// set; token identifies which banner armed it, so a fade can't wipe a newer one.
+type updateNoticeFadedMsg struct{ token int }
+
+func fadeUpdateNoticeCmd(token int) tea.Cmd {
+	return tea.Tick(updateNoticeTTL, func(time.Time) tea.Msg { return updateNoticeFadedMsg{token} })
+}
+
+// showUpdateApplied arms a self-fading green success banner, clearing any
+// competing update banners, and returns the fade command to schedule.
+func (m *tuiModel) showUpdateApplied(msg string) tea.Cmd {
+	m.applyToken++
+	m.updateApplied = msg
+	m.restartPending = ""
+	m.updateError = ""
+	return fadeUpdateNoticeCmd(m.applyToken)
+}
+
 // releaseCheckInterval is how often the TUI re-polls GitHub for a newer release
 // while it's open, so a release that drops mid-session surfaces on its own. Kept
 // long — the GitHub API rate-limits unauthenticated callers, and a fresh release
@@ -549,6 +607,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if n := m.rowCount(); m.selected >= n && n > 0 {
 			m.selected = n - 1
 		}
+		// Keep the band cursor in range when a terminal is added/removed.
+		if m.bandSel >= m.bandRowCount() {
+			m.bandSel = m.bandRowCount() - 1
+		}
 		return m, nil
 
 	case terminalCreatedMsg:
@@ -613,9 +675,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clientUpdatedMsg:
 		if msg.err != nil {
 			m.updateError = "client update failed: " + msg.err.Error()
+			m.updateApplied, m.restartPending = "", ""
 		} else {
+			// The binary on disk is new, but THIS process is still the old one —
+			// it only takes effect on relaunch. Orange + sticky until they do.
 			m.clientUpdate = false
-			m.lastNotice = "updated client to " + msg.version + " — restart dejima to run the new version"
+			m.updateError, m.updateApplied = "", ""
+			m.restartPending = "client updated to " + msg.version + " — restart dejima to apply"
 		}
 		return m, nil
 
@@ -627,9 +693,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// stickily (updateError), since the transient lastError would be
 			// wiped by the next 2s poll before it could be read.
 			m.updateError = "daemon update failed: " + msg.err.Error()
+			m.updateApplied, m.restartPending = "", ""
 		case msg.resp != nil && msg.resp.Applying:
+			// The daemon restarts itself and reconnects — no user action needed,
+			// so this is a green "done" that fades on its own.
 			m.daemonUpdate = false
-			m.lastNotice = "daemon installed " + msg.resp.Latest + ", restarting — it'll reconnect shortly"
+			cmd := m.showUpdateApplied("daemon updated to " + msg.resp.Latest + " — restarting, reconnecting shortly")
+			return m, cmd
 		case msg.resp != nil && msg.resp.Deferred:
 			// The restart would drop every attached terminal, so the daemon held
 			// off. Re-prompt to force (the y/n confirm sets force=true), or let the
@@ -639,6 +709,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastNotice = fmt.Sprintf("update deferred: %s, closing every open terminal — force anyway?", pluralizeTerminals(n))
 		default:
 			m.lastNotice = "daemon already up to date"
+		}
+		return m, nil
+
+	case updateNoticeFadedMsg:
+		// Only clear if this is still the banner that armed the fade — a newer
+		// success set since then owns the slot and its own later fade.
+		if msg.token == m.applyToken {
+			m.updateApplied = ""
 		}
 		return m, nil
 
@@ -930,6 +1008,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	// The host-terminal band owns keys while focused (expanded + driving). After
+	// the confirm guard, so a band-opened "close terminal" confirm takes keys.
+	if m.bandFocused {
+		return m.bandKey(msg)
+	}
 
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -953,6 +1036,16 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		return m.openCreator()
+	case "`":
+		// Toggle + focus the pinned host-terminal band (above the island list).
+		if m.hostTerminalsEnabled() {
+			m.bandExpanded = true
+			m.bandFocused = true
+			if m.bandSel >= m.bandRowCount() {
+				m.bandSel = 0
+			}
+		}
+		return m, nil
 	case "t":
 		// New host terminal (uncontained shell on the daemon host) + attach.
 		if m.hostTerminalsEnabled() {
@@ -1113,9 +1206,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirm = &confirmPrompt{verb: "build-image"}
 		}
 	case "d":
-		if r := m.currentRow(); r.kind == rowTerminal {
-			m.confirm = &confirmPrompt{verb: "remove-terminal", agent: r.termID}
-		} else if name := m.selectedName(); name != "" {
+		if name := m.selectedName(); name != "" {
 			m.confirm = &confirmPrompt{verb: "purge", island: name}
 		}
 	case "S":
@@ -1129,8 +1220,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirm = &confirmPrompt{verb: "setup-ssh"}
 		return m, nil
 	case "esc":
-		// Dismiss a sticky update-error banner (no overlay is active here).
+		// Dismiss whichever sticky update banner is showing (no overlay here):
+		// a failure, or an applied-but-needs-restart notice. (Green fades itself.)
 		m.updateError = ""
+		m.restartPending = ""
 		return m, nil
 	case "U":
 		// Update Dejima itself (distinct from lowercase 'u' = upgrade an island).
@@ -1366,7 +1459,6 @@ type treeRow struct {
 	kind    rowKind
 	island  string
 	agentID string
-	termID  string // for rowTerminal
 }
 
 // hostTerminalsEnabled reports whether the daemon offers host terminals (so the
@@ -1418,14 +1510,9 @@ func (m tuiModel) visibleRows() []treeRow {
 		}
 	}
 	rows = append(rows, treeRow{kind: rowNewIsland})
-	// Host section: operator terminals on the daemon host (uncontained). Only
-	// when the daemon enables them.
-	if m.hostTerminalsEnabled() {
-		for _, t := range m.terminals {
-			rows = append(rows, treeRow{kind: rowTerminal, termID: t.ID})
-		}
-		rows = append(rows, treeRow{kind: rowNewTerminal})
-	}
+	// Host terminals (operator shells on the daemon host) used to live at the
+	// tail of this list; they now have their own pinned band above it. See
+	// renderBand / bandKey.
 	return rows
 }
 
@@ -1453,16 +1540,6 @@ func (m tuiModel) orderedIslands() []api.IslandInfo {
 		out = append(out, g...)
 	}
 	return out
-}
-
-// terminalByID finds a loaded host terminal by id.
-func (m tuiModel) terminalByID(id string) (hostterm.Terminal, bool) {
-	for _, t := range m.terminals {
-		if t.ID == id {
-			return t, true
-		}
-	}
-	return hostterm.Terminal{}, false
 }
 
 // islandDisplay is the user-facing island name: its Title if set, else the slug.
@@ -1583,12 +1660,6 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 			}},
 			actionMenuItem{label: "Rename (relabel)", key: "e"},
 			actionMenuItem{label: "Remove agent", key: "X", danger: true},
-		)
-	case rowTerminal:
-		title = "host terminal"
-		items = append(items,
-			actionMenuItem{label: "Attach", key: "o"},
-			actionMenuItem{label: "Close terminal", key: "d", danger: true},
 		)
 	default:
 		return m, false
@@ -1819,11 +1890,6 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 		return m.openCreator()
 	case rowAddAgent:
 		return m.openAgentAdder(row.island)
-	case rowTerminal:
-		m.connectTerminal = row.termID // attach in this terminal (host shell)
-		return m, tea.Quit
-	case rowNewTerminal:
-		return m, m.createTerminalCmd("")
 	}
 	name := row.island
 	if name == "" {
@@ -1918,6 +1984,7 @@ var (
 	styleHibernate = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
 	styleErrored   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
 	styleWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
+	styleNeedsYou  = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Bold(true) // the one call-to-action state — bold so it pops out of a quiet fleet
 	styleFooter    = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
 	// styleBroadcast is the attention bar for the header's top line: amber
 	// background, near-black bold text. Amber, not red — an update is attention,
@@ -1927,6 +1994,13 @@ var (
 	// self-update that errored) — red where styleBroadcast is amber, so a failure
 	// reads as a failure, not just news.
 	styleErrorBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#fef2f2")).Background(lipgloss.Color("#b91c1c")).Bold(true)
+	// styleSuccessBroadcast (green) confirms an update landed cleanly. It's the
+	// only broadcast that self-fades — a brief "done", not standing news.
+	styleSuccessBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#f0fdf4")).Background(lipgloss.Color("#16a34a")).Bold(true)
+	// styleWarnBroadcast (orange) flags an update that needs the user to act
+	// (restart to apply). Sticky — distinct from the amber "update available"
+	// prompt (news) and the red failure, so attention ≠ done ≠ broken.
+	styleWarnBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1205")).Background(lipgloss.Color("#fb923c")).Bold(true)
 	// styleMenuBox frames the per-row action popup — a brighter border than the
 	// panes so it reads as a modal floating above them.
 	styleMenuBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3b5b8f")).Padding(0, 2)
@@ -2012,8 +2086,13 @@ func (m tuiModel) View() string {
 	}
 
 	footer := m.renderFooter()
-	body := m.renderBody(hh)
-
+	// The pinned host-terminal band sits between the header and the island list;
+	// the body sizes off (header + band) height so nothing is pushed off-screen.
+	band, bandH := m.renderBand(m.width - 2)
+	body := m.renderBody(hh + bandH)
+	if band != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, header, band, body, footer)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
@@ -2075,10 +2154,19 @@ func (m tuiModel) updateParts() string {
 func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok bool) {
 	switch {
 	case m.updateError != "":
-		// A failed self-update outranks the "update available" prompt and stays
-		// put (red) until retried [U] or dismissed [esc] — never wiped by a poll.
+		// A failed self-update outranks everything else here and stays put (red)
+		// until retried [U] or dismissed [esc] — never wiped by a poll.
 		return " ⚠ " + m.updateError + "   ·   [U] retry · [esc] dismiss",
 			" ⚠ update failed ", styleErrorBroadcast, true
+	case m.restartPending != "":
+		// An applied-but-not-yet-active update: outstanding user action, so it
+		// sticks (orange) until they restart or dismiss it.
+		return " ⟳ " + m.restartPending + "   ·   [esc] dismiss",
+			" ⟳ restart to apply ", styleWarnBroadcast, true
+	case m.updateApplied != "":
+		// A clean landing — green, and it fades on its own (updateNoticeFadedMsg).
+		return " ✓ " + m.updateApplied,
+			" ✓ updated ", styleSuccessBroadcast, true
 	case m.clientUpdate || m.daemonUpdate:
 		return " ⬆ update available: " + m.updateParts() + "   ·   [U] update",
 			" ⬆ [U] update ", styleBroadcast, true
@@ -2205,13 +2293,18 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderBody(headerHeight int) string {
-	leftW := m.width / 2
+	// The island/agent list is the information-dense star of the dashboard, so
+	// give it the larger share (~4/7) — a full agent row (name + type + uptime +
+	// state) runs wide. The detail pane keeps a floor so it stays readable; on a
+	// narrow terminal the detail floor wins and the list gives way.
+	leftW := m.width * 4 / 7
+	rightW := m.width - leftW - 4
+	if rightW < 28 {
+		rightW = 28
+		leftW = m.width - rightW - 4
+	}
 	if leftW < 30 {
 		leftW = 30
-	}
-	rightW := m.width - leftW - 4
-	if rightW < 20 {
-		rightW = 20
 	}
 	// -5 = 3 footer lines (health strip + two key-hint rows) + the body pane's
 	// top/bottom border.
@@ -2317,7 +2410,7 @@ func (m tuiModel) scrollDetail(pages int) tuiModel {
 	return m
 }
 
-func (m tuiModel) renderList(_ int) (string, int) {
+func (m tuiModel) renderList(width int) (string, int) {
 	if len(m.islands) == 0 {
 		if m.lastError != "" {
 			if m.daemonHelp != nil {
@@ -2343,14 +2436,8 @@ func (m tuiModel) renderList(_ int) (string, int) {
 	b.WriteString(styleHeader.Render("Islands"))
 	b.WriteString("\n\n")
 	selLine := -1
-	hostHeaderDone := false
 	lastRepo := "\x00" // sentinel so the first group always prints its header
 	for i, row := range m.visibleRows() {
-		// The Host section gets its own (cautionary) header before its first row.
-		if (row.kind == rowTerminal || row.kind == rowNewTerminal) && !hostHeaderDone {
-			b.WriteString("\n" + styleHeader.Render("Host") + " " + styleMuted.Render("· not contained") + "\n\n")
-			hostHeaderDone = true
-		}
 		// Grouped view: a muted repo header before each repo group's first island.
 		// Injected like the Host header — an extra line that doesn't consume a row
 		// index, so the cursor mapping is unaffected.
@@ -2369,16 +2456,12 @@ func (m tuiModel) renderList(_ int) (string, int) {
 		case rowNewIsland:
 			line = styleAccent.Render("+ new island")
 		case rowAddAgent:
-			line = "   " + styleMuted.Render("+ add agent")
+			// Caps the island's child group (└); agent rows above it branch (├).
+			line = "   " + styleMuted.Render("└ + add agent")
 		case rowAgent:
 			isl := byName[row.island]
 			a := agentByID(isl, row.agentID)
-			line = "   └ " + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
-		case rowTerminal:
-			t, _ := m.terminalByID(row.termID)
-			line = terminalRowText(t)
-		case rowNewTerminal:
-			line = styleMuted.Render("+ new terminal")
+			line = "   " + styleMuted.Render("├ ") + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
 		default: // rowIsland
 			isl, ok := byName[row.island]
 			if !ok {
@@ -2403,7 +2486,16 @@ func (m tuiModel) renderList(_ int) (string, int) {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	return b.String(), selLine
+	// Clip each row to the pane width instead of letting lipgloss wrap it — a
+	// wrapped agent row spills onto a second line, shreds the tree, and (worse)
+	// throws off the selLine→viewport math below. MaxWidth is ANSI-aware, so the
+	// embedded colors survive, and truncation never changes the line count, so
+	// selLine stays valid.
+	out := b.String()
+	if width > 0 {
+		out = lipgloss.NewStyle().MaxWidth(width).Render(out)
+	}
+	return out, selLine
 }
 
 // agentByID finds an agent within an island, or returns a zero value.
@@ -2429,8 +2521,52 @@ const (
 // a local const so the TUI doesn't import internal/handlers for one string.
 const agentTypeShell = "shell"
 
+// agentStatus normalizes an agent's last emitted signal (AgentState.Latest),
+// credential readiness (AuthState), session liveness (State), and any
+// orchestration Error into one legible, colored word. It is the single source
+// of truth for agent state across the UI — the row signal, the glyph color
+// (agentGlyph), and the detail panel all read from it, so the word and the
+// color can never disagree. "needs you" is the one call-to-action state,
+// rendered bold (styleNeedsYou) so it pops out of a fleet of quiet agents.
+//
+// State and Restarts are probed only for the detail view (agentInfos live=true);
+// in the island list they're empty. So liveness words (working/idle/stopped/
+// crash-loop) appear only once State is known — in the list we degrade to the
+// shim signal (needs you / done / error / no model key), and otherwise return
+// "" with a muted style, matching the list's "state not probed" reality. An
+// empty word means the row shows no state token and the glyph stays neutral.
+func agentStatus(a api.AgentInfo) (string, lipgloss.Style) {
+	latest := ""
+	if a.AgentState != nil {
+		latest = a.AgentState.Latest
+	}
+	switch {
+	case a.Error != "" || latest == "error":
+		return "error", styleErrored
+	case a.State == "exited":
+		return "exited", styleErrored // session alive but the agent process died
+	case latest == "waiting-for-input":
+		return "needs you", styleNeedsYou
+	case a.AuthState == "missing-provider-auth":
+		return "no model key", styleWaiting // will fail at first task — flag it
+	case a.State == "running" && a.Restarts >= 3:
+		return "crash-loop", styleWaiting // supervised but crash-looping (e.g. OOM)
+	case a.State == "stopped":
+		return "stopped", styleHibernate
+	case a.State == "running" && latest == "task-complete":
+		return "idle", styleHibernate
+	case a.State == "running":
+		return "working", styleRunning
+	case latest == "task-complete":
+		return "done", styleHibernate // list view: liveness unknown, last signal was done
+	default:
+		return "", styleHibernate // unknown (list, no signal yet) — neutral glyph, no word
+	}
+}
+
 // agentGlyph renders an agent's kind glyph colored by its state: the shape says
-// terminal vs AI-agent vs headless, the color says running / idle / needs-you / error.
+// terminal vs AI-agent vs headless (stable identity); the color comes from
+// agentStatus, so the glyph and the row's state word always agree.
 func agentGlyph(a api.AgentInfo) string {
 	g := glyphAgent // attachable AI agents (claude-code, codex, custom interactive)
 	switch {
@@ -2439,19 +2575,7 @@ func agentGlyph(a api.AgentInfo) string {
 	case !a.Attachable:
 		g = glyphHeadless // background process
 	}
-	style := styleHibernate // gray: idle / stopped (also the default)
-	switch {
-	case a.Error != "":
-		style = styleErrored
-	case a.State == "exited":
-		style = styleErrored // session alive but the agent process died
-	case a.AgentState != nil && a.AgentState.Latest == "waiting-for-input":
-		style = styleWaiting
-	case a.State == "running" && a.Restarts >= 3:
-		style = styleWaiting // supervised but crash-looping (e.g. OOM) — flag it
-	case a.State == "running":
-		style = styleRunning
-	}
+	_, style := agentStatus(a)
 	return style.Render(g)
 }
 
@@ -2476,26 +2600,155 @@ func terminalRowText(t hostterm.Terminal) string {
 	return fmt.Sprintf("%s %-14s %s", glyphTerminal, truncate(name, 14), styleMuted.Render(t.ID))
 }
 
+// bandRowCount is the number of selectable rows in the expanded band: one per
+// terminal, plus the trailing "+ new terminal" affordance.
+func (m tuiModel) bandRowCount() int { return len(m.terminals) + 1 }
+
+// renderBand draws the pinned host-terminal band that sits above the island
+// list, and returns it with its height in lines (0 when host terminals are off,
+// so the caller adds no rows). Collapsed it's a single summary line; focused it
+// expands to the terminal list + a "+ new terminal" row, with bandSel
+// highlighted. Rows are clipped (never wrapped) to width, like the island list.
+func (m tuiModel) renderBand(width int) (string, int) {
+	if !m.hostTerminalsEnabled() {
+		return "", 0
+	}
+	n := len(m.terminals)
+	clip := func(s string) string {
+		if width > 0 {
+			return lipgloss.NewStyle().MaxWidth(width).Render(s)
+		}
+		return s
+	}
+
+	if !m.bandExpanded {
+		dot := styleMuted.Render("○")
+		count := "no terminals"
+		if n > 0 {
+			dot = styleRunning.Render("●")
+			s := ""
+			if n != 1 {
+				s = "s"
+			}
+			count = fmt.Sprintf("%d terminal%s", n, s)
+		}
+		line := fmt.Sprintf("%s %s %s %s   %s",
+			styleHeader.Render("⌨ Host"), dot, styleMuted.Render(count),
+			styleMuted.Render("· not contained"), styleMuted.Render("[`] expand"))
+		return clip(line), 1
+	}
+
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("⌨ Host terminals") + " " +
+		styleMuted.Render("· not contained") + "   " + styleMuted.Render("[`] collapse") + "\n")
+	for i, t := range m.terminals {
+		line := "  " + terminalRowText(t)
+		if i == m.bandSel {
+			line = styleSelected.Render("▶ " + terminalRowText(t))
+		}
+		b.WriteString(clip(line) + "\n")
+	}
+	newRow := "  " + styleMuted.Render("+ new terminal")
+	if m.bandSel == n {
+		newRow = styleSelected.Render("▶ + new terminal")
+	}
+	b.WriteString(clip(newRow))
+	// height = header + n terminal rows + the new-terminal row
+	return b.String(), n + 2
+}
+
+// bandKey drives the focused host-terminal band: navigate the terminals + the
+// "+ new terminal" row, attach (⏎), create, close (d/X), relabel (e), and
+// collapse-on-blur (esc / backtick). Reuses the same commands as the old inline
+// Host rows, so terminal behavior is unchanged — only its home moved.
+func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.terminals)
+	collapse := func() (tea.Model, tea.Cmd) {
+		m.bandExpanded, m.bandFocused = false, false
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "`", "left", "q":
+		return collapse()
+	case "j", "down":
+		if m.bandSel < m.bandRowCount()-1 {
+			m.bandSel++
+		}
+		return m, nil
+	case "k", "up":
+		if m.bandSel > 0 {
+			m.bandSel--
+		}
+		return m, nil
+	case "g", "home":
+		m.bandSel = 0
+		return m, nil
+	case "G", "end":
+		m.bandSel = m.bandRowCount() - 1
+		return m, nil
+	case "enter", "o":
+		if m.bandSel >= n { // the "+ new terminal" row
+			return m, m.createTerminalCmd("")
+		}
+		m.connectTerminal = m.terminals[m.bandSel].ID // attach (resumes live tmux)
+		return m, tea.Quit
+	case "d", "X":
+		if m.bandSel < n {
+			m.confirm = &confirmPrompt{verb: "remove-terminal", agent: m.terminals[m.bandSel].ID}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
 // agentRowText renders one agent's list line: kind glyph, name (label, or id
-// when unlabeled), then the latest signal. The id isn't repeated when a label
-// is present — it stays available in the detail view — unless ambiguous is set,
-// meaning another agent in the same island shares this display name, in which
-// case the muted id is appended so the two rows aren't indistinguishable.
+// when unlabeled), a muted meta cluster (type, uptime, a presence dot), then the
+// normalized state word (agentStatus), colored to match the glyph. The id isn't
+// repeated when a label is present — it stays available in the detail view —
+// unless ambiguous is set, meaning another agent in the same island shares this
+// display name, in which case the muted id is appended so the two rows aren't
+// indistinguishable.
 func agentRowText(a api.AgentInfo, ambiguous bool) string {
-	sig := ""
-	switch {
-	case a.Error != "":
-		sig = "  " + styleErrored.Render("error")
-	case a.AuthState == "missing-provider-auth":
-		sig = "  " + styleWaiting.Render("⚠ no model key")
-	case a.AgentState != nil && a.AgentState.Latest != "":
-		sig = "  " + a.AgentState.Latest
-	}
-	name := truncate(agentDisplayName(a), 18)
+	name := fmt.Sprintf("%-14s", truncate(agentDisplayName(a), 14))
 	if ambiguous {
-		name = truncate(agentDisplayName(a), 12) + " " + styleMuted.Render(a.ID)
+		// rare: append the disambiguating id. The trailing columns shift for
+		// these rows, which is fine — they're deliberately distinct.
+		name = truncate(agentDisplayName(a), 10) + " " + styleMuted.Render(a.ID)
 	}
-	return fmt.Sprintf("%s %s%s", agentGlyph(a), name, sig)
+	// Muted meta: the agent type, plus uptime/age unless the session is known to
+	// be down. (State is unprobed in the list, so we show age there too; the
+	// state word, not this, is what says whether it's actually running.)
+	meta := a.Type
+	if a.State != "stopped" && a.State != "exited" && !a.CreatedAt.IsZero() {
+		meta += "  up " + timeAgo(a.CreatedAt)
+	}
+	metaStr := styleMuted.Render(meta)
+	if v := attachedIndicator(a.Attached); v != "" {
+		metaStr += "  " + v
+	}
+	status, statusStyle := agentStatus(a)
+	statusStr := ""
+	if status != "" {
+		statusStr = "  " + statusStyle.Render(status)
+	}
+	return fmt.Sprintf("%s %s  %s%s", agentGlyph(a), name, metaStr, statusStr)
+}
+
+// attachedIndicator renders a compact "someone's driving this" badge — a
+// presence dot plus the viewer count when more than one client is attached. It
+// stays empty (and silent) when nobody's watching, so a quiet fleet reads
+// quiet. The detail panel lists who and for how long; this is the at-a-glance
+// cue. Rendered in accent so it's noticeable without competing with the amber
+// "needs you" state.
+func attachedIndicator(attached []api.PresenceEntry) string {
+	switch n := len(attached); n {
+	case 0:
+		return ""
+	case 1:
+		return styleAccent.Render("◉")
+	default:
+		return styleAccent.Render(fmt.Sprintf("◉%d", n))
+	}
 }
 
 // labelIsAmbiguous reports whether another agent in the same island renders to
@@ -2521,22 +2774,6 @@ func (m tuiModel) renderDetail(_ int) string {
 	if m.currentRow().kind == rowAddAgent {
 		return styleTitle.Render("+ Add agent") + "\n\n" +
 			styleMuted.Render("Press ⏎ to add an agent to "+styleAccent.Render(m.selectedName())+styleMuted.Render(".\nClaude Code, Codex, a terminal, or a headless command."))
-	}
-	if m.currentRow().kind == rowNewTerminal {
-		return styleTitle.Render("+ New terminal") + "\n\n" +
-			styleMuted.Render("Press ⏎ (or ") + styleAccent.Render("t") + styleMuted.Render(") to open a shell ") +
-			styleErrored.Render("on the daemon host — NOT contained") + styleMuted.Render(".\nResumable; reattach anytime.")
-	}
-	if r := m.currentRow(); r.kind == rowTerminal {
-		t, _ := m.terminalByID(r.termID)
-		name := t.Label
-		if name == "" {
-			name = t.ID
-		}
-		return styleTitle.Render("Host terminal · "+name) + "\n\n" +
-			styleErrored.Render("⚠ A shell on the daemon host — NOT contained.") + "\n\n" +
-			styleMuted.Render(fmt.Sprintf("id:        %s\n", t.ID)) +
-			styleMuted.Render("Press ⏎ to attach (resumes the live session); [d] to close.")
 	}
 	if m.detail == nil {
 		if name := m.selectedName(); name != "" {
@@ -2667,6 +2904,9 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		kind = "headless — background process, logs only"
 	}
 	b.WriteString(fmt.Sprintf("kind:      %s %s\n", agentGlyph(a), styleMuted.Render(kind)))
+	if sw, ss := agentStatus(a); sw != "" {
+		b.WriteString(fmt.Sprintf("state:     %s\n", ss.Render(sw)))
+	}
 	state := a.State
 	switch a.State {
 	case "":
@@ -2743,7 +2983,7 @@ func (m tuiModel) renderFooter() string {
 	// listed in the ⏎ menu and in [?] help.
 	term := ""
 	if m.hostTerminalsEnabled() {
-		term = "[t] terminal   "
+		term = "[`] terminals   "
 	}
 	keys1 := "[n] new   " + term + "[s] settings   [?] help   [q] quit"
 	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll
@@ -2823,6 +3063,7 @@ func (m tuiModel) renderHelp() string {
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
 		{"PgUp/PgDn", "scroll the detail panel (events, agents) — Ctrl-u/Ctrl-d also work"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
+		{"Ctrl-\\", "from inside a session: summon this dashboard (with the terminal band) — session stays alive"},
 		{"q", "quit the dashboard"},
 	}
 	for _, kv := range basic {
@@ -2835,12 +3076,13 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString(styleHeader.Render("Glyphs"))
 	b.WriteString("\n  ")
 	b.WriteString(styleMuted.Render(fmt.Sprintf(
-		"%s island   %s terminal agent   %s headless agent", "●", glyphTerminal, glyphHeadless)))
+		"%s island   %s AI agent   %s shell   %s headless   ", "●", glyphAgent, glyphTerminal, glyphHeadless)) +
+		styleAccent.Render("◉") + styleMuted.Render(" attached (someone's driving)"))
 	b.WriteString("\n  ")
 	b.WriteString(styleMuted.Render("color = state: ") +
-		styleRunning.Render("running") + styleMuted.Render(" · ") +
-		styleHibernate.Render("idle") + styleMuted.Render(" · ") +
-		styleWaiting.Render("needs you") + styleMuted.Render(" · ") +
+		styleRunning.Render("working") + styleMuted.Render(" · ") +
+		styleHibernate.Render("idle/stopped") + styleMuted.Render(" · ") +
+		styleNeedsYou.Render("needs you") + styleMuted.Render(" · ") +
 		styleErrored.Render("error"))
 	b.WriteString("\n\n")
 
@@ -3091,7 +3333,8 @@ func shortStatus(isl api.IslandInfo, transient string) string {
 	if isl.Stats != nil && isl.Container == "running" {
 		parts = append(parts, fmt.Sprintf("%s · %.0f%%", humanBytes(isl.Stats.MemoryUsageBytes), isl.Stats.CPUPercent))
 	}
-	parts = append(parts, isl.Agent)
+	// Per-agent type belongs on each agent row, not here — an island's first
+	// agent's type says nothing about the rest. (See agentRowText.)
 	return strings.Join(parts, " · ")
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/aoos/dejima/internal/clientcfg"
 )
@@ -77,6 +78,69 @@ func TestAnnouncement(t *testing.T) {
 	}
 	if !strings.Contains(short, "[U]") {
 		t.Fatalf("compact chip missing action: %q", short)
+	}
+}
+
+// TestAnnouncementLifecycle locks in the update-bar states and their precedence:
+// red failure > orange restart-pending > green applied > amber available. The
+// styles differ per state so each reads distinctly.
+func TestAnnouncementLifecycle(t *testing.T) {
+	// lipgloss.Style isn't comparable (it holds funcs), so identify a style by
+	// what it renders.
+	sameStyle := func(a, b lipgloss.Style) bool { return a.Render("x") == b.Render("x") }
+	full := func(m tuiModel) (string, lipgloss.Style) {
+		f, _, st, ok := m.announcement()
+		if !ok {
+			t.Helper()
+			t.Fatal("expected an announcement")
+		}
+		return f, st
+	}
+
+	applied, appliedStyle := full(tuiModel{updateApplied: "daemon updated to v9 — restarting"})
+	if !strings.Contains(applied, "✓") || !sameStyle(appliedStyle, styleSuccessBroadcast) {
+		t.Errorf("applied should be a green ✓ banner: %q", applied)
+	}
+	restart, restartStyle := full(tuiModel{restartPending: "client updated to v9 — restart dejima to apply"})
+	if !strings.Contains(restart, "restart") || !sameStyle(restartStyle, styleWarnBroadcast) {
+		t.Errorf("restart-pending should be an orange banner: %q", restart)
+	}
+	failed, failStyle := full(tuiModel{updateError: "boom"})
+	if !strings.Contains(failed, "retry") || !sameStyle(failStyle, styleErrorBroadcast) {
+		t.Errorf("failure should be a red retry banner: %q", failed)
+	}
+
+	// Precedence: a failure outranks a pending restart, which outranks a fading
+	// success, which outranks the plain "available" prompt.
+	_, st := full(tuiModel{updateError: "boom", restartPending: "x", updateApplied: "y", clientUpdate: true})
+	if !sameStyle(st, styleErrorBroadcast) {
+		t.Error("failure must outrank every other update banner")
+	}
+	_, st = full(tuiModel{restartPending: "x", updateApplied: "y", clientUpdate: true})
+	if !sameStyle(st, styleWarnBroadcast) {
+		t.Error("restart-pending must outrank applied + available")
+	}
+	_, st = full(tuiModel{updateApplied: "y", clientUpdate: true})
+	if !sameStyle(st, styleSuccessBroadcast) {
+		t.Error("applied must outrank the available prompt")
+	}
+}
+
+// TestUpdateNoticeFade: the green banner clears only when the fade tick matches
+// the token that armed it — a newer banner set in between must survive.
+func TestUpdateNoticeFade(t *testing.T) {
+	var m tuiModel
+	m.showUpdateApplied("first")
+	stale := m.applyToken
+	m.showUpdateApplied("second") // a newer success takes the slot + its own token
+
+	out, _ := m.Update(updateNoticeFadedMsg{token: stale})
+	if got := out.(tuiModel).updateApplied; got != "second" {
+		t.Errorf("stale fade wiped a newer banner: updateApplied=%q, want %q", got, "second")
+	}
+	out, _ = out.(tuiModel).Update(updateNoticeFadedMsg{token: out.(tuiModel).applyToken})
+	if got := out.(tuiModel).updateApplied; got != "" {
+		t.Errorf("matching fade should clear the banner, got %q", got)
 	}
 }
 
