@@ -190,8 +190,10 @@ func newRootCmd() *cobra.Command {
 			return runTUI(cmd.Context())
 		},
 	}
+	registerProfileFlags(cmd)
 	cmd.AddCommand(
 		newInitCmd(),
+		newProfileCmd(),
 		newHomeCmd(),
 		newConnectCmd(),
 		newLsCmd(),
@@ -904,6 +906,12 @@ func client() (*api.Client, error) {
 // source is one of "env", "profile", or "local" — where the target came from,
 // surfaced in the TUI header so a stale DEJIMA_HOST override is visible.
 func resolveTarget() (host, label, source string) {
+	// An explicit launch flag (`-p NAME` / `--host`) is the most deliberate
+	// expression of intent and is *ephemeral* — it overrides the saved profile
+	// and even DEJIMA_HOST for this process only, without persisting anything.
+	if h, label, ok := ephemeralTarget(); ok {
+		return h, label, "flag"
+	}
 	if h := strings.TrimSpace(os.Getenv("DEJIMA_HOST")); h != "" {
 		return h, h, "env"
 	}
