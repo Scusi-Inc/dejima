@@ -142,6 +142,16 @@ type tuiModel struct {
 	// failure that vanished in 2s is exactly the bug #22's reporting was meant to
 	// kill, so it gets its own non-transient slot.
 	updateError string
+	// updateApplied is a GREEN, self-fading success banner (e.g. the daemon
+	// updated and is restarting itself — no user action needed). It clears on a
+	// fade tick keyed by applyToken so a newer banner is never wiped early.
+	updateApplied string
+	applyToken    int
+	// restartPending is an ORANGE, sticky banner for an update that landed but
+	// needs the user to act before it takes effect — the client binary updated,
+	// but this running process is still the old one until they relaunch. Stays
+	// until restart or an explicit [esc] dismiss.
+	restartPending string
 }
 
 type confirmPrompt struct {
@@ -349,6 +359,27 @@ type terminalRemovedMsg struct{ err error }
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// updateNoticeTTL is how long a green "updated" banner shows before it fades.
+const updateNoticeTTL = 5 * time.Second
+
+// updateNoticeFadedMsg fires updateNoticeTTL after a green success banner is
+// set; token identifies which banner armed it, so a fade can't wipe a newer one.
+type updateNoticeFadedMsg struct{ token int }
+
+func fadeUpdateNoticeCmd(token int) tea.Cmd {
+	return tea.Tick(updateNoticeTTL, func(time.Time) tea.Msg { return updateNoticeFadedMsg{token} })
+}
+
+// showUpdateApplied arms a self-fading green success banner, clearing any
+// competing update banners, and returns the fade command to schedule.
+func (m *tuiModel) showUpdateApplied(msg string) tea.Cmd {
+	m.applyToken++
+	m.updateApplied = msg
+	m.restartPending = ""
+	m.updateError = ""
+	return fadeUpdateNoticeCmd(m.applyToken)
 }
 
 // releaseCheckInterval is how often the TUI re-polls GitHub for a newer release
@@ -612,9 +643,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clientUpdatedMsg:
 		if msg.err != nil {
 			m.updateError = "client update failed: " + msg.err.Error()
+			m.updateApplied, m.restartPending = "", ""
 		} else {
+			// The binary on disk is new, but THIS process is still the old one —
+			// it only takes effect on relaunch. Orange + sticky until they do.
 			m.clientUpdate = false
-			m.lastNotice = "updated client to " + msg.version + " — restart dejima to run the new version"
+			m.updateError, m.updateApplied = "", ""
+			m.restartPending = "client updated to " + msg.version + " — restart dejima to apply"
 		}
 		return m, nil
 
@@ -626,9 +661,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// stickily (updateError), since the transient lastError would be
 			// wiped by the next 2s poll before it could be read.
 			m.updateError = "daemon update failed: " + msg.err.Error()
+			m.updateApplied, m.restartPending = "", ""
 		case msg.resp != nil && msg.resp.Applying:
+			// The daemon restarts itself and reconnects — no user action needed,
+			// so this is a green "done" that fades on its own.
 			m.daemonUpdate = false
-			m.lastNotice = "daemon installed " + msg.resp.Latest + ", restarting — it'll reconnect shortly"
+			cmd := m.showUpdateApplied("daemon updated to " + msg.resp.Latest + " — restarting, reconnecting shortly")
+			return m, cmd
 		case msg.resp != nil && msg.resp.Deferred:
 			// The restart would drop every attached terminal, so the daemon held
 			// off. Re-prompt to force (the y/n confirm sets force=true), or let the
@@ -638,6 +677,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastNotice = fmt.Sprintf("update deferred: %s, closing every open terminal — force anyway?", pluralizeTerminals(n))
 		default:
 			m.lastNotice = "daemon already up to date"
+		}
+		return m, nil
+
+	case updateNoticeFadedMsg:
+		// Only clear if this is still the banner that armed the fade — a newer
+		// success set since then owns the slot and its own later fade.
+		if msg.token == m.applyToken {
+			m.updateApplied = ""
 		}
 		return m, nil
 
@@ -1114,8 +1161,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirm = &confirmPrompt{verb: "setup-ssh"}
 		return m, nil
 	case "esc":
-		// Dismiss a sticky update-error banner (no overlay is active here).
+		// Dismiss whichever sticky update banner is showing (no overlay here):
+		// a failure, or an applied-but-needs-restart notice. (Green fades itself.)
 		m.updateError = ""
+		m.restartPending = ""
 		return m, nil
 	case "U":
 		// Update Dejima itself (distinct from lowercase 'u' = upgrade an island).
@@ -1906,6 +1955,13 @@ var (
 	// self-update that errored) — red where styleBroadcast is amber, so a failure
 	// reads as a failure, not just news.
 	styleErrorBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#fef2f2")).Background(lipgloss.Color("#b91c1c")).Bold(true)
+	// styleSuccessBroadcast (green) confirms an update landed cleanly. It's the
+	// only broadcast that self-fades — a brief "done", not standing news.
+	styleSuccessBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#f0fdf4")).Background(lipgloss.Color("#16a34a")).Bold(true)
+	// styleWarnBroadcast (orange) flags an update that needs the user to act
+	// (restart to apply). Sticky — distinct from the amber "update available"
+	// prompt (news) and the red failure, so attention ≠ done ≠ broken.
+	styleWarnBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1205")).Background(lipgloss.Color("#fb923c")).Bold(true)
 	// styleMenuBox frames the per-row action popup — a brighter border than the
 	// panes so it reads as a modal floating above them.
 	styleMenuBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3b5b8f")).Padding(0, 2)
@@ -2050,10 +2106,19 @@ func (m tuiModel) updateParts() string {
 func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok bool) {
 	switch {
 	case m.updateError != "":
-		// A failed self-update outranks the "update available" prompt and stays
-		// put (red) until retried [U] or dismissed [esc] — never wiped by a poll.
+		// A failed self-update outranks everything else here and stays put (red)
+		// until retried [U] or dismissed [esc] — never wiped by a poll.
 		return " ⚠ " + m.updateError + "   ·   [U] retry · [esc] dismiss",
 			" ⚠ update failed ", styleErrorBroadcast, true
+	case m.restartPending != "":
+		// An applied-but-not-yet-active update: outstanding user action, so it
+		// sticks (orange) until they restart or dismiss it.
+		return " ⟳ " + m.restartPending + "   ·   [esc] dismiss",
+			" ⟳ restart to apply ", styleWarnBroadcast, true
+	case m.updateApplied != "":
+		// A clean landing — green, and it fades on its own (updateNoticeFadedMsg).
+		return " ✓ " + m.updateApplied,
+			" ✓ updated ", styleSuccessBroadcast, true
 	case m.clientUpdate || m.daemonUpdate:
 		return " ⬆ update available: " + m.updateParts() + "   ·   [U] update",
 			" ⬆ [U] update ", styleBroadcast, true
