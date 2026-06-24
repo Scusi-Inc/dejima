@@ -1237,7 +1237,7 @@ func newConnectCmd() *cobra.Command {
 			// No agent named → a contained shell at /workspace (matches the TUI's
 			// Enter-on-island and SSH). An explicit agent attaches that agent.
 			if agent == "" {
-				return runInShellSession(cmd.Context(), c, name, label)
+				return runInShellSession(cmd.Context(), c, name, label, false) // bare CLI — no dashboard to summon back to
 			}
 			return runSession(cmd.Context(), c, name, agent, label)
 		},
