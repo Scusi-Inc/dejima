@@ -83,6 +83,12 @@ var tokenRouteAccess = map[string]tokenAccess{
 	"POST /v1/islands/{name}/exec":        accessOwnIsland,
 	"POST /v1/islands/{name}/mailbox":     accessOwnIsland, // intra-island agent messaging (Lane 5 P1)
 	"GET /v1/islands/{name}/mailbox":      accessOwnIsland,
+	// Own-island agent roster (intra-island coordination P1): lets a contained
+	// agent discover its co-resident peers (id↔label↔state) to address messages.
+	// accessOwnIsland enforces {name}==token's island, so it can never enumerate
+	// other islands; listAgents returns a reduced view to token callers. See
+	// docs/intra-island-coordination-spec.md.
+	"GET /v1/islands/{name}/agents": accessOwnIsland,
 	// Inter-island link send (Lane 5 P2): an island sends only AS itself; the gate
 	// (deny-all) decides whether it lands, delivered into the recipient's mailbox.
 	// Grant/revoke is operator-only (absent here); there is no link-inbox route —
