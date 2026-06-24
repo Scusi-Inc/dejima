@@ -675,7 +675,11 @@ assert_has "$TOK_LS" "viewer" "minted tokens are listed"
 if [ -n "$VIEWER_SECRET" ]; then
   step "Token: the viewer role is read-only (ls allowed, purge denied)"
   expect_ok "viewer allowed a read (ls)" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima ls
-  expect_fail "viewer denied a purge" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima purge "$ISLAND"
+  # --force skips the client-side type-the-name confirmation, so the DAEMON's
+  # role check is what denies the viewer (a 403) — not the prompt. Without it,
+  # the prompt blocks on a TTY (and on a pipe aborts non-zero, making this pass
+  # for the WRONG reason: the abort, not role enforcement).
+  expect_fail "viewer denied a purge (even with --force)" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima purge "$ISLAND" --force
 else
   fail "could not parse the viewer token secret to test role enforcement"
 fi
