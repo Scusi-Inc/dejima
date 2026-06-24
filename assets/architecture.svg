@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="660" viewBox="0 0 1120 660">
-  <rect width="1120" height="660" fill="#0f1e35"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="568" viewBox="0 0 1120 568">
+  <rect width="1120" height="568" fill="#0f1e35"/>
   <g font-family="DejaVu Sans">
     <!-- you drive it -->
     
@@ -21,7 +21,7 @@
     <path d="M 553 162 L 560 174 L 567 162 Z" fill="#9ec1ff"/>
     <text x="582" y="132" font-size="16" fill="#94a3b8">websocket · HTTP API — over Tailscale</text>
     <!-- host -->
-    <rect x="40" y="180" width="1040" height="440" rx="14" fill="#122443" stroke="#1c3358" stroke-width="1.5"/>
+    <rect x="40" y="180" width="1040" height="362" rx="14" fill="#122443" stroke="#1c3358" stroke-width="1.5"/>
     <text x="64" y="222" font-size="22" font-weight="bold" fill="#9ec1ff">Dejima host</text>
     <text x="214" y="222" font-size="19" fill="#94a3b8">— Mac mini / VPS / cloud VM</text>
     
@@ -37,12 +37,12 @@
   <g transform="translate(22,120)">
     <rect width="372" height="46" rx="7" fill="#0f1e35" stroke="#1c3358"/>
     <text x="18" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#94a3b8">a2</text>
-    <text x="62" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#9ec1ff">codex</text>
+    <text x="62" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#9ec1ff">openclaw</text>
   </g>
   <g transform="translate(22,178)">
     <rect width="372" height="46" rx="7" fill="#0f1e35" stroke="#1c3358"/>
     <text x="18" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#94a3b8">a3</text>
-    <text x="62" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#9ec1ff">headless</text>
+    <text x="62" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#9ec1ff">shell</text>
   </g>
   </g>
     
@@ -58,11 +58,13 @@
   <g transform="translate(22,120)">
     <rect width="372" height="46" rx="7" fill="#0f1e35" stroke="#1c3358"/>
     <text x="18" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#94a3b8">a2</text>
-    <text x="62" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#9ec1ff">claude-code</text>
+    <text x="62" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#9ec1ff">letta</text>
+  </g>
+  <g transform="translate(22,178)">
+    <rect width="372" height="46" rx="7" fill="#0f1e35" stroke="#1c3358"/>
+    <text x="18" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#94a3b8">a3</text>
+    <text x="62" y="29" font-family="DejaVu Sans Mono" font-size="17" fill="#9ec1ff">headless</text>
   </g>
   </g>
-    <!-- notes -->
-    <text x="80" y="566" font-size="16" fill="#94a3b8"><tspan fill="#eef3ff" font-weight="bold">per island:</tspan>  one container · shared home + credentials</text>
-    <text x="80" y="596" font-size="16" fill="#94a3b8"><tspan fill="#eef3ff" font-weight="bold">per agent:</tspan>  own git worktree · sandboxed from host &amp; each other</text>
   </g>
 </svg>

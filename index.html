@@ -82,7 +82,7 @@
 <h2 id="why-dejima">The hard parts of running agents, already handled</h2>
 <p><strong>You shouldn't have to become an infrastructure engineer to run agents safely.</strong> That usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
 <ul>
-  <li><strong>Ease.</strong> One line installs it; <code>dejima init</code> and you've got a sandboxed agent running in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same one command.</li>
+  <li><strong>Ease.</strong> One line installs it; run <code>dejima</code> and the TUI walks you to a sandboxed agent in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same one command.</li>
   <li><strong>Security.</strong> Every agent is walled off from your machine, your files, and the other agents; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
   <li><strong>Audit.</strong> Every privileged crossing is written to a tamper-evident, hash-chained ledger you can read, export, and verify — so you can <em>prove</em> what an agent did, not just hope.</li>
 </ul>
@@ -102,22 +102,22 @@
     <th>A dev container</th>
   </tr>
   <tr><td>Isolated workspace per project</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>✓</td></tr>
-  <tr><td>Several agents at once, one dashboard</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>✗</td><td>manual</td><td>✗</td></tr>
+  <tr><td>Several agents at once, one dashboard</td><td><strong>✓</strong></td><td>$</td><td>✗</td><td>✗</td><td>manual</td><td>✗</td></tr>
   <tr><td>Each agent walled off from host &amp; each other</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>~ (from host)</td></tr>
   <tr><td>Survives disconnect, multi-device</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>~</td><td>✓</td><td>✗</td></tr>
-  <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>~</td><td>✓</td><td>✓</td><td>✓</td></tr>
-  <tr><td>Self-hosted without a platform team (no Kubernetes)</td><td><strong>✓</strong></td><td>✗</td><td>~</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>$</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Self-hosted without a platform team (no Kubernetes)</td><td><strong>✓</strong></td><td>✗</td><td>$</td><td>✓</td><td>✓</td><td>✓</td></tr>
   <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
   <tr><td>Curated MCP servers, brokered &amp; audited</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
   <tr><td>Up in minutes, nothing to build</td><td><strong>✓</strong></td><td>✗</td><td>~</td><td>~</td><td>~</td><td>✓</td></tr>
 </table>
 </div>
-<p class="small"><strong>~</strong> = partial or do-it-yourself. Dejima runs tmux inside each island and adds the layer above it: isolation, a fleet on one dashboard, lifecycle controls, and an audit trail. <strong>Coder</strong> is the closest — self-hosted, parallel agents, audit logging — but it's a Kubernetes-era platform built for enterprise platform teams; Dejima is that idea sized for one person and a Mac mini. <strong>E2B</strong>'s Firecracker microVMs isolate as strongly or stronger — the difference isn't isolation, it's that with Dejima your code, files, and credentials never leave a box you own. <strong>Rivet</strong> is lightweight and self-hostable but it's agent <em>infrastructure</em> (an SDK), not a fleet dashboard you operate.</p>
+<p class="small"><strong>$</strong> = available only on a paid plan.</p>
 
 <h2 id="architecture">One host. Many sealed islands.</h2>
 <figure class="demo-shot diagram">
   <img src="assets/architecture.png" width="1120" loading="lazy"
-       alt="How Dejima works: you drive it from a CLI, TUI, or your own app over a websocket + HTTP API on Tailscale. That reaches the Dejima host — a Mac mini, VPS, or cloud VM — which holds islands: 'web' running claude-code, codex, and a headless agent; 'api' running codex and claude-code. Each island is one container with a shared home and credentials; each agent gets its own git worktree, sandboxed from the host and the other agents.">
+       alt="How Dejima works: you drive it from a CLI, TUI, or your own app over a websocket + HTTP API on Tailscale. That reaches the Dejima host — a Mac mini, VPS, or cloud VM — which holds islands: 'web' running claude-code, openclaw, and a shell; 'api' running codex, letta, and a headless agent. Each island is one container; each agent gets its own git worktree, sandboxed from the host and the other agents.">
 </figure>
 <details class="ascii-fallback">
   <summary>Text version</summary>
@@ -138,7 +138,12 @@
 └────────────────────────────────────────────────────────────────┘</code></pre>
 </details>
 <p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other. Islands can't see each other; that blindness is the security boundary.</p>
-<p class="bundled-note"><strong>Two kinds of agents.</strong> <strong>Terminal</strong> agents are CLIs you attach to (Claude Code, Codex) — a host-side bridge connects your session to the agent's tmux inside, so it survives disconnect and multiple devices share one screen. <strong>Headless</strong> agents run on their own (an SDK loop, a worker) — output captured to <code>dejima logs</code>. Both get the same isolation, lifecycle, events, and one-API management.</p>
+<p><strong>Run almost any agent.</strong> Each island holds a mix of two kinds:</p>
+<ul>
+  <li><strong>Terminal agents</strong> you attach to — <strong>Claude Code</strong>, <strong>Codex</strong>, or a plain <strong>shell</strong> (an empty, sandboxed terminal). A host-side bridge wires your session to the agent's tmux inside, so it survives disconnect and multiple devices share one screen.</li>
+  <li><strong>Headless agents</strong> that run on their own — runtimes like <strong>OpenClaw</strong>, <strong>Letta</strong>, and <strong>Hermes</strong>, or your own SDK loop or worker. Output is captured to <code>dejima logs</code>.</li>
+</ul>
+<p class="small">Both get the same isolation, lifecycle, events, and one-API management — bring your own keys and mix vendors freely.</p>
 
 <h2 id="features">Everything you need to run a fleet safely</h2>
 <ul>
