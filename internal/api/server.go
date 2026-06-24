@@ -835,7 +835,37 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)))
+	infos := s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p))
+	// An island token reaching its OWN roster (allowlisted accessOwnIsland) gets a
+	// reduced peer view — the discovery/addressing directory only. Operator and
+	// team tokens (TokenIslandFromContext == "") keep the full AgentInfo.
+	if TokenIslandFromContext(r.Context()) != "" {
+		infos = islandPeerRoster(infos)
+	}
+	writeJSON(w, http.StatusOK, infos)
+}
+
+// islandPeerRoster projects AgentInfos to the reduced view an island token may
+// see of its co-resident peers. It keeps id/label/type/state/branch/worktree —
+// data a peer can already read directly off the shared /workspace (peer worktrees
+// live at /workspace/.agents/<id>) — and drops everything that is config,
+// credential, or attach-surface (provider, model, key status, tmux, attachable,
+// restarts, error, presence, agent-state, created-at). The contained agent thus
+// learns nothing it couldn't already see, just ergonomically. See
+// docs/intra-island-coordination-spec.md (P1).
+func islandPeerRoster(infos []AgentInfo) []AgentInfo {
+	out := make([]AgentInfo, len(infos))
+	for i, ai := range infos {
+		out[i] = AgentInfo{
+			ID:       ai.ID,
+			Label:    ai.Label,
+			Type:     ai.Type,
+			State:    ai.State,
+			Branch:   ai.Branch,
+			Worktree: ai.Worktree,
+		}
+	}
+	return out
 }
 
 func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
