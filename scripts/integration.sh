@@ -129,6 +129,10 @@ cleanup(){
   # crashed run doesn't strand a docker volume.
   docker volume rm -f "dejima-$ISLAND_READOPT-workspace" "dejima-$ISLAND_READOPT-home" >/dev/null 2>&1
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
+  # Preserve the daemon log at a STABLE path before nuking $TMP, so a failure can
+  # be diagnosed by `cat`-ing one file instead of scrolling a tmux pane.
+  cp -f "$TMP/dejimad.log" "$HOME/dejima-itest-dejimad.log" 2>/dev/null \
+    && echo "daemon log saved to $HOME/dejima-itest-dejimad.log"
   # The isolated HOME holds a read-only Go module cache ($HOME/go/pkg/mod);
   # make the tree writable before removing it so cleanup exits silently.
   chmod -R u+w "$TMP" 2>/dev/null
@@ -565,10 +569,13 @@ feature "purge unpushed-work guard + force-purge"
 step "Purge guard: unpushed work blocks a plain purge, --force overrides"
 dejima init --name "$ISLAND_GUARD" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
   >/dev/null 2>&1 || die "guard island create failed"
-# Create an unpushed commit inside the island's workspace.
-dejima exec "$ISLAND_GUARD" -- sh -c \
-  'cd /workspace && git config user.email t@t && git config user.name t && echo work > unpushed.txt && git add -A && git commit -qm unpushed' \
-  >/dev/null 2>&1 || die "could not create unpushed commit in the guard island"
+# Leave UNCOMMITTED work in the workspace. The daemon's guard counts
+# `git status --porcelain` lines, so an untracked file makes the tree dirty
+# (DirtyFiles>0). NOTE: a local *commit* on a branch with no upstream would NOT
+# trip the guard — the tree is clean and Ahead needs an upstream — which is a
+# separate product gap (committed-but-nowhere-pushed work isn't flagged).
+dejima exec "$ISLAND_GUARD" -- sh -c 'echo work > /workspace/uncommitted.txt' \
+  >/dev/null 2>&1 || die "could not create uncommitted work in the guard island"
 # The CLI now gates a plain purge behind a type-the-island-name confirmation, so
 # feed the name on stdin to get PAST it and exercise the DAEMON's unpushed-work
 # guard — the layer that emits the `--force` hint.
