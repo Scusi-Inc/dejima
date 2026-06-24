@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -74,6 +75,19 @@ func TestAgentStatus(t *testing.T) {
 	for _, c := range cases {
 		if got, _ := agentStatus(c.a); got != c.want {
 			t.Errorf("%s: agentStatus = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestRenderListNoWrap guards the layout against the wrap bug: a full agent row
+// is wider than a narrow pane, and lipgloss would wrap it onto a second line,
+// shredding the tree. renderList must clip each line to the pane width instead.
+func TestRenderListNoWrap(t *testing.T) {
+	const w = 40 // narrower than a full agent row
+	out := sampleModel().renderList(w)
+	for _, ln := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(ln); got > w {
+			t.Errorf("row exceeds pane width %d (=%d), would wrap: %q", w, got, plain(ln))
 		}
 	}
 }

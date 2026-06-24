@@ -868,13 +868,18 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderBody(headerHeight int) string {
-	leftW := m.width / 2
+	// The island/agent list is the information-dense star of the dashboard, so
+	// give it the larger share (~4/7) — a full agent row runs ~58 cols. The
+	// detail pane keeps a floor so it stays readable; on a narrow terminal the
+	// detail floor wins and the list gives way.
+	leftW := m.width * 4 / 7
+	rightW := m.width - leftW - 4
+	if rightW < 28 {
+		rightW = 28
+		leftW = m.width - rightW - 4
+	}
 	if leftW < 30 {
 		leftW = 30
-	}
-	rightW := m.width - leftW - 4
-	if rightW < 20 {
-		rightW = 20
 	}
 	// -5 = 3 footer lines (health strip + two key-hint rows) + the body pane's
 	// top/bottom border.
@@ -894,10 +899,15 @@ func (m tuiModel) renderBody(headerHeight int) string {
 	return body
 }
 
-func (m tuiModel) renderList(_ int) string {
+func (m tuiModel) renderList(width int) string {
 	if len(m.islands) == 0 {
 		if m.lastError != "" {
 			return styleErrored.Render("error: "+m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)")
+		}
+		// overview is nil only until the first poll lands — distinguish the
+		// brief connecting phase from a genuinely empty fleet.
+		if m.overview == nil {
+			return styleMuted.Render("connecting…")
 		}
 		return styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`")
 	}
@@ -916,10 +926,13 @@ func (m tuiModel) renderList(_ int) string {
 		case rowNewIsland:
 			line = styleAccent.Render("+ new island")
 		case rowAddAgent:
-			line = "   " + styleMuted.Render("+ add agent")
+			// The add-agent row is the last child under an island, so it caps
+			// the tree (└); agent rows above it branch (├). See agentRowText for
+			// why the connector stays a 5-col prefix (keeps columns aligned).
+			line = "   " + styleMuted.Render("└ + add agent")
 		case rowAgent:
 			a := agentByID(byName[row.island], row.agentID)
-			line = "   └ " + agentRowText(a)
+			line = "   " + styleMuted.Render("├ ") + agentRowText(a)
 		default: // rowIsland
 			isl, ok := byName[row.island]
 			if !ok {
@@ -942,6 +955,14 @@ func (m tuiModel) renderList(_ int) string {
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
+	}
+	// Clip each row to the pane width instead of letting lipgloss wrap it — a
+	// wrapped agent row spills onto a second line and shreds the layout. The
+	// rightmost token (the state word) is the first to go only when the pane is
+	// genuinely too narrow, which the width rebalance in renderBody avoids in
+	// normal use. MaxWidth is ANSI-aware, so the embedded colors survive.
+	if width > 0 {
+		return lipgloss.NewStyle().MaxWidth(width).Render(b.String())
 	}
 	return b.String()
 }
