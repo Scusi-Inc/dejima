@@ -15,6 +15,7 @@ import (
 
 	"github.com/aoos/dejima/internal/bridge"
 	"github.com/aoos/dejima/internal/hostterm"
+	"github.com/aoos/dejima/internal/hosttmux"
 )
 
 // Host terminals: operator shells running in tmux on the DAEMON HOST (no
@@ -277,7 +278,8 @@ func (s *Server) terminalSessionWS(w http.ResponseWriter, r *http.Request) {
 // startHostTmux brings a detached host tmux session up; a pre-existing session
 // is not an error (idempotent).
 func startHostTmux(ctx context.Context, session string) error {
-	out, err := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", session).CombinedOutput()
+	argv := hosttmux.NewSessionArgs("new-session", "-d", "-s", session)
+	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
 	if err != nil && strings.Contains(string(out), "duplicate session") {
 		return nil
 	}
