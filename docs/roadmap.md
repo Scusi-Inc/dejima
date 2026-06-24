@@ -156,6 +156,25 @@ in the gitignored `/strategy/` docs; this is the committable summary.
 - **Site: not an overhaul** — bones are good; launch needs hero-regression fix + the 2 GIFs +
   confident headers + compare-table framing. Brand-spine/island-diagram = fast-follow.
 
+### Action gate (cross-island orchestration approval) — see docs/action-gate-spec.md
+- [ ] Built per the spec: grant=envelope / gate=per-action; risk tiers; **prompt-everything
+  default**; daemon-enforced with TUI + CLI + webhook clients; fail-safe default-deny;
+  everything ledgered; non-blocking parallel queue.
+- Coherence goal: unify Port (host files) + MCP (tools) + cross-island actions under ONE
+  grant+gate+ledger model + the single "grants" view (don't ship 3 bespoke approval systems).
+
+### Later — needs richer roles/permissioning (post-launch / governance backlog)
+- [ ] **Action-gate team approval routing** — in a multi-operator team, who receives the
+  prompt (owner / any operator / the link's creator)? Solo collapses to "you," so not
+  launch-blocking. Tie to Lane 2 roles (owner/operator approve, viewer can't); will likely
+  need finer-grained roles/permissioning.
+- [ ] **Destructive auto-approve escalation** (revisit BEFORE v1.0) — let advanced users
+  auto-approve even destructive cross-island actions, but make it harder/non-default
+  (explicit, scoped, expiring, loudly-ledgered). Don't block advanced usage; never default.
+- [ ] **Egress gate (future, possible)** — outbound calls (LLM/external APIs) are ungated
+  today; "approve before this agent calls out" is a plausible future governance ask. Out of
+  scope now; fold into the unified grant+gate model if pursued.
+
 ---
 
 ## v1 (current — dogfood phase)
