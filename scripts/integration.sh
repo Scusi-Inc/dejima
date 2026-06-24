@@ -140,6 +140,25 @@ command -v go     >/dev/null || die "go not found"
 command -v git    >/dev/null || die "git not found"
 docker info >/dev/null 2>&1   || die "docker daemon not reachable"
 
+# Live-island guard. This suite churns Docker (creates/purges islands + throwaway
+# `docker run`s) on whatever engine `docker` points at, and recovering a wedged
+# engine means `colima restart` — which stops EVERY container on that VM. If real
+# (non-itest) dejima islands are present, this engine is shared with live work
+# (e.g. aoos's agents on aoos's colima): refuse, and point at the isolated
+# dejimaqa test account (its own colima). DEJIMA_ITEST_ALLOW_LIVE=1 overrides —
+# for the dejimaqa runner / CI (no live aoos islands there) or a knowing operator.
+if [ "${DEJIMA_ITEST_ALLOW_LIVE:-}" != "1" ]; then
+  live_islands="$(docker ps -a --filter label=dejima.project --format '{{.Names}}' 2>/dev/null | grep -v '^dejima-itest-' || true)"
+  if [ -n "$live_islands" ]; then
+    printf '\033[31mFATAL: live dejima islands are present on this Docker engine:\033[0m\n' >&2
+    printf '%s\n' "$live_islands" | sed 's/^/  - /' >&2
+    printf 'This suite churns Docker and recovering a wedged engine needs a colima restart,\n' >&2
+    printf 'which would STOP those islands. Run it on the isolated dejimaqa test account\n' >&2
+    printf '(its own colima), or set DEJIMA_ITEST_ALLOW_LIVE=1 to override.\n' >&2
+    exit 1
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # Install-channel sanity (Lane A). No Docker needed; runs first so a broken
 # install path (the #1 clean-Mac failure mode) is caught before the heavier,
