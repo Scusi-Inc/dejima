@@ -53,8 +53,11 @@ DEJIMA_SUITE="${DEJIMA_SUITE:-tier2-integration}"
 assert_eq(){ if [ "$1" = "$2" ]; then pass "$3"; else fail "$3 — got [$1] want [$2]"; fi; }
 assert_has(){ if printf '%s' "$1" | grep -qF -- "$2"; then pass "$3"; else fail "$3 — missing [$2]"; fi; }
 # expect_ok / expect_fail: run a command, assert its exit status, never abort.
-expect_ok(){ local d="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$d"; else fail "$d — command failed: $*"; fi; }
-expect_fail(){ local d="$1"; shift; if "$@" >/dev/null 2>&1; then fail "$d — expected failure but it succeeded"; else pass "$d"; fi; }
+# Capture the command's output and surface it (squashed to one line) in the
+# failure detail, so a red feature is self-explanatory in the run summary + the
+# filed tracking issue instead of needing the daemon log to diagnose.
+expect_ok(){ local d="$1"; shift; local out rc; out="$("$@" 2>&1)"; rc=$?; out="$(printf '%s' "$out" | tr '\n' ' ')"; if [ "$rc" -eq 0 ]; then pass "$d"; else fail "$d — command failed (rc=$rc): $* — ${out}"; fi; }
+expect_fail(){ local d="$1"; shift; local out rc; out="$("$@" 2>&1)"; rc=$?; out="$(printf '%s' "$out" | tr '\n' ' ')"; if [ "$rc" -eq 0 ]; then fail "$d — expected failure but it succeeded; output: ${out}"; else pass "$d"; fi; }
 # expect_err_match <desc> <substring> <cmd...>: assert the command FAILS *and*
 # its output contains <substring> — so an unrelated non-zero exit can't pass for
 # a security guard. Used for traversal/deny-all refusals.
@@ -77,6 +80,19 @@ command -v git    >/dev/null || die "git not found"
 docker info >/dev/null 2>&1   || die "docker daemon not reachable"
 
 # ---------------------------------------------------------------------------
+# Install-channel sanity (Lane A). No Docker needed; runs first so a broken
+# install path (the #1 clean-Mac failure mode) is caught before the heavier,
+# slower container suite below. The end-to-end virgin-Mac proof is the separate
+# human-run Lane 0 procedure; this is the part we can automate.
+# ---------------------------------------------------------------------------
+feature "install channels (curl|sh / brew / npm consistency)"
+if bash "$REPO_ROOT/scripts/install-channels-check.sh"; then
+  pass "install-channel consistency check"
+else
+  fail "install-channel consistency check (see output above)"
+fi
+
+# ---------------------------------------------------------------------------
 # Isolated environment + cleanup
 # ---------------------------------------------------------------------------
 TMP="$(mktemp -d)"
@@ -95,6 +111,7 @@ ISLAND_CLONE="itest-clone"
 ISLAND_A="itest-a"
 ISLAND_B="itest-b"
 ISLAND_GUARD="itest-guard"
+ISLAND_READOPT="itest-readopt"
 DAEMON_PID=""
 # The --local-copy seed is bind-mounted into the Docker VM, so it must live on a
 # path Docker shares. macOS shares /Users by default but NOT /var/folders (where
@@ -104,9 +121,13 @@ REPO="$REPO_DIR/repo"
 
 cleanup(){
   set +e
-  for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD"; do
+  for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD" "$ISLAND_READOPT"; do
     [ -n "$DAEMON_PID" ] && dejima purge "$isl" -f >/dev/null 2>&1
   done
+  # The re-adopt feature can leave a named volume behind on a mid-run failure
+  # (that's the whole point — keep-islands keeps it). Sweep it in cleanup so a
+  # crashed run doesn't strand a docker volume.
+  docker volume rm -f "dejima-$ISLAND_READOPT-workspace" "dejima-$ISLAND_READOPT-home" >/dev/null 2>&1
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
   # The isolated HOME holds a read-only Go module cache ($HOME/go/pkg/mod);
   # make the tree writable before removing it so cleanup exits silently.
@@ -548,8 +569,12 @@ dejima init --name "$ISLAND_GUARD" --repo "$REPO" --local-copy --agent headless 
 dejima exec "$ISLAND_GUARD" -- sh -c \
   'cd /workspace && git config user.email t@t && git config user.name t && echo work > unpushed.txt && git add -A && git commit -qm unpushed' \
   >/dev/null 2>&1 || die "could not create unpushed commit in the guard island"
+# The CLI now gates a plain purge behind a type-the-island-name confirmation, so
+# feed the name on stdin to get PAST it and exercise the DAEMON's unpushed-work
+# guard — the layer that emits the `--force` hint.
+purge_confirmed(){ printf '%s\n' "$1" | dejima purge "$1"; }
 expect_err_match "plain purge refused with unpushed work" "--force" \
-  dejima purge "$ISLAND_GUARD"
+  purge_confirmed "$ISLAND_GUARD"
 expect_ok "force-purge overrides the guard" dejima purge "$ISLAND_GUARD" --force
 expect_fail "guard island is gone after force-purge" dejima status "$ISLAND_GUARD"
 
@@ -598,7 +623,9 @@ step "Token: create an operator + a viewer token"
 expect_ok "token create (operator)" dejima token create --role operator --label itest-op
 VIEWER_OUT="$(dejima token create --role viewer --label itest-viewer 2>&1)"
 assert_has "$VIEWER_OUT" "viewer" "viewer token minted"
-VIEWER_SECRET="$(printf '%s\n' "$VIEWER_OUT" | sed -n 's/.*secret:[[:space:]]*\([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
+# Parse the secret from the stable `export DEJIMA_TOKEN=<hex>` line (the bearer
+# secret is printed bare on its own line, with no "secret:" prefix).
+VIEWER_SECRET="$(printf '%s\n' "$VIEWER_OUT" | sed -n 's/.*DEJIMA_TOKEN=\([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
 TOK_LS="$(dejima token ls 2>&1)"
 assert_has "$TOK_LS" "viewer" "minted tokens are listed"
 if [ -n "$VIEWER_SECRET" ]; then
@@ -662,6 +689,76 @@ if [ -n "$(printf '%s' "$DOC" | tr -d '[:space:]')" ]; then
   pass "doctor produced a health report"
 else
   fail "doctor produced no output"
+fi
+
+# ---------------------------------------------------------------------------
+# Uninstall --keep-islands re-adoption — the Lane B acceptance bar. Prove that
+# `dejima uninstall --keep-islands` removes the daemon + binaries but KEEPS the
+# island's named volume + ~/.dejima config, and that a *fresh install*
+# (rebuild + restart daemon) re-adopts the pre-existing island by name with its
+# workspace data intact. Runs LAST: it tears the daemon + binaries down, then
+# stands a fresh one up — so it must follow every other feature.
+# ---------------------------------------------------------------------------
+feature "uninstall --keep-islands + re-adopt (Lane B acceptance bar)"
+
+step "Re-adopt: create a dedicated island and write a workspace marker"
+dejima init --name "$ISLAND_READOPT" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
+  >/dev/null 2>&1 || die "re-adopt island create failed (see $TMP/dejimad.log)"
+dejima exec "$ISLAND_READOPT" -- sh -c 'echo readopt-survives > /workspace/keep.txt' >/dev/null 2>&1 \
+  || die "could not write re-adopt marker"
+WS_VOL="dejima-$ISLAND_READOPT-workspace"
+CFG="$HOME/.dejima/projects/$ISLAND_READOPT/config.toml"
+expect_ok "workspace volume exists before uninstall" docker volume inspect "$WS_VOL"
+if [ -f "$CFG" ]; then pass "island config exists before uninstall"; else fail "island config missing before uninstall"; fi
+
+step "Bare uninstall refuses without an explicit choice (no destructive default)"
+expect_err_match "bare uninstall refuses" "explicit choice" dejima uninstall --yes
+# The refusal must NOT have touched anything.
+expect_ok "volume still present after refusal" docker volume inspect "$WS_VOL"
+
+step "uninstall --keep-islands: remove daemon + binaries, KEEP volume + config"
+# This stops the island container, uninstalls the (no-op in-test) service, and
+# removes the test binaries — but must leave the named volume + ~/.dejima alone.
+dejima uninstall --keep-islands --yes >"$TMP/uninstall.log" 2>&1 || true
+# The foreground test daemon isn't a real service, so kill it explicitly to
+# emulate the service stop that --keep-islands performs in production.
+[ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1; wait "$DAEMON_PID" 2>/dev/null; DAEMON_PID=""
+expect_ok "named volume survived --keep-islands" docker volume inspect "$WS_VOL"
+if [ -f "$CFG" ]; then pass "the .dejima config survived --keep-islands"; else fail "config was deleted by --keep-islands (it must be kept)"; fi
+# Prove the *data* in the kept volume is intact, independent of any container.
+VOLDATA="$(docker run --rm -v "$WS_VOL":/ws:ro dejima/island:latest sh -c 'cat /ws/keep.txt' 2>/dev/null)"
+assert_eq "$VOLDATA" "readopt-survives" "workspace data persists in the kept volume"
+
+step "Fresh install re-adopts: rebuild binaries, restart daemon, re-create island"
+( cd "$REPO_ROOT" && go build -o "$BIN/dejima" ./cmd/dejima && go build -o "$BIN/dejimad" ./cmd/dejimad ) \
+  || die "reinstall build failed"
+dejimad --foreground >>"$TMP/dejimad.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 50); do [ -S "$HOME/.dejima/dejimad.sock" ] && break; sleep 0.2; done
+[ -S "$HOME/.dejima/dejimad.sock" ] || die "daemon socket never reappeared after reinstall"
+# The kept config means the daemon already knows this island; re-creating it
+# binds the SAME named volume (deterministic name) — re-adoption.
+READOPT_LS="$(dejima ls 2>&1)"
+if printf '%s' "$READOPT_LS" | grep -qF -- "$ISLAND_READOPT"; then
+  pass "fresh daemon already lists the kept island (config re-adopted)"
+else
+  # Config-less daemons re-adopt on (re)create; bind the same volume by name.
+  dejima init --name "$ISLAND_READOPT" --repo "$REPO" --local-copy --agent headless --cmd "sleep infinity" \
+    >/dev/null 2>&1 || die "re-create after reinstall failed"
+fi
+# Wake/recreate the container so it mounts the pre-existing volume, then confirm
+# the workspace marker written BEFORE the uninstall is still there.
+dejima wake "$ISLAND_READOPT" >/dev/null 2>&1 || true
+readopted=""
+for _ in $(seq 1 30); do
+  if dejima exec "$ISLAND_READOPT" -- test -f /workspace/keep.txt >/dev/null 2>&1; then readopted=1; break; fi
+  sleep 1
+done
+if [ -n "$readopted" ]; then
+  GOT="$(dejima exec "$ISLAND_READOPT" -- cat /workspace/keep.txt 2>/dev/null)"
+  assert_eq "$GOT" "readopt-survives" "re-adopted island's workspace survived the uninstall→reinstall round-trip"
+else
+  fail "island never became exec-able after re-adoption"
 fi
 
 # ---------------------------------------------------------------------------

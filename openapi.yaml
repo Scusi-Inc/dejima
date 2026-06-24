@@ -891,6 +891,24 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/islands/{name}/grants:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [grants]
+      summary: All grant types for one island in a single shape (deny-all by default)
+      description: >
+        The unified per-island grants view: Port host-folder scopes, host
+        capability targets, MCP servers, and the inter-island link channels that
+        touch this island — in one operator-readable call instead of four. A
+        fresh island returns empty arrays across all four (deny-all is genuine).
+      operationId: listIslandGrants
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandGrantsResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/credentials/claude:
     get:
       tags: [credentials]
@@ -1913,6 +1931,26 @@ components:
         grants:
           type: array
           items: { $ref: "#/components/schemas/MCPGrantView" }
+    IslandGrantsResponse:
+      type: object
+      description: >
+        Every grant type an island holds, in one shape. Each field mirrors the
+        element type of the corresponding per-resource list endpoint; links are
+        filtered to channels touching this island. All arrays are non-null
+        (empty for a deny-all island).
+      properties:
+        port:
+          type: array
+          items: { $ref: "#/components/schemas/PortScopeView" }
+        capability:
+          type: array
+          items: { $ref: "#/components/schemas/CapabilityGrantView" }
+        mcp:
+          type: array
+          items: { $ref: "#/components/schemas/MCPGrantView" }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/LinkGrant" }
     MCPCallRequest:
       type: object
       required: [server, method]

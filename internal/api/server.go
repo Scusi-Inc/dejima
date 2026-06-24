@@ -527,6 +527,10 @@ func (s *Server) routes() *http.ServeMux {
 	// ledgered call path. Grant routes are operator-only (absent from
 	// tokenRouteAccess). See internal/api/mcp.go + docs/mcp-broker-spec.md.
 	s.RegisterMCP(mux)
+	// Unified per-island grants view — every grant type (Port, capability, MCP,
+	// links) in one operator-readable call. Aggregates the four list endpoints
+	// above; owns no store. See internal/api/grants.go.
+	mux.HandleFunc("GET /v1/islands/{name}/grants", s.handleListGrants)
 	// Team-auth: token issuance/list/revoke (owner-only; see roleauth.go +
 	// tokens.go). Registered as one append-only line per the lane seam contract.
 	s.RegisterAuth(mux)
