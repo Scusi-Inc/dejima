@@ -53,8 +53,11 @@ DEJIMA_SUITE="${DEJIMA_SUITE:-tier2-integration}"
 assert_eq(){ if [ "$1" = "$2" ]; then pass "$3"; else fail "$3 — got [$1] want [$2]"; fi; }
 assert_has(){ if printf '%s' "$1" | grep -qF -- "$2"; then pass "$3"; else fail "$3 — missing [$2]"; fi; }
 # expect_ok / expect_fail: run a command, assert its exit status, never abort.
-expect_ok(){ local d="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$d"; else fail "$d — command failed: $*"; fi; }
-expect_fail(){ local d="$1"; shift; if "$@" >/dev/null 2>&1; then fail "$d — expected failure but it succeeded"; else pass "$d"; fi; }
+# Capture the command's output and surface it (squashed to one line) in the
+# failure detail, so a red feature is self-explanatory in the run summary + the
+# filed tracking issue instead of needing the daemon log to diagnose.
+expect_ok(){ local d="$1"; shift; local out rc; out="$("$@" 2>&1)"; rc=$?; out="$(printf '%s' "$out" | tr '\n' ' ')"; if [ "$rc" -eq 0 ]; then pass "$d"; else fail "$d — command failed (rc=$rc): $* — ${out}"; fi; }
+expect_fail(){ local d="$1"; shift; local out rc; out="$("$@" 2>&1)"; rc=$?; out="$(printf '%s' "$out" | tr '\n' ' ')"; if [ "$rc" -eq 0 ]; then fail "$d — expected failure but it succeeded; output: ${out}"; else pass "$d"; fi; }
 # expect_err_match <desc> <substring> <cmd...>: assert the command FAILS *and*
 # its output contains <substring> — so an unrelated non-zero exit can't pass for
 # a security guard. Used for traversal/deny-all refusals.
