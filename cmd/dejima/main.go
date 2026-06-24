@@ -1203,11 +1203,11 @@ func newConnectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "connect <name>",
 		Short: "Attach to an island's session.",
-		Long: "Open an interactive PTY into the island's tmux session via the Dejima API. " +
-			"Multiple clients can attach simultaneously (shared tmux). Disconnect with the " +
-			"normal tmux detach key (Ctrl-b then d).\n\n" +
-			"For islands with multiple agents, target one with --agent <id> or the " +
-			"`<name>/<agent>` shorthand; the bare name attaches to the primary agent.",
+		Long: "Open an interactive PTY into the island via the Dejima API. With no agent, " +
+			"you get a contained shell at /workspace (the same place agents run); target an " +
+			"agent with --agent <id> or the `<name>/<agent>` shorthand. Multiple clients can " +
+			"attach simultaneously (shared tmux). Disconnect with the normal tmux detach key " +
+			"(Ctrl-b then d).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, agent := splitIslandAgent(args[0])
@@ -1234,11 +1234,16 @@ func newConnectCmd() *cobra.Command {
 			if info.Repo != "" {
 				waitForWorkspaceReady(cmd.Context(), c, name)
 			}
+			// No agent named → a contained shell at /workspace (matches the TUI's
+			// Enter-on-island and SSH). An explicit agent attaches that agent.
+			if agent == "" {
+				return runInShellSession(cmd.Context(), c, name, label, false) // bare CLI — no dashboard to summon back to
+			}
 			return runSession(cmd.Context(), c, name, agent, label)
 		},
 	}
 	cmd.Flags().StringVar(&label, "as", "", "client label shown in presence (default: $HOSTNAME or 'cli')")
-	cmd.Flags().StringVar(&agentID, "agent", "", "agent id to attach to (default: the island's primary agent)")
+	cmd.Flags().StringVar(&agentID, "agent", "", "agent id to attach to (default: a shell at /workspace)")
 	return cmd
 }
 
@@ -1852,7 +1857,7 @@ func newAgentAddCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&typ, "type", "", "agent type (default: same as the island's primary agent)")
+	cmd.Flags().StringVar(&typ, "type", "", "agent type (default: same as the island's first agent)")
 	cmd.Flags().StringVar(&label, "label", "", "optional label for the agent")
 	cmd.Flags().StringVar(&provider, "provider", "", "LLM provider for key-requiring agent types")
 	cmd.Flags().StringVar(&model, "model", "", "model string, e.g. anthropic/claude-sonnet-4-6")

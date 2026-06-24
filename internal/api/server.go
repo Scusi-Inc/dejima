@@ -1010,12 +1010,15 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
 		return
 	}
-	if len(p.Agents) <= 1 {
-		writeError(w, http.StatusConflict, errors.New("cannot remove the last agent; purge the island instead"))
-		return
-	}
-	if pa := p.PrimaryAgent(); pa != nil && pa.ID == id {
-		writeError(w, http.StatusConflict, errors.New("cannot remove the primary agent"))
+	// Any agent can be removed — an island with no agents is valid (you shell into
+	// it, or add agents later); the container's tail -f keepalive outlives them.
+	// The one exception: a headless FIRST agent IS the container's PID 1
+	// (image/start.sh runs it as the main process), so removing it would stop the
+	// island. Direct the user to hibernate/purge instead. (Path B removes this
+	// coupling; see docs/island-pid1-unification.md.)
+	if len(p.Agents) > 0 && p.Agents[0].ID == id && !handlers.Attachable(p.Agents[0].Type) {
+		writeError(w, http.StatusConflict, errors.New(
+			"this agent is the island's main process (PID 1) — hibernate or purge the island instead"))
 		return
 	}
 	// Persist the removal first (the source of truth), then clean up the agent's
@@ -1752,6 +1755,11 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 				}
 			}
 		}
+	} else {
+		// No agents (all removed, or seeded with none): the entrypoint just keeps
+		// the container alive so you can shell in or add agents later, instead of
+		// erroring on a missing launch command. See image/start.sh.
+		env["DEJIMA_AGENTLESS"] = "1"
 	}
 	env["DEJIMA_AGENT"] = agentType
 	if seedPath != "" {

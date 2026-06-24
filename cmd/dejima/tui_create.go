@@ -906,13 +906,10 @@ func (c *creatorModel) viewAgent(b *strings.Builder) {
 func (c *creatorModel) viewAgents(b *strings.Builder) {
 	b.WriteString(styleMuted.Render(c.resolution.Note))
 	b.WriteString("\n\n")
-	b.WriteString(styleMuted.Render("Agents to seed (the first is primary — it backs `dejima connect`):"))
+	b.WriteString(styleMuted.Render("Agents to seed (or none — you can shell in and add agents later):"))
 	b.WriteString("\n\n")
 	for i, a := range c.agents {
-		role := "primary"
-		if i > 0 {
-			role = fmt.Sprintf("agent %d", i+1)
-		}
+		role := fmt.Sprintf("agent %d", i+1)
 		line := fmt.Sprintf("%-9s %s", role, a.Type)
 		if a.Cmd != "" {
 			line += "  — " + a.Cmd
