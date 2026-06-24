@@ -1097,6 +1097,12 @@ func (c *Client) ListAgents(ctx context.Context, name string) ([]AgentInfo, erro
 	return out, nil
 }
 
+// MoveAgent reorders an agent within its island by delta positions (negative =
+// toward the front), clamped to the ends. Order is cosmetic.
+func (c *Client) MoveAgent(ctx context.Context, name, id string, delta int) error {
+	return c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(name)+"/agents/"+url.PathEscape(id)+"/move", MoveAgentRequest{Delta: delta}, nil)
+}
+
 // AddAgent adds an agent to an island.
 func (c *Client) AddAgent(ctx context.Context, name string, req AgentSpecRequest) (*AgentInfo, error) {
 	var out AgentInfo

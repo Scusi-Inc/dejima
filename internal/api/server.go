@@ -461,6 +461,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}", s.getAgent)
 	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/move", s.moveAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
 	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
@@ -1134,6 +1135,46 @@ func (s *Server) updateIslandResources(w http.ResponseWriter, r *http.Request) {
 // updateAgent changes an agent's cosmetic label. Everything else (id, type,
 // worktree, session) is immutable — the id is the stable handle, the label is
 // the renamable display name, mirroring the island Name / agent Label split.
+// MoveAgentRequest reorders an agent within its island's list. Delta is the
+// number of positions to shift (negative = toward the front); it's clamped to
+// the ends.
+type MoveAgentRequest struct {
+	Delta int `json:"delta"`
+}
+
+// moveAgent reorders an agent within its island. Order is cosmetic (the
+// dashboard/CLI no longer key off position), except Agents[0] still seeds the
+// container entrypoint on the next recreate — moving a headless first agent off
+// slot 0 only matters then; see docs/island-pid1-unification.md.
+func (s *Server) moveAgent(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("name"), r.PathValue("id")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if _, ok := p.AgentByID(id); !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
+		return
+	}
+	var req MoveAgentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	if p.MoveAgent(id, req.Delta) {
+		if err := p.Save(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, s.agentInfos(r.Context(), p, false))
+}
+
 func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	name, id := r.PathValue("name"), r.PathValue("id")
 	lock := s.projectLock(name)

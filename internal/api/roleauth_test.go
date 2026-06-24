@@ -43,6 +43,8 @@ func TestAuthorizeRoleMatrix(t *testing.T) {
 		{"viewer cannot create", viewer, "POST /v1/islands", "/v1/islands", true},
 		{"operator wakes", operator, "POST /v1/islands/{name}/wake", "/v1/islands/alpha/wake", false},
 		{"operator opens island shell", operator, "GET /v1/islands/{name}/shell/session", "/v1/islands/alpha/shell/session", false},
+		{"viewer cannot reorder agents", viewer, "POST /v1/islands/{name}/agents/{id}/move", "/v1/islands/alpha/agents/p1/move", true},
+		{"operator reorders agents", operator, "POST /v1/islands/{name}/agents/{id}/move", "/v1/islands/alpha/agents/p1/move", false},
 		{"operator creates", operator, "POST /v1/islands", "/v1/islands", false},
 		{"operator grants port scope", operator, "POST /v1/islands/{name}/port/scopes", "/v1/islands/alpha/port/scopes", false},
 
