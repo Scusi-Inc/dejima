@@ -131,15 +131,29 @@ DAEMON_PID=""
 REPO_DIR="$REAL_HOME/.cache/dejima-itest-$$"
 REPO="$REPO_DIR/repo"
 
+# force_remove_itest_docker tears down every test island's docker objects
+# DIRECTLY (no daemon needed). A crashed/Ctrl-C'd run kills the daemon before
+# `dejima purge` can run, orphaning `dejima-itest-*` containers — then the next
+# run's `docker run --name` fails with exit 125 ("name already in use"). Scoped
+# to the exact itest-* names so real islands are never touched.
+force_remove_itest_docker(){
+  local isl
+  for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD" "$ISLAND_READOPT"; do
+    docker rm -f "dejima-$isl" >/dev/null 2>&1 || true
+    docker volume rm -f "dejima-$isl-workspace" "dejima-$isl-home" >/dev/null 2>&1 || true
+    docker network rm "dejima-net-$isl" >/dev/null 2>&1 || true
+  done
+}
+
 cleanup(){
   set +e
   for isl in "$ISLAND" "$ISLAND_MULTI" "$ISLAND_CLONE" "$ISLAND_A" "$ISLAND_B" "$ISLAND_GUARD" "$ISLAND_READOPT"; do
     [ -n "$DAEMON_PID" ] && dejima purge "$isl" -f >/dev/null 2>&1
   done
-  # The re-adopt feature can leave a named volume behind on a mid-run failure
-  # (that's the whole point — keep-islands keeps it). Sweep it in cleanup so a
-  # crashed run doesn't strand a docker volume.
-  docker volume rm -f "dejima-$ISLAND_READOPT-workspace" "dejima-$ISLAND_READOPT-home" >/dev/null 2>&1
+  # Backstop the graceful purge above with a direct docker teardown, so a run
+  # that dies before/while the daemon is up still leaves no orphaned containers
+  # or volumes to collide with the next run.
+  force_remove_itest_docker
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
   # Preserve the daemon log at a STABLE path before nuking $TMP, so a failure can
   # be diagnosed by `cat`-ing one file instead of scrolling a tmux pane.
@@ -157,6 +171,11 @@ cleanup(){
 # (cleanup) exactly once.
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+
+# Startup sweep: clear any dejima-itest-* docker objects a previously interrupted
+# run left behind, so the first `docker run --name` doesn't 125 on a name
+# conflict. No-op (silenced) when docker isn't up yet — bootstrap checks that.
+force_remove_itest_docker
 
 # ---------------------------------------------------------------------------
 feature "bootstrap (build/daemon/image/create)"
