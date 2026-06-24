@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -43,21 +44,39 @@ func runTUI(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	m := initialTUIModel(c)
-	finalRaw, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
-	if err != nil {
-		return err
+	// The dashboard runs in a loop with attached sessions: normally an attach
+	// quits the TUI into the raw bridge and a detach exits to the shell, but the
+	// summon chord (Ctrl-\) ends a session with errSummonBand, which brings us
+	// back here with the host-terminal band open instead of exiting.
+	summonReturn := false
+	for {
+		m := initialTUIModel(c)
+		if summonReturn {
+			m.bandExpanded, m.bandFocused = true, true
+		}
+		finalRaw, rerr := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+		if rerr != nil {
+			return rerr
+		}
+		final := finalRaw.(tuiModel)
+		c = final.client // the switcher may have swapped the client mid-session
+
+		var sessErr error
+		switch {
+		case final.connectTerminal != "":
+			// Attach to a host terminal (uncontained shell on the daemon host).
+			sessErr = runTerminalSession(ctx, c, final.connectTerminal, defaultLabel(), true)
+		case final.connectTo != "":
+			sessErr = runConnectFromTUI(ctx, c, final.connectTo, final.connectAgent)
+		default:
+			return nil // the user quit the dashboard — leave dejima
+		}
+		if errors.Is(sessErr, errSummonBand) {
+			summonReturn = true
+			continue // re-enter the dashboard with the band open
+		}
+		return sessErr // normal detach / error → exit to the shell, as before
 	}
-	final := finalRaw.(tuiModel)
-	if final.connectTerminal != "" {
-		// Attach to a host terminal (uncontained shell on the daemon host).
-		return runTerminalSession(ctx, final.client, final.connectTerminal, defaultLabel())
-	}
-	if final.connectTo != "" {
-		// Use the model's client, which may have been swapped via the switcher.
-		return runConnectFromTUI(ctx, final.client, final.connectTo, final.connectAgent)
-	}
-	return nil
 }
 
 func runConnectFromTUI(ctx context.Context, c *api.Client, name, agentID string) error {
@@ -68,7 +87,8 @@ func runConnectFromTUI(ctx context.Context, c *api.Client, name, agentID string)
 	if info.Container != "running" {
 		return fmt.Errorf("island %q is %s; `dejima wake %s` first", name, info.Container, name)
 	}
-	return runSession(ctx, c, name, agentID, defaultLabel())
+	// Launched from the TUI, so the summon chord (Ctrl-\) can return there.
+	return runSessionSummonable(ctx, c, name, agentID, defaultLabel())
 }
 
 // ---------------------------------------------------------------------------
@@ -3018,6 +3038,7 @@ func (m tuiModel) renderHelp() string {
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
 		{"PgUp/PgDn", "scroll the detail panel (events, agents) — Ctrl-u/Ctrl-d also work"},
 		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
+		{"Ctrl-\\", "from inside a session: summon this dashboard (with the terminal band) — session stays alive"},
 		{"q", "quit the dashboard"},
 	}
 	for _, kv := range basic {
