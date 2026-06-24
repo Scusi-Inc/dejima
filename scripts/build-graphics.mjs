@@ -44,7 +44,7 @@ const island = (x, label, agents) => `
     ${agents.map((a, i) => agentChip(22, 62 + i * 58, a[0], a[1])).join('')}
   </g>`
 
-const ARCH_W = 1120, ARCH_H = 660
+const ARCH_W = 1120, ARCH_H = 568
 const arch = `<svg xmlns="http://www.w3.org/2000/svg" width="${ARCH_W}" height="${ARCH_H}" viewBox="0 0 ${ARCH_W} ${ARCH_H}">
   <rect width="${ARCH_W}" height="${ARCH_H}" fill="${C.bg}"/>
   <g font-family="DejaVu Sans">
@@ -60,14 +60,11 @@ const arch = `<svg xmlns="http://www.w3.org/2000/svg" width="${ARCH_W}" height="
     <path d="M 553 162 L 560 174 L 567 162 Z" fill="${C.accent}"/>
     <text x="582" y="132" font-size="16" fill="${C.muted}">websocket · HTTP API — over Tailscale</text>
     <!-- host -->
-    <rect x="40" y="180" width="1040" height="440" rx="14" fill="${C.card}" stroke="${C.border}" stroke-width="1.5"/>
+    <rect x="40" y="180" width="1040" height="362" rx="14" fill="${C.card}" stroke="${C.border}" stroke-width="1.5"/>
     <text x="64" y="222" font-size="22" font-weight="bold" fill="${C.accent}">Dejima host</text>
     <text x="214" y="222" font-size="19" fill="${C.muted}">— Mac mini / VPS / cloud VM</text>
-    ${island(80, 'island: web', [['a1', 'claude-code'], ['a2', 'codex'], ['a3', 'headless']])}
-    ${island(624, 'island: api', [['a1', 'codex'], ['a2', 'claude-code']])}
-    <!-- notes -->
-    <text x="80" y="566" font-size="16" fill="${C.muted}"><tspan fill="${C.fg}" font-weight="bold">per island:</tspan>  one container · shared home + credentials</text>
-    <text x="80" y="596" font-size="16" fill="${C.muted}"><tspan fill="${C.fg}" font-weight="bold">per agent:</tspan>  own git worktree · sandboxed from host &amp; each other</text>
+    ${island(80, 'island: web', [['a1', 'claude-code'], ['a2', 'openclaw'], ['a3', 'shell']])}
+    ${island(624, 'island: api', [['a1', 'codex'], ['a2', 'letta'], ['a3', 'headless']])}
   </g>
 </svg>`
 render(arch, ARCH_W, 'architecture')
