@@ -133,42 +133,16 @@ fi
 
 cd "$WORKSPACE"
 
-# --- launch the agent -----------------------------------------------------
-# Agent-less island: nothing to launch — just keep the container alive so the
-# operator can shell in (`dejima connect <name>`) or add agents later. Set by
-# the daemon when the island has no agents (all removed, or seeded with none).
-if [[ -n "${DEJIMA_AGENTLESS:-}" ]]; then
-    echo "dejima island '${PROJECT}' ready; no agents — shell in with 'dejima connect ${PROJECT}', or add one"
-    exec tail -f /dev/null
-fi
-
-# "headless" is the escape hatch: the agent is a user-supplied command
-# (DEJIMA_AGENT_CMD) run as the container's main process, with stdout/stderr
-# captured by Docker so `dejima logs` works — no tmux, no attach surface.
-if [[ "$AGENT" == "headless" ]]; then
-    if [[ -z "${DEJIMA_AGENT_CMD:-}" ]]; then
-        echo "dejima: agent=headless requires DEJIMA_AGENT_CMD" >&2
-        exit 64
-    fi
-    echo "dejima island '${PROJECT}' ready; running headless: ${DEJIMA_AGENT_CMD}"
-    exec /bin/sh -c "$DEJIMA_AGENT_CMD"
-fi
-
-# Interactive primary agent: the daemon supplies the launch command via
-# DEJIMA_LAUNCH (from the handler registry). The fallback to the agent name
-# only matters for a bare `docker run` with no daemon (debugging).
-if [[ -z "$LAUNCH" ]]; then
-    LAUNCH="$AGENT"
-fi
-
-# CLI agents run under tmux so multiple clients can attach to the same screen
-# and the session survives client disconnects.
-if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux new-session -d -s "$SESSION" -c "$WORKSPACE" "$LAUNCH"
-fi
-
-echo "dejima island '${PROJECT}' ready; tmux session '${SESSION}' running ${LAUNCH}"
-echo "attach with: docker exec -it dejima-${PROJECT} tmux attach-session -t ${SESSION}"
-
-# Keep container alive while tmux server runs.
+# --- keep the container alive; the daemon launches every agent ------------
+# Path B (island PID-1 unification): the entrypoint NO LONGER launches any
+# agent. It is always a keepalive — PID 1 = `tail -f /dev/null` — so the
+# container outlives every agent and no agent is ever PID 1. The daemon brings
+# up ALL agents (interactive and headless, first and co-located) uniformly via
+# `docker exec tmux new-session` (reconcileAgents / ensureAgentSession), so
+# adding, removing, and reordering any agent is symmetric, and zero-agent
+# islands work for every type. See docs/island-pid1-unification.md.
+#
+# (SESSION/LAUNCH/DEJIMA_AGENT_CMD are no longer read here; the daemon owns
+# launch. DEJIMA_AGENT still selects the boot shim above.)
+echo "dejima island '${PROJECT}' ready; agents managed by the daemon (attach: dejima connect ${PROJECT})"
 exec tail -f /dev/null

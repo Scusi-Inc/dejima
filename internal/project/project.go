@@ -14,11 +14,6 @@ import (
 	"github.com/aoos/dejima/internal/paths"
 )
 
-// agentTypeHeadless mirrors api.AgentHeadless. It's duplicated here to avoid an
-// import cycle (the api package imports project, not vice-versa). The handler
-// registry (internal/handlers) centralizes agent-type knowledge in a later phase.
-const agentTypeHeadless = "headless"
-
 // State is the desired state of an island.
 type State string
 
@@ -168,9 +163,11 @@ func (p *Project) EnsureAgents() {
 		Worktree:  "/workspace",
 		CreatedAt: p.CreatedAt,
 	}
-	if p.Agent != agentTypeHeadless {
-		spec.Tmux = "agent-" + spec.ID // uniform with non-primary agents
-	}
+	// Path B: every agent — interactive AND headless — runs in a daemon-launched
+	// tmux session (no agent is the container's PID 1), so the headless primary
+	// gets a session name too. (It was "" before, when headless ran as PID 1 via
+	// the entrypoint.) See docs/island-pid1-unification.md.
+	spec.Tmux = "agent-" + spec.ID
 	p.Agents = []AgentSpec{spec}
 }
 
@@ -276,6 +273,12 @@ func (p *Project) RemoveAgent(id string) bool {
 	for i := range p.Agents {
 		if p.Agents[i].ID == id {
 			p.Agents = append(p.Agents[:i], p.Agents[i+1:]...)
+			if len(p.Agents) == 0 {
+				// Last agent gone: clear the legacy scalar so EnsureAgents (run on
+				// Load) doesn't resurrect a phantom agent from it. The island stays
+				// up on its keepalive entrypoint (Path B).
+				p.Agent, p.Cmd = "", ""
+			}
 			return true
 		}
 	}

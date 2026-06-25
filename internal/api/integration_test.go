@@ -410,11 +410,12 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	f.mu.Lock()
 	cr := f.lastCreate
 	f.mu.Unlock()
-	if cr.Env["DEJIMA_LAUNCH"] != "claude" {
-		t.Errorf("DEJIMA_LAUNCH = %q, want claude", cr.Env["DEJIMA_LAUNCH"])
-	}
-	if cr.Env["DEJIMA_TMUX"] != "agent-p1" {
-		t.Errorf("DEJIMA_TMUX = %q, want agent-p1", cr.Env["DEJIMA_TMUX"])
+	// Path B: the entrypoint launches nothing, so the entrypoint-launch env vars
+	// are gone (the daemon launches every agent via reconcileAgents). DEJIMA_AGENT
+	// stays — it still selects the boot shim by agent type.
+	if cr.Env["DEJIMA_LAUNCH"] != "" || cr.Env["DEJIMA_TMUX"] != "" || cr.Env["DEJIMA_AGENT_CMD"] != "" {
+		t.Errorf("Path B should not set entrypoint-launch env, got LAUNCH=%q TMUX=%q CMD=%q",
+			cr.Env["DEJIMA_LAUNCH"], cr.Env["DEJIMA_TMUX"], cr.Env["DEJIMA_AGENT_CMD"])
 	}
 	if cr.Env["DEJIMA_AGENT"] != "claude-code" {
 		t.Errorf("DEJIMA_AGENT = %q, want claude-code", cr.Env["DEJIMA_AGENT"])
@@ -562,18 +563,30 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	}
 }
 
-// TestRemoveHeadlessFirstAgentRefused: a headless first agent IS the container's
-// PID 1 (start.sh runs it as the main process), so removing it would stop the
-// island — the daemon refuses with 409 and points to hibernate/purge.
-func TestRemoveHeadlessFirstAgentRefused(t *testing.T) {
+// TestRemoveHeadlessFirstAgentAllowed: Path B retires the PID-1 coupling — the
+// entrypoint is a keepalive, so even a headless FIRST agent can be removed; the
+// island survives agent-less (you shell in or add agents later).
+func TestRemoveHeadlessFirstAgentAllowed(t *testing.T) {
 	h, _ := newTestServer(t)
 	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"hl","agent":"headless","cmd":"sleep infinity"}`); rr.Code != http.StatusCreated {
 		t.Fatalf("create headless island: %d %s", rr.Code, rr.Body.String())
 	}
 	// "hl" → agent id prefix "h" → first agent "h1".
 	rr := do(t, h, http.MethodDelete, "/v1/islands/hl/agents/h1", "")
-	if rr.Code != http.StatusConflict {
-		t.Errorf("remove headless PID-1 agent: got %d, want 409 (body: %s)", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK && rr.Code != http.StatusNoContent {
+		t.Fatalf("remove headless first agent: got %d, want 2xx (body: %s)", rr.Code, rr.Body.String())
+	}
+	// The island is now agent-less but still present.
+	rr = do(t, h, http.MethodGet, "/v1/islands/hl", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("island should still exist after removing its only agent: %d", rr.Code)
+	}
+	var isl IslandInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &isl); err != nil {
+		t.Fatal(err)
+	}
+	if len(isl.Agents) != 0 {
+		t.Errorf("island should be agent-less, got %d agents", len(isl.Agents))
 	}
 }
 

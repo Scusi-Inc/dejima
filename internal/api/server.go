@@ -1016,17 +1016,11 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
 		return
 	}
-	// Any agent can be removed — an island with no agents is valid (you shell into
-	// it, or add agents later); the container's tail -f keepalive outlives them.
-	// The one exception: a headless FIRST agent IS the container's PID 1
-	// (image/start.sh runs it as the main process), so removing it would stop the
-	// island. Direct the user to hibernate/purge instead. (Path B removes this
-	// coupling; see docs/island-pid1-unification.md.)
-	if len(p.Agents) > 0 && p.Agents[0].ID == id && !handlers.Attachable(p.Agents[0].Type) {
-		writeError(w, http.StatusConflict, errors.New(
-			"this agent is the island's main process (PID 1) — hibernate or purge the island instead"))
-		return
-	}
+	// Path B: ANY agent can be removed — no agent is the container's PID 1 (the
+	// entrypoint is a keepalive that outlives them all), so the former "can't
+	// remove a headless first agent (it's PID 1)" guard is gone. A zero-agent
+	// island is valid: you shell into it or add agents later. See
+	// docs/island-pid1-unification.md.
 	// Persist the removal first (the source of truth), then clean up the agent's
 	// tmux session + worktree best-effort. The cleanup execs into the container,
 	// which can be busy or wedged — so it runs detached and bounded rather than
@@ -1774,42 +1768,29 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		env["DEJIMA_HOST"] = s.autonomyDial
 		env["DEJIMA_TOKEN"] = tok
 	}
-	// Everything the entrypoint needs about the primary agent flows via env, so
-	// the launch command lives in one place (the handler registry) rather than
-	// being duplicated in start.sh. Non-primary agents are launched by the daemon
-	// (reconcileAgents), each overriding DEJIMA_AGENT_ID per session.
+	// Path B: the entrypoint launches NO agent (it's a keepalive), so the former
+	// entrypoint-launch vars are gone — DEJIMA_LAUNCH / DEJIMA_AGENT_CMD /
+	// DEJIMA_TMUX / DEJIMA_AGENTLESS. The daemon launches every agent via
+	// reconcileAgents (agentLaunchScript sets each session's DEJIMA_AGENT_ID).
+	// DEJIMA_AGENT still selects the boot shim (per agent TYPE), and the LLM
+	// provider/model env feeds that shim — the key bytes are never injected, only
+	// the path to the read-only mounted file (materialized by islandLLMConfigDir),
+	// so the secret never appears in env / `docker inspect`.
 	agentType := p.Agent
 	if pa := p.PrimaryAgent(); pa != nil {
 		agentType = pa.Type
 		env["DEJIMA_AGENT_ID"] = pa.ID
-		env["DEJIMA_TMUX"] = pa.Tmux
-		if pa.Cmd != "" {
-			env["DEJIMA_AGENT_CMD"] = pa.Cmd
-		}
-		if h, ok := handlers.Lookup(pa.Type); ok {
-			env["DEJIMA_LAUNCH"] = h.Launch // empty for headless → entrypoint runs DEJIMA_AGENT_CMD as PID 1
-			// LLM provider/model selection for frameworks that reach a model over
-			// an API key. The key bytes are NOT injected here — only the path to
-			// the read-only mounted file is (materialized by islandLLMConfigDir),
-			// so the secret never appears in env / `docker inspect`. The per-agent
-			// shim sources the file and translates DEJIMA_MODEL into native config.
-			if h.RequiresProviderKey {
-				if pa.Model != "" {
-					env["DEJIMA_MODEL"] = pa.Model
-				}
-				if store, err := providercreds.Load(); err == nil {
-					if prov, ok := store.Resolve(pa.Provider); ok {
-						env["DEJIMA_PROVIDER"] = prov.Name
-						env["DEJIMA_PROVIDER_KEY_FILE"] = "/opt/host/llm/" + prov.Name + ".env"
-					}
+		if h, ok := handlers.Lookup(pa.Type); ok && h.RequiresProviderKey {
+			if pa.Model != "" {
+				env["DEJIMA_MODEL"] = pa.Model
+			}
+			if store, err := providercreds.Load(); err == nil {
+				if prov, ok := store.Resolve(pa.Provider); ok {
+					env["DEJIMA_PROVIDER"] = prov.Name
+					env["DEJIMA_PROVIDER_KEY_FILE"] = "/opt/host/llm/" + prov.Name + ".env"
 				}
 			}
 		}
-	} else {
-		// No agents (all removed, or seeded with none): the entrypoint just keeps
-		// the container alive so you can shell in or add agents later, instead of
-		// erroring on a missing launch command. See image/start.sh.
-		env["DEJIMA_AGENTLESS"] = "1"
 	}
 	env["DEJIMA_AGENT"] = agentType
 	if seedPath != "" {
@@ -1865,9 +1846,9 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 // island's workspace.
 const agentsWorktreeRoot = "/workspace/.agents"
 
-// reconcileAgentsAsync ensures the island's non-primary agent sessions exist, in
-// the background. The container entrypoint launches the primary agent; the
-// daemon owns the rest. Safe to call after create, wake, and at adopt.
+// reconcileAgentsAsync ensures the island's agent sessions exist, in the
+// background. Path B: the entrypoint launches nothing (keepalive only), so the
+// daemon owns every agent. Safe to call after create, wake, and at adopt.
 func (s *Server) reconcileAgentsAsync(p *project.Project) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -1879,16 +1860,18 @@ func (s *Server) reconcileAgentsAsync(p *project.Project) {
 }
 
 // reconcileAgents brings tmux sessions and worktrees into line with p.Agents for
-// every non-primary agent. Idempotent. The primary (Agents[0]) is launched by
-// the entrypoint and skipped here.
+// EVERY agent. Idempotent. Path B: the entrypoint is now a keepalive that
+// launches no agent, so the daemon launches all of them — including the first —
+// uniformly here. (Was: started at i=1, skipping Agents[0], which the entrypoint
+// launched as the container's PID 1.) See docs/island-pid1-unification.md.
 func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error {
-	if len(p.Agents) <= 1 {
+	if len(p.Agents) == 0 {
 		return nil
 	}
 	if !s.waitForWorkspace(ctx, p) {
 		return fmt.Errorf("workspace not ready for %q", p.Name)
 	}
-	for i := 1; i < len(p.Agents); i++ {
+	for i := 0; i < len(p.Agents); i++ {
 		a := &p.Agents[i]
 		if err := s.ensureAgentSession(ctx, p, a); err != nil {
 			s.setAgentError(p.Name, a.ID, err)
@@ -2189,7 +2172,7 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandWoken, Island: p.Name})
-	s.reconcileAgentsAsync(p) // the entrypoint relaunches the primary; restore the rest
+	s.reconcileAgentsAsync(p) // Path B: the entrypoint launches nothing; restore ALL agents
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
