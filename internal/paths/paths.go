@@ -270,6 +270,20 @@ func LinksDir() (string, error) {
 	return dir, nil
 }
 
+// PolicyDir returns ~/.dejima/policy — the daemon's store of action-gate
+// auto-approve rules (Lane 5, Phase 3.x). Created 0700.
+func PolicyDir() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, "policy")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // LLMSecretsDir returns ~/.dejima/secrets/llm — the daemon's store of LLM
 // provider credentials (provider→api_key) and the per-island provider configs
 // materialized from them. Created 0700.

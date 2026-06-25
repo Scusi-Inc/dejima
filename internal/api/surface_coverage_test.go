@@ -230,3 +230,20 @@ func TestSurfaceLinkApproveDeny(t *testing.T) {
 		t.Fatalf("deny unknown action should be a 4xx, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestSurfacePolicy(t *testing.T) {
+	h, _ := newTestServer(t)
+	// list (empty) — wired, 2xx.
+	if rr := do(t, h, http.MethodGet, "/v1/policy", ""); !ok2xx(rr.Code) {
+		t.Fatalf("GET /v1/policy should be 2xx, got %d: %s", rr.Code, rr.Body.String())
+	}
+	// add against missing islands → a clean 4xx (route wired; validates then 404s),
+	// never a 5xx or an unrouted bare 404.
+	if rr := do(t, h, http.MethodPost, "/v1/policy", `{"from":"nope-a","to":"nope-b","action":"dispatch","max_count":5,"ttl":"1h"}`); rr.Code >= 500 {
+		t.Fatalf("POST /v1/policy should not 5xx, got %d: %s", rr.Code, rr.Body.String())
+	}
+	// remove a nonexistent rule → 404 (route wired).
+	if rr := do(t, h, http.MethodDelete, "/v1/policy?from=nope-a&to=nope-b&action=dispatch", ""); rr.Code >= 500 {
+		t.Fatalf("DELETE /v1/policy should not 5xx, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
