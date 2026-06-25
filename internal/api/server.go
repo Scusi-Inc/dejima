@@ -456,11 +456,13 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/ssh/account-keys", s.handleAuthorizeAccountKey)
 	mux.HandleFunc("GET /v1/ssh/account-keys", s.handleListAccountKeys)
 	mux.HandleFunc("GET /v1/islands/{name}/session", s.sessionWS)
+	mux.HandleFunc("GET /v1/islands/{name}/shell/session", s.islandShellWS)
 	mux.HandleFunc("GET /v1/islands/{name}/agents", s.listAgents)
 	mux.HandleFunc("POST /v1/islands/{name}/agents", s.addAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}", s.getAgent)
 	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/move", s.moveAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
 	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
@@ -1010,12 +1012,15 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
 		return
 	}
-	if len(p.Agents) <= 1 {
-		writeError(w, http.StatusConflict, errors.New("cannot remove the last agent; purge the island instead"))
-		return
-	}
-	if pa := p.PrimaryAgent(); pa != nil && pa.ID == id {
-		writeError(w, http.StatusConflict, errors.New("cannot remove the primary agent"))
+	// Any agent can be removed — an island with no agents is valid (you shell into
+	// it, or add agents later); the container's tail -f keepalive outlives them.
+	// The one exception: a headless FIRST agent IS the container's PID 1
+	// (image/start.sh runs it as the main process), so removing it would stop the
+	// island. Direct the user to hibernate/purge instead. (Path B removes this
+	// coupling; see docs/island-pid1-unification.md.)
+	if len(p.Agents) > 0 && p.Agents[0].ID == id && !handlers.Attachable(p.Agents[0].Type) {
+		writeError(w, http.StatusConflict, errors.New(
+			"this agent is the island's main process (PID 1) — hibernate or purge the island instead"))
 		return
 	}
 	// Persist the removal first (the source of truth), then clean up the agent's
@@ -1131,6 +1136,46 @@ func (s *Server) updateIslandResources(w http.ResponseWriter, r *http.Request) {
 // updateAgent changes an agent's cosmetic label. Everything else (id, type,
 // worktree, session) is immutable — the id is the stable handle, the label is
 // the renamable display name, mirroring the island Name / agent Label split.
+// MoveAgentRequest reorders an agent within its island's list. Delta is the
+// number of positions to shift (negative = toward the front); it's clamped to
+// the ends.
+type MoveAgentRequest struct {
+	Delta int `json:"delta"`
+}
+
+// moveAgent reorders an agent within its island. Order is cosmetic (the
+// dashboard/CLI no longer key off position), except Agents[0] still seeds the
+// container entrypoint on the next recreate — moving a headless first agent off
+// slot 0 only matters then; see docs/island-pid1-unification.md.
+func (s *Server) moveAgent(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("name"), r.PathValue("id")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if _, ok := p.AgentByID(id); !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
+		return
+	}
+	var req MoveAgentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	if p.MoveAgent(id, req.Delta) {
+		if err := p.Save(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, s.agentInfos(r.Context(), p, false))
+}
+
 func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	name, id := r.PathValue("name"), r.PathValue("id")
 	lock := s.projectLock(name)
@@ -1756,6 +1801,11 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 				}
 			}
 		}
+	} else {
+		// No agents (all removed, or seeded with none): the entrypoint just keeps
+		// the container alive so you can shell in or add agents later, instead of
+		// erroring on a missing launch command. See image/start.sh.
+		env["DEJIMA_AGENTLESS"] = "1"
 	}
 	env["DEJIMA_AGENT"] = agentType
 	if seedPath != "" {
