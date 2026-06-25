@@ -169,6 +169,11 @@ var roleRouteCap = map[string]roleCap{
 	"GET /v1/link/actions":                            capRead,
 	"POST /v1/link/actions/{id}/approve":              capOperate,
 	"POST /v1/link/actions/{id}/deny":                 capOperate,
+	// Auto-approve policy is operator-managed end to end — even listing rules is
+	// privileged (a rule is a standing bypass; adding/removing one is sensitive).
+	"GET /v1/policy":    capOperate,
+	"POST /v1/policy":   capOperate,
+	"DELETE /v1/policy": capOperate,
 }
 
 // identityKey carries the resolved Identity down to handlers and to Lane 1's

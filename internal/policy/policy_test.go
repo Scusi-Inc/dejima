@@ -14,7 +14,7 @@ func req(action string, tier link.Tier) link.ActionRequest {
 func addRule(t *testing.T, action string, max int, ttl time.Duration) {
 	t.Helper()
 	if _, err := Update(func(s *Store) error {
-		s.Add(Rule{From: "a", To: "b", Topic: "t", Action: action, MaxCount: max}, ttl)
+		s.Add(Rule{From: "a", To: "b", Action: action, MaxCount: max}, ttl)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
