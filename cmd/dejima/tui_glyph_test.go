@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -9,6 +10,46 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// TestIslandIdentity: the per-island color+glyph is stable for a given name,
+// always drawn from the curated palette/glyph set, and varied enough across
+// names to be useful (no single color/glyph dominates a sample of names).
+func TestIslandIdentity(t *testing.T) {
+	// Deterministic: same name → same color + glyph, every call. (Compare the
+	// color value via GetForeground — Render() strips color in the non-TTY test
+	// environment, so it can't distinguish colors.)
+	s1, g1 := islandIdentity("myrepo")
+	s2, g2 := islandIdentity("myrepo")
+	if g1 != g2 || s1.GetForeground() != s2.GetForeground() {
+		t.Errorf("islandIdentity not stable for the same name")
+	}
+	// Glyph is always from the curated set.
+	inSet := func(g string, set []string) bool {
+		for _, s := range set {
+			if s == g {
+				return true
+			}
+		}
+		return false
+	}
+	colors := map[string]bool{}
+	glyphs := map[string]bool{}
+	for _, n := range []string{"alpha", "bravo", "charlie", "delta", "echo", "myrepo", "infra", "web", "api", "data", "x", "Port"} {
+		st, g := islandIdentity(n)
+		if !inSet(g, islandIdentityGlyphs) {
+			t.Errorf("%q got off-palette glyph %q", n, g)
+		}
+		colors[fmt.Sprint(st.GetForeground())] = true
+		glyphs[g] = true
+	}
+	// Variety: a dozen names shouldn't collapse onto one or two colors/glyphs.
+	if len(colors) < 4 {
+		t.Errorf("identity colors not varied enough: only %d distinct over 12 names", len(colors))
+	}
+	if len(glyphs) < 3 {
+		t.Errorf("identity glyphs not varied enough: only %d distinct over 12 names", len(glyphs))
+	}
+}
 
 var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
