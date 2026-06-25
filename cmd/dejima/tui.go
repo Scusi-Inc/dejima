@@ -1107,6 +1107,18 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// General settings (editor · group-by-repo · connection target). Server
 		// switching now lives inside here rather than owning its own hotkey.
 		return m.openSettings(), nil
+	case "$":
+		// In-island /workspace shell for the selected island. (Enter now opens the
+		// island's agents; `$` — the shell prompt — opens the contained shell.)
+		name := m.selectedName()
+		if name == "" {
+			return m, nil
+		}
+		if m.detail != nil && m.detail.Container != "running" {
+			m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
+			return m, nil
+		}
+		return m.openIslandShell(name)
 	case "j", "down":
 		if m.selected < m.rowCount()-1 {
 			m.selected++
@@ -1386,6 +1398,11 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		if a, ok := m.findPendingAction(c.agent); ok {
 			maxCount, ttl := parseRuleSpec(c.answer)
 			return m, m.approveRuleCmd(a, maxCount, ttl)
+		}
+	case "open-all-agents":
+		// Confirmed opening many agent windows at once (Enter on a big island).
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			return m.openAgents(c.island, m.attachableAgentIDs(c.island))
 		}
 	case "relabel-agent":
 		// The typed text is the new label (blank clears it); no y/n gate.
@@ -2006,17 +2023,11 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 		m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
 		return m, nil
 	}
-	// Enter on an island row opens a contained shell at /workspace — not an
-	// agent. (Agents are opened by hitting Enter on their own row.)
+	// Enter on an island row opens all of its (attachable) agents, each in its
+	// own window — "jump into this island's work". The in-island shell moved to
+	// `$`. (Agents are also openable one at a time via Enter on their own row.)
 	if row.agentID == "" {
-		if canOpenNewWindow() {
-			if err := m.openAgentWindow("shell", name, "", "", nil); err != nil {
-				m.lastError = err.Error()
-			}
-			return m, nil
-		}
-		m.connectShell = name
-		return m, tea.Quit
+		return m.openIslandAgents(name)
 	}
 	if m.isHeadlessAgent(name, row.agentID) {
 		return m.openAgentLogs(name, row.agentID)
@@ -2029,6 +2040,68 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 	}
 	m.connectTo, m.connectAgent = name, row.agentID
 	return m, tea.Quit
+}
+
+// openAllConfirmThreshold is the number of windows above which Enter-on-island
+// asks before spawning them all (so a stray Enter on a big island can't blanket
+// the screen in tabs).
+const openAllConfirmThreshold = 4
+
+// openIslandAgents opens one window per attachable agent on the island (Enter on
+// an island row). It falls back to the in-island shell when there's nothing to
+// open as windows — an empty or all-headless island, or a terminal that can't
+// spawn windows — and confirms first past openAllConfirmThreshold.
+func (m tuiModel) openIslandAgents(name string) (tea.Model, tea.Cmd) {
+	ids := m.attachableAgentIDs(name)
+	if !canOpenNewWindow() || len(ids) == 0 {
+		return m.openIslandShell(name)
+	}
+	if len(ids) > openAllConfirmThreshold {
+		m.confirm = &confirmPrompt{verb: "open-all-agents", island: name}
+		return m, nil
+	}
+	return m.openAgents(name, ids)
+}
+
+// openAgents opens a window for each given agent id; errors surface but don't
+// stop the rest from opening.
+func (m tuiModel) openAgents(name string, ids []string) (tea.Model, tea.Cmd) {
+	for _, id := range ids {
+		if err := m.openInNewWindow(name, id, ""); err != nil {
+			m.lastError = err.Error()
+		}
+	}
+	return m, nil
+}
+
+// openIslandShell attaches the local terminal to the island's in-island shell at
+// /workspace — in a new window when the terminal supports it, otherwise by
+// quitting the TUI and attaching in place. Bound to `$`; also the Enter fallback
+// when an island has no attachable agents.
+func (m tuiModel) openIslandShell(name string) (tea.Model, tea.Cmd) {
+	if canOpenNewWindow() {
+		if err := m.openAgentWindow("shell", name, "", "", nil); err != nil {
+			m.lastError = err.Error()
+		}
+		return m, nil
+	}
+	m.connectShell = name
+	return m, tea.Quit
+}
+
+// attachableAgentIDs returns the island's attachable (non-headless) agent ids.
+func (m tuiModel) attachableAgentIDs(name string) []string {
+	isl, ok := m.islandByName(name)
+	if !ok {
+		return nil
+	}
+	var ids []string
+	for _, a := range isl.Agents {
+		if a.Attachable {
+			ids = append(ids, a.ID)
+		}
+	}
+	return ids
 }
 
 // openAgentLogs opens a headless agent's logs in a new window, or points the
@@ -2419,7 +2492,7 @@ func (m tuiModel) renderHeader() string {
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
 		styleMuted.Render("Each island is a repo in its own container — host one or more agents, or just shell in."),
-		styleAccent.Render("↑/↓") + styleMuted.Render(" pick an island  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open in a new tab  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
+		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open its agents  ·  ") + styleAccent.Render("$") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		serverLine,
 	}, "\n")
@@ -3196,7 +3269,8 @@ func (m tuiModel) renderHelp() string {
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
 		{"t", "new host terminal — an uncontained shell on the daemon host (if enabled)"},
-		{"⏎ / o", "island → a shell at /workspace (contained); agent → its session; in a new tab (or run the affordance)"},
+		{"⏎ / o", "island → opens all its agents (each in a new tab); agent → its session; headless agent → its logs"},
+		{"$", "open a shell at /workspace inside the highlighted island (contained)"},
 		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh setup, purge…)"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
@@ -3216,7 +3290,7 @@ func (m tuiModel) renderHelp() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens a shell at /workspace (inside the\ncontainer); ⏎ on an agent opens that agent. Expand one with [space], then [+]\nadd agents. Headless agents have no screen — ⏎ opens their logs."))
+	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; $ opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."))
 	b.WriteString("\n\n")
 	b.WriteString(styleHeader.Render("Glyphs"))
 	b.WriteString("\n  ")
@@ -3337,6 +3411,9 @@ func (m tuiModel) renderConfirm() string {
 	case "approve-rule":
 		prompt = fmt.Sprintf("Approve %s AND auto-approve this link+action going forward. Type '<max> [<ttl>]' (e.g. '20 1h'; blank = unlimited, no expiry) and Enter: %s",
 			c.agent, c.answer)
+	case "open-all-agents":
+		prompt = fmt.Sprintf("Open all %d agents of %q in separate windows? Type 'y' and press Enter: %s",
+			len(m.attachableAgentIDs(c.island)), c.island, c.answer)
 	case "relabel-agent":
 		prompt = fmt.Sprintf("Rename agent %s (blank clears the label). Type a name and press Enter: %s",
 			c.agent, c.answer)
