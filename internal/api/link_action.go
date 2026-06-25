@@ -127,7 +127,7 @@ func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("to, to_agent, topic, and action are required"))
 		return
 	}
-	ar := link.ActionRequest{From: from, FromAgent: strings.TrimSpace(req.FromAgent), To: to, ToAgent: toAgent, Topic: topic, Action: action, Params: req.Params}
+	ar := link.ActionRequest{From: from, FromAgent: strings.TrimSpace(req.FromAgent), To: to, ToAgent: toAgent, Topic: topic, Action: action, Tier: link.ClassifyTier(action), Params: req.Params}
 	grant, allowed, exposed, agentOK, err := s.linkActionGate(ar)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -162,7 +162,8 @@ func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
 		Island: from,
 		Agent:  ar.FromAgent,
 		Payload: map[string]any{
-			"id": pending.ID, "to": to, "to_agent": toAgent, "topic": topic, "action": action,
+			"id": pending.ID, "to": to, "to_agent": toAgent, "topic": topic,
+			"action": action, "tier": string(pending.Tier),
 		},
 	})
 	s.ledgerAppend(ledger.Entry{
