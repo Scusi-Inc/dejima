@@ -167,6 +167,7 @@ var roleRouteCap = map[string]roleCap{
 	"DELETE /v1/islands/{name}/link/actions/{action}": capOperate,
 	"POST /v1/islands/{name}/link/action":             capOperate,
 	"GET /v1/link/actions":                            capRead,
+	"GET /v1/link/actions/watch":                      capRead, // stream the queue (viewer may watch, not approve)
 	"POST /v1/link/actions/{id}/approve":              capOperate,
 	"POST /v1/link/actions/{id}/deny":                 capOperate,
 	// Auto-approve policy is operator-managed end to end — even listing rules is

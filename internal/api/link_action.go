@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/ledger"
@@ -233,6 +234,66 @@ func (s *Server) ledgerLinkDeny(ar link.ActionRequest, reason string) {
 // listPendingActions returns the queued action approvals (operator).
 func (s *Server) listPendingActions(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, LinkPendingResponse{Pending: s.linkQueue.List()})
+}
+
+// watchActions streams pending action approvals as Server-Sent Events: each new
+// pending request is emitted once as a `data: <ActionRequest JSON>` frame, so an
+// on-call operator or an external approval bot can react without polling. Backed
+// by a short poll of the in-memory queue (no extra pub/sub); a keepalive comment
+// each idle tick keeps proxies open and surfaces a dead client (write error →
+// return). The stream ends when the client disconnects.
+func (s *Server) watchActions(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, errors.New("streaming unsupported"))
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher.Flush() // commit headers so the client sees the stream open
+
+	seen := map[string]bool{}
+	emit := func() bool {
+		wrote := false
+		for _, ar := range s.linkQueue.List() {
+			if seen[ar.ID] {
+				continue
+			}
+			seen[ar.ID] = true
+			b, err := json.Marshal(ar)
+			if err != nil {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+				return false
+			}
+			wrote = true
+		}
+		if !wrote {
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return false
+			}
+		}
+		flusher.Flush()
+		return true
+	}
+
+	if !emit() {
+		return
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !emit() {
+				return
+			}
+		}
+	}
 }
 
 // approveAction approves a pending action and executes it (operator role only —
