@@ -21,6 +21,7 @@ import (
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
@@ -177,6 +178,9 @@ type tuiModel struct {
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
 	// gate is unused/disabled. See tui_approvals.go.
 	pendingActions []link.ActionRequest
+	// policyRules are the active auto-approve rules, loaded when the approvals
+	// overlay opens (and after a mutation) — not polled. See tui_approvals.go.
+	policyRules []policy.Rule
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -615,6 +619,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case policyRulesMsg:
+		m.policyRules = msg
+		if m.approvals != nil {
+			if m.approvals.ruleSel >= len(msg) {
+				m.approvals.ruleSel = max(0, len(msg)-1)
+			}
+			if len(msg) == 0 && m.approvals.focus == focusRules {
+				m.approvals.focus = focusPending // nothing left to act on
+			}
+		}
+		return m, nil
+
 	case releaseTickMsg:
 		// Re-poll GitHub and re-arm the slow ticker. The result (latestReleaseMsg)
 		// recomputes clientUpdate/daemonUpdate, so a release that dropped mid-
@@ -867,7 +883,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
 		}
-		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd())
+		cmds := []tea.Cmd{m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd()}
+		if m.approvals != nil {
+			// Refresh the rules section too while the overlay's open (covers
+			// approve+rule and revoke); skipped otherwise to avoid a needless GET.
+			cmds = append(cmds, m.fetchPolicyCmd())
+		}
+		return m, tea.Batch(cmds...)
 
 	case imageBuildDoneMsg:
 		m.building = false
@@ -1053,9 +1075,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openGrantsView(m.selectedName())
 	case "V":
 		// Action-gate approvals — the queue of cross-island actions awaiting a
-		// decision (reView). Refresh on open. (G is jump-to-bottom.)
+		// decision (reView) + the active auto-approve rules. Refresh both on open.
+		// (G is jump-to-bottom.)
 		m.approvals = &approvalsView{}
-		return m, m.fetchPendingActionsCmd()
+		return m, tea.Batch(m.fetchPendingActionsCmd(), m.fetchPolicyCmd())
 	case "P":
 		// Port scope-picker for the selected island (brokered host-file grants).
 		// Capital P; lowercase p is group-by-repo.
@@ -1351,6 +1374,18 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		// can't be rubber-stamped. (c.agent carries the action id.)
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			return m, m.approveActionCmd(c.agent)
+		}
+	case "deny-action":
+		// The typed text is an optional ledger reason (blank is fine); deny always
+		// proceeds. (c.agent carries the action id.)
+		return m, m.denyActionCmd(c.agent, strings.TrimSpace(c.answer))
+	case "approve-rule":
+		// Approve + add a scoped auto-approve rule. The typed answer is
+		// "<max> [<ttl>]" (e.g. "20 1h"); blank max = unlimited, blank ttl = no
+		// expiry. Look the action up by id so a queue refresh can't misdirect it.
+		if a, ok := m.findPendingAction(c.agent); ok {
+			maxCount, ttl := parseRuleSpec(c.answer)
+			return m, m.approveRuleCmd(a, maxCount, ttl)
 		}
 	case "relabel-agent":
 		// The typed text is the new label (blank clears it); no y/n gate.
@@ -3296,6 +3331,12 @@ func (m tuiModel) renderConfirm() string {
 	case "approve-action":
 		prompt = fmt.Sprintf("⚠ Approve this DESTRUCTIVE cross-island action (%s)? It runs once approved. Type 'y' and press Enter: %s",
 			c.agent, c.answer)
+	case "deny-action":
+		prompt = fmt.Sprintf("Deny action %s. Reason (optional) — type one and press Enter, or just Enter: %s",
+			c.agent, c.answer)
+	case "approve-rule":
+		prompt = fmt.Sprintf("Approve %s AND auto-approve this link+action going forward. Type '<max> [<ttl>]' (e.g. '20 1h'; blank = unlimited, no expiry) and Enter: %s",
+			c.agent, c.answer)
 	case "relabel-agent":
 		prompt = fmt.Sprintf("Rename agent %s (blank clears the label). Type a name and press Enter: %s",
 			c.agent, c.answer)
@@ -3520,6 +3561,16 @@ func timeAgo(t time.Time) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// timeUntil is timeAgo's forward-looking sibling: a short "in 5m" / "in 2h" for
+// a future instant (or "now" once it's passed). Used for auto-approve-rule expiry.
+func timeUntil(t time.Time) string {
+	d := time.Until(t).Round(time.Second)
+	if d <= 0 {
+		return "now"
+	}
+	return "in " + timeAgo(time.Now().Add(-d))
 }
 
 // humanDuration formats an elapsed span as up to two units ("1h 14m", "3m 02s",
