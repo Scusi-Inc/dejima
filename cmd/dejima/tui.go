@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"os/exec"
@@ -2336,7 +2337,7 @@ func (m tuiModel) renderHeader() string {
 		topLine,
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
-		styleMuted.Render("Each island is one repo + one agent in its own container."),
+		styleMuted.Render("Each island is a repo in its own container — host one or more agents, or just shell in."),
 		styleAccent.Render("↑/↓") + styleMuted.Render(" pick an island  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open in a new tab  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		serverLine,
@@ -2526,11 +2527,18 @@ func (m tuiModel) renderList(width int) (string, int) {
 			if m.islandExpanded(isl) {
 				caret = "▾"
 			}
-			label := truncate(islandDisplay(isl), 16)
+			label := truncate(islandDisplay(isl), 14)
 			if len(isl.Agents) > 1 {
-				label = truncate(islandDisplay(isl), 12) + fmt.Sprintf(" (%d)", len(isl.Agents))
+				label = truncate(islandDisplay(isl), 10) + fmt.Sprintf(" (%d)", len(isl.Agents))
 			}
-			line = fmt.Sprintf("%s %s  %-16s  %s", caret, glyphFor(isl), label, shortStatus(isl, m.dirtyOps[isl.Name]))
+			// Per-island visual identity: a stable color+glyph (idStyle/idGlyph)
+			// marks the island and tints its name, so it and its agent group stand
+			// out. The state glyph (glyphFor) keeps its own status color.
+			idStyle, idGlyph := islandIdentity(isl.Name)
+			line = fmt.Sprintf("%s %s %s  %s  %s",
+				caret, glyphFor(isl), idStyle.Render(idGlyph),
+				idStyle.Render(fmt.Sprintf("%-14s", label)),
+				shortStatus(isl, m.dirtyOps[isl.Name]))
 		}
 		if i == m.selected {
 			selLine = strings.Count(b.String(), "\n") // line index this row will occupy
@@ -3140,6 +3148,10 @@ func (m tuiModel) renderHelp() string {
 		styleHibernate.Render("idle/stopped") + styleMuted.Render(" · ") +
 		styleNeedsYou.Render("needs you") + styleMuted.Render(" · ") +
 		styleErrored.Render("error"))
+	b.WriteString("\n  ")
+	b.WriteString(styleMuted.Render("each island also has its own stable color + glyph (e.g. ") +
+		func() string { st, g := islandIdentity("alpha"); return st.Render(g + " name") }() +
+		styleMuted.Render(") so it's recognizable at a glance"))
 	b.WriteString("\n\n")
 
 	if !m.helpAdvanced {
@@ -3364,6 +3376,35 @@ func (m tuiModel) renderSettings() string {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// islandIdentityColors / islandIdentityGlyphs are the palette for per-island
+// visual identity (a3 brief #2): a stable color + glyph per island so islands —
+// and the agents grouped under them — are distinguishable at a glance (and the
+// hero/containment recordings read clearly). Colors are light-medium so they
+// show on both the default dark background and the selected-row highlight, and
+// deliberately avoid the state hues (green/amber/red, see styleRunning/Waiting/
+// Errored) so identity never reads as status. Glyphs avoid the lifecycle glyphs
+// (●/⏸/◌/✱/!) for the same reason. Scope: name + 1 color + 1 glyph, no theming.
+var islandIdentityColors = []lipgloss.Color{
+	"#60a5fa", "#a78bfa", "#22d3ee", "#f472b6", "#2dd4bf",
+	"#e879f9", "#38bdf8", "#818cf8", "#f0abfc", "#5eead4",
+}
+
+var islandIdentityGlyphs = []string{"◆", "▲", "★", "■", "◈", "✦", "♦", "⬟"}
+
+// islandIdentity returns a stable color+glyph for an island, derived
+// deterministically from its durable Name so it never changes across restarts
+// (and matches between sessions/devices without any backend). Color and glyph
+// are decorrelated so two islands rarely collide on both. When the backend ships
+// a stored visual-identity field, prefer it and fall back to this.
+func islandIdentity(name string) (lipgloss.Style, string) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	sum := h.Sum32()
+	color := islandIdentityColors[sum%uint32(len(islandIdentityColors))]
+	glyph := islandIdentityGlyphs[(sum/uint32(len(islandIdentityColors)))%uint32(len(islandIdentityGlyphs))]
+	return lipgloss.NewStyle().Foreground(color), glyph
+}
 
 func glyphFor(isl api.IslandInfo) string {
 	if isl.AgentState != nil && isl.AgentState.Latest == "waiting-for-input" {
