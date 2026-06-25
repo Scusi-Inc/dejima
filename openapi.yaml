@@ -843,6 +843,11 @@ paths:
       tags: [link]
       summary: Deny a pending action (operator; owner/operator only)
       operationId: denyAction
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DenyActionRequest" }
       responses:
         "204": { description: Denied }
         "404": { description: Unknown or expired }
@@ -1779,6 +1784,10 @@ components:
       type: object
       properties:
         rules: { type: array, items: { $ref: "#/components/schemas/PolicyRule" } }
+    DenyActionRequest:
+      type: object
+      properties:
+        reason: { type: string, description: "Optional human-readable reason, recorded in the ledger" }
     LinkSendRequest:
       type: object
       required: [to, to_agent, topic, payload]

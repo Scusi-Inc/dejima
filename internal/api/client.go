@@ -23,6 +23,7 @@ import (
 	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/providercreds"
 )
 
@@ -370,9 +371,38 @@ func (c *Client) ApproveAction(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/approve", nil, nil)
 }
 
-// DenyAction denies a pending action (operator).
-func (c *Client) DenyAction(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/deny", nil, nil)
+// DenyAction denies a pending action (operator). An optional reason is recorded
+// in the ledger.
+func (c *Client) DenyAction(ctx context.Context, id, reason string) error {
+	var body any
+	if reason != "" {
+		body = DenyActionRequest{Reason: reason}
+	}
+	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/deny", body, nil)
+}
+
+// ListPolicy returns the active auto-approve rules (operator).
+func (c *Client) ListPolicy(ctx context.Context) ([]policy.Rule, error) {
+	var out PolicyListResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/policy", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Rules, nil
+}
+
+// AddPolicy creates (or replaces) an auto-approve rule (operator).
+func (c *Client) AddPolicy(ctx context.Context, req PolicyAddRequest) (*policy.Rule, error) {
+	var out policy.Rule
+	if err := c.do(ctx, http.MethodPost, "/v1/policy", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RemovePolicy deletes an auto-approve rule by link+action (operator).
+func (c *Client) RemovePolicy(ctx context.Context, from, to, action string) error {
+	q := url.Values{"from": {from}, "to": {to}, "action": {action}}
+	return c.do(ctx, http.MethodDelete, "/v1/policy?"+q.Encode(), nil, nil)
 }
 
 // ListGitHubRepos lists repositories the identity can access, fetched daemon-side

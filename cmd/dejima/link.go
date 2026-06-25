@@ -302,7 +302,8 @@ func newLinkApproveCmd() *cobra.Command {
 }
 
 func newLinkDenyCmd() *cobra.Command {
-	return &cobra.Command{
+	var reason string
+	cmd := &cobra.Command{
 		Use:   "deny <id>",
 		Short: "Deny a pending action (operator).",
 		Args:  cobra.ExactArgs(1),
@@ -311,11 +312,13 @@ func newLinkDenyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.DenyAction(cmd.Context(), args[0]); err != nil {
+			if err := c.DenyAction(cmd.Context(), args[0], reason); err != nil {
 				return err
 			}
 			fmt.Printf("denied %s\n", args[0])
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&reason, "reason", "", "optional reason recorded in the ledger")
+	return cmd
 }
