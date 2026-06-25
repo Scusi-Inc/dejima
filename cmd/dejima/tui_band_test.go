@@ -38,7 +38,7 @@ func TestBandCollapsed(t *testing.T) {
 		t.Errorf("collapsed band height = %d, want 1", h)
 	}
 	bare := plain(s)
-	for _, want := range []string{"Host", "2 terminal", "[`] expand"} {
+	for _, want := range []string{"Host", "2 terminal", "[/] expand"} {
 		if !strings.Contains(bare, want) {
 			t.Errorf("collapsed band missing %q: %q", want, bare)
 		}
@@ -55,7 +55,7 @@ func TestBandExpanded(t *testing.T) {
 		t.Errorf("expanded band height = %d, want %d", h, want)
 	}
 	bare := plain(s)
-	for _, want := range []string{"build", "t2", "+ new terminal", "[`] collapse"} {
+	for _, want := range []string{"build", "t2", "+ new terminal", "[/] collapse"} {
 		if !strings.Contains(bare, want) {
 			t.Errorf("expanded band missing %q: %q", want, bare)
 		}
