@@ -544,6 +544,11 @@ func (s *Server) routes() *http.ServeMux {
 	// Team activity feed — the curated, owner-enriched view over the audit ledger
 	// (viewer-readable; see activity.go). One append-only line per the seam contract.
 	s.RegisterActivity(mux)
+	// Per-island visual identity — operator-only color+glyph override (absent from
+	// tokenRouteAccess, so a contained island can never set its own identity). The
+	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
+	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
+	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
 	return mux
 }
 
@@ -2405,6 +2410,12 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	// boot/recreate/upgrade time available without a per-container engine probe.
 	running := info.Container == string(runtime.StatusRunning)
 	info.NeverHeardFrom = neverHeardFrom(running, info.AgentState, p.LastUsedAt, time.Now())
+	// Operator-set visual identity override (color + glyph). Omitted from the
+	// payload when unset, so the TUI falls back to its deterministic per-name
+	// default. Set/cleared via PUT/DELETE /v1/islands/{name}/identity (identity.go).
+	if p.Identity.IsSet() {
+		info.Identity = &IslandIdentity{Color: p.Identity.Color, Glyph: p.Identity.Glyph}
+	}
 	return info
 }
 
