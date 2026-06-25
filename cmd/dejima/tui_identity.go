@@ -89,11 +89,11 @@ func (m tuiModel) identityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dirtyOps[island] = "setting identity"
 		return m, m.setIdentityCmd(island, color, glyph)
 	case "x":
-		// Clear → revert to the deterministic default (empty color+glyph).
+		// Clear → DELETE the override, reverting to the deterministic default.
 		island := v.island
 		m.identity = nil
 		m.dirtyOps[island] = "clearing identity"
-		return m, m.setIdentityCmd(island, "", "")
+		return m, m.clearIdentityCmd(island)
 	}
 	return m, nil
 }
@@ -105,6 +105,16 @@ func (m tuiModel) setIdentityCmd(name, color, glyph string) tea.Cmd {
 		defer cancel()
 		_, err := c.SetIslandIdentity(ctx, name, color, glyph)
 		return opCompleteMsg{name: name, verb: "set identity", err: err}
+	}
+}
+
+func (m tuiModel) clearIdentityCmd(name string) tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, err := c.ClearIslandIdentity(ctx, name)
+		return opCompleteMsg{name: name, verb: "clear identity", err: err}
 	}
 }
 
