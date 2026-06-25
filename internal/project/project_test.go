@@ -67,12 +67,15 @@ func TestEnsureAgentsMigratesLegacyScalar(t *testing.T) {
 	}
 }
 
-func TestEnsureAgentsHeadlessHasNoTmux(t *testing.T) {
+func TestEnsureAgentsHeadlessGetsTmux(t *testing.T) {
+	// Path B: every agent (incl. headless) runs in a daemon-launched tmux
+	// session — no agent is the container's PID 1 — so the headless primary now
+	// gets a session name too.
 	p := &Project{Name: "h", Agent: "headless", Cmd: "python loop.py"}
 	p.EnsureAgents()
 	a := p.Agents[0]
-	if a.Tmux != "" {
-		t.Errorf("headless agent Tmux = %q, want empty", a.Tmux)
+	if a.Tmux != "agent-a1" {
+		t.Errorf("headless agent Tmux = %q, want agent-a1 (Path B)", a.Tmux)
 	}
 	if a.Cmd != "python loop.py" {
 		t.Errorf("headless agent Cmd = %q, want it carried over", a.Cmd)
@@ -176,6 +179,28 @@ func TestAddRemoveAgent(t *testing.T) {
 	}
 	if pa := p.PrimaryAgent(); pa == nil || pa.ID != "a2" {
 		t.Errorf("PrimaryAgent() = %+v, want a2", pa)
+	}
+}
+
+// TestRemoveLastAgentClearsScalar: Path B — removing the final agent clears the
+// legacy scalar so EnsureAgents (run on Load) doesn't resurrect a phantom from
+// it. The island stays valid agent-less.
+func TestRemoveLastAgentClearsScalar(t *testing.T) {
+	p := &Project{Name: "hl", Agent: "headless", Cmd: "sleep infinity"}
+	p.EnsureAgents()
+	if len(p.Agents) != 1 {
+		t.Fatalf("setup: want 1 agent, got %d", len(p.Agents))
+	}
+	if !p.RemoveAgent(p.Agents[0].ID) {
+		t.Fatal("RemoveAgent returned false")
+	}
+	if p.Agent != "" || p.Cmd != "" {
+		t.Errorf("removing the last agent should clear the legacy scalar, got Agent=%q Cmd=%q", p.Agent, p.Cmd)
+	}
+	// EnsureAgents must NOT resurrect it now that the scalar is cleared.
+	p.EnsureAgents()
+	if len(p.Agents) != 0 {
+		t.Errorf("EnsureAgents resurrected a phantom agent: %+v", p.Agents)
 	}
 }
 
