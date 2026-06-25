@@ -282,6 +282,39 @@ func (p *Project) RemoveAgent(id string) bool {
 	return false
 }
 
+// MoveAgent shifts the agent with the given id by delta positions within the
+// list (negative = toward the front), clamping to the ends. Reports whether the
+// agent was found and actually moved. Order is cosmetic — the dashboard and CLI
+// no longer key off position — except that Agents[0] still seeds the container
+// entrypoint on the next recreate (see docs/island-pid1-unification.md).
+func (p *Project) MoveAgent(id string, delta int) bool {
+	from := -1
+	for i := range p.Agents {
+		if p.Agents[i].ID == id {
+			from = i
+			break
+		}
+	}
+	if from < 0 {
+		return false
+	}
+	to := from + delta
+	if to < 0 {
+		to = 0
+	}
+	if to > len(p.Agents)-1 {
+		to = len(p.Agents) - 1
+	}
+	if to == from {
+		return false
+	}
+	a := p.Agents[from]
+	p.Agents = append(p.Agents[:from], p.Agents[from+1:]...)
+	// Re-insert at the clamped target.
+	p.Agents = append(p.Agents[:to], append([]AgentSpec{a}, p.Agents[to:]...)...)
+	return true
+}
+
 // DisplayName is the user-facing name: the Title if set, else the Name slug.
 func (p *Project) DisplayName() string {
 	if p.Title != "" {

@@ -310,16 +310,38 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [agents]
-      summary: Remove an agent (non-primary; not the last one)
+      summary: Remove an agent (any agent; islands may have zero)
       operationId: removeAgent
       responses:
         "204": { description: Removed }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Cannot remove the primary or the last agent
+          description: Refused — the agent is the container's PID 1 (a headless first agent); hibernate or purge instead
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/islands/{name}/agents/{id}/move:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AgentID"
+    post:
+      tags: [agents]
+      summary: Reorder an agent within its island (cosmetic; delta positions, clamped)
+      operationId: moveAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { delta: { type: integer, description: "positions to shift; negative = toward the front" } }
+      responses:
+        "200":
+          description: OK — the island's agents in new order
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentInfo" } }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/agents/{id}/config:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -362,6 +384,15 @@ paths:
       tags: [agents]
       summary: "Per-agent WebSocket PTY stream. NOTE: WebSocket upgrade — see SessionEnvelope."
       operationId: agentSessionWS
+      x-websocket: true
+      responses:
+        "101": { description: Switching Protocols (WebSocket) }
+  /v1/islands/{name}/shell/session:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [agents]
+      summary: "WebSocket PTY stream for the island's contained shell at /workspace (shared, resumable; not an agent). NOTE: WebSocket upgrade — see SessionEnvelope."
+      operationId: islandShellWS
       x-websocket: true
       responses:
         "101": { description: Switching Protocols (WebSocket) }

@@ -134,6 +134,14 @@ fi
 cd "$WORKSPACE"
 
 # --- launch the agent -----------------------------------------------------
+# Agent-less island: nothing to launch — just keep the container alive so the
+# operator can shell in (`dejima connect <name>`) or add agents later. Set by
+# the daemon when the island has no agents (all removed, or seeded with none).
+if [[ -n "${DEJIMA_AGENTLESS:-}" ]]; then
+    echo "dejima island '${PROJECT}' ready; no agents — shell in with 'dejima connect ${PROJECT}', or add one"
+    exec tail -f /dev/null
+fi
+
 # "headless" is the escape hatch: the agent is a user-supplied command
 # (DEJIMA_AGENT_CMD) run as the container's main process, with stdout/stderr
 # captured by Docker so `dejima logs` works — no tmux, no attach surface.
