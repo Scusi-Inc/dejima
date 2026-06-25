@@ -1479,6 +1479,14 @@ func runSessionLoop(ctx context.Context, summonable bool, dial func(context.Cont
 		}
 		next, rerr := reconnectSession(ctx, dial, stdinDone)
 		if rerr != nil {
+			// The only error reconnectSession returns is a positive session-gone
+			// signal — exit cleanly with a clear note, not a scary code-1.
+			if errors.Is(rerr, api.ErrSessionGone) {
+				if term.IsTerminal(stdinFd) {
+					fmt.Fprint(os.Stderr, "\r\n[dejima] this session is gone — the island was removed. Closing.\r\n")
+				}
+				return nil
+			}
 			return rerr
 		}
 		if next == nil {
@@ -1491,11 +1499,15 @@ func runSessionLoop(ctx context.Context, summonable bool, dial func(context.Cont
 	}
 }
 
-// reconnectSession re-dials with capped exponential backoff for up to 5 minutes.
-// Returns the new connection, or (nil, nil) if the caller cancels / the local
-// terminal closes, or (nil, err) if the window is exceeded (e.g. island purged).
+// reconnectSession re-dials with capped exponential backoff until it succeeds.
+// The tmux session lives on the daemon, so a dropped client link (laptop sleep,
+// network/Tailscale blip, daemon restart) is recoverable — we retry as long as
+// the user keeps the terminal open rather than discarding a still-valid session
+// on a timer. Returns: the new connection on success; (nil, nil) if the caller
+// cancels or the local terminal closes; (nil, err wrapping api.ErrSessionGone)
+// only when the daemon positively reports the session/island is gone (404/410) —
+// the one case that will never recover.
 func reconnectSession(ctx context.Context, dial func(context.Context) (*websocket.Conn, error), stdinDone <-chan struct{}) (*websocket.Conn, error) {
-	deadline := time.Now().Add(5 * time.Minute)
 	backoff := 250 * time.Millisecond
 	for {
 		select {
@@ -1505,11 +1517,14 @@ func reconnectSession(ctx context.Context, dial func(context.Context) (*websocke
 			return nil, nil
 		case <-time.After(backoff):
 		}
-		if conn, err := dial(ctx); err == nil {
+		conn, err := dial(ctx)
+		if err == nil {
 			return conn, nil
 		}
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("could not reconnect after 5m — the session may be gone (check `dejima ls`)")
+		// A purged island / gone session won't come back — stop now. Every other
+		// failure is transport-down (daemon unreachable); keep retrying.
+		if errors.Is(err, api.ErrSessionGone) {
+			return nil, err
 		}
 		if backoff < 5*time.Second {
 			backoff *= 2
