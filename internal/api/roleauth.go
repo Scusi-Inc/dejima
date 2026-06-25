@@ -95,6 +95,8 @@ var roleRouteCap = map[string]roleCap{
 	// --- island lifecycle + interaction (operator and up; never purge) ---
 	"POST /v1/islands":                                     capOperate, // create (scoped tokens denied — no {name})
 	"PATCH /v1/islands/{name}":                             capOperate, // title
+	"PUT /v1/islands/{name}/identity":                      capOperate, // visual color+glyph override
+	"DELETE /v1/islands/{name}/identity":                   capOperate,
 	"PUT /v1/islands/{name}/resources":                     capOperate,
 	"POST /v1/islands/{name}/hibernate":                    capOperate,
 	"POST /v1/islands/{name}/wake":                         capOperate,
