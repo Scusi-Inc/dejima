@@ -38,14 +38,51 @@ if [[ -f "$TEMPLATE" && ! -f "$TARGET" ]]; then
 fi
 
 # --- hooks ----------------------------------------------------------------
+# The hook script and its settings.json wiring are daemon-OWNED managed files:
+# re-derived from /opt on EVERY boot so a `dejima upgrade` (recreate against a
+# fresh image) propagates fixes. Only user data is sticky. This is what heals the
+# socket→TCP class of break: an island built from a stale image carried the OLD
+# unix-socket hook + wiring, which silently no-op'd on a TCP-only island, so the
+# agent-state heartbeat never fired (no mail-nudges, no idle-hibernate, no metric).
 cp /opt/dejima/agents/claude-code/hooks/notify.sh "$HOME_CLAUDE/hooks/dejima-notify.sh"
 chmod +x "$HOME_CLAUDE/hooks/dejima-notify.sh"
 
-# Settings file wires the hook to Notification (Claude is waiting on user) and
-# Stop (response finished). Only write if not already configured.
+# Reconcile the Notification (Claude is waiting on user) and Stop (response
+# finished) → dejima-notify wiring IDEMPOTENTLY every boot, rather than only when
+# absent. We MERGE into the existing settings: any of the user's own hooks in
+# these two events are preserved; only the dejima-owned entries are dropped and
+# re-added to the current contract. All other settings keys are untouched.
 SETTINGS="$HOME_CLAUDE/settings.json"
-if [[ ! -f "$SETTINGS" ]] || ! grep -q "dejima-notify" "$SETTINGS" 2>/dev/null; then
-    cat > "$SETTINGS" <<EOF
+reconcile_dejima_hooks() {
+    local cur='{}'
+    if [[ -f "$SETTINGS" ]] && jq -e . "$SETTINGS" >/dev/null 2>&1; then
+        cur=$(cat "$SETTINGS")
+    fi
+    # For each event, strip prior dejima-notify entries (refresh the contract),
+    # keep the user's other hooks, then append our canonical entry.
+    printf '%s' "$cur" | jq \
+        --arg notif '$HOME/.claude/hooks/dejima-notify.sh agent.waiting-for-input' \
+        --arg stop '$HOME/.claude/hooks/dejima-notify.sh agent.task-complete' '
+        def reconcile(event; command):
+            .hooks[event] = (
+                ((.hooks[event] // [])
+                 | map(select(any(.hooks[]?; .command | test("dejima-notify")) | not)))
+                + [{ hooks: [{ type: "command", command: command }] }]
+            );
+        (. // {})
+        | .hooks = (.hooks // {})
+        | reconcile("Notification"; $notif)
+        | reconcile("Stop"; $stop)
+    '
+}
+
+if reconciled=$(reconcile_dejima_hooks 2>/dev/null) && [[ -n "$reconciled" ]]; then
+    printf '%s\n' "$reconciled" >"$SETTINGS"
+else
+    # jq unavailable or a malformed pre-existing file: fall back to writing the
+    # minimal canonical wiring so the heartbeat still works (last-resort; may
+    # overwrite a hand-edited settings.json, but a dead heartbeat is worse).
+    cat >"$SETTINGS" <<'EOF'
 {
   "hooks": {
     "Notification": [
@@ -53,7 +90,7 @@ if [[ ! -f "$SETTINGS" ]] || ! grep -q "dejima-notify" "$SETTINGS" 2>/dev/null; 
         "hooks": [
           {
             "type": "command",
-            "command": "\$HOME/.claude/hooks/dejima-notify.sh agent.waiting-for-input"
+            "command": "$HOME/.claude/hooks/dejima-notify.sh agent.waiting-for-input"
           }
         ]
       }
@@ -63,7 +100,7 @@ if [[ ! -f "$SETTINGS" ]] || ! grep -q "dejima-notify" "$SETTINGS" 2>/dev/null; 
         "hooks": [
           {
             "type": "command",
-            "command": "\$HOME/.claude/hooks/dejima-notify.sh agent.task-complete"
+            "command": "$HOME/.claude/hooks/dejima-notify.sh agent.task-complete"
           }
         ]
       }
