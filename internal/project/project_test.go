@@ -240,3 +240,36 @@ func TestAgentsTOMLRoundTrip(t *testing.T) {
 		t.Errorf("Agents not round-tripped: %+v", out.Agents)
 	}
 }
+
+// StampVersion prefers the upgrade stamp, falls back to the build stamp, and is
+// empty for islands created before version stamping (provenance unknown). The
+// stamp also survives a TOML round-trip.
+func TestStampVersion(t *testing.T) {
+	cases := []struct {
+		built, upgraded, want string
+	}{
+		{"v0.1.4", "", "v0.1.4"},       // only ever built
+		{"v0.1.4", "v0.5.3", "v0.5.3"}, // upgraded since → upgrade stamp wins
+		{"", "", ""},                   // legacy island, unknown provenance
+		{"", "v0.5.3", "v0.5.3"},       // back-filled at upgrade
+	}
+	for _, tc := range cases {
+		p := &Project{BuiltVersion: tc.built, UpgradedVersion: tc.upgraded}
+		if got := p.StampVersion(); got != tc.want {
+			t.Errorf("StampVersion(built=%q,upgraded=%q) = %q, want %q", tc.built, tc.upgraded, got, tc.want)
+		}
+	}
+
+	in := &Project{Name: "r", Agent: "claude-code", BuiltVersion: "v0.1.4", UpgradedVersion: "v0.5.3"}
+	data, err := toml.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out Project
+	if err := toml.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.BuiltVersion != "v0.1.4" || out.UpgradedVersion != "v0.5.3" {
+		t.Errorf("version stamp not round-tripped: built=%q upgraded=%q", out.BuiltVersion, out.UpgradedVersion)
+	}
+}

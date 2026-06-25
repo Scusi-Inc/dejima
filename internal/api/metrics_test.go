@@ -50,6 +50,31 @@ func TestWriteMetrics(t *testing.T) {
 	}
 }
 
+func TestNeverHeardFrom(t *testing.T) {
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	heard := &AgentStateInfo{Latest: "waiting-for-input", UpdatedAt: now.Add(-time.Minute)}
+	cases := []struct {
+		name      string
+		running   bool
+		state     *AgentStateInfo
+		sinceTime time.Time
+		want      bool
+	}{
+		{"running, silent, past grace → flagged", true, nil, now.Add(-30 * time.Minute), true},
+		{"running, silent, within grace → not yet", true, nil, now.Add(-2 * time.Minute), false},
+		{"running, heard from → never flagged", true, heard, now.Add(-30 * time.Minute), false},
+		{"not running → never flagged", false, nil, now.Add(-30 * time.Minute), false},
+		{"zero reference time → never flagged", true, nil, time.Time{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := neverHeardFrom(tc.running, tc.state, tc.sinceTime, now); got != tc.want {
+				t.Errorf("neverHeardFrom = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAgentIdleMetrics(t *testing.T) {
 	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 	s := &Server{agentStates: map[string]AgentStateInfo{

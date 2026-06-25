@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
+	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
@@ -170,6 +172,11 @@ type tuiModel struct {
 	audit        *auditView      // non-nil while the audit-ledger viewer is open (opened with `A`)
 	grants       *grantsView     // non-nil while the island-grants trust view is open (opened with `T`)
 	scope        *scopeView      // non-nil while the Port scope-picker is open (opened with `P`)
+	approvals    *approvalsView  // non-nil while the action-gate approvals overlay is open (opened with `V`)
+	// pendingActions is the polled queue of cross-island actions awaiting approval
+	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
+	// gate is unused/disabled. See tui_approvals.go.
+	pendingActions []link.ActionRequest
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -592,7 +599,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case tickMsg:
-		cmds := []tea.Cmd{tickCmd(), m.fetchListCmd(), m.fetchOverviewCmd()}
+		cmds := []tea.Cmd{tickCmd(), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd()}
 		if name := m.selectedName(); name != "" {
 			cmds = append(cmds, m.fetchDetailCmd(name))
 		}
@@ -600,6 +607,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, c)
 		}
 		return m, tea.Batch(cmds...)
+
+	case pendingActionsMsg:
+		m.pendingActions = msg
+		if m.approvals != nil && m.approvals.sel >= len(msg) {
+			m.approvals.sel = max(0, len(msg)-1)
+		}
+		return m, nil
 
 	case releaseTickMsg:
 		// Re-poll GitHub and re-arm the slow ticker. The result (latestReleaseMsg)
@@ -853,7 +867,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
 		}
-		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd())
 
 	case imageBuildDoneMsg:
 		m.building = false
@@ -992,6 +1006,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.scope != nil {
 		return m.scopeKey(msg)
 	}
+	// The action-gate approvals overlay owns keys while open.
+	if m.approvals != nil {
+		return m.approvalsKey(msg)
+	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
 		switch msg.String() {
@@ -1033,6 +1051,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Trust surface — what the highlighted island can reach (Port · MCP ·
 		// links · capabilities). Agent rows inherit their island's grants.
 		return m.openGrantsView(m.selectedName())
+	case "V":
+		// Action-gate approvals — the queue of cross-island actions awaiting a
+		// decision (reView). Refresh on open. (G is jump-to-bottom.)
+		m.approvals = &approvalsView{}
+		return m, m.fetchPendingActionsCmd()
 	case "P":
 		// Port scope-picker for the selected island (brokered host-file grants).
 		// Capital P; lowercase p is group-by-repo.
@@ -1322,6 +1345,12 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	case "remove-terminal":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			return m, m.removeTerminalCmd(c.agent) // c.agent carries the terminal id
+		}
+	case "approve-action":
+		// Approving a DESTRUCTIVE cross-island action: require a typed "y" so it
+		// can't be rubber-stamped. (c.agent carries the action id.)
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			return m, m.approveActionCmd(c.agent)
 		}
 	case "relabel-agent":
 		// The typed text is the new label (blank clears it); no y/n gate.
@@ -2139,6 +2168,10 @@ func (m tuiModel) View() string {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderScopeView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.approvals != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderApprovalsView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 
 	footer := m.renderFooter()
 	// The pinned host-terminal band sits between the header and the island list;
@@ -2208,6 +2241,20 @@ func (m tuiModel) updateParts() string {
 // PANIC stays its own override (renderPanicBanner) since it supersedes the UI.
 func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok bool) {
 	switch {
+	case len(m.pendingActions) > 0:
+		// Cross-island actions awaiting your decision — the headline safety moment,
+		// so it outranks update news. Red + loud when any pending action is
+		// destructive (which the gate never auto-approves), amber otherwise.
+		n := len(m.pendingActions)
+		st, tail := styleBroadcast, "await approval"
+		for _, a := range m.pendingActions {
+			if a.Tier == link.TierDestructive {
+				st, tail = styleErrorBroadcast, "need approval — destructive!"
+				break
+			}
+		}
+		return fmt.Sprintf(" ⚖ %d cross-island action(s) %s   ·   [V] review", n, tail),
+			fmt.Sprintf(" ⚖ %d to approve ", n), st, true
 	case m.updateError != "":
 		// A failed self-update outranks everything else here and stays put (red)
 		// until retried [U] or dismissed [esc] — never wiped by a poll.
@@ -2336,7 +2383,7 @@ func (m tuiModel) renderHeader() string {
 		topLine,
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
-		styleMuted.Render("Each island is one repo + one agent in its own container."),
+		styleMuted.Render("Each island is a repo in its own container — host one or more agents, or just shell in."),
 		styleAccent.Render("↑/↓") + styleMuted.Render(" pick an island  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open in a new tab  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		serverLine,
@@ -2526,11 +2573,18 @@ func (m tuiModel) renderList(width int) (string, int) {
 			if m.islandExpanded(isl) {
 				caret = "▾"
 			}
-			label := truncate(islandDisplay(isl), 16)
+			label := truncate(islandDisplay(isl), 14)
 			if len(isl.Agents) > 1 {
-				label = truncate(islandDisplay(isl), 12) + fmt.Sprintf(" (%d)", len(isl.Agents))
+				label = truncate(islandDisplay(isl), 10) + fmt.Sprintf(" (%d)", len(isl.Agents))
 			}
-			line = fmt.Sprintf("%s %s  %-16s  %s", caret, glyphFor(isl), label, shortStatus(isl, m.dirtyOps[isl.Name]))
+			// Per-island visual identity: a stable color+glyph (idStyle/idGlyph)
+			// marks the island and tints its name, so it and its agent group stand
+			// out. The state glyph (glyphFor) keeps its own status color.
+			idStyle, idGlyph := islandIdentity(isl.Name)
+			line = fmt.Sprintf("%s %s %s  %s  %s",
+				caret, glyphFor(isl), idStyle.Render(idGlyph),
+				idStyle.Render(fmt.Sprintf("%-14s", label)),
+				shortStatus(isl, m.dirtyOps[isl.Name]))
 		}
 		if i == m.selected {
 			selLine = strings.Count(b.String(), "\n") // line index this row will occupy
@@ -3140,6 +3194,10 @@ func (m tuiModel) renderHelp() string {
 		styleHibernate.Render("idle/stopped") + styleMuted.Render(" · ") +
 		styleNeedsYou.Render("needs you") + styleMuted.Render(" · ") +
 		styleErrored.Render("error"))
+	b.WriteString("\n  ")
+	b.WriteString(styleMuted.Render("each island also has its own stable color + glyph (e.g. ") +
+		func() string { st, g := islandIdentity("alpha"); return st.Render(g + " name") }() +
+		styleMuted.Render(") so it's recognizable at a glance"))
 	b.WriteString("\n\n")
 
 	if !m.helpAdvanced {
@@ -3162,6 +3220,7 @@ func (m tuiModel) renderHelp() string {
 		{"A", "audit ledger — chain-verification + recent governance activity"},
 		{"T", "grants — what the highlighted island can reach (Port · MCP · links · caps)"},
 		{"P", "Port scopes — brokered host-file grants (add/revoke; deny-all by default)"},
+		{"V", "approvals — review/approve/deny pending cross-island actions (the action gate)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
@@ -3233,6 +3292,9 @@ func (m tuiModel) renderConfirm() string {
 			who, c.agent, c.island, c.agent, c.answer)
 	case "remove-terminal":
 		prompt = fmt.Sprintf("Close host terminal %s (kills the shell on the daemon host)? Type 'y' and press Enter: %s",
+			c.agent, c.answer)
+	case "approve-action":
+		prompt = fmt.Sprintf("⚠ Approve this DESTRUCTIVE cross-island action (%s)? It runs once approved. Type 'y' and press Enter: %s",
 			c.agent, c.answer)
 	case "relabel-agent":
 		prompt = fmt.Sprintf("Rename agent %s (blank clears the label). Type a name and press Enter: %s",
@@ -3364,6 +3426,35 @@ func (m tuiModel) renderSettings() string {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// islandIdentityColors / islandIdentityGlyphs are the palette for per-island
+// visual identity (a3 brief #2): a stable color + glyph per island so islands —
+// and the agents grouped under them — are distinguishable at a glance (and the
+// hero/containment recordings read clearly). Colors are light-medium so they
+// show on both the default dark background and the selected-row highlight, and
+// deliberately avoid the state hues (green/amber/red, see styleRunning/Waiting/
+// Errored) so identity never reads as status. Glyphs avoid the lifecycle glyphs
+// (●/⏸/◌/✱/!) for the same reason. Scope: name + 1 color + 1 glyph, no theming.
+var islandIdentityColors = []lipgloss.Color{
+	"#60a5fa", "#a78bfa", "#22d3ee", "#f472b6", "#2dd4bf",
+	"#e879f9", "#38bdf8", "#818cf8", "#f0abfc", "#5eead4",
+}
+
+var islandIdentityGlyphs = []string{"◆", "▲", "★", "■", "◈", "✦", "♦", "⬟"}
+
+// islandIdentity returns a stable color+glyph for an island, derived
+// deterministically from its durable Name so it never changes across restarts
+// (and matches between sessions/devices without any backend). Color and glyph
+// are decorrelated so two islands rarely collide on both. When the backend ships
+// a stored visual-identity field, prefer it and fall back to this.
+func islandIdentity(name string) (lipgloss.Style, string) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	sum := h.Sum32()
+	color := islandIdentityColors[sum%uint32(len(islandIdentityColors))]
+	glyph := islandIdentityGlyphs[(sum/uint32(len(islandIdentityColors)))%uint32(len(islandIdentityGlyphs))]
+	return lipgloss.NewStyle().Foreground(color), glyph
+}
 
 func glyphFor(isl api.IslandInfo) string {
 	if isl.AgentState != nil && isl.AgentState.Latest == "waiting-for-input" {

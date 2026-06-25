@@ -823,6 +823,22 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LinkPendingResponse" }
+  /v1/link/actions/watch:
+    get:
+      tags: [link]
+      summary: Stream pending action approvals as Server-Sent Events (operator/viewer)
+      description: >
+        text/event-stream of `data: <ActionRequest JSON>` frames, one per new
+        pending request, with a `: keepalive` comment on idle ticks. For an
+        on-call operator or an external approval bot. The stream ends on client
+        disconnect.
+      operationId: watchActions
+      responses:
+        "200":
+          description: An SSE stream
+          content:
+            text/event-stream:
+              schema: { type: string }
   /v1/link/actions/{id}/approve:
     parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
     post:
@@ -843,9 +859,53 @@ paths:
       tags: [link]
       summary: Deny a pending action (operator; owner/operator only)
       operationId: denyAction
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DenyActionRequest" }
       responses:
         "204": { description: Denied }
         "404": { description: Unknown or expired }
+  /v1/policy:
+    get:
+      tags: [link]
+      summary: List active auto-approve rules (operator)
+      operationId: listPolicy
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyListResponse" }
+    post:
+      tags: [link]
+      summary: Add a scoped auto-approve rule (operator; ledgered). Destructive actions are never auto-approved.
+      operationId: addPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyAddRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyRule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [link]
+      summary: Remove an auto-approve rule (operator; ledgered)
+      operationId: removePolicy
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string } }
+        - { name: to, in: query, required: true, schema: { type: string } }
+        - { name: action, in: query, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/mcp/grants:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -1715,6 +1775,35 @@ components:
       type: object
       properties:
         grants: { type: array, items: { $ref: "#/components/schemas/LinkGrant" } }
+    PolicyRule:
+      type: object
+      description: A scoped auto-approve rule for the action gate. Topic-agnostic (the link grant gates the channel); destructive actions are never auto-approved regardless.
+      properties:
+        from: { type: string }
+        to: { type: string }
+        action: { type: string }
+        max_count: { type: integer, description: "0 = unlimited within the TTL window" }
+        used: { type: integer }
+        expires_at: { type: string, format: date-time, description: "omitted = no expiry" }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+    PolicyAddRequest:
+      type: object
+      required: [from, to, action]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        action: { type: string, description: Named action type to auto-approve over from→to }
+        max_count: { type: integer, description: "0 = unlimited within the TTL" }
+        ttl: { type: string, description: "Go duration (e.g. 1h, 30m); empty = no expiry" }
+    PolicyListResponse:
+      type: object
+      properties:
+        rules: { type: array, items: { $ref: "#/components/schemas/PolicyRule" } }
+    DenyActionRequest:
+      type: object
+      properties:
+        reason: { type: string, description: "Optional human-readable reason, recorded in the ledger" }
     LinkSendRequest:
       type: object
       required: [to, to_agent, topic, payload]

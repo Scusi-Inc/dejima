@@ -23,6 +23,7 @@ import (
 	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
+	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/providercreds"
 )
 
@@ -370,9 +371,46 @@ func (c *Client) ApproveAction(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/approve", nil, nil)
 }
 
-// DenyAction denies a pending action (operator).
-func (c *Client) DenyAction(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/deny", nil, nil)
+// DenyAction denies a pending action (operator). An optional reason is recorded
+// in the ledger.
+func (c *Client) DenyAction(ctx context.Context, id, reason string) error {
+	var body any
+	if reason != "" {
+		body = DenyActionRequest{Reason: reason}
+	}
+	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/deny", body, nil)
+}
+
+// WatchActions opens an SSE stream of pending action approvals (`data: <JSON>`
+// frames). The caller owns the returned reader and must Close it; cancel ctx to
+// stop. Uses the timeout-free stream path so the long-lived stream isn't cut at
+// the 30s default.
+func (c *Client) WatchActions(ctx context.Context) (io.ReadCloser, error) {
+	return c.stream(ctx, http.MethodGet, "/v1/link/actions/watch")
+}
+
+// ListPolicy returns the active auto-approve rules (operator).
+func (c *Client) ListPolicy(ctx context.Context) ([]policy.Rule, error) {
+	var out PolicyListResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/policy", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Rules, nil
+}
+
+// AddPolicy creates (or replaces) an auto-approve rule (operator).
+func (c *Client) AddPolicy(ctx context.Context, req PolicyAddRequest) (*policy.Rule, error) {
+	var out policy.Rule
+	if err := c.do(ctx, http.MethodPost, "/v1/policy", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RemovePolicy deletes an auto-approve rule by link+action (operator).
+func (c *Client) RemovePolicy(ctx context.Context, from, to, action string) error {
+	q := url.Values{"from": {from}, "to": {to}, "action": {action}}
+	return c.do(ctx, http.MethodDelete, "/v1/policy?"+q.Encode(), nil, nil)
 }
 
 // ListGitHubRepos lists repositories the identity can access, fetched daemon-side
@@ -966,6 +1004,26 @@ func (c *Client) IslandEvents(ctx context.Context, name string) ([]events.Event,
 }
 
 // DialSession opens a websocket against the island's primary-agent session.
+// ErrSessionGone tags a websocket-attach failure where the daemon positively
+// reported the session/island is gone (a 404/410 handshake response), as opposed
+// to a transient transport failure (daemon unreachable: laptop sleep, network
+// drop, daemon restart). The reconnect loop uses it to stop retrying promptly —
+// a gone session never comes back — while retrying transport failures for as
+// long as the user keeps the terminal open, since the tmux session survives on
+// the daemon.
+var ErrSessionGone = errors.New("session gone")
+
+// dialErr wraps a websocket.Dial failure. When the handshake got a positive
+// gone response (404/410), the error wraps ErrSessionGone; otherwise it's a
+// transport failure and the original error passes through. resp may be nil
+// (pure transport error — no handshake response at all).
+func dialErr(what string, resp *http.Response, err error) error {
+	if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone) {
+		return fmt.Errorf("%s: %w (http %d)", what, ErrSessionGone, resp.StatusCode)
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
 func (c *Client) DialSession(ctx context.Context, name, label string) (*websocket.Conn, error) {
 	return c.DialAgentSession(ctx, name, "", label)
 }
@@ -991,9 +1049,9 @@ func (c *Client) DialAgentSession(ctx context.Context, name, agentID, label stri
 	if encoded := q.Encode(); encoded != "" {
 		wsURL += "?" + encoded
 	}
-	conn, _, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
+	conn, resp, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
 	if err != nil {
-		return nil, fmt.Errorf("dial session: %w", err)
+		return nil, dialErr("dial session", resp, err)
 	}
 	return conn, nil
 }
@@ -1081,9 +1139,9 @@ func (c *Client) DialTerminalSession(ctx context.Context, id, label string) (*we
 	if encoded := q.Encode(); encoded != "" {
 		wsURL += "?" + encoded
 	}
-	conn, _, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
+	conn, resp, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
 	if err != nil {
-		return nil, fmt.Errorf("dial terminal session: %w", err)
+		return nil, dialErr("dial terminal session", resp, err)
 	}
 	return conn, nil
 }
