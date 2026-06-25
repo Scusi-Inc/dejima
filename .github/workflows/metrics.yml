@@ -1,0 +1,48 @@
+# Daily public-download snapshot. Runs on a GitHub-hosted runner (NOT the Mac
+# mini), reads only already-public download counts via scripts/metrics/install-totals.sh,
+# and appends one compact JSON line to install-totals.jsonl on the data-only
+# `metrics` branch. npm/PyPI are rolling 30-day windows, so this daily series is
+# the only way to see launch-window trends (the windows can't be backfilled).
+# Zero risk: no client telemetry, no Mac-mini involvement, read-only aggregation.
+name: metrics-snapshot
+
+on:
+  schedule:
+    - cron: "17 8 * * *" # daily ~08:17 UTC
+  workflow_dispatch: {}
+
+# Only the built-in token is needed; it pushes the appended line to the metrics branch.
+permissions:
+  contents: write
+
+concurrency:
+  group: metrics-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # default branch — for the aggregator script
+
+      - name: aggregate public totals + append to the metrics branch
+        env:
+          GH_TOKEN: ${{ github.token }} # lifts the api.github.com 60/hr unauth limit
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # One compact line: timestamp + per-channel totals (drop the bulky
+          # per-release / per-package detail).
+          line="$(scripts/metrics/install-totals.sh --json \
+            | jq -c '{generated_at, channels: (.channels | map_values(del(.releases)))}')"
+          [ -n "$line" ] || { echo "::error::empty aggregator output"; exit 1; }
+
+          tmp="$(mktemp -d)"
+          git clone --branch metrics --single-branch \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$tmp/m"
+          printf '%s\n' "$line" >> "$tmp/m/install-totals.jsonl"
+          git -C "$tmp/m" add install-totals.jsonl
+          git -C "$tmp/m" \
+            -c user.email=metrics@dejima.tech -c user.name=dejima-metrics \
+            commit -m "metrics: snapshot $(date -u +%FT%TZ)"
+          git -C "$tmp/m" push origin metrics
