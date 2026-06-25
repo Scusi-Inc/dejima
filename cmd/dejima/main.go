@@ -1635,14 +1635,34 @@ func newLsCmd() *cobra.Command {
 				fmt.Println("no islands yet — `dejima init --repo <url>` to create one")
 				return nil
 			}
+			// The daemon's version is the reference for the per-island skew note.
+			// Best-effort: an older daemon (no overview/version) just yields no note.
+			daemonVer := ""
+			if o, ovErr := c.Overview(cmd.Context()); ovErr == nil {
+				daemonVer = o.DaemonVersion
+			}
+			// Whether to render the NOTE column at all: only when at least one island
+			// has something to say, so the common all-healthy listing stays clean.
+			anyNote := false
+			for _, i := range items {
+				if islandSkewNote(i, daemonVer) != "" {
+					anyNote = true
+					break
+				}
+			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 			writeRow := func(i api.IslandInfo) {
 				agentCol := i.Agent
 				if len(i.Agents) > 1 {
 					agentCol = fmt.Sprintf("%d agents", len(i.Agents))
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-					i.Name, agentCol, shortenRepo(i.Repo), i.State, i.Container)
+				if anyNote {
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+						i.Name, agentCol, shortenRepo(i.Repo), i.State, i.Container, islandSkewNote(i, daemonVer))
+				} else {
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+						i.Name, agentCol, shortenRepo(i.Repo), i.State, i.Container)
+				}
 				if showAgents && len(i.Agents) > 1 {
 					for _, a := range i.Agents {
 						label := a.Type
@@ -1661,7 +1681,11 @@ func newLsCmd() *cobra.Command {
 					if gi > 0 {
 						fmt.Fprintln(tw)
 					}
-					fmt.Fprintf(tw, "%s\t\t\t\t(%s)\n", shortenRepo(g.repo), countNoun(len(g.islands), "island"))
+					tail := ""
+					if anyNote {
+						tail = "\t"
+					}
+					fmt.Fprintf(tw, "%s\t\t\t\t(%s)%s\n", shortenRepo(g.repo), countNoun(len(g.islands), "island"), tail)
 					for _, i := range g.islands {
 						writeRow(i)
 					}
@@ -1669,7 +1693,11 @@ func newLsCmd() *cobra.Command {
 				return tw.Flush()
 			}
 
-			fmt.Fprintln(tw, "NAME\tAGENT\tREPO\tSTATE\tCONTAINER")
+			header := "NAME\tAGENT\tREPO\tSTATE\tCONTAINER"
+			if anyNote {
+				header += "\tNOTE"
+			}
+			fmt.Fprintln(tw, header)
 			for _, i := range items {
 				writeRow(i)
 			}
@@ -1679,6 +1707,35 @@ func newLsCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&showAgents, "agents", "a", false, "expand each island's agents")
 	cmd.Flags().BoolVarP(&group, "group", "g", false, "group islands that share a repo (multi-agent projects read as one)")
 	return cmd
+}
+
+// daemonVersion fetches the running daemon's reported version (the reference for
+// island version-skew), or "" if it can't be determined (older daemon, transient
+// error) — in which case skew comparison degrades to a no-op.
+func daemonVersion(ctx context.Context, c *api.Client) string {
+	if o, err := c.Overview(ctx); err == nil {
+		return o.DaemonVersion
+	}
+	return ""
+}
+
+// islandSkewNote is the short `dejima ls` marker for an island that's behind the
+// daemon's version or whose heartbeat never fired — the compact form of the
+// doctor finding. Empty when the island is level/healthy or provenance is
+// unknown. The full remedy (`dejima upgrade <name>`) lives in `dejima doctor` and
+// `dejima status`; ls just flags which islands to look at.
+func islandSkewNote(i api.IslandInfo, daemonVer string) string {
+	stamp := i.UpgradedVersion
+	if stamp == "" {
+		stamp = i.BuiltVersion
+	}
+	if version.IsRelease(daemonVer) && version.IsRelease(stamp) && version.Compare(stamp, daemonVer) < 0 {
+		return fmt.Sprintf("stale image (%s < %s) — dejima upgrade %s", stamp, daemonVer, i.Name)
+	}
+	if i.NeverHeardFrom {
+		return "no heartbeat — dejima upgrade " + i.Name
+	}
+	return ""
 }
 
 // islandGroup is a set of islands sharing one repo, for the `dejima ls -g` view.
@@ -1903,8 +1960,18 @@ func newStatusCmd() *cobra.Command {
 			fmt.Printf("repo:        %s\n", info.Repo)
 			fmt.Printf("agent:       %s\n", info.Agent)
 			fmt.Printf("image:       %s\n", info.Image)
+			if stamp := info.UpgradedVersion; stamp != "" {
+				fmt.Printf("built on:    %s (last upgrade)\n", stamp)
+			} else if info.BuiltVersion != "" {
+				fmt.Printf("built on:    %s\n", info.BuiltVersion)
+			}
 			fmt.Printf("state:       %s (desired)\n", info.State)
 			fmt.Printf("container:   %s\n", info.Container)
+			// Surface version-skew / dead-heartbeat right where the operator inspects
+			// an island, with the exact remedy inline.
+			if note := islandSkewNote(*info, daemonVersion(cmd.Context(), c)); note != "" {
+				fmt.Printf("skew:        %s\n", note)
+			}
 			if info.Owner != "" {
 				fmt.Printf("owner:       %s\n", info.Owner)
 			}

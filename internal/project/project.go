@@ -129,6 +129,26 @@ type Project struct {
 	// Tags are free-form key=value labels (e.g. team=web, env=staging) for
 	// grouping and per-team rollups in wrapper tooling. Empty when untagged.
 	Tags map[string]string `toml:"tags,omitempty"`
+	// BuiltVersion is the daemon version (version.Version) this island's container
+	// was first created against, and UpgradedVersion is the version of the most
+	// recent `dejima upgrade` recreate. They are the version-skew stamp: an island
+	// whose UpgradedVersion (falling back to BuiltVersion) is behind the running
+	// daemon was built from an older image and may carry stale /opt shims (the
+	// socket→TCP heartbeat-break class of bug). The api layer sets these from
+	// version.Version at create/upgrade; project stays a pure data struct. Empty
+	// for islands created before this stamp existed ("unknown" provenance).
+	BuiltVersion    string `toml:"built_version,omitempty"`
+	UpgradedVersion string `toml:"upgraded_version,omitempty"`
+}
+
+// StampVersion returns the most authoritative version this island was last built
+// or upgraded against: the upgrade stamp if present, else the build stamp. Empty
+// when the island predates version stamping (provenance unknown).
+func (p *Project) StampVersion() string {
+	if p.UpgradedVersion != "" {
+		return p.UpgradedVersion
+	}
+	return p.BuiltVersion
 }
 
 // IsHome reports whether this island is a Home Island (hosts an assistant brain).
