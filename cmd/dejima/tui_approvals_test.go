@@ -98,6 +98,32 @@ func TestApprovalsKeyApprove(t *testing.T) {
 	}
 }
 
+// TestConfirmModalTopmostOverOverlay guards the fix where a confirm opened from
+// the approvals overlay was unreachable: with the overlay still open, typing and
+// Enter must route to the confirm modal, not be swallowed by approvalsKey.
+func TestConfirmModalTopmostOverOverlay(t *testing.T) {
+	m := initialTUIModel(nil)
+	m.approvals = &approvalsView{}
+	m.pendingActions = []link.ActionRequest{{ID: "act-1", From: "a", To: "b", Action: "deploy", Tier: link.TierMutating}}
+	m.confirm = &confirmPrompt{verb: "deny-action", agent: "act-1"}
+
+	// Typing a rune appends to the confirm answer (it would be a revoke/etc in the
+	// overlay) — proves the confirm guard preempts the overlay guard.
+	out, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	gm := out.(tuiModel)
+	if gm.confirm == nil || gm.confirm.answer != "x" {
+		t.Fatalf("typing should reach the confirm modal, got %+v", gm.confirm)
+	}
+	// Enter fires the confirmed command and closes the modal.
+	out2, cmd := gm.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if out2.(tuiModel).confirm != nil {
+		t.Error("Enter should close the confirm modal")
+	}
+	if cmd == nil {
+		t.Error("Enter should fire the confirmed (deny) command")
+	}
+}
+
 // TestApprovalsRuleFlow: [r] approve+rule is offered on non-destructive actions
 // (opens the rule prompt) but never on destructive ones; the spec parses; and
 // the rules region revokes immediately.
