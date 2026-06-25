@@ -59,7 +59,9 @@ func (m tuiModel) denyActionCmd(id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		return opCompleteMsg{name: id, verb: "deny action", err: c.DenyAction(ctx, id)}
+		// Empty reason for now; the deny-reason prompt is the slice-3 follow-on
+		// (the backend gained the reason arg in #134/slice 3).
+		return opCompleteMsg{name: id, verb: "deny action", err: c.DenyAction(ctx, id, "")}
 	}
 }
 
