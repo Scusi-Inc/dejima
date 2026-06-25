@@ -1151,6 +1151,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.bandSel >= m.bandRowCount() {
 				m.bandSel = 0
 			}
+		} else {
+			// Say why the key's a no-op rather than leaving the operator guessing
+			// (host terminals are an opt-in daemon capability, off by default).
+			m.lastNotice = "host terminals are off — start dejimad with --host-terminals to enable the host band"
 		}
 		return m, nil
 	case "t":
@@ -2423,8 +2427,8 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 				break
 			}
 		}
-		return fmt.Sprintf(" ⚖ %d cross-island action(s) %s   ·   [V] review", n, tail),
-			fmt.Sprintf(" ⚖ %d to approve ", n), st, true
+		return fmt.Sprintf(" ! %d cross-island action(s) %s   ·   [V] review", n, tail),
+			fmt.Sprintf(" ! %d to approve ", n), st, true
 	case m.updateError != "":
 		// A failed self-update outranks everything else here and stays put (red)
 		// until retried [U] or dismissed [esc] — never wiped by a poll.
@@ -3506,8 +3510,16 @@ func (m tuiModel) renderConfirm() string {
 		prompt = fmt.Sprintf("Download %s and replace this dejima binary (verified against the release checksums)? Type 'y' and Enter: %s",
 			m.latestRelease, c.answer)
 	case "update-daemon":
-		prompt = fmt.Sprintf("Update the daemon to %s and restart it (briefly disconnects)? Type 'y' and Enter: %s",
-			m.latestRelease, c.answer)
+		if c.force {
+			// The daemon deferred because clients are attached; forcing disconnects
+			// them. This is a DISTINCT decision from the first confirm — say so, or
+			// it reads as the same prompt asked twice.
+			prompt = fmt.Sprintf("The daemon held off — attached terminal(s) would be disconnected. Force the update to %s and restart now? Type 'y' and Enter: %s",
+				m.latestRelease, c.answer)
+		} else {
+			prompt = fmt.Sprintf("Update the daemon to %s and restart it (briefly disconnects)? Type 'y' and Enter: %s",
+				m.latestRelease, c.answer)
+		}
 	}
 	// Render inside the centered styleMenuBox (View supplies the border): a clear
 	// title, the prompt with a blinking-style cursor on the typed answer, and a
