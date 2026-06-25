@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"os"
 	"os/exec"
@@ -1143,8 +1142,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		return m.openCreator()
-	case "`":
+	case "/", "`":
 		// Toggle + focus the pinned host-terminal band (above the island list).
+		// `/` is the primary key; backtick kept as an alias.
 		if m.hostTerminalsEnabled() {
 			m.bandExpanded = true
 			m.bandFocused = true
@@ -1162,12 +1162,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// General settings (editor · group-by-repo · connection target). Server
 		// switching now lives inside here rather than owning its own hotkey.
 		return m.openSettings(), nil
-	case "i":
-		// Visual-identity editor for the selected island (color + glyph).
-		return m.openIdentityEditor(m.selectedName())
-	case "$":
-		// In-island /workspace shell for the selected island. (Enter now opens the
-		// island's agents; `$` — the shell prompt — opens the contained shell.)
+	case ">":
+		// In-island /workspace shell for the selected island. (Enter opens the
+		// island's agents; `>` — a shell prompt — opens the contained shell.)
 		name := m.selectedName()
 		if name == "" {
 			return m, nil
@@ -1806,6 +1803,9 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		}})
 		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openScopeView(islandName)
+		}})
+		items = append(items, actionMenuItem{label: "Color & glyph… (visual identity)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openIdentityEditor(islandName)
 		}})
 		if m.overview != nil && m.overview.SSHAddr != "" {
 			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", key: "S"})
@@ -2554,7 +2554,7 @@ func (m tuiModel) renderHeader() string {
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
 		styleMuted.Render("Each island is a repo in its own container — host one or more agents, or just shell in."),
-		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open its agents  ·  ") + styleAccent.Render("$") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
+		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open its agents  ·  ") + styleAccent.Render(">") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		serverLine,
 	}, "\n")
@@ -2913,13 +2913,13 @@ func (m tuiModel) renderBand(width int) (string, int) {
 		}
 		line := fmt.Sprintf("%s %s %s %s   %s",
 			styleHeader.Render("⌨ Host"), dot, styleMuted.Render(count),
-			styleMuted.Render("· not contained"), styleMuted.Render("[`] expand"))
+			styleMuted.Render("· not contained"), styleMuted.Render("[/] expand"))
 		return clip(line), 1
 	}
 
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("⌨ Host terminals") + " " +
-		styleMuted.Render("· not contained") + "   " + styleMuted.Render("[`] collapse") + "\n")
+		styleMuted.Render("· not contained") + "   " + styleMuted.Render("[/] collapse") + "\n")
 	for i, t := range m.terminals {
 		line := "  " + terminalRowText(t)
 		if i == m.bandSel {
@@ -3005,7 +3005,12 @@ func agentRowText(a api.AgentInfo, ambiguous bool) string {
 	if v := attachedIndicator(a.Attached); v != "" {
 		metaStr += "  " + v
 	}
-	left := fmt.Sprintf("%s %s  %s", agentGlyph(a), name, metaStr)
+	// Pin the kind glyph to a fixed 2-cell slot so the name (and the type column
+	// after it) line up regardless of the glyph's render width — ◆/■/❯ aren't all
+	// one cell in every terminal font, which otherwise nudged headless rows
+	// (e.g. openclaw) out of column.
+	glyphSlot := lipgloss.NewStyle().Width(2).Render(agentGlyph(a))
+	left := fmt.Sprintf("%s%s  %s", glyphSlot, name, metaStr)
 	status, statusStyle := agentStatus(a)
 	if status == "" {
 		return left
@@ -3276,7 +3281,7 @@ func (m tuiModel) renderFooter() string {
 	// listed in the ⏎ menu and in [?] help.
 	term := ""
 	if m.hostTerminalsEnabled() {
-		term = "[`] terminals   "
+		term = "[/] terminals   "
 	}
 	keys1 := "[n] new   " + term + "[s] settings   [?] help   [q] quit"
 	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll
@@ -3346,14 +3351,13 @@ func (m tuiModel) renderHelp() string {
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
 		{"t", "new host terminal — an uncontained shell on the daemon host (if enabled)"},
 		{"⏎ / o", "island → opens all its agents (each in a new tab); agent → its session; headless agent → its logs"},
-		{"$", "open a shell at /workspace inside the highlighted island (contained)"},
+		{">", "open a shell at /workspace inside the highlighted island (contained)"},
 		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh setup, purge…)"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
 		{"p", "group the island list by repo — multi-agent projects read as one"},
 		{"+", "add an agent — Claude Code, Codex, a terminal, or a headless command"},
 		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
-		{"i", "set the island's color + glyph (visual identity); clear to revert to the auto default"},
 		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
@@ -3367,7 +3371,7 @@ func (m tuiModel) renderHelp() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; $ opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."))
+	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."))
 	b.WriteString("\n\n")
 	b.WriteString(styleHeader.Render("Glyphs"))
 	b.WriteString("\n  ")
@@ -3381,9 +3385,7 @@ func (m tuiModel) renderHelp() string {
 		styleNeedsYou.Render("needs you") + styleMuted.Render(" · ") +
 		styleErrored.Render("error"))
 	b.WriteString("\n  ")
-	b.WriteString(styleMuted.Render("each island also has its own stable color + glyph (e.g. ") +
-		func() string { st, g := islandIdentity("alpha"); return st.Render(g + " name") }() +
-		styleMuted.Render(") so it's recognizable at a glance"))
+	b.WriteString(styleMuted.Render("islands are uniform by default; give one its own color + glyph via the actions menu (m → Color & glyph)"))
 	b.WriteString("\n\n")
 
 	if !m.helpAdvanced {
@@ -3622,33 +3624,34 @@ func (m tuiModel) renderSettings() string {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// islandIdentityColors / islandIdentityGlyphs are the palette for per-island
-// visual identity (a3 brief #2): a stable color + glyph per island so islands —
-// and the agents grouped under them — are distinguishable at a glance (and the
-// hero/containment recordings read clearly). Colors are light-medium so they
-// show on both the default dark background and the selected-row highlight, and
-// deliberately avoid the state hues (green/amber/red, see styleRunning/Waiting/
-// Errored) so identity never reads as status. Glyphs avoid the lifecycle glyphs
-// (●/⏸/◌/✱/!) for the same reason. Scope: name + 1 color + 1 glyph, no theming.
+// islandIdentityColors / islandIdentityGlyphs are the palette the visual-identity
+// EDITOR offers (see tui_identity.go). They are NOT auto-assigned: islands look
+// uniform by default (see islandIdentityDefault), and a color/glyph is opt-in per
+// island via the actions menu. Colors are light-medium so they show on both the
+// default dark background and the selected-row highlight, and deliberately avoid
+// the state hues (green/amber/red); glyphs avoid the lifecycle glyphs.
 var islandIdentityColors = []lipgloss.Color{
+	"#ffffff", // the default (uniform) — first so the editor opens on it
 	"#60a5fa", "#a78bfa", "#22d3ee", "#f472b6", "#2dd4bf",
 	"#e879f9", "#38bdf8", "#818cf8", "#f0abfc", "#5eead4",
 }
 
 var islandIdentityGlyphs = []string{"◆", "▲", "★", "■", "◈", "✦", "♦", "⬟"}
 
-// islandIdentity returns a stable color+glyph for an island, derived
-// deterministically from its durable Name so it never changes across restarts
-// (and matches between sessions/devices without any backend). Color and glyph
-// are decorrelated so two islands rarely collide on both. When the backend ships
-// a stored visual-identity field, prefer it and fall back to this.
+// islandIdentityDefaultColor / Glyph are the uniform default every island wears
+// until the operator sets one: white + a neutral glyph. (The per-island
+// hash-distinct coloring was dropped — it carried no meaning; distinctness is
+// now opt-in.)
+const islandIdentityDefaultColor = "#ffffff"
+
+var islandIdentityDefaultGlyph = islandIdentityGlyphs[0] // ◆
+
+// islandIdentity returns the uniform default identity (white + neutral glyph) —
+// the same for every island. A per-island override comes from islandVisual when
+// the operator has set one.
 func islandIdentity(name string) (lipgloss.Style, string) {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(name))
-	sum := h.Sum32()
-	color := islandIdentityColors[sum%uint32(len(islandIdentityColors))]
-	glyph := islandIdentityGlyphs[(sum/uint32(len(islandIdentityColors)))%uint32(len(islandIdentityGlyphs))]
-	return lipgloss.NewStyle().Foreground(color), glyph
+	_ = name // uniform default; name no longer hashed into a distinct color/glyph
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(islandIdentityDefaultColor)), islandIdentityDefaultGlyph
 }
 
 // islandVisual is the read-through used everywhere the dashboard draws an
