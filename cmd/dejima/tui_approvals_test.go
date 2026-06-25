@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/policy"
 )
 
 func benign() link.ActionRequest {
@@ -86,12 +87,50 @@ func TestApprovalsKeyApprove(t *testing.T) {
 		t.Error("benign approve should fire a command")
 	}
 
-	// Deny fires a command.
-	if _, cmd := m.approvalsKey(key("d")); cmd == nil {
-		t.Error("deny should fire a command")
+	// Deny opens an (optional) reason prompt rather than firing immediately.
+	out, _ = m.approvalsKey(key("d"))
+	if c := out.(tuiModel).confirm; c == nil || c.verb != "deny-action" {
+		t.Errorf("deny should open the deny-action reason prompt, got %+v", out.(tuiModel).confirm)
 	}
 	// esc closes.
 	if out, _ := m.approvalsKey(tea.KeyMsg{Type: tea.KeyEsc}); out.(tuiModel).approvals != nil {
 		t.Error("esc should close the approvals overlay")
+	}
+}
+
+// TestApprovalsRuleFlow: [r] approve+rule is offered on non-destructive actions
+// (opens the rule prompt) but never on destructive ones; the spec parses; and
+// the rules region revokes immediately.
+func TestApprovalsRuleFlow(t *testing.T) {
+	key := func(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+
+	// Non-destructive → [r] opens the approve-rule prompt.
+	m := tuiModel{approvals: &approvalsView{sel: 0}, pendingActions: []link.ActionRequest{benign()}}
+	out, _ := m.approvalsKey(key("r"))
+	if c := out.(tuiModel).confirm; c == nil || c.verb != "approve-rule" || c.agent != "act1" {
+		t.Errorf("benign [r] should open the approve-rule prompt, got %+v", out.(tuiModel).confirm)
+	}
+	// Destructive → [r] is a no-op (a rule can never match it).
+	m = tuiModel{approvals: &approvalsView{sel: 0}, pendingActions: []link.ActionRequest{destructive()}}
+	if out, _ := m.approvalsKey(key("r")); out.(tuiModel).confirm != nil {
+		t.Error("destructive [r] must not offer a rule")
+	}
+
+	// parseRuleSpec: "<max> [<ttl>]".
+	if mc, ttl := parseRuleSpec("20 1h"); mc != 20 || ttl != "1h" {
+		t.Errorf(`parseRuleSpec("20 1h") = (%d,%q), want (20,"1h")`, mc, ttl)
+	}
+	if mc, ttl := parseRuleSpec(""); mc != 0 || ttl != "" {
+		t.Errorf(`parseRuleSpec("") = (%d,%q), want (0,"")`, mc, ttl)
+	}
+
+	// Rules region: Tab focuses it (rules present), [x] fires a revoke command.
+	m = tuiModel{approvals: &approvalsView{}, policyRules: []policy.Rule{{From: "web", To: "infra", Action: "deploy"}}}
+	out, _ = m.approvalsKey(tea.KeyMsg{Type: tea.KeyTab})
+	if out.(tuiModel).approvals.focus != focusRules {
+		t.Fatal("Tab should focus the rules region when rules exist")
+	}
+	if _, cmd := out.(tuiModel).approvalsKey(key("x")); cmd == nil {
+		t.Error("[x] in the rules region should fire a revoke command")
 	}
 }
