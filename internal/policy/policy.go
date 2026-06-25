@@ -28,13 +28,15 @@ import (
 	"github.com/aoos/dejima/internal/paths"
 )
 
-// Rule auto-approves a specific action-type over a specific link, up to MaxCount
-// times, until ExpiresAt. It never covers destructive actions (enforced at
-// Consume, not stored here — the tier is a property of each request).
+// Rule auto-approves a specific action-type over a link (from→to), up to MaxCount
+// times, until ExpiresAt. It is topic-agnostic: the link grant (which is
+// per-topic) already gates which channels exist, so the operator-facing rule is
+// scoped to the meaningful unit — the link + action-type. It never covers
+// destructive actions (enforced at Consume — the tier is a property of each
+// request, not the rule).
 type Rule struct {
 	From      string    `json:"from"`
 	To        string    `json:"to"`
-	Topic     string    `json:"topic"`
 	Action    string    `json:"action"`
 	MaxCount  int       `json:"max_count"` // <=0 = unlimited within the TTL window
 	Used      int       `json:"used"`
@@ -43,12 +45,12 @@ type Rule struct {
 	CreatedBy string    `json:"created_by,omitempty"`
 }
 
-func ruleKey(from, to, topic, action string) string {
-	return from + "\x00" + to + "\x00" + topic + "\x00" + action
+func ruleKey(from, to, action string) string {
+	return from + "\x00" + to + "\x00" + action
 }
 
-// Key is the rule's unique identity (from, to, topic, action).
-func (r Rule) Key() string { return ruleKey(r.From, r.To, r.Topic, r.Action) }
+// Key is the rule's unique identity (from, to, action).
+func (r Rule) Key() string { return ruleKey(r.From, r.To, r.Action) }
 
 func (r Rule) expired(now time.Time) bool {
 	return !r.ExpiresAt.IsZero() && now.After(r.ExpiresAt)
@@ -164,7 +166,7 @@ func (s *Store) Add(r Rule, ttl time.Duration) Rule {
 	if s.Rules == nil {
 		s.Rules = map[string]Rule{}
 	}
-	r.From, r.To, r.Topic, r.Action = strings.TrimSpace(r.From), strings.TrimSpace(r.To), strings.TrimSpace(r.Topic), strings.TrimSpace(r.Action)
+	r.From, r.To, r.Action = strings.TrimSpace(r.From), strings.TrimSpace(r.To), strings.TrimSpace(r.Action)
 	now := time.Now().UTC()
 	r.CreatedAt = now
 	r.Used = 0
@@ -178,8 +180,8 @@ func (s *Store) Add(r Rule, ttl time.Duration) Rule {
 }
 
 // Remove deletes a rule by its parts. Returns false when no such rule exists.
-func (s *Store) Remove(from, to, topic, action string) bool {
-	k := ruleKey(strings.TrimSpace(from), strings.TrimSpace(to), strings.TrimSpace(topic), strings.TrimSpace(action))
+func (s *Store) Remove(from, to, action string) bool {
+	k := ruleKey(strings.TrimSpace(from), strings.TrimSpace(to), strings.TrimSpace(action))
 	if _, ok := s.Rules[k]; !ok {
 		return false
 	}
@@ -216,7 +218,7 @@ func Consume(ar link.ActionRequest) (Rule, bool, error) {
 	var ok bool
 	_, err := Update(func(s *Store) error {
 		now := time.Now().UTC()
-		k := ruleKey(strings.TrimSpace(ar.From), strings.TrimSpace(ar.To), strings.TrimSpace(ar.Topic), strings.TrimSpace(ar.Action))
+		k := ruleKey(strings.TrimSpace(ar.From), strings.TrimSpace(ar.To), strings.TrimSpace(ar.Action))
 		r, found := s.Rules[k]
 		if !found {
 			return nil
