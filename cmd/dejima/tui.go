@@ -2427,8 +2427,8 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 				break
 			}
 		}
-		return fmt.Sprintf(" ⚖ %d cross-island action(s) %s   ·   [V] review", n, tail),
-			fmt.Sprintf(" ⚖ %d to approve ", n), st, true
+		return fmt.Sprintf(" ! %d cross-island action(s) %s   ·   [V] review", n, tail),
+			fmt.Sprintf(" ! %d to approve ", n), st, true
 	case m.updateError != "":
 		// A failed self-update outranks everything else here and stays put (red)
 		// until retried [U] or dismissed [esc] — never wiped by a poll.
