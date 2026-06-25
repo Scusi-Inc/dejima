@@ -16,7 +16,8 @@
 #   · purge unpushed-work guard + force-purge override
 #   · capability brokering: deny-all / grant / list / revoke
 #   · provider credentials: set / list (masked) / rm
-#   · team tokens + role enforcement (viewer denied purge, allowed reads)
+#   · team tokens: mint + list (role *enforcement* is roleauth_test.go's job —
+#     it can't be exercised over the owner-trusted local socket)
 #   · webhooks: events catalog / subscribe / ls / rm
 #   · activity feed · panic brake (engage/status/clear) · doctor health check
 #
@@ -749,31 +750,24 @@ fi
 expect_ok "provider rm" dejima provider rm anthropic
 
 # ---------------------------------------------------------------------------
-# Team tokens + roles — mint a viewer token and confirm role enforcement: a
-# viewer is denied a purge but allowed a read (ls). Owner-equivalent local
-# listener mints; the scoped bearer is presented via DEJIMA_TOKEN.
+# Team tokens — mint an operator + a viewer token and confirm they're minted and
+# listed. Role *enforcement* (a viewer denied an operate/owner action) is NOT
+# exercised here, and deliberately so: this suite drives the daemon over the
+# local unix socket, which is filesystem-trusted and runs as OWNER. The CLI does
+# not forward DEJIMA_TOKEN over the socket (it attenuates only the TCP/in-island
+# path — see clientForHost), so a token set here is ignored and every call runs
+# as owner — an `expect_fail "viewer denied …"` would test nothing. Role
+# attenuation is owned by internal/api/roleauth_test.go, which drives the HTTP
+# surface with real role tokens (operator/viewer denied capOwner/capOperate
+# routes incl. purge; owner allowed).
 # ---------------------------------------------------------------------------
-feature "team tokens + role enforcement (viewer denied purge, allowed reads)"
+feature "team tokens (mint + list)"
 step "Token: create an operator + a viewer token"
 expect_ok "token create (operator)" dejima token create --role operator --label itest-op
 VIEWER_OUT="$(dejima token create --role viewer --label itest-viewer 2>&1)"
 assert_has "$VIEWER_OUT" "viewer" "viewer token minted"
-# Parse the secret from the stable `export DEJIMA_TOKEN=<hex>` line (the bearer
-# secret is printed bare on its own line, with no "secret:" prefix).
-VIEWER_SECRET="$(printf '%s\n' "$VIEWER_OUT" | sed -n 's/.*DEJIMA_TOKEN=\([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
 TOK_LS="$(dejima token ls 2>&1)"
 assert_has "$TOK_LS" "viewer" "minted tokens are listed"
-if [ -n "$VIEWER_SECRET" ]; then
-  step "Token: the viewer role is read-only (ls allowed, purge denied)"
-  expect_ok "viewer allowed a read (ls)" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima ls
-  # --force skips the client-side type-the-name confirmation, so the DAEMON's
-  # role check is what denies the viewer (a 403) — not the prompt. Without it,
-  # the prompt blocks on a TTY (and on a pipe aborts non-zero, making this pass
-  # for the WRONG reason: the abort, not role enforcement).
-  expect_fail "viewer denied a purge (even with --force)" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima purge "$ISLAND" --force
-else
-  fail "could not parse the viewer token secret to test role enforcement"
-fi
 
 # ---------------------------------------------------------------------------
 # Webhooks — subscribe to events, see the subscription listed, unsubscribe. The

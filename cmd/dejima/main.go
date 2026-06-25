@@ -948,6 +948,14 @@ func resolveHost() string {
 func clientForHost(host string) (*api.Client, error) {
 	host = strings.TrimSpace(host)
 	if host == "" {
+		// The local unix socket is filesystem-trusted and runs as OWNER
+		// (exchange-down model). A token attenuates only the TCP/in-island path,
+		// so DEJIMA_TOKEN here is silently ignored — warn, so a viewer token set
+		// locally in the hope of reduced rights isn't mistaken for being in
+		// effect (it isn't; you act as owner). Set DEJIMA_HOST to use a token.
+		if strings.TrimSpace(os.Getenv("DEJIMA_TOKEN")) != "" {
+			fmt.Fprintln(os.Stderr, "warning: DEJIMA_TOKEN is ignored over the local socket — you act as the trusted owner. A token applies only to a remote/in-island target (set DEJIMA_HOST).")
+		}
 		return api.NewUnixClient()
 	}
 	// Guard the choke point: a host carrying a control character (e.g. a stray
