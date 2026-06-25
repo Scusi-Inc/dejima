@@ -162,6 +162,7 @@ func runConnectionTroubleshooter(ctx context.Context) {
 }
 
 func newRootCmd() *cobra.Command {
+	var demoMode bool
 	cmd := &cobra.Command{
 		Use:   "dejima",
 		Short: "An island for agents to live on.",
@@ -189,9 +190,10 @@ func newRootCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "Try `dejima ls` for a scriptable view, or `dejima --help` for all verbs.")
 				return nil
 			}
-			return runTUI(cmd.Context())
+			return runTUI(cmd.Context(), demoMode)
 		},
 	}
+	cmd.Flags().BoolVar(&demoMode, "demo", false, "drive the dashboard from a synthetic fleet (for screen recordings; no daemon)")
 	registerProfileFlags(cmd)
 	cmd.AddCommand(
 		newInitCmd(),
