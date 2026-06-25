@@ -46,6 +46,12 @@ type LinkPendingResponse struct {
 	Pending []link.ActionRequest `json:"pending"`
 }
 
+// DenyActionRequest is the optional body of POST .../deny: a human-readable
+// reason recorded in the ledger.
+type DenyActionRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 // exposeAction adds a named action type to an island's exposed set (operator).
 // Cross-island delegation is deny-all: another island can invoke only actions
 // this island has exposed AND a grant authorizes.
@@ -258,19 +264,25 @@ func (s *Server) approveAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // denyAction denies a pending action (operator role only); fail-closed, ledgered.
+// An optional {reason} body is recorded in the ledger.
 func (s *Server) denyAction(w http.ResponseWriter, r *http.Request) {
 	ar, ok := s.linkQueue.Take(r.PathValue("id"))
 	if !ok {
 		writeError(w, http.StatusNotFound, errors.New("no such pending action (unknown or expired)"))
 		return
 	}
+	var req DenyActionRequest
+	_ = json.NewDecoder(r.Body).Decode(&req) // body optional
 	denier := "operator"
 	if id, ok := IdentityFromContext(r.Context()); ok && id.Subject != "" {
 		denier = id.Subject
 	}
+	detail := "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "] operator-denied"
+	if reason := strings.TrimSpace(req.Reason); reason != "" {
+		detail += ": " + reason
+	}
 	s.ledgerAppend(ledger.Entry{
-		Type: "link.deny", Island: ar.From, Scope: ar.Topic,
-		Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "] operator-denied", Actor: denier, Decision: "denied",
+		Type: "link.deny", Island: ar.From, Scope: ar.Topic, Detail: detail, Actor: denier, Decision: "denied",
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
