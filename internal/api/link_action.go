@@ -10,6 +10,7 @@ import (
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/project"
 )
 
@@ -149,9 +150,17 @@ func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("island %q does not expose action %q", to, action))
 		return
 	}
-	// Pre-authorized in the grant's allowlist → execute immediately.
+	// Pre-authorized in the grant's static allowlist → execute immediately.
 	if actionInList(action, grant.Actions) {
 		s.executeLinkAction(ar, "")
+		writeJSON(w, http.StatusCreated, LinkActionResponse{Status: "executed"})
+		return
+	}
+	// A scoped, counted, expiring auto-approve rule (operator opt-in) covers this
+	// link+action → execute and spend one unit of its budget. Consume never
+	// matches a destructive action, so this can't become a wipe-the-drive bypass.
+	if _, ok, perr := policy.Consume(ar); perr == nil && ok {
+		s.executeLinkAction(ar, "policy") // ledgers link.approve (Actor=policy) → an auto record
 		writeJSON(w, http.StatusCreated, LinkActionResponse{Status: "executed"})
 		return
 	}
