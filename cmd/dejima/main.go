@@ -1327,8 +1327,40 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) {
 
 // runSession is the websocket ↔ local-stdio bridge driving `dejima connect`.
 // An empty agentID attaches to the island's primary agent.
+// setTerminalTitle sets the local terminal tab/window title via an OSC sequence
+// (no-op for a non-TTY stdout, or an empty title used to clear on detach). It's
+// written to the local terminal — above any inner tmux — so it's the reliable
+// "what am I attached to" cue regardless of the container's tmux config. Control
+// bytes are stripped so a crafted name can't inject escape sequences.
+func setTerminalTitle(title string) {
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return
+	}
+	fmt.Fprintf(os.Stdout, "\033]0;%s\007", sanitizeTitle(title))
+}
+
+// sanitizeTitle strips control bytes (including ESC and BEL) from a title so a
+// crafted island/agent name can't inject its own terminal escape sequences.
+func sanitizeTitle(title string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, title)
+}
+
+// sessionTitle builds the tab title for an island/agent attach: "island/agent",
+// or just "island" when no specific agent is named.
+func sessionTitle(name, agentID string) string {
+	if agentID == "" {
+		return name
+	}
+	return name + "/" + agentID
+}
+
 func runSession(ctx context.Context, c *api.Client, name, agentID, label string) error {
-	return runSessionLoop(ctx, false, func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, false, sessionTitle(name, agentID), func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialAgentSession(ctx, name, agentID, label)
 	})
 }
@@ -1336,7 +1368,7 @@ func runSession(ctx context.Context, c *api.Client, name, agentID, label string)
 // runSessionSummonable is runSession with the summon chord (Ctrl-\) enabled — used
 // when the attach was launched from the TUI, so the chord can return there.
 func runSessionSummonable(ctx context.Context, c *api.Client, name, agentID, label string) error {
-	return runSessionLoop(ctx, true, func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, true, sessionTitle(name, agentID), func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialAgentSession(ctx, name, agentID, label)
 	})
 }
@@ -1344,7 +1376,7 @@ func runSessionSummonable(ctx context.Context, c *api.Client, name, agentID, lab
 // runTerminalSession attaches the local terminal to a host terminal's session.
 // summonable enables the summon chord (true when launched from the TUI).
 func runTerminalSession(ctx context.Context, c *api.Client, id, label string, summonable bool) error {
-	return runSessionLoop(ctx, summonable, func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, summonable, "host: "+id, func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialTerminalSession(ctx, id, label)
 	})
 }
@@ -1353,7 +1385,7 @@ func runTerminalSession(ctx context.Context, c *api.Client, id, label string, su
 // a contained bash session at /workspace inside the container. summonable=true
 // when launched from the TUI so the Ctrl-\ chord returns to the dashboard.
 func runInShellSession(ctx context.Context, c *api.Client, name, label string, summonable bool) error {
-	return runSessionLoop(ctx, summonable, func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, summonable, name+" — shell", func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialIslandShell(ctx, name, label)
 	})
 }
@@ -1416,7 +1448,7 @@ func classifySessionClose(err error, ctx context.Context) sessReason {
 // so a daemon restart, the host sleeping, or a network blip no longer closes the
 // terminal out from under you when you next type. Stdin is read by one long-lived
 // goroutine that outlives individual connections; raw mode is entered once.
-func runSessionLoop(ctx context.Context, summonable bool, dial func(context.Context) (*websocket.Conn, error)) error {
+func runSessionLoop(ctx context.Context, summonable bool, title string, dial func(context.Context) (*websocket.Conn, error)) error {
 	// The first dial surfaces real errors (auth, no such island/agent) directly —
 	// no reconnect spinner on a connect that was never going to work.
 	conn, err := dial(ctx)
@@ -1438,6 +1470,11 @@ func runSessionLoop(ctx context.Context, summonable bool, dial func(context.Cont
 			return fmt.Errorf("raw mode: %w", rerr)
 		}
 		defer func() { _ = term.Restore(stdinFd, oldState) }()
+		// Title the local tab to what we're attached to. Emitted to the local
+		// terminal (not into the websocket), so it sits above any inner tmux and
+		// works regardless of the container's tmux config. Cleared on detach.
+		setTerminalTitle(title)
+		defer setTerminalTitle("")
 	}
 
 	// One long-lived stdin reader → channel; it survives reconnects so keystrokes
