@@ -479,6 +479,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/policy", s.addPolicy)
 	mux.HandleFunc("DELETE /v1/policy", s.removePolicy)
 	mux.HandleFunc("GET /v1/link/actions", s.listPendingActions)
+	mux.HandleFunc("GET /v1/link/actions/watch", s.watchActions)
 	mux.HandleFunc("POST /v1/link/actions/{id}/approve", s.approveAction)
 	mux.HandleFunc("POST /v1/link/actions/{id}/deny", s.denyAction)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)

@@ -381,6 +381,14 @@ func (c *Client) DenyAction(ctx context.Context, id, reason string) error {
 	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/deny", body, nil)
 }
 
+// WatchActions opens an SSE stream of pending action approvals (`data: <JSON>`
+// frames). The caller owns the returned reader and must Close it; cancel ctx to
+// stop. Uses the timeout-free stream path so the long-lived stream isn't cut at
+// the 30s default.
+func (c *Client) WatchActions(ctx context.Context) (io.ReadCloser, error) {
+	return c.stream(ctx, http.MethodGet, "/v1/link/actions/watch")
+}
+
 // ListPolicy returns the active auto-approve rules (operator).
 func (c *Client) ListPolicy(ctx context.Context) ([]policy.Rule, error) {
 	var out PolicyListResponse

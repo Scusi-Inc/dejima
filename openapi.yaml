@@ -823,6 +823,22 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LinkPendingResponse" }
+  /v1/link/actions/watch:
+    get:
+      tags: [link]
+      summary: Stream pending action approvals as Server-Sent Events (operator/viewer)
+      description: >
+        text/event-stream of `data: <ActionRequest JSON>` frames, one per new
+        pending request, with a `: keepalive` comment on idle ticks. For an
+        on-call operator or an external approval bot. The stream ends on client
+        disconnect.
+      operationId: watchActions
+      responses:
+        "200":
+          description: An SSE stream
+          content:
+            text/event-stream:
+              schema: { type: string }
   /v1/link/actions/{id}/approve:
     parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
     post:
