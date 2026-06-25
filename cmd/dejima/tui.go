@@ -2993,13 +2993,27 @@ func agentRowText(a api.AgentInfo, ambiguous bool) string {
 	if v := attachedIndicator(a.Attached); v != "" {
 		metaStr += "  " + v
 	}
+	left := fmt.Sprintf("%s %s  %s", agentGlyph(a), name, metaStr)
 	status, statusStyle := agentStatus(a)
-	statusStr := ""
-	if status != "" {
-		statusStr = "  " + statusStyle.Render(status)
+	if status == "" {
+		return left
 	}
-	return fmt.Sprintf("%s %s  %s%s", agentGlyph(a), name, metaStr, statusStr)
+	// Align the status word to a fixed column so the states read as a column down
+	// the list, regardless of how wide each row's type/uptime/presence meta is.
+	// lipgloss.Width measures visible cells (ignores the ANSI in glyph/meta). Rows
+	// wider than the column (e.g. a disambiguated name) overflow past it with a
+	// minimum 2-space gap rather than colliding — the "within reason" exception.
+	pad := agentStatusCol - lipgloss.Width(left)
+	if pad < 2 {
+		pad = 2
+	}
+	return left + strings.Repeat(" ", pad) + statusStyle.Render(status)
 }
+
+// agentStatusCol is the visible column the agent state word starts at, sized to
+// clear a typical "<type>  up <age>  <presence>" meta (e.g. "claude-code  up
+// 40m" + a presence dot). Wider rows overflow gracefully (see agentRowText).
+const agentStatusCol = 40
 
 // attachedIndicator renders a compact "someone's driving this" badge — a
 // presence dot plus the viewer count when more than one client is attached. It
