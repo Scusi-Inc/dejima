@@ -181,12 +181,24 @@ func runDoctor(ctx context.Context) *doctorReport {
 	// --- Projects -------------------------------------------------------
 	c, err := client()
 	if err == nil {
+		// The running daemon's version is the reference for island version-skew.
+		// Empty if the daemon predates version reporting; diagnoseIslandSkew then
+		// skips the ordering and only the heartbeat flag can fire.
+		daemonVer := ""
+		if o, ovErr := c.Overview(ctx); ovErr == nil {
+			daemonVer = o.DaemonVersion
+		}
 		islands, lsErr := c.ListIslands(ctx)
 		if lsErr == nil {
 			if len(islands) == 0 {
 				r.add("Projects", "(none)", "INFO", "no islands yet; `dejima init --repo …` to create one", "")
 			}
 			for _, info := range islands {
+				// Version-skew + zero-heartbeat: a stale-image island (or one whose
+				// in-island hook never fired) flagged with the exact upgrade remedy.
+				if f := diagnoseIslandSkew(info, daemonVer); f.status != "" {
+					r.add("Projects", info.Name, f.status, f.detail, f.fix)
+				}
 				switch {
 				case info.State == "running" && info.Container != "running":
 					r.add("Projects", info.Name, "FAIL",

@@ -8,10 +8,12 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/service"
+	"github.com/aoos/dejima/internal/version"
 )
 
 // checkConnection reports where the client connects and why, and offers to fix a
@@ -201,4 +203,58 @@ func isLoopbackAddr(hostPort string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// skewFinding is a version-skew / liveness diagnosis for one island, ready to add
+// to the report. status "" means nothing to report (the island is level/unknown
+// and healthy). It's split out, pure, so the comparison logic is unit-tested
+// without a daemon.
+type skewFinding struct {
+	status string // WARN | "" (nothing to report)
+	detail string
+	fix    string
+}
+
+// diagnoseIslandSkew compares one island's version stamp against the running
+// daemon and folds in the zero-heartbeat liveness flag. The two are reported as a
+// single finding because they have the same remedy — recreate the island against
+// the current image — which is exactly what would have healed the motivating
+// incident (a stale socket→TCP notify shim that silently never heart-beat).
+//
+//   - A stamp behind the daemon is the loud skew signal, with the exact remedy
+//     inline: `island "x" built on v0.1.4, daemon on v0.5.3 — run: dejima upgrade x`.
+//   - NeverHeardFrom on its own (stamp level/unknown) still warrants the upgrade:
+//     a level island whose heartbeat never fired has a broken in-island hook, and
+//     an upgrade re-derives the managed shims.
+//
+// daemonVer is the daemon's reported version; a non-release daemon ("dev", a
+// git-describe build) can't be ordered, so skew comparison is skipped and only
+// the heartbeat flag (which needs no version math) can fire.
+func diagnoseIslandSkew(info api.IslandInfo, daemonVer string) skewFinding {
+	stamp := info.UpgradedVersion
+	if stamp == "" {
+		stamp = info.BuiltVersion
+	}
+
+	behind := false
+	if version.IsRelease(daemonVer) && version.IsRelease(stamp) {
+		behind = version.Compare(stamp, daemonVer) < 0
+	}
+
+	switch {
+	case behind:
+		return skewFinding{
+			status: "WARN",
+			detail: fmt.Sprintf("built on %s, daemon on %s — stale island image (its /opt shims may be old)", stamp, daemonVer),
+			fix:    fmt.Sprintf("dejima upgrade %s", info.Name),
+		}
+	case info.NeverHeardFrom:
+		return skewFinding{
+			status: "WARN",
+			detail: "no agent-state heartbeat since boot — its in-island event hook looks broken (mail-nudges / idle-hibernate / idle metric are dark)",
+			fix:    fmt.Sprintf("dejima upgrade %s (re-derives the managed hook shims)", info.Name),
+		}
+	default:
+		return skewFinding{}
+	}
 }
