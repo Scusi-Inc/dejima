@@ -45,6 +45,12 @@ type policyRulesMsg []policy.Rule
 // older daemon, transient) collapses to an empty queue rather than surfacing —
 // the badge just stays hidden.
 func (m tuiModel) fetchPendingActionsCmd() tea.Cmd {
+	if m.demo {
+		if !m.demoApprovals {
+			return func() tea.Msg { return pendingActionsMsg(nil) }
+		}
+		return func() tea.Msg { return pendingActionsMsg(demoPending()) }
+	}
 	c := m.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -61,6 +67,9 @@ func (m tuiModel) fetchPendingActionsCmd() tea.Cmd {
 // section). Loaded on open and after a mutation, not on every tick — rules
 // change rarely. Errors collapse to an empty list.
 func (m tuiModel) fetchPolicyCmd() tea.Cmd {
+	if m.demo {
+		return func() tea.Msg { return policyRulesMsg(demoPolicy()) }
+	}
 	c := m.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -30,19 +30,25 @@ import (
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
 // One-shot CLI verbs (`dejima ls`, etc.) continue to work for scripting.
 func newTUICmd() *cobra.Command {
-	return &cobra.Command{
+	var demo bool
+	cmd := &cobra.Command{
 		Use:    "tui",
 		Short:  "Launch the interactive dashboard (default when run with no args).",
 		Hidden: true, // not surfaced in `dejima --help`; users get it via bare `dejima`.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTUI(cmd.Context())
+			return runTUI(cmd.Context(), demo)
 		},
 	}
+	// --demo drives the dashboard from a synthetic fleet (no daemon) for the site
+	// recordings: reproducible, secret-free, and animated. `!` stages the
+	// action-gate scene. See strategy/tui-capture-runbook.md.
+	cmd.Flags().BoolVar(&demo, "demo", false, "drive the dashboard from a synthetic fleet (for screen recordings; no daemon)")
+	return cmd
 }
 
 // runTUI starts the bubbletea program; on Enter, it exits with a saved
 // connect-to-this-island intent which the caller acts on after the TUI loop.
-func runTUI(ctx context.Context) error {
+func runTUI(ctx context.Context, demo bool) error {
 	c, err := client()
 	if err != nil {
 		return err
@@ -54,6 +60,7 @@ func runTUI(ctx context.Context) error {
 	summonReturn := false
 	for {
 		m := initialTUIModel(c)
+		m.demo = demo
 		if summonReturn {
 			m.bandExpanded, m.bandFocused = true, true
 		}
@@ -181,6 +188,14 @@ type tuiModel struct {
 	// policyRules are the active auto-approve rules, loaded when the approvals
 	// overlay opens (and after a mutation) — not polled. See tui_approvals.go.
 	policyRules []policy.Rule
+	// demo drives the dashboard from a synthetic fleet (tui_demo.go) instead of a
+	// live daemon — for reproducible, secret-free site recordings. demoTick
+	// advances each poll so the fleet's agent states churn on screen.
+	// demoApprovals stages the action-gate scene (pending actions + badge),
+	// toggled with `!` so the hero fleet shot stays clean until you want it.
+	demo          bool
+	demoTick      int
+	demoApprovals bool
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -442,6 +457,10 @@ func releaseTickCmd() tea.Cmd {
 }
 
 func (m tuiModel) fetchListCmd() tea.Cmd {
+	if m.demo {
+		tick := m.demoTick
+		return func() tea.Msg { return listMsg(demoIslands(tick)) }
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -454,6 +473,10 @@ func (m tuiModel) fetchListCmd() tea.Cmd {
 }
 
 func (m tuiModel) fetchOverviewCmd() tea.Cmd {
+	if m.demo {
+		tick := m.demoTick
+		return func() tea.Msg { return overviewMsg(demoOverview(tick)) }
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -506,6 +529,15 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 	if name == "" {
 		return nil // e.g. the trailing "+ new island" row has no island
 	}
+	if m.demo {
+		tick := m.demoTick
+		return func() tea.Msg {
+			if info, ok := demoIsland(name, tick); ok {
+				return detailMsg{info: info}
+			}
+			return nil
+		}
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -525,6 +557,11 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 func (m tuiModel) Init() tea.Cmd {
 	// Title the dashboard's own terminal tab "dejima" (session tabs it spawns are
 	// titled "<island>-<agent>"); see openAgentWindow.
+	if m.demo {
+		// No daemon, no setup-readiness or update checks — just the synthetic
+		// fleet, polled on the tick so it animates. Keeps recordings clean.
+		return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd(), tickCmd())
+	}
 	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
@@ -603,6 +640,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case tickMsg:
+		if m.demo {
+			m.demoTick++ // advance the synthetic fleet so agent states churn on screen
+		}
 		cmds := []tea.Cmd{tickCmd(), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd()}
 		if name := m.selectedName(); name != "" {
 			cmds = append(cmds, m.fetchDetailCmd(name))
@@ -859,6 +899,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case errMsg:
+		if m.demo {
+			return m, nil // demo never talks to a daemon; ignore stray fetch errors
+		}
 		if msg.err != nil {
 			m.lastError = msg.err.Error()
 			// A local daemon that's gone unreachable: attach a one-shot, actionable
@@ -1079,6 +1122,13 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// (G is jump-to-bottom.)
 		m.approvals = &approvalsView{}
 		return m, tea.Batch(m.fetchPendingActionsCmd(), m.fetchPolicyCmd())
+	case "!":
+		// Demo-only: stage/unstage the action-gate scene (pending actions + badge)
+		// so the hero fleet shot stays clean until you want the approval clip.
+		if m.demo {
+			m.demoApprovals = !m.demoApprovals
+			return m, m.fetchPendingActionsCmd()
+		}
 	case "P":
 		// Port scope-picker for the selected island (brokered host-file grants).
 		// Capital P; lowercase p is group-by-repo.
