@@ -14,28 +14,36 @@ Endpoints on `feat/link-action-gate`:
 - `POST /v1/link/actions/{id}/deny`
 
 `link.ActionRequest` (internal/link/action.go):
-`{ id, from, from_agent, to, to_agent, topic, action, params?, created_at }`
+`{ id, from, from_agent, to, to_agent, topic, action, params?, created_at, tier }`
 — requesting island/agent (`from`/`from_agent`) → `action` over the granted
-`topic` channel → target island/agent (`to`/`to_agent`), with `params` the payload.
+`topic` channel → target island/agent (`to`/`to_agent`), `params` the payload, and
+**`tier`** the risk classification (`benign|mutating|destructive`).
 
-## Contract gaps to resolve with a1 (BEFORE building)
-1. **Risk tier is missing from the payload.** The spec's headline UX — "make the
-   destructive tier unmistakable; never approve blind" — and tier-colored rows are
-   impossible unless each `ActionRequest` carries its computed tier. **Ask:** add
-   `risk` (enum `benign|mutating|destructive`) to the GET payload (the gate already
-   knows it — that's how it decides auto-approvable vs human-gated).
-2. **Policy CRUD endpoints aren't there yet.** The overlay's "active auto-approve
-   rules" section, the `[r] approve + rule` action, and the spec's `dejima policy
-   add/ls/rm` need: list rules, create rule, delete rule. **Ask:** confirm routes
-   (e.g. `GET/POST /v1/link/policy`, `DELETE /v1/link/policy/{id}`) and the rule
-   shape (`{link/from→to, action, max, ttl}`).
-3. **`approve + rule`** — does `approve` take an inline rule spec, or is it
-   `approve` followed by a separate policy-create? (Prefer one call so the UI is
-   atomic; otherwise the client does both.)
-4. **Deny reason** — confirm the `deny` body (`{reason?}` per the CLI `--reason`).
-5. **Push vs poll** — the TUI will **poll** `GET /v1/link/actions` on its existing
-   2s tick (cheap, no new infra) to drive the count badge. Confirm that's fine, or
-   point me at an event/webhook if live push is preferred.
+## Contract — resolved with a1 (msg #17, slices 1+2 merged: #131 tiers, #132 policy engine)
+1. **Risk tier — DONE.** `GET /v1/link/actions` items carry `tier`
+   (`benign|mutating|destructive`), classified at request time; same `tier` is on
+   the `link.action-pending` event. (Spec calls it "risk tier"; the field is `tier`.)
+   **Engine guarantee:** a destructive action is *never* auto-approved
+   (`policy.Consume` filters on tier), so it ALWAYS reaches the prompt — which is
+   exactly what the "render destructive unmistakable" UX relies on.
+2. **Policy CRUD — engine merged (#132, internal/policy); the CRUD API is slice 3
+   (next).** Rule shape: `{from, to, topic, action, max_count (0 = unlimited within
+   ttl), used, expires_at, created_at, created_by}`. List/create/delete routes land
+   in slice 3 (a1 will confirm exact paths).
+3. **`approve + rule` — approve THEN a separate policy-create** (composable; a1 may
+   add an inline convenience later). Build `[r]` as approve + policy.create.
+4. **Deny reason — slice 3.** `POST .../deny` ignores the body today; `{reason}`
+   lands in slice 3 (matches the CLI `--reason`). Build the prompt for it.
+5. **Count badge — poll is fine.** Poll `GET /v1/link/actions` on the 2s tick. A
+   `link.action-pending` push event + a slice-4 SSE (`dejima approvals watch`) exist
+   if we want live push later; not needed for the badge.
+
+## Build split (post-launch)
+- **Buildable now (slices 1+2):** the announcement-bar count/alert (tier-aware red
+  when any destructive pending), the pending queue, and `[a]` approve / `[d]` deny /
+  `[v]` view — with tier-colored rows and the **destructive typed-confirm**.
+- **Slice 3 (when CRUD + deny-reason land):** the active-rules section, `[r]`
+  approve+rule (approve → policy.create), and the deny `{reason}` field.
 
 ## Client UI (mirrors patterns already shipped)
 Two surfaces, in the **same trust-surface family** as the grants view (`T`, #111)
