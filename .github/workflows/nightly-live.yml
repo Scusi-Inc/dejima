@@ -1,0 +1,126 @@
+name: nightly-live
+
+# ============================================================================
+# LIVE clean-Mac launch gate (Lane 0). Proves install + uninstall + re-adopt on
+# a REAL clean Mac — the single biggest remaining launch risk. This is the ONE
+# job that requires a genuinely virgin macOS host, so it lives in its own
+# workflow (separate from nightly.yml's in-container Tier-2/3/4 suites).
+#
+# It runs scripts/clean-mac/proof-loop.sh end to end: for EACH channel
+# (curl|sh, brew, npm) it tears the box down to virgin, installs, asserts the
+# daemon + a test island, runs `dejima uninstall --keep-islands`, reinstalls,
+# and asserts the island volume + ~/.dejima config RE-ADOPT (marker survives).
+#
+# TRIGGER POLICY — workflow_dispatch ONLY (same policy as nightly.yml). There is
+# intentionally NO `schedule:` cron: every run tears down + reinstalls Dejima on
+# the Mac-mini runner, so enabling unattended nightly auto-runs is the
+# OPERATOR's explicit decision. Uncomment the `schedule:` block below to enable.
+#
+# RUNNER — the `dejimaqa` self-hosted runner on the Minion Mac mini (label
+# `macos-mini`), which has its OWN colima Docker + its own ~/.dejima and scoped
+# sudo. The proof loop installs under the user PREFIX (~/.local) and refuses to
+# run as `aoos`, so it never touches the operator account. The runner job-token
+# is read-only; see docs/testing/dejimaqa-runner-setup.md.
+#
+# GATING — the job only runs on a self-hosted macos-mini runner (no GitHub-hosted
+# macOS runner can host colima + a system install). On any other host it has no
+# runner to pick it up, so it stays queued rather than running somewhere unsafe.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      channels:
+        description: "Which install channels to verify (comma-separated: curl,brew,npm)."
+        type: string
+        default: "curl,brew,npm"
+      use_served:
+        description: "curl the SERVED dejima.tech/install.sh (production path) instead of the in-repo install.sh. Off = verify the checked-out branch."
+        type: boolean
+        default: false
+      reset_colima:
+        description: "Also reset the dejimaqa colima VM to a from-zero Docker (destructive to its containers). Default off — teardown already removes Dejima's own objects."
+        type: boolean
+        default: false
+  # TODO(operator): to enable unattended nightly auto-runs, uncomment this
+  # schedule. This tears down + reinstalls Dejima on the Mac mini every night —
+  # enable it deliberately, not by default.
+  # schedule:
+  #   - cron: "30 7 * * *" # 07:30 UTC nightly, after the in-container nightly
+
+permissions:
+  contents: read
+
+jobs:
+  clean-mac-gate:
+    name: clean-mac launch gate (Mac mini, dejimaqa)
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 60
+    env:
+      # In-repo install.sh by default (verifies the branch under review); flip
+      # use_served=true on the dispatch to exercise the production curl path.
+      CLEANMAC_USE_SERVED: ${{ inputs.use_served && '1' || '' }}
+      CLEANMAC_RESET_COLIMA: ${{ inputs.reset_colima && '1' || '' }}
+      # The proof loop installs the operator-facing binaries under this prefix
+      # (never /usr/local) so the run needs no admin and can't clobber an aoos
+      # install. Matches scripts/clean-mac/lib.sh's default.
+      DEJIMA_PREFIX: ${{ github.workspace }}/.cleanmac-prefix
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # install.sh bakes its version from `git describe --tags`; a shallow
+          # checkout has no tags → a hash version. Fetch everything so the gate
+          # also catches a version-baking regression.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # Refuse to run as the operator account — the proof loop deletes ~/.dejima
+      # during teardown, so a misconfigured runner must fail here, not wipe aoos.
+      - name: guard — not running as aoos
+        run: |
+          who="$(id -un)"
+          if [ "$who" = "aoos" ]; then
+            echo "::error::nightly-live must run as the dejimaqa test user, not aoos (it deletes ~/.dejima during teardown). Fix the runner's RUNNER_USER."
+            exit 1
+          fi
+          echo "running as $who (ok)"
+
+      # The whole launch gate: per-channel teardown → install → assert → uninstall
+      # --keep-islands → reinstall → assert re-adopt. continue-on-error so the log
+      # artifact always uploads; the final step re-asserts the real outcome.
+      - name: run the clean-Mac proof loop (all channels)
+        id: gate
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          scripts/clean-mac/proof-loop.sh --channels "${{ inputs.channels }}" \
+            2>&1 | tee "${{ github.workspace }}/clean-mac-gate.log"
+
+      # Capture the full transcript + any saved daemon logs as an artifact, so a
+      # failure is diagnosable without re-running on the box.
+      - name: collect logs
+        if: always()
+        run: |
+          mkdir -p "${{ github.workspace }}/gate-logs"
+          cp -f "${{ github.workspace }}/clean-mac-gate.log" "${{ github.workspace }}/gate-logs/" 2>/dev/null || true
+          # The proof loop saves per-channel daemon logs under $HOME on failure.
+          cp -f "$HOME"/cleanmac-*-dejimad.log "${{ github.workspace }}/gate-logs/" 2>/dev/null || true
+          ls -la "${{ github.workspace }}/gate-logs" || true
+      - name: upload the gate logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-mac-gate-logs
+          path: gate-logs
+          if-no-files-found: warn
+
+      # Fail loud: re-assert the proof loop's real exit status so a red gate reds
+      # the job (the channel skips inside the loop don't fail; a real assertion
+      # failure does).
+      - name: reflect the proof-loop outcome
+        if: steps.gate.outcome == 'failure'
+        run: |
+          echo "::error::the clean-Mac launch gate FAILED — install/uninstall/re-adopt did not hold on a clean Mac. See the clean-mac-gate-logs artifact."
+          exit 1
