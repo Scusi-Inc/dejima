@@ -134,6 +134,26 @@ expect_err_match(){
     fail "$d — failed but error did not contain [$want]; got: $out"
   fi
 }
+# run_bounded <secs> <cmd...>: run cmd under a portable wall-clock deadline
+# (macOS ships no GNU `timeout`). stdout passes through so it stays $(...)-
+# capturable. On timeout the child is killed and 124 returned; otherwise the
+# child's own exit status. Guards suite-direct `docker run`s, which can wedge the
+# whole job for 30+ min on a stalled engine instead of failing fast.
+run_bounded(){
+  local secs="$1"; shift
+  "$@" &
+  local pid=$! waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$secs" ]; then
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
 
 command -v docker >/dev/null || die "docker not found / not running"
 command -v go     >/dev/null || die "go not found"
@@ -845,8 +865,18 @@ dejima uninstall --keep-islands --yes >"$TMP/uninstall.log" 2>&1 || true
 expect_ok "named volume survived --keep-islands" docker volume inspect "$WS_VOL"
 if [ -f "$CFG" ]; then pass "the .dejima config survived --keep-islands"; else fail "config was deleted by --keep-islands (it must be kept)"; fi
 # Prove the *data* in the kept volume is intact, independent of any container.
-VOLDATA="$(docker run --rm -v "$WS_VOL":/ws:ro dejima/island:latest sh -c 'cat /ws/keep.txt' 2>/dev/null)"
-assert_eq "$VOLDATA" "readopt-survives" "workspace data persists in the kept volume"
+# Bounded: this throwaway `docker run` (the suite's only direct one) has wedged
+# the whole nightly for 30+ min on a stalled colima engine. Cap it so a hung read
+# fails one assertion fast — and the suite still finishes and reports — instead of
+# hanging the job to its timeout. Force-remove the named container if the read
+# times out (the killed client can't fire --rm).
+VOLDATA="$(run_bounded 60 docker run --rm --name dejima-itest-voldata -v "$WS_VOL":/ws:ro dejima/island:latest sh -c 'cat /ws/keep.txt' 2>/dev/null)"; voldata_rc=$?
+if [ "$voldata_rc" -eq 124 ]; then
+  docker rm -f dejima-itest-voldata >/dev/null 2>&1 || true
+  fail "reading the kept volume timed out after 60s (docker run wedged — engine stall)"
+else
+  assert_eq "$VOLDATA" "readopt-survives" "workspace data persists in the kept volume"
+fi
 
 step "Fresh install re-adopts: rebuild binaries, restart daemon, re-create island"
 with_progress "recompiling dejima + dejimad" build_dejima_binaries || die "reinstall build failed"
