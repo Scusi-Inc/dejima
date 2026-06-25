@@ -55,6 +55,18 @@ type IslandInfo struct {
 	// stale socket→TCP notify hook silently no-ops, so the heartbeat never fires
 	// and mail-nudges / idle-hibernate / the idle metric all go dark with no error.
 	NeverHeardFrom bool `json:"never_heard_from,omitempty"`
+	// Identity is the operator-set visual identity (color + glyph) for the island.
+	// Omitted when unset — the TUI then falls back to its deterministic per-name
+	// default (islandIdentity). Set/cleared via PUT /v1/islands/{name}/identity.
+	// (Backend populate + the PUT route are d5's; this field is the shared seam.)
+	Identity *IslandIdentity `json:"identity,omitempty"`
+}
+
+// IslandIdentity is an operator-chosen color + glyph override for an island.
+// Color is a hex string (#rgb or #rrggbb); Glyph is exactly one rune.
+type IslandIdentity struct {
+	Color string `json:"color"`
+	Glyph string `json:"glyph"`
 }
 
 // AgentInfo is the public view of one agent within an island.

@@ -155,6 +155,36 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/UpdateResourcesResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/identity:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    put:
+      tags: [islands]
+      summary: Set the island's visual identity (color + glyph) override
+      operationId: setIslandIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IslandIdentity" }
+      responses:
+        "200":
+          description: OK — the updated island
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [islands]
+      summary: Clear the island's visual identity override (revert to the default)
+      operationId: clearIslandIdentity
+      responses:
+        "200":
+          description: OK — the updated island
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IslandInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/hibernate:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
@@ -1877,6 +1907,15 @@ components:
         agents:
           type: array
           items: { $ref: "#/components/schemas/AgentInfo" }
+        identity:
+          allOf: [ { $ref: "#/components/schemas/IslandIdentity" } ]
+          description: operator-set visual color+glyph override; omitted when unset
+    IslandIdentity:
+      type: object
+      required: [color, glyph]
+      properties:
+        color: { type: string, description: "hex color: #rgb or #rrggbb" }
+        glyph: { type: string, description: exactly one rune }
     AgentInfo:
       type: object
       properties:

@@ -139,6 +139,25 @@ type Project struct {
 	// for islands created before this stamp existed ("unknown" provenance).
 	BuiltVersion    string `toml:"built_version,omitempty"`
 	UpgradedVersion string `toml:"upgraded_version,omitempty"`
+	// Identity is the operator-chosen visual identity (color + glyph) override for
+	// this island, persisted in config.toml. Nil/zero means no override — the TUI
+	// then falls back to its deterministic per-name default. Set/cleared by the
+	// operator via PUT/DELETE /v1/islands/{name}/identity. Cosmetic only.
+	Identity Identity `toml:"identity,omitempty"`
+}
+
+// Identity is a per-island visual override: a hex color (#rgb or #rrggbb) and a
+// single-rune glyph. The zero value (both empty) means unset. Validation lives in
+// the api layer (PUT /v1/islands/{name}/identity); project stays a pure data struct.
+type Identity struct {
+	Color string `toml:"color,omitempty"`
+	Glyph string `toml:"glyph,omitempty"`
+}
+
+// IsSet reports whether this island carries a visual-identity override (both
+// color and glyph present).
+func (i Identity) IsSet() bool {
+	return i.Color != "" && i.Glyph != ""
 }
 
 // StampVersion returns the most authoritative version this island was last built
