@@ -1021,6 +1021,31 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// A success notice lingers until the next keystroke, then clears (an action
 	// may set a fresh one — e.g. setup-ssh sets it via runConfirmed below).
 	m.lastNotice = ""
+	// A confirmation modal is top-most: it owns keys whenever open, even over an
+	// overlay that spawned it (e.g. approve / deny / approve-rule from the
+	// approvals overlay). Otherwise that overlay's key handler swallows the typing
+	// and the Enter, leaving the modal unusable.
+	if m.confirm != nil {
+		switch msg.String() {
+		case "esc", "ctrl+c":
+			m.confirm = nil
+			return m, nil
+		case "enter":
+			c := *m.confirm
+			m.confirm = nil
+			return m.runConfirmed(c)
+		case "backspace":
+			if len(m.confirm.answer) > 0 {
+				m.confirm.answer = m.confirm.answer[:len(m.confirm.answer)-1]
+			}
+			return m, nil
+		default:
+			if len(msg.String()) == 1 {
+				m.confirm.answer += msg.String()
+			}
+			return m, nil
+		}
+	}
 	// The new-island creator owns all keys while active.
 	if m.creator != nil {
 		return m.creatorKey(msg)
@@ -1078,28 +1103,6 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The visual-identity editor owns keys while open.
 	if m.identity != nil {
 		return m.identityKey(msg)
-	}
-	// Confirmation modal owns keys when active.
-	if m.confirm != nil {
-		switch msg.String() {
-		case "esc", "ctrl+c":
-			m.confirm = nil
-			return m, nil
-		case "enter":
-			c := *m.confirm
-			m.confirm = nil
-			return m.runConfirmed(c)
-		case "backspace":
-			if len(m.confirm.answer) > 0 {
-				m.confirm.answer = m.confirm.answer[:len(m.confirm.answer)-1]
-			}
-			return m, nil
-		default:
-			if len(msg.String()) == 1 {
-				m.confirm.answer += msg.String()
-			}
-			return m, nil
-		}
 	}
 	// The host-terminal band owns keys while focused (expanded + driving). After
 	// the confirm guard, so a band-opened "close terminal" confirm takes keys.
@@ -3518,7 +3521,17 @@ func (m tuiModel) renderConfirm() string {
 		title = styleErrored.Render("⚠  Confirm")
 	}
 	hint := styleHeader.Render("Enter = confirm    ·    Esc = cancel")
-	return title + "\n\n" + prompt + "▌" + "\n\n" + hint
+	// Wrap the prompt so a long one (e.g. approve-rule's "<max> [<ttl>]…") doesn't
+	// run off the box and hide the typed answer + cursor.
+	width := m.width - 10
+	if width > 76 {
+		width = 76
+	}
+	if width < 24 {
+		width = 24
+	}
+	body := lipgloss.NewStyle().Width(width).Render(prompt + "▌")
+	return title + "\n\n" + body + "\n\n" + hint
 }
 
 // renderActionMenu draws the inner content of the per-row context popup: a
