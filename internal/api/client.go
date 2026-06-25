@@ -827,6 +827,18 @@ func (c *Client) SetIslandTitle(ctx context.Context, name, title string) (*Islan
 	return &out, nil
 }
 
+// SetIslandIdentity sets (or, with both empty, clears) an island's visual
+// identity — color (hex) + glyph (one rune). Clearing reverts to the TUI's
+// deterministic per-name default. Operator-scoped; ledgered server-side.
+// (The PUT route + server populate are d5's; this is the client seam.)
+func (c *Client) SetIslandIdentity(ctx context.Context, name, color, glyph string) (*IslandInfo, error) {
+	var out IslandInfo
+	if err := c.do(ctx, http.MethodPut, "/v1/islands/"+name+"/identity", IslandIdentity{Color: color, Glyph: glyph}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ExecInIsland runs a one-shot command inside an island and returns its output.
 func (c *Client) ExecInIsland(ctx context.Context, name string, cmd []string) (*ExecResponse, error) {
 	var out ExecResponse

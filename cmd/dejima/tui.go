@@ -174,6 +174,7 @@ type tuiModel struct {
 	grants       *grantsView     // non-nil while the island-grants trust view is open (opened with `T`)
 	scope        *scopeView      // non-nil while the Port scope-picker is open (opened with `P`)
 	approvals    *approvalsView  // non-nil while the action-gate approvals overlay is open (opened with `V`)
+	identity     *identityView   // non-nil while the visual-identity editor is open (opened with `i`)
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
 	// gate is unused/disabled. See tui_approvals.go.
@@ -1032,6 +1033,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.approvals != nil {
 		return m.approvalsKey(msg)
 	}
+	// The visual-identity editor owns keys while open.
+	if m.identity != nil {
+		return m.identityKey(msg)
+	}
 	// Confirmation modal owns keys when active.
 	if m.confirm != nil {
 		switch msg.String() {
@@ -1107,6 +1112,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// General settings (editor · group-by-repo · connection target). Server
 		// switching now lives inside here rather than owning its own hotkey.
 		return m.openSettings(), nil
+	case "i":
+		// Visual-identity editor for the selected island (color + glyph).
+		return m.openIdentityEditor(m.selectedName())
 	case "$":
 		// In-island /workspace shell for the selected island. (Enter now opens the
 		// island's agents; `$` — the shell prompt — opens the contained shell.)
@@ -2280,6 +2288,10 @@ func (m tuiModel) View() string {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderApprovalsView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.identity != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderIdentityView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 
 	footer := m.renderFooter()
 	// The pinned host-terminal band sits between the header and the island list;
@@ -2688,7 +2700,7 @@ func (m tuiModel) renderList(width int) (string, int) {
 			// Per-island visual identity: a stable color+glyph (idStyle/idGlyph)
 			// marks the island and tints its name, so it and its agent group stand
 			// out. The state glyph (glyphFor) keeps its own status color.
-			idStyle, idGlyph := islandIdentity(isl.Name)
+			idStyle, idGlyph := islandVisual(isl)
 			line = fmt.Sprintf("%s %s %s  %s  %s",
 				caret, glyphFor(isl), idStyle.Render(idGlyph),
 				idStyle.Render(fmt.Sprintf("%-14s", label)),
@@ -3277,6 +3289,7 @@ func (m tuiModel) renderHelp() string {
 		{"p", "group the island list by repo — multi-agent projects read as one"},
 		{"+", "add an agent — Claude Code, Codex, a terminal, or a headless command"},
 		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
+		{"i", "set the island's color + glyph (visual identity); clear to revert to the auto default"},
 		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
 		{"a", "attach here instead — replaces the dashboard with the agent"},
 		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
@@ -3572,6 +3585,17 @@ func islandIdentity(name string) (lipgloss.Style, string) {
 	color := islandIdentityColors[sum%uint32(len(islandIdentityColors))]
 	glyph := islandIdentityGlyphs[(sum/uint32(len(islandIdentityColors)))%uint32(len(islandIdentityGlyphs))]
 	return lipgloss.NewStyle().Foreground(color), glyph
+}
+
+// islandVisual is the read-through used everywhere the dashboard draws an
+// island's identity: the operator's stored override (isl.Identity, set via the
+// editor / PUT) when present and valid, otherwise the deterministic per-name
+// default. One seam so a stored identity and the default render identically.
+func islandVisual(isl api.IslandInfo) (lipgloss.Style, string) {
+	if isl.Identity != nil && isl.Identity.Glyph != "" && isl.Identity.Color != "" {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(isl.Identity.Color)), isl.Identity.Glyph
+	}
+	return islandIdentity(isl.Name)
 }
 
 func glyphFor(isl api.IslandInfo) string {
