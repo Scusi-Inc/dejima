@@ -14,12 +14,13 @@ import (
 // exposed, never free text.
 type ActionRequest struct {
 	ID        string    `json:"id"`
-	From      string    `json:"from"`       // source island
-	FromAgent string    `json:"from_agent"` // source agent (self-reported within A)
-	To        string    `json:"to"`         // destination island
-	ToAgent   string    `json:"to_agent"`   // destination agent
-	Topic     string    `json:"topic"`      // the granted channel
-	Action    string    `json:"action"`     // named, typed action exposed by B
+	From      string    `json:"from"`           // source island
+	FromAgent string    `json:"from_agent"`     // source agent (self-reported within A)
+	To        string    `json:"to"`             // destination island
+	ToAgent   string    `json:"to_agent"`       // destination agent
+	Topic     string    `json:"topic"`          // the granted channel
+	Action    string    `json:"action"`         // named, typed action exposed by B
+	Tier      Tier      `json:"tier,omitempty"` // risk class (benign/mutating/destructive)
 	Params    string    `json:"params,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
