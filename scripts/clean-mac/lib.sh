@@ -52,6 +52,14 @@ PREFIX="${DEJIMA_PREFIX:-$HOME/.local}"
 BIN_DIR="$PREFIX/bin"
 DEJIMA_SRC="${DEJIMA_SRC_DIR:-$HOME/.dejima-src}"
 DEJIMA_HOME="$HOME/.dejima"
+# REAL_HOME is the operator's true home — consumed by the sourcing scripts
+# (proof-loop.sh: seed-repo dir + the dejimad foreground-log fallback). Defined
+# here next to DEJIMA_HOME because lib.sh runs under `set -u`: without it those
+# scripts abort with "REAL_HOME: unbound variable" before any assertion (every
+# full-host channel). Mirrors integration.sh / tier3/lib.sh. Consumed downstream,
+# so shellcheck (linting this file standalone) can't see the use.
+# shellcheck disable=SC2034
+REAL_HOME="$HOME"
 # Deterministic test-island names + the workspace marker that must survive a
 # --keep-islands uninstall→reinstall round-trip. MARKER_TEXT/CFG are consumed by
 # the sourcing scripts (proof-loop.sh), not here — so shellcheck, which lints this
@@ -108,6 +116,14 @@ teardown_dejima(){
   if have dejima; then
     dejima uninstall --purge-all --yes >/dev/null 2>&1 || true
   fi
+
+  # 1b. Kill any hand-started foreground dejimad. `uninstall` stops the SERVICE,
+  #     not a `dejimad --foreground &` (the proof loop's fallback when the service
+  #     path isn't up). Without this a stray daemon survives into the next channel
+  #     and wait_for_daemon passes against a STALE socket, masking an install
+  #     failure. Scoped to THIS user's processes (teardown refuses to run as the
+  #     operator), so it never touches a real host daemon.
+  pkill -u "$(id -u)" -x dejimad >/dev/null 2>&1 || true
 
   # 2. Package-manager channels, removed if present (best effort, no sudo).
   if have brew; then
