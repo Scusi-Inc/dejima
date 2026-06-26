@@ -28,6 +28,7 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/version"
 )
 
 const (
@@ -474,7 +475,11 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /v1/islands/{name}/link/actions/{action}", s.exposeAction)
 	mux.HandleFunc("DELETE /v1/islands/{name}/link/actions/{action}", s.unexposeAction)
 	mux.HandleFunc("POST /v1/islands/{name}/link/action", s.requestAction)
+	mux.HandleFunc("GET /v1/policy", s.listPolicy)
+	mux.HandleFunc("POST /v1/policy", s.addPolicy)
+	mux.HandleFunc("DELETE /v1/policy", s.removePolicy)
 	mux.HandleFunc("GET /v1/link/actions", s.listPendingActions)
+	mux.HandleFunc("GET /v1/link/actions/watch", s.watchActions)
 	mux.HandleFunc("POST /v1/link/actions/{id}/approve", s.approveAction)
 	mux.HandleFunc("POST /v1/link/actions/{id}/deny", s.denyAction)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
@@ -539,6 +544,11 @@ func (s *Server) routes() *http.ServeMux {
 	// Team activity feed — the curated, owner-enriched view over the audit ledger
 	// (viewer-readable; see activity.go). One append-only line per the seam contract.
 	s.RegisterActivity(mux)
+	// Per-island visual identity — operator-only color+glyph override (absent from
+	// tokenRouteAccess, so a contained island can never set its own identity). The
+	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
+	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
+	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
 	return mux
 }
 
@@ -1684,6 +1694,10 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		DesiredState: project.StateRunning,
 		CreatedAt:    now,
 		LastUsedAt:   now,
+		// Version-skew stamp: the daemon build this island's container is created
+		// against. Compared later (doctor / ls / detail) to the running daemon to
+		// flag an island built from a stale image whose /opt shims may be old.
+		BuiltVersion: version.Version,
 	}
 	p.EnsureAgents()                             // mirror the scalar agent into Agents[0] for new islands
 	p.SetPrimaryID(project.PrimaryAgentID(name)) // fresh island: island-letter primary id (p1), not the legacy a1 back-fill
@@ -1933,6 +1947,15 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
 		return nil
 	}
+	// Install this co-located agent's per-type shim BEFORE launching it. start.sh
+	// runs the shim only for the PRIMARY agent, so an agent whose type's init.sh
+	// never ran — a different type than the primary, or any agent added after boot
+	// — would otherwise launch with no agent-state hook wired into the shared
+	// ~/.claude. A missing heartbeat silently disables wake-on-message, idle
+	// auto-hibernate, and the idle metric for that agent (the recipient never sees
+	// a delivered cross-island message). The shim is idempotent, so re-running it
+	// is safe.
+	s.runAgentShim(ctx, p, a)
 	// Both interactive and headless agents run inside a tmux session (the host
 	// process), scoped to DEJIMA_AGENT_ID via sh so we don't depend on a specific
 	// tmux version's `new-session -e`. Headless agents are marked non-attachable,
@@ -1948,6 +1971,24 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 		return fmt.Errorf("tmux new-session for %q: %s", a.ID, strings.TrimSpace(stderr))
 	}
 	return nil
+}
+
+// runAgentShim runs a co-located agent's per-type init.sh inside the container —
+// the same shim start.sh runs for the primary — so the agent's hooks/creds/
+// template land in the shared ~/.claude before it launches. DEJIMA_AGENT_ID is
+// scoped to this agent so any per-agent shim logic targets it. Best-effort: a
+// type with no shim is a clean no-op, and a shim failure is logged but must not
+// block the launch (the agent still runs; it just may lack the heartbeat hook).
+func (s *Server) runAgentShim(ctx context.Context, p *project.Project, a *project.AgentSpec) {
+	shim := "/opt/dejima/agents/" + a.Type + "/init.sh"
+	// `[ -x ] || exit 0` keeps a missing shim (unknown type / stale image) silent.
+	cmd := "[ -x " + shim + " ] || exit 0; exec " + shim
+	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"sh", "-c", "DEJIMA_AGENT_ID=" + a.ID + " " + cmd})
+	if err != nil || code != 0 {
+		s.log.Warn("agent shim", "island", p.Name, "agent", a.ID, "type", a.Type,
+			"code", code, "err", err, "stderr", strings.TrimSpace(stderr))
+	}
 }
 
 // headlessLogPath is the per-agent log file for a co-located headless agent.
@@ -2283,6 +2324,14 @@ func (s *Server) upgradeIsland(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p.LastUsedAt = time.Now().UTC()
+	// Re-stamp the version skew marker: the container was just recreated against
+	// the current image, so the island is now level with this daemon build (and
+	// its /opt shims are fresh). Back-fill BuiltVersion too for islands created
+	// before the stamp existed, so provenance is no longer "unknown" after upgrade.
+	p.UpgradedVersion = version.Version
+	if p.BuiltVersion == "" {
+		p.BuiltVersion = version.Version
+	}
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -2379,7 +2428,40 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	info.Attached = s.islandPresence(p.Name)
 	info.AgentState = s.islandAgentState(p.Name)
 	info.Agents = s.agentInfos(ctx, p, false)
+	info.BuiltVersion = p.BuiltVersion
+	info.UpgradedVersion = p.UpgradedVersion
+	// Zero-heartbeat liveness: a running island that has never emitted a single
+	// agent-state event, past a short grace window, is the direct broken-shim
+	// signal (a stale socket→TCP notify hook no-ops silently). We use the rollup
+	// AgentState (any agent suffices); LastUsedAt is the most recent
+	// boot/recreate/upgrade time available without a per-container engine probe.
+	running := info.Container == string(runtime.StatusRunning)
+	info.NeverHeardFrom = neverHeardFrom(running, info.AgentState, p.LastUsedAt, time.Now())
+	// Operator-set visual identity override (color + glyph). Omitted from the
+	// payload when unset, so the TUI falls back to its deterministic per-name
+	// default. Set/cleared via PUT/DELETE /v1/islands/{name}/identity (identity.go).
+	if p.Identity.IsSet() {
+		info.Identity = &IslandIdentity{Color: p.Identity.Color, Glyph: p.Identity.Glyph}
+	}
 	return info
+}
+
+// heartbeatGrace is how long a freshly (re)started island is given to emit its
+// first agent-state heartbeat before a continued silence is treated as a broken
+// shim. Generous enough to cover a slow clone + agent warm-up, short relative to
+// the 18h the motivating incident went unnoticed.
+const heartbeatGrace = 10 * time.Minute
+
+// neverHeardFrom decides the zero-heartbeat liveness flag: a running island that
+// has emitted NO agent-state event (agentState nil) and whose last
+// boot/recreate (sinceTime, from LastUsedAt) is older than heartbeatGrace. A
+// just-started island, a hibernated one, or one with a zero reference time is
+// never flagged. Pure, so the grace logic is unit-tested without a runtime.
+func neverHeardFrom(running bool, agentState *AgentStateInfo, sinceTime, now time.Time) bool {
+	if !running || agentState != nil || sinceTime.IsZero() {
+		return false
+	}
+	return now.Sub(sinceTime) > heartbeatGrace
 }
 
 // agentInfos builds the per-agent public view. When live is true, each agent's

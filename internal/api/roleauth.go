@@ -95,6 +95,8 @@ var roleRouteCap = map[string]roleCap{
 	// --- island lifecycle + interaction (operator and up; never purge) ---
 	"POST /v1/islands":                                     capOperate, // create (scoped tokens denied — no {name})
 	"PATCH /v1/islands/{name}":                             capOperate, // title
+	"PUT /v1/islands/{name}/identity":                      capOperate, // visual color+glyph override
+	"DELETE /v1/islands/{name}/identity":                   capOperate,
 	"PUT /v1/islands/{name}/resources":                     capOperate,
 	"POST /v1/islands/{name}/hibernate":                    capOperate,
 	"POST /v1/islands/{name}/wake":                         capOperate,
@@ -167,8 +169,14 @@ var roleRouteCap = map[string]roleCap{
 	"DELETE /v1/islands/{name}/link/actions/{action}": capOperate,
 	"POST /v1/islands/{name}/link/action":             capOperate,
 	"GET /v1/link/actions":                            capRead,
+	"GET /v1/link/actions/watch":                      capRead, // stream the queue (viewer may watch, not approve)
 	"POST /v1/link/actions/{id}/approve":              capOperate,
 	"POST /v1/link/actions/{id}/deny":                 capOperate,
+	// Auto-approve policy is operator-managed end to end — even listing rules is
+	// privileged (a rule is a standing bypass; adding/removing one is sensitive).
+	"GET /v1/policy":    capOperate,
+	"POST /v1/policy":   capOperate,
+	"DELETE /v1/policy": capOperate,
 }
 
 // identityKey carries the resolved Identity down to handlers and to Lane 1's

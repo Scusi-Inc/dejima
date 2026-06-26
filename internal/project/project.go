@@ -129,6 +129,45 @@ type Project struct {
 	// Tags are free-form key=value labels (e.g. team=web, env=staging) for
 	// grouping and per-team rollups in wrapper tooling. Empty when untagged.
 	Tags map[string]string `toml:"tags,omitempty"`
+	// BuiltVersion is the daemon version (version.Version) this island's container
+	// was first created against, and UpgradedVersion is the version of the most
+	// recent `dejima upgrade` recreate. They are the version-skew stamp: an island
+	// whose UpgradedVersion (falling back to BuiltVersion) is behind the running
+	// daemon was built from an older image and may carry stale /opt shims (the
+	// socket→TCP heartbeat-break class of bug). The api layer sets these from
+	// version.Version at create/upgrade; project stays a pure data struct. Empty
+	// for islands created before this stamp existed ("unknown" provenance).
+	BuiltVersion    string `toml:"built_version,omitempty"`
+	UpgradedVersion string `toml:"upgraded_version,omitempty"`
+	// Identity is the operator-chosen visual identity (color + glyph) override for
+	// this island, persisted in config.toml. Nil/zero means no override — the TUI
+	// then falls back to its deterministic per-name default. Set/cleared by the
+	// operator via PUT/DELETE /v1/islands/{name}/identity. Cosmetic only.
+	Identity Identity `toml:"identity,omitempty"`
+}
+
+// Identity is a per-island visual override: a hex color (#rgb or #rrggbb) and a
+// single-rune glyph. The zero value (both empty) means unset. Validation lives in
+// the api layer (PUT /v1/islands/{name}/identity); project stays a pure data struct.
+type Identity struct {
+	Color string `toml:"color,omitempty"`
+	Glyph string `toml:"glyph,omitempty"`
+}
+
+// IsSet reports whether this island carries a visual-identity override (both
+// color and glyph present).
+func (i Identity) IsSet() bool {
+	return i.Color != "" && i.Glyph != ""
+}
+
+// StampVersion returns the most authoritative version this island was last built
+// or upgraded against: the upgrade stamp if present, else the build stamp. Empty
+// when the island predates version stamping (provenance unknown).
+func (p *Project) StampVersion() string {
+	if p.UpgradedVersion != "" {
+		return p.UpgradedVersion
+	}
+	return p.BuiltVersion
 }
 
 // IsHome reports whether this island is a Home Island (hosts an assistant brain).

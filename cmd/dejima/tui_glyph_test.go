@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -9,6 +10,30 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// TestIslandIdentity: the per-island color+glyph is stable for a given name,
+// the UNIFORM default — white + the neutral glyph — the same for every island
+// (distinct color/glyph is opt-in via the editor, not auto-assigned per name).
+func TestIslandIdentity(t *testing.T) {
+	colors := map[string]bool{}
+	glyphs := map[string]bool{}
+	for _, n := range []string{"alpha", "bravo", "charlie", "delta", "echo", "myrepo", "infra", "web", "api", "data", "x", "Port"} {
+		st, g := islandIdentity(n)
+		colors[fmt.Sprint(st.GetForeground())] = true
+		glyphs[g] = true
+	}
+	// Uniform: every island gets the same default color + glyph, regardless of name.
+	if len(colors) != 1 || len(glyphs) != 1 {
+		t.Errorf("default identity should be uniform, got %d colors / %d glyphs", len(colors), len(glyphs))
+	}
+	st, g := islandIdentity("anything")
+	if fmt.Sprint(st.GetForeground()) != islandIdentityDefaultColor {
+		t.Errorf("default color = %v, want %s", st.GetForeground(), islandIdentityDefaultColor)
+	}
+	if g != islandIdentityDefaultGlyph {
+		t.Errorf("default glyph = %q, want %q", g, islandIdentityDefaultGlyph)
+	}
+}
 
 var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 

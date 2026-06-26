@@ -41,6 +41,32 @@ type IslandInfo struct {
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
+	// BuiltVersion / UpgradedVersion are the version-skew stamp: the daemon build
+	// the island's container was first created against, and the build of its most
+	// recent `dejima upgrade` recreate. A stamp behind the running daemon means the
+	// island was built from an older image and may carry stale /opt shims. Both
+	// empty for islands created before version stamping (provenance unknown).
+	BuiltVersion    string `json:"built_version,omitempty"`
+	UpgradedVersion string `json:"upgraded_version,omitempty"`
+	// NeverHeardFrom is the zero-heartbeat liveness flag: true when the island's
+	// container is running yet NO agent has emitted a single agent-state event
+	// since boot, and the island is past a short grace window (so a just-started
+	// island isn't falsely flagged). This is the direct broken-shim signal — a
+	// stale socket→TCP notify hook silently no-ops, so the heartbeat never fires
+	// and mail-nudges / idle-hibernate / the idle metric all go dark with no error.
+	NeverHeardFrom bool `json:"never_heard_from,omitempty"`
+	// Identity is the operator-set visual identity (color + glyph) for the island.
+	// Omitted when unset — the TUI then falls back to its deterministic per-name
+	// default (islandIdentity). Set/cleared via PUT /v1/islands/{name}/identity.
+	// (Backend populate + the PUT route are d5's; this field is the shared seam.)
+	Identity *IslandIdentity `json:"identity,omitempty"`
+}
+
+// IslandIdentity is an operator-chosen color + glyph override for an island.
+// Color is a hex string (#rgb or #rrggbb); Glyph is exactly one rune.
+type IslandIdentity struct {
+	Color string `json:"color"`
+	Glyph string `json:"glyph"`
 }
 
 // AgentInfo is the public view of one agent within an island.

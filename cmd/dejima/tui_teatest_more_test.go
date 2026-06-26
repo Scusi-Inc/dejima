@@ -195,16 +195,16 @@ func TestWindowLabelManualNames(t *testing.T) {
 	}
 	m.islands = sortIslands([]api.IslandInfo{isl})
 
-	if got := m.windowLabel("proj-slug", "a1", ""); got != "My Project-backend" {
-		t.Errorf("labelled agent: got %q, want %q", got, "My Project-backend")
+	if got := m.windowLabel("proj-slug", "a1", ""); got != "My Project/backend" {
+		t.Errorf("labelled agent: got %q, want %q", got, "My Project/backend")
 	}
-	if got := m.windowLabel("proj-slug", "a2", ""); got != "My Project-a2" {
-		t.Errorf("unlabelled agent should fall back to id: got %q, want %q", got, "My Project-a2")
+	if got := m.windowLabel("proj-slug", "a2", ""); got != "My Project/a2" {
+		t.Errorf("unlabelled agent should fall back to id: got %q, want %q", got, "My Project/a2")
 	}
 	// An explicit agentLabel override wins (used right after adding an agent,
 	// before the island list refreshes).
-	if got := m.windowLabel("proj-slug", "a3", "frontend"); got != "My Project-frontend" {
-		t.Errorf("override label: got %q, want %q", got, "My Project-frontend")
+	if got := m.windowLabel("proj-slug", "a3", "frontend"); got != "My Project/frontend" {
+		t.Errorf("override label: got %q, want %q", got, "My Project/frontend")
 	}
 	// Unknown island → the raw name is used as the island part.
 	if got := m.windowLabel("ghost", "", ""); got != "ghost" {

@@ -16,7 +16,8 @@
 #   · purge unpushed-work guard + force-purge override
 #   · capability brokering: deny-all / grant / list / revoke
 #   · provider credentials: set / list (masked) / rm
-#   · team tokens + role enforcement (viewer denied purge, allowed reads)
+#   · team tokens: mint + list (role *enforcement* is roleauth_test.go's job —
+#     it can't be exercised over the owner-trusted local socket)
 #   · webhooks: events catalog / subscribe / ls / rm
 #   · activity feed · panic brake (engage/status/clear) · doctor health check
 #
@@ -134,6 +135,32 @@ expect_err_match(){
     fail "$d — failed but error did not contain [$want]; got: $out"
   fi
 }
+# run_bounded <secs> <cmd...>: run cmd under a portable wall-clock deadline
+# (macOS ships no GNU `timeout`). stdout passes through so it stays $(...)-
+# capturable. On timeout the child is killed and 124 returned; otherwise the
+# child's own exit status. Guards suite-direct `docker run`s, which can wedge the
+# whole job for 30+ min on a stalled engine instead of failing fast.
+run_bounded(){
+  local secs="$1"; shift
+  "$@" &
+  local pid=$! waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$secs" ]; then
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+# drop_island <name>...: free islands as soon as the suite is done with them, so
+# containers don't ACCUMULATE. Peak concurrent containers (not any single op) is
+# what OOM-kills the heavy clone volume-copy on a small/dedicated engine: without
+# this, ~5 islands stay alive until the EXIT trap. Best-effort + bounded so a slow
+# purge can't stall the run; the trap still sweeps anything left.
+drop_island(){ for _isl in "$@"; do run_bounded 45 dejima purge "$_isl" -f >/dev/null 2>&1 || true; done; }
 
 command -v docker >/dev/null || die "docker not found / not running"
 command -v go     >/dev/null || die "go not found"
@@ -566,6 +593,8 @@ else
   printf '  daemon log (worktree/reconcile/clone lines):\n'
   grep -iE "worktree|ensure agent|reconcile|clone|seed|not a git" "$TMP/dejimad.log" 2>/dev/null | tail -20 | sed 's/^/    /'
 fi
+# itest-multi is done — free it before the memory-heavy clone copy that follows.
+drop_island "$ISLAND_MULTI"
 
 # ---------------------------------------------------------------------------
 # Clone — a byte-for-byte copy of an island's workspace into fresh volumes; the
@@ -588,6 +617,8 @@ if [ -n "$cloned" ]; then
 else
   fail "clone never became exec-able with the copied workspace (waited 60s)"
 fi
+# Clone done — free the clone (itest-port is kept; it's still used by capability).
+drop_island "$ISLAND_CLONE"
 
 # ---------------------------------------------------------------------------
 # Inter-island exchange (Lane 5) — cross-island is deny-all; a channel exists
@@ -667,6 +698,8 @@ assert_has "$XAUDIT" "link.grant"   "grant recorded as link.grant"
 assert_has "$XAUDIT" "link.message" "delivery recorded as link.message"
 assert_has "$XAUDIT" "link.deny"    "refused send recorded as link.deny"
 expect_ok "ledger chain verifies with link.* entries" dejima audit --verify
+# Inter-island done — free both A and B.
+drop_island "$ISLAND_A" "$ISLAND_B"
 
 # ---------------------------------------------------------------------------
 # Purge unpushed-work guard — purging an island with unpushed/uncommitted work
@@ -708,6 +741,8 @@ assert_has "$CAP_LS" "script" "granted capability appears in the list"
 expect_ok "cap revoke" dejima cap revoke "$ISLAND" script
 CAP_GONE="$(dejima cap list "$ISLAND" 2>&1)"
 assert_has "$CAP_GONE" "deny-all" "revoke returns to deny-all"
+# itest-port's last use — free it; the remaining features need no prior island.
+drop_island "$ISLAND"
 
 # ---------------------------------------------------------------------------
 # Provider credentials — set / list (masked) / remove. The key is never echoed
@@ -729,31 +764,24 @@ fi
 expect_ok "provider rm" dejima provider rm anthropic
 
 # ---------------------------------------------------------------------------
-# Team tokens + roles — mint a viewer token and confirm role enforcement: a
-# viewer is denied a purge but allowed a read (ls). Owner-equivalent local
-# listener mints; the scoped bearer is presented via DEJIMA_TOKEN.
+# Team tokens — mint an operator + a viewer token and confirm they're minted and
+# listed. Role *enforcement* (a viewer denied an operate/owner action) is NOT
+# exercised here, and deliberately so: this suite drives the daemon over the
+# local unix socket, which is filesystem-trusted and runs as OWNER. The CLI does
+# not forward DEJIMA_TOKEN over the socket (it attenuates only the TCP/in-island
+# path — see clientForHost), so a token set here is ignored and every call runs
+# as owner — an `expect_fail "viewer denied …"` would test nothing. Role
+# attenuation is owned by internal/api/roleauth_test.go, which drives the HTTP
+# surface with real role tokens (operator/viewer denied capOwner/capOperate
+# routes incl. purge; owner allowed).
 # ---------------------------------------------------------------------------
-feature "team tokens + role enforcement (viewer denied purge, allowed reads)"
+feature "team tokens (mint + list)"
 step "Token: create an operator + a viewer token"
 expect_ok "token create (operator)" dejima token create --role operator --label itest-op
 VIEWER_OUT="$(dejima token create --role viewer --label itest-viewer 2>&1)"
 assert_has "$VIEWER_OUT" "viewer" "viewer token minted"
-# Parse the secret from the stable `export DEJIMA_TOKEN=<hex>` line (the bearer
-# secret is printed bare on its own line, with no "secret:" prefix).
-VIEWER_SECRET="$(printf '%s\n' "$VIEWER_OUT" | sed -n 's/.*DEJIMA_TOKEN=\([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
 TOK_LS="$(dejima token ls 2>&1)"
 assert_has "$TOK_LS" "viewer" "minted tokens are listed"
-if [ -n "$VIEWER_SECRET" ]; then
-  step "Token: the viewer role is read-only (ls allowed, purge denied)"
-  expect_ok "viewer allowed a read (ls)" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima ls
-  # --force skips the client-side type-the-name confirmation, so the DAEMON's
-  # role check is what denies the viewer (a 403) — not the prompt. Without it,
-  # the prompt blocks on a TTY (and on a pipe aborts non-zero, making this pass
-  # for the WRONG reason: the abort, not role enforcement).
-  expect_fail "viewer denied a purge (even with --force)" env DEJIMA_TOKEN="$VIEWER_SECRET" dejima purge "$ISLAND" --force
-else
-  fail "could not parse the viewer token secret to test role enforcement"
-fi
 
 # ---------------------------------------------------------------------------
 # Webhooks — subscribe to events, see the subscription listed, unsubscribe. The
@@ -845,8 +873,18 @@ dejima uninstall --keep-islands --yes >"$TMP/uninstall.log" 2>&1 || true
 expect_ok "named volume survived --keep-islands" docker volume inspect "$WS_VOL"
 if [ -f "$CFG" ]; then pass "the .dejima config survived --keep-islands"; else fail "config was deleted by --keep-islands (it must be kept)"; fi
 # Prove the *data* in the kept volume is intact, independent of any container.
-VOLDATA="$(docker run --rm -v "$WS_VOL":/ws:ro dejima/island:latest sh -c 'cat /ws/keep.txt' 2>/dev/null)"
-assert_eq "$VOLDATA" "readopt-survives" "workspace data persists in the kept volume"
+# Bounded: this throwaway `docker run` (the suite's only direct one) has wedged
+# the whole nightly for 30+ min on a stalled colima engine. Cap it so a hung read
+# fails one assertion fast — and the suite still finishes and reports — instead of
+# hanging the job to its timeout. Force-remove the named container if the read
+# times out (the killed client can't fire --rm).
+VOLDATA="$(run_bounded 60 docker run --rm --name dejima-itest-voldata -v "$WS_VOL":/ws:ro dejima/island:latest sh -c 'cat /ws/keep.txt' 2>/dev/null)"; voldata_rc=$?
+if [ "$voldata_rc" -eq 124 ]; then
+  docker rm -f dejima-itest-voldata >/dev/null 2>&1 || true
+  fail "reading the kept volume timed out after 60s (docker run wedged — engine stall)"
+else
+  assert_eq "$VOLDATA" "readopt-survives" "workspace data persists in the kept volume"
+fi
 
 step "Fresh install re-adopts: rebuild binaries, restart daemon, re-create island"
 with_progress "recompiling dejima + dejimad" build_dejima_binaries || die "reinstall build failed"

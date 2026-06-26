@@ -11,7 +11,10 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 **Now (current coverage, conservative — Lane 6 reconciles):** `A` automated (unit or
 `integration.sh`) · `A*` **wired** in the Tier-3/Tier-4 suite, awaiting its first live
 Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the nightly
-`workflow_dispatch`) · `M` manual verify today · `▢` none yet.
+`workflow_dispatch`) · `A†` **wired** in the Lane 0 clean-Mac launch gate
+(`scripts/clean-mac/proof-loop.sh` via the `nightly-live` `workflow_dispatch`), awaiting
+its first virgin-Mac run on Minion — proves it on a REAL clean Mac, not in-island · `M`
+manual verify today · `▢` none yet.
 
 ---
 
@@ -32,7 +35,7 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [ ] `recreate-island` (TUI) — recreate after OOM/resource change · T3 · M
 - [ ] `relabel`/`rename-island` — change title · CLI(PATCH)/TUI · T1/T2 · M
 - [ ] `resources` (PUT) — set per-island memory/CPU/OOM-priority · T2/T3 · M
-- [ ] island survives daemon restart (state persists) · T2 · M
+- [ ] island survives daemon restart (state persists) · T2 · A (integration.sh re-adopt) / A† (clean-mac gate: survives a real uninstall→reinstall)
 
 ## 2. Agents
 - [x] `agent add <island>` — add an agent (own git worktree/branch) · CLI/API/TUI · T2 · A
@@ -198,11 +201,30 @@ Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the night
 - [ ] PTY JSON-envelope+base64 protocol · T1/T2 · A
 - [ ] PyPI/npm publish (tag-driven) · T1 · ▢ (needs secrets)
 
+## 19. Install / uninstall on a clean Mac (Lane 0 launch gate)
+The single biggest launch risk — install + uninstall + re-adopt on a REAL virgin Mac.
+Driven by `scripts/clean-mac/proof-loop.sh` via the `nightly-live` `workflow_dispatch`
+on the Minion `dejimaqa` runner. `A†` = wired + CI-runnable, **awaiting its first virgin-Mac
+run on Minion** (we cannot self-verify off a clean macOS host — the live run is the operator's).
+The in-island consistency + Docker re-adopt halves are already `A` (reused, not rebuilt).
+- [ ] install-channel consistency (curl|sh / brew / npm asset+path coherence) · T1 · A (`install-channels-check.sh`, also in CI + integration.sh)
+- [ ] `curl \| sh` full-host install on a virgin Mac (daemon + island image + binaries) · T3 · A† (clean-mac gate)
+- [ ] `brew install --HEAD` builds dejima + dejimad from source on a virgin Mac · T3 · A† (clean-mac gate; pinned-binary path smoked separately)
+- [ ] `npm install -g dejima` client installs + drives a running daemon · T3 · A† (clean-mac gate; client-only by design)
+- [ ] bare `uninstall` refuses (no destructive default; names both choices) · T2/T3 · A (integration.sh) / A† (clean-mac gate, real channel)
+- [ ] `uninstall --keep-islands` keeps the named volume + `~/.dejima` config · T2/T3 · A (integration.sh) / A† (clean-mac gate, real channel)
+- [ ] workspace marker readable from the kept volume with no daemon · T2/T3 · A (integration.sh) / A† (clean-mac gate)
+- [ ] reinstall re-adopts the island by name; marker survives the round-trip · T2/T3 · A (integration.sh) / A† (clean-mac gate, real channel)
+- [ ] teardown→provision driver leaves a virgin env (no Docker/colima/brew/`~/.dejima` history) · T3 · A† (`scripts/clean-mac/teardown.sh` + `assert_virgin`)
+
 ---
 
 ## Rollup
-~150 line items across 18 areas. **T1** (CI, every PR) and **T2** (Docker) cover the bulk;
+~160 line items across 19 areas. **T1** (CI, every PR) and **T2** (Docker) cover the bulk;
 **T3** (Mac-mini runner) owns the macOS-host + live-session items currently marked `M`/`▢`;
-**T4** is the small real-agent smoke. The biggest gaps today (`▢`) are the **TUI** (no
-`teatest` yet), **wake-on-message** (P3.5, just built), **Keychain/idle-hibernate**, and the
-**framework adapters** — these are the priority for Lane 6 + the first Mac-mini nightly.
+**T4** is the small real-agent smoke; **§19** is the Lane 0 clean-Mac launch gate (`A†` —
+wired + CI-runnable, awaiting its first virgin-Mac run on Minion). The biggest gaps today
+(`▢`) are the **TUI** (no `teatest` yet), **wake-on-message** (P3.5, just built),
+**Keychain/idle-hibernate**, and the **framework adapters** — these are the priority for
+Lane 6 + the first Mac-mini nightly. The launch-gate (`A†`) rows are the **operator's first
+run on Minion**: the harness + the button are delivered; the green tick is theirs to earn.

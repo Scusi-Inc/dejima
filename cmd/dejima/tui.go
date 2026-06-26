@@ -19,6 +19,8 @@ import (
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
+	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
@@ -27,19 +29,25 @@ import (
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
 // One-shot CLI verbs (`dejima ls`, etc.) continue to work for scripting.
 func newTUICmd() *cobra.Command {
-	return &cobra.Command{
+	var demo bool
+	cmd := &cobra.Command{
 		Use:    "tui",
 		Short:  "Launch the interactive dashboard (default when run with no args).",
 		Hidden: true, // not surfaced in `dejima --help`; users get it via bare `dejima`.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTUI(cmd.Context())
+			return runTUI(cmd.Context(), demo)
 		},
 	}
+	// --demo drives the dashboard from a synthetic fleet (no daemon) for the site
+	// recordings: reproducible, secret-free, and animated. `!` stages the
+	// action-gate scene. See strategy/tui-capture-runbook.md.
+	cmd.Flags().BoolVar(&demo, "demo", false, "drive the dashboard from a synthetic fleet (for screen recordings; no daemon)")
+	return cmd
 }
 
 // runTUI starts the bubbletea program; on Enter, it exits with a saved
 // connect-to-this-island intent which the caller acts on after the TUI loop.
-func runTUI(ctx context.Context) error {
+func runTUI(ctx context.Context, demo bool) error {
 	c, err := client()
 	if err != nil {
 		return err
@@ -51,6 +59,7 @@ func runTUI(ctx context.Context) error {
 	summonReturn := false
 	for {
 		m := initialTUIModel(c)
+		m.demo = demo
 		if summonReturn {
 			m.bandExpanded, m.bandFocused = true, true
 		}
@@ -170,6 +179,23 @@ type tuiModel struct {
 	audit        *auditView      // non-nil while the audit-ledger viewer is open (opened with `A`)
 	grants       *grantsView     // non-nil while the island-grants trust view is open (opened with `T`)
 	scope        *scopeView      // non-nil while the Port scope-picker is open (opened with `P`)
+	approvals    *approvalsView  // non-nil while the action-gate approvals overlay is open (opened with `V`)
+	identity     *identityView   // non-nil while the visual-identity editor is open (opened with `i`)
+	// pendingActions is the polled queue of cross-island actions awaiting approval
+	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
+	// gate is unused/disabled. See tui_approvals.go.
+	pendingActions []link.ActionRequest
+	// policyRules are the active auto-approve rules, loaded when the approvals
+	// overlay opens (and after a mutation) — not polled. See tui_approvals.go.
+	policyRules []policy.Rule
+	// demo drives the dashboard from a synthetic fleet (tui_demo.go) instead of a
+	// live daemon — for reproducible, secret-free site recordings. demoTick
+	// advances each poll so the fleet's agent states churn on screen.
+	// demoApprovals stages the action-gate scene (pending actions + badge),
+	// toggled with `!` so the hero fleet shot stays clean until you want it.
+	demo          bool
+	demoTick      int
+	demoApprovals bool
 	// updateError is a STICKY client/daemon self-update failure, shown in the
 	// header announcement until the next update attempt or an explicit dismiss
 	// (esc). Distinct from lastError, which routine 2s polls clear — an update
@@ -431,6 +457,10 @@ func releaseTickCmd() tea.Cmd {
 }
 
 func (m tuiModel) fetchListCmd() tea.Cmd {
+	if m.demo {
+		tick := m.demoTick
+		return func() tea.Msg { return listMsg(demoIslands(tick)) }
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -443,6 +473,10 @@ func (m tuiModel) fetchListCmd() tea.Cmd {
 }
 
 func (m tuiModel) fetchOverviewCmd() tea.Cmd {
+	if m.demo {
+		tick := m.demoTick
+		return func() tea.Msg { return overviewMsg(demoOverview(tick)) }
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -495,6 +529,15 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 	if name == "" {
 		return nil // e.g. the trailing "+ new island" row has no island
 	}
+	if m.demo {
+		tick := m.demoTick
+		return func() tea.Msg {
+			if info, ok := demoIsland(name, tick); ok {
+				return detailMsg{info: info}
+			}
+			return nil
+		}
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -514,6 +557,11 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 func (m tuiModel) Init() tea.Cmd {
 	// Title the dashboard's own terminal tab "dejima" (session tabs it spawns are
 	// titled "<island>-<agent>"); see openAgentWindow.
+	if m.demo {
+		// No daemon, no setup-readiness or update checks — just the synthetic
+		// fleet, polled on the tick so it animates. Keeps recordings clean.
+		return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd(), tickCmd())
+	}
 	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
@@ -592,7 +640,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case tickMsg:
-		cmds := []tea.Cmd{tickCmd(), m.fetchListCmd(), m.fetchOverviewCmd()}
+		if m.demo {
+			m.demoTick++ // advance the synthetic fleet so agent states churn on screen
+		}
+		cmds := []tea.Cmd{tickCmd(), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd()}
 		if name := m.selectedName(); name != "" {
 			cmds = append(cmds, m.fetchDetailCmd(name))
 		}
@@ -600,6 +651,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, c)
 		}
 		return m, tea.Batch(cmds...)
+
+	case pendingActionsMsg:
+		m.pendingActions = msg
+		if m.approvals != nil && m.approvals.sel >= len(msg) {
+			m.approvals.sel = max(0, len(msg)-1)
+		}
+		return m, nil
+
+	case policyRulesMsg:
+		m.policyRules = msg
+		if m.approvals != nil {
+			if m.approvals.ruleSel >= len(msg) {
+				m.approvals.ruleSel = max(0, len(msg)-1)
+			}
+			if len(msg) == 0 && m.approvals.focus == focusRules {
+				m.approvals.focus = focusPending // nothing left to act on
+			}
+		}
+		return m, nil
 
 	case releaseTickMsg:
 		// Re-poll GitHub and re-arm the slow ticker. The result (latestReleaseMsg)
@@ -829,6 +899,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case errMsg:
+		if m.demo {
+			return m, nil // demo never talks to a daemon; ignore stray fetch errors
+		}
 		if msg.err != nil {
 			m.lastError = msg.err.Error()
 			// A local daemon that's gone unreachable: attach a one-shot, actionable
@@ -853,7 +926,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
 		}
-		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+		cmds := []tea.Cmd{m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd()}
+		if m.approvals != nil {
+			// Refresh the rules section too while the overlay's open (covers
+			// approve+rule and revoke); skipped otherwise to avoid a needless GET.
+			cmds = append(cmds, m.fetchPolicyCmd())
+		}
+		return m, tea.Batch(cmds...)
 
 	case imageBuildDoneMsg:
 		m.building = false
@@ -942,6 +1021,31 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// A success notice lingers until the next keystroke, then clears (an action
 	// may set a fresh one — e.g. setup-ssh sets it via runConfirmed below).
 	m.lastNotice = ""
+	// A confirmation modal is top-most: it owns keys whenever open, even over an
+	// overlay that spawned it (e.g. approve / deny / approve-rule from the
+	// approvals overlay). Otherwise that overlay's key handler swallows the typing
+	// and the Enter, leaving the modal unusable.
+	if m.confirm != nil {
+		switch msg.String() {
+		case "esc", "ctrl+c":
+			m.confirm = nil
+			return m, nil
+		case "enter":
+			c := *m.confirm
+			m.confirm = nil
+			return m.runConfirmed(c)
+		case "backspace":
+			if len(m.confirm.answer) > 0 {
+				m.confirm.answer = m.confirm.answer[:len(m.confirm.answer)-1]
+			}
+			return m, nil
+		default:
+			if len(msg.String()) == 1 {
+				m.confirm.answer += msg.String()
+			}
+			return m, nil
+		}
+	}
 	// The new-island creator owns all keys while active.
 	if m.creator != nil {
 		return m.creatorKey(msg)
@@ -992,27 +1096,13 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.scope != nil {
 		return m.scopeKey(msg)
 	}
-	// Confirmation modal owns keys when active.
-	if m.confirm != nil {
-		switch msg.String() {
-		case "esc", "ctrl+c":
-			m.confirm = nil
-			return m, nil
-		case "enter":
-			c := *m.confirm
-			m.confirm = nil
-			return m.runConfirmed(c)
-		case "backspace":
-			if len(m.confirm.answer) > 0 {
-				m.confirm.answer = m.confirm.answer[:len(m.confirm.answer)-1]
-			}
-			return m, nil
-		default:
-			if len(msg.String()) == 1 {
-				m.confirm.answer += msg.String()
-			}
-			return m, nil
-		}
+	// The action-gate approvals overlay owns keys while open.
+	if m.approvals != nil {
+		return m.approvalsKey(msg)
+	}
+	// The visual-identity editor owns keys while open.
+	if m.identity != nil {
+		return m.identityKey(msg)
 	}
 	// The host-terminal band owns keys while focused (expanded + driving). After
 	// the confirm guard, so a band-opened "close terminal" confirm takes keys.
@@ -1033,6 +1123,19 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Trust surface — what the highlighted island can reach (Port · MCP ·
 		// links · capabilities). Agent rows inherit their island's grants.
 		return m.openGrantsView(m.selectedName())
+	case "V":
+		// Action-gate approvals — the queue of cross-island actions awaiting a
+		// decision (reView) + the active auto-approve rules. Refresh both on open.
+		// (G is jump-to-bottom.)
+		m.approvals = &approvalsView{}
+		return m, tea.Batch(m.fetchPendingActionsCmd(), m.fetchPolicyCmd())
+	case "!":
+		// Demo-only: stage/unstage the action-gate scene (pending actions + badge)
+		// so the hero fleet shot stays clean until you want the approval clip.
+		if m.demo {
+			m.demoApprovals = !m.demoApprovals
+			return m, m.fetchPendingActionsCmd()
+		}
 	case "P":
 		// Port scope-picker for the selected island (brokered host-file grants).
 		// Capital P; lowercase p is group-by-repo.
@@ -1042,14 +1145,19 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		return m.openCreator()
-	case "`":
+	case "/", "`":
 		// Toggle + focus the pinned host-terminal band (above the island list).
+		// `/` is the primary key; backtick kept as an alias.
 		if m.hostTerminalsEnabled() {
 			m.bandExpanded = true
 			m.bandFocused = true
 			if m.bandSel >= m.bandRowCount() {
 				m.bandSel = 0
 			}
+		} else {
+			// Say why the key's a no-op rather than leaving the operator guessing
+			// (host terminals are an opt-in daemon capability, off by default).
+			m.lastNotice = "host terminals are off — start dejimad with --host-terminals to enable the host band"
 		}
 		return m, nil
 	case "t":
@@ -1061,6 +1169,18 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// General settings (editor · group-by-repo · connection target). Server
 		// switching now lives inside here rather than owning its own hotkey.
 		return m.openSettings(), nil
+	case ">":
+		// In-island /workspace shell for the selected island. (Enter opens the
+		// island's agents; `>` — a shell prompt — opens the contained shell.)
+		name := m.selectedName()
+		if name == "" {
+			return m, nil
+		}
+		if m.detail != nil && m.detail.Container != "running" {
+			m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
+			return m, nil
+		}
+		return m.openIslandShell(name)
 	case "j", "down":
 		if m.selected < m.rowCount()-1 {
 			m.selected++
@@ -1322,6 +1442,29 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	case "remove-terminal":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			return m, m.removeTerminalCmd(c.agent) // c.agent carries the terminal id
+		}
+	case "approve-action":
+		// Approving a DESTRUCTIVE cross-island action: require a typed "y" so it
+		// can't be rubber-stamped. (c.agent carries the action id.)
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			return m, m.approveActionCmd(c.agent)
+		}
+	case "deny-action":
+		// The typed text is an optional ledger reason (blank is fine); deny always
+		// proceeds. (c.agent carries the action id.)
+		return m, m.denyActionCmd(c.agent, strings.TrimSpace(c.answer))
+	case "approve-rule":
+		// Approve + add a scoped auto-approve rule. The typed answer is
+		// "<max> [<ttl>]" (e.g. "20 1h"); blank max = unlimited, blank ttl = no
+		// expiry. Look the action up by id so a queue refresh can't misdirect it.
+		if a, ok := m.findPendingAction(c.agent); ok {
+			maxCount, ttl := parseRuleSpec(c.answer)
+			return m, m.approveRuleCmd(a, maxCount, ttl)
+		}
+	case "open-all-agents":
+		// Confirmed opening many agent windows at once (Enter on a big island).
+		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			return m.openAgents(c.island, m.attachableAgentIDs(c.island))
 		}
 	case "relabel-agent":
 		// The typed text is the new label (blank clears it); no y/n gate.
@@ -1668,6 +1811,9 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openScopeView(islandName)
 		}})
+		items = append(items, actionMenuItem{label: "Color & glyph… (visual identity)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openIdentityEditor(islandName)
+		}})
 		if m.overview != nil && m.overview.SSHAddr != "" {
 			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", key: "S"})
 		}
@@ -1942,17 +2088,11 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 		m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it first", name, m.detail.Container)
 		return m, nil
 	}
-	// Enter on an island row opens a contained shell at /workspace — not an
-	// agent. (Agents are opened by hitting Enter on their own row.)
+	// Enter on an island row opens all of its (attachable) agents, each in its
+	// own window — "jump into this island's work". The in-island shell moved to
+	// `$`. (Agents are also openable one at a time via Enter on their own row.)
 	if row.agentID == "" {
-		if canOpenNewWindow() {
-			if err := m.openAgentWindow("shell", name, "", "", nil); err != nil {
-				m.lastError = err.Error()
-			}
-			return m, nil
-		}
-		m.connectShell = name
-		return m, tea.Quit
+		return m.openIslandAgents(name)
 	}
 	if m.isHeadlessAgent(name, row.agentID) {
 		return m.openAgentLogs(name, row.agentID)
@@ -1965,6 +2105,68 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 	}
 	m.connectTo, m.connectAgent = name, row.agentID
 	return m, tea.Quit
+}
+
+// openAllConfirmThreshold is the number of windows above which Enter-on-island
+// asks before spawning them all (so a stray Enter on a big island can't blanket
+// the screen in tabs).
+const openAllConfirmThreshold = 4
+
+// openIslandAgents opens one window per attachable agent on the island (Enter on
+// an island row). It falls back to the in-island shell when there's nothing to
+// open as windows — an empty or all-headless island, or a terminal that can't
+// spawn windows — and confirms first past openAllConfirmThreshold.
+func (m tuiModel) openIslandAgents(name string) (tea.Model, tea.Cmd) {
+	ids := m.attachableAgentIDs(name)
+	if !canOpenNewWindow() || len(ids) == 0 {
+		return m.openIslandShell(name)
+	}
+	if len(ids) > openAllConfirmThreshold {
+		m.confirm = &confirmPrompt{verb: "open-all-agents", island: name}
+		return m, nil
+	}
+	return m.openAgents(name, ids)
+}
+
+// openAgents opens a window for each given agent id; errors surface but don't
+// stop the rest from opening.
+func (m tuiModel) openAgents(name string, ids []string) (tea.Model, tea.Cmd) {
+	for _, id := range ids {
+		if err := m.openInNewWindow(name, id, ""); err != nil {
+			m.lastError = err.Error()
+		}
+	}
+	return m, nil
+}
+
+// openIslandShell attaches the local terminal to the island's in-island shell at
+// /workspace — in a new window when the terminal supports it, otherwise by
+// quitting the TUI and attaching in place. Bound to `$`; also the Enter fallback
+// when an island has no attachable agents.
+func (m tuiModel) openIslandShell(name string) (tea.Model, tea.Cmd) {
+	if canOpenNewWindow() {
+		if err := m.openAgentWindow("shell", name, "", "", nil); err != nil {
+			m.lastError = err.Error()
+		}
+		return m, nil
+	}
+	m.connectShell = name
+	return m, tea.Quit
+}
+
+// attachableAgentIDs returns the island's attachable (non-headless) agent ids.
+func (m tuiModel) attachableAgentIDs(name string) []string {
+	isl, ok := m.islandByName(name)
+	if !ok {
+		return nil
+	}
+	var ids []string
+	for _, a := range isl.Agents {
+		if a.Attachable {
+			ids = append(ids, a.ID)
+		}
+	}
+	return ids
 }
 
 // openAgentLogs opens a headless agent's logs in a new window, or points the
@@ -2139,6 +2341,14 @@ func (m tuiModel) View() string {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderScopeView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.approvals != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderApprovalsView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.identity != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderIdentityView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 
 	footer := m.renderFooter()
 	// The pinned host-terminal band sits between the header and the island list;
@@ -2208,6 +2418,20 @@ func (m tuiModel) updateParts() string {
 // PANIC stays its own override (renderPanicBanner) since it supersedes the UI.
 func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok bool) {
 	switch {
+	case len(m.pendingActions) > 0:
+		// Cross-island actions awaiting your decision — the headline safety moment,
+		// so it outranks update news. Red + loud when any pending action is
+		// destructive (which the gate never auto-approves), amber otherwise.
+		n := len(m.pendingActions)
+		st, tail := styleBroadcast, "await approval"
+		for _, a := range m.pendingActions {
+			if a.Tier == link.TierDestructive {
+				st, tail = styleErrorBroadcast, "need approval — destructive!"
+				break
+			}
+		}
+		return fmt.Sprintf(" ! %d cross-island action(s) %s   ·   [V] review", n, tail),
+			fmt.Sprintf(" ! %d to approve ", n), st, true
 	case m.updateError != "":
 		// A failed self-update outranks everything else here and stays put (red)
 		// until retried [U] or dismissed [esc] — never wiped by a poll.
@@ -2336,8 +2560,8 @@ func (m tuiModel) renderHeader() string {
 		topLine,
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
-		styleMuted.Render("Each island is one repo + one agent in its own container."),
-		styleAccent.Render("↑/↓") + styleMuted.Render(" pick an island  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open in a new tab  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
+		styleMuted.Render("Each island is a repo in its own container — host one or more agents, or just shell in."),
+		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open its agents  ·  ") + styleAccent.Render(">") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
 		serverLine,
 	}, "\n")
@@ -2526,11 +2750,18 @@ func (m tuiModel) renderList(width int) (string, int) {
 			if m.islandExpanded(isl) {
 				caret = "▾"
 			}
-			label := truncate(islandDisplay(isl), 16)
+			label := truncate(islandDisplay(isl), 14)
 			if len(isl.Agents) > 1 {
-				label = truncate(islandDisplay(isl), 12) + fmt.Sprintf(" (%d)", len(isl.Agents))
+				label = truncate(islandDisplay(isl), 10) + fmt.Sprintf(" (%d)", len(isl.Agents))
 			}
-			line = fmt.Sprintf("%s %s  %-16s  %s", caret, glyphFor(isl), label, shortStatus(isl, m.dirtyOps[isl.Name]))
+			// Per-island visual identity: a stable color+glyph (idStyle/idGlyph)
+			// marks the island and tints its name, so it and its agent group stand
+			// out. The state glyph (glyphFor) keeps its own status color.
+			idStyle, idGlyph := islandVisual(isl)
+			line = fmt.Sprintf("%s %s %s  %s  %s",
+				caret, glyphFor(isl), idStyle.Render(idGlyph),
+				idStyle.Render(fmt.Sprintf("%-14s", label)),
+				shortStatus(isl, m.dirtyOps[isl.Name]))
 		}
 		if i == m.selected {
 			selLine = strings.Count(b.String(), "\n") // line index this row will occupy
@@ -2689,13 +2920,13 @@ func (m tuiModel) renderBand(width int) (string, int) {
 		}
 		line := fmt.Sprintf("%s %s %s %s   %s",
 			styleHeader.Render("⌨ Host"), dot, styleMuted.Render(count),
-			styleMuted.Render("· not contained"), styleMuted.Render("[`] expand"))
+			styleMuted.Render("· not contained"), styleMuted.Render("[/] expand"))
 		return clip(line), 1
 	}
 
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("⌨ Host terminals") + " " +
-		styleMuted.Render("· not contained") + "   " + styleMuted.Render("[`] collapse") + "\n")
+		styleMuted.Render("· not contained") + "   " + styleMuted.Render("[/] collapse") + "\n")
 	for i, t := range m.terminals {
 		line := "  " + terminalRowText(t)
 		if i == m.bandSel {
@@ -2781,13 +3012,32 @@ func agentRowText(a api.AgentInfo, ambiguous bool) string {
 	if v := attachedIndicator(a.Attached); v != "" {
 		metaStr += "  " + v
 	}
+	// Pin the kind glyph to a fixed 2-cell slot so the name (and the type column
+	// after it) line up regardless of the glyph's render width — ◆/■/❯ aren't all
+	// one cell in every terminal font, which otherwise nudged headless rows
+	// (e.g. openclaw) out of column.
+	glyphSlot := lipgloss.NewStyle().Width(2).Render(agentGlyph(a))
+	left := fmt.Sprintf("%s%s  %s", glyphSlot, name, metaStr)
 	status, statusStyle := agentStatus(a)
-	statusStr := ""
-	if status != "" {
-		statusStr = "  " + statusStyle.Render(status)
+	if status == "" {
+		return left
 	}
-	return fmt.Sprintf("%s %s  %s%s", agentGlyph(a), name, metaStr, statusStr)
+	// Align the status word to a fixed column so the states read as a column down
+	// the list, regardless of how wide each row's type/uptime/presence meta is.
+	// lipgloss.Width measures visible cells (ignores the ANSI in glyph/meta). Rows
+	// wider than the column (e.g. a disambiguated name) overflow past it with a
+	// minimum 2-space gap rather than colliding — the "within reason" exception.
+	pad := agentStatusCol - lipgloss.Width(left)
+	if pad < 2 {
+		pad = 2
+	}
+	return left + strings.Repeat(" ", pad) + statusStyle.Render(status)
 }
+
+// agentStatusCol is the visible column the agent state word starts at, sized to
+// clear a typical "<type>  up <age>  <presence>" meta (e.g. "claude-code  up
+// 40m" + a presence dot). Wider rows overflow gracefully (see agentRowText).
+const agentStatusCol = 40
 
 // attachedIndicator renders a compact "someone's driving this" badge — a
 // presence dot plus the viewer count when more than one client is attached. It
@@ -3038,7 +3288,7 @@ func (m tuiModel) renderFooter() string {
 	// listed in the ⏎ menu and in [?] help.
 	term := ""
 	if m.hostTerminalsEnabled() {
-		term = "[`] terminals   "
+		term = "[/] terminals   "
 	}
 	keys1 := "[n] new   " + term + "[s] settings   [?] help   [q] quit"
 	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll
@@ -3107,7 +3357,8 @@ func (m tuiModel) renderHelp() string {
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
 		{"t", "new host terminal — an uncontained shell on the daemon host (if enabled)"},
-		{"⏎ / o", "island → a shell at /workspace (contained); agent → its session; in a new tab (or run the affordance)"},
+		{"⏎ / o", "island → opens all its agents (each in a new tab); agent → its session; headless agent → its logs"},
+		{">", "open a shell at /workspace inside the highlighted island (contained)"},
 		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh setup, purge…)"},
 		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
 		{"E", "expand / collapse all islands at once (flips on the current state)"},
@@ -3127,7 +3378,7 @@ func (m tuiModel) renderHelp() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens a shell at /workspace (inside the\ncontainer); ⏎ on an agent opens that agent. Expand one with [space], then [+]\nadd agents. Headless agents have no screen — ⏎ opens their logs."))
+	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."))
 	b.WriteString("\n\n")
 	b.WriteString(styleHeader.Render("Glyphs"))
 	b.WriteString("\n  ")
@@ -3140,6 +3391,8 @@ func (m tuiModel) renderHelp() string {
 		styleHibernate.Render("idle/stopped") + styleMuted.Render(" · ") +
 		styleNeedsYou.Render("needs you") + styleMuted.Render(" · ") +
 		styleErrored.Render("error"))
+	b.WriteString("\n  ")
+	b.WriteString(styleMuted.Render("islands are uniform by default; give one its own color + glyph via the actions menu (m → Color & glyph)"))
 	b.WriteString("\n\n")
 
 	if !m.helpAdvanced {
@@ -3162,6 +3415,7 @@ func (m tuiModel) renderHelp() string {
 		{"A", "audit ledger — chain-verification + recent governance activity"},
 		{"T", "grants — what the highlighted island can reach (Port · MCP · links · caps)"},
 		{"P", "Port scopes — brokered host-file grants (add/revoke; deny-all by default)"},
+		{"V", "approvals — review/approve/deny pending cross-island actions (the action gate)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
@@ -3234,6 +3488,18 @@ func (m tuiModel) renderConfirm() string {
 	case "remove-terminal":
 		prompt = fmt.Sprintf("Close host terminal %s (kills the shell on the daemon host)? Type 'y' and press Enter: %s",
 			c.agent, c.answer)
+	case "approve-action":
+		prompt = fmt.Sprintf("⚠ Approve this DESTRUCTIVE cross-island action (%s)? It runs once approved. Type 'y' and press Enter: %s",
+			c.agent, c.answer)
+	case "deny-action":
+		prompt = fmt.Sprintf("Deny action %s. Reason (optional) — type one and press Enter, or just Enter: %s",
+			c.agent, c.answer)
+	case "approve-rule":
+		prompt = fmt.Sprintf("Approve %s AND auto-approve this link+action going forward. Type '<max> [<ttl>]' (e.g. '20 1h'; blank = unlimited, no expiry) and Enter: %s",
+			c.agent, c.answer)
+	case "open-all-agents":
+		prompt = fmt.Sprintf("Open all %d agents of %q in separate windows? Type 'y' and press Enter: %s",
+			len(m.attachableAgentIDs(c.island)), c.island, c.answer)
 	case "relabel-agent":
 		prompt = fmt.Sprintf("Rename agent %s (blank clears the label). Type a name and press Enter: %s",
 			c.agent, c.answer)
@@ -3247,8 +3513,16 @@ func (m tuiModel) renderConfirm() string {
 		prompt = fmt.Sprintf("Download %s and replace this dejima binary (verified against the release checksums)? Type 'y' and Enter: %s",
 			m.latestRelease, c.answer)
 	case "update-daemon":
-		prompt = fmt.Sprintf("Update the daemon to %s and restart it (briefly disconnects)? Type 'y' and Enter: %s",
-			m.latestRelease, c.answer)
+		if c.force {
+			// The daemon deferred because clients are attached; forcing disconnects
+			// them. This is a DISTINCT decision from the first confirm — say so, or
+			// it reads as the same prompt asked twice.
+			prompt = fmt.Sprintf("The daemon held off — attached terminal(s) would be disconnected. Force the update to %s and restart now? Type 'y' and Enter: %s",
+				m.latestRelease, c.answer)
+		} else {
+			prompt = fmt.Sprintf("Update the daemon to %s and restart it (briefly disconnects)? Type 'y' and Enter: %s",
+				m.latestRelease, c.answer)
+		}
 	}
 	// Render inside the centered styleMenuBox (View supplies the border): a clear
 	// title, the prompt with a blinking-style cursor on the typed answer, and a
@@ -3259,7 +3533,17 @@ func (m tuiModel) renderConfirm() string {
 		title = styleErrored.Render("⚠  Confirm")
 	}
 	hint := styleHeader.Render("Enter = confirm    ·    Esc = cancel")
-	return title + "\n\n" + prompt + "▌" + "\n\n" + hint
+	// Wrap the prompt so a long one (e.g. approve-rule's "<max> [<ttl>]…") doesn't
+	// run off the box and hide the typed answer + cursor.
+	width := m.width - 10
+	if width > 76 {
+		width = 76
+	}
+	if width < 24 {
+		width = 24
+	}
+	body := lipgloss.NewStyle().Width(width).Render(prompt + "▌")
+	return title + "\n\n" + body + "\n\n" + hint
 }
 
 // renderActionMenu draws the inner content of the per-row context popup: a
@@ -3365,6 +3649,47 @@ func (m tuiModel) renderSettings() string {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// islandIdentityColors / islandIdentityGlyphs are the palette the visual-identity
+// EDITOR offers (see tui_identity.go). They are NOT auto-assigned: islands look
+// uniform by default (see islandIdentityDefault), and a color/glyph is opt-in per
+// island via the actions menu. Colors are light-medium so they show on both the
+// default dark background and the selected-row highlight, and deliberately avoid
+// the state hues (green/amber/red); glyphs avoid the lifecycle glyphs.
+var islandIdentityColors = []lipgloss.Color{
+	"#ffffff", // the default (uniform) — first so the editor opens on it
+	"#60a5fa", "#a78bfa", "#22d3ee", "#f472b6", "#2dd4bf",
+	"#e879f9", "#38bdf8", "#818cf8", "#f0abfc", "#5eead4",
+}
+
+var islandIdentityGlyphs = []string{"◆", "▲", "★", "■", "◈", "✦", "♦", "⬟"}
+
+// islandIdentityDefaultColor / Glyph are the uniform default every island wears
+// until the operator sets one: white + a neutral glyph. (The per-island
+// hash-distinct coloring was dropped — it carried no meaning; distinctness is
+// now opt-in.)
+const islandIdentityDefaultColor = "#ffffff"
+
+var islandIdentityDefaultGlyph = islandIdentityGlyphs[0] // ◆
+
+// islandIdentity returns the uniform default identity (white + neutral glyph) —
+// the same for every island. A per-island override comes from islandVisual when
+// the operator has set one.
+func islandIdentity(name string) (lipgloss.Style, string) {
+	_ = name // uniform default; name no longer hashed into a distinct color/glyph
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(islandIdentityDefaultColor)), islandIdentityDefaultGlyph
+}
+
+// islandVisual is the read-through used everywhere the dashboard draws an
+// island's identity: the operator's stored override (isl.Identity, set via the
+// editor / PUT) when present and valid, otherwise the deterministic per-name
+// default. One seam so a stored identity and the default render identically.
+func islandVisual(isl api.IslandInfo) (lipgloss.Style, string) {
+	if isl.Identity != nil && isl.Identity.Glyph != "" && isl.Identity.Color != "" {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(isl.Identity.Color)), isl.Identity.Glyph
+	}
+	return islandIdentity(isl.Name)
+}
+
 func glyphFor(isl api.IslandInfo) string {
 	if isl.AgentState != nil && isl.AgentState.Latest == "waiting-for-input" {
 		return styleWaiting.Render("!")
@@ -3429,6 +3754,16 @@ func timeAgo(t time.Time) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// timeUntil is timeAgo's forward-looking sibling: a short "in 5m" / "in 2h" for
+// a future instant (or "now" once it's passed). Used for auto-approve-rule expiry.
+func timeUntil(t time.Time) string {
+	d := time.Until(t).Round(time.Second)
+	if d <= 0 {
+		return "now"
+	}
+	return "in " + timeAgo(time.Now().Add(-d))
 }
 
 // humanDuration formats an elapsed span as up to two units ("1h 14m", "3m 02s",
