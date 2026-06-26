@@ -201,8 +201,9 @@ func memPressureWarning(isl api.IslandInfo, ov *api.OverviewResponse) string {
 type agentAddedMsg struct {
 	island     string
 	agentID    string // the new agent's id, for opening it in a new tab
-	agentLabel string // its user-set label (the model list hasn't refreshed yet)
+	agentLabel string // its FINAL label from the daemon (may be auto-incremented)
 	attachable bool   // interactive (connect) vs headless (logs)
+	notice     string // set when the requested label collided and was auto-renamed
 	err        error
 }
 
@@ -271,6 +272,7 @@ func (m tuiModel) addAgentSpecCmd(name string, req api.AgentSpecRequest) tea.Cmd
 			agentID:    ag.ID,
 			agentLabel: ag.Label,
 			attachable: ag.Attachable,
+			notice:     renameNotice(req.Label, ag.Label), // daemon auto-increments collisions
 		}
 	}
 }

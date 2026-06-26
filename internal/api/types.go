@@ -36,7 +36,9 @@ type IslandInfo struct {
 	Health     *IslandHealth     `json:"health,omitempty"`
 	Disk       *IslandDisk       `json:"disk,omitempty"`
 	// Resources are the island's configured caps + OOM priority (nil OOMPriority
-	// means the smart default applies). Detail endpoint only.
+	// means the smart default applies). Present on both the list and detail
+	// endpoints — cheap (read from island config) and needed alongside Stats so a
+	// client can compute usage as a "% of cap".
 	Resources *Resources `json:"resources,omitempty"`
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.

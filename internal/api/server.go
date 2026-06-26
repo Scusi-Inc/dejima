@@ -890,13 +890,7 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	info := s.toInfo(ctx, p)
 	// Per-agent session liveness is detail-only (one exec per agent).
 	info.Agents = s.agentInfos(ctx, p, info.Container == string(runtime.StatusRunning))
-	// Configured resource caps + OOM priority (detail-only).
-	info.Resources = &Resources{
-		Memory:      p.Resources.Memory,
-		CPUs:        p.Resources.CPUs,
-		Disk:        p.Resources.Disk,
-		OOMPriority: p.Resources.OOMPriority,
-	}
+	// (Resource caps are populated in toInfo() — present on both list and detail.)
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
 	info.Git = s.gitStatusOf(ctx, p.ContainerName())
@@ -2538,6 +2532,16 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		}
 	} else {
 		info.Container = string(runtime.StatusErrored)
+	}
+	// Configured resource caps + OOM priority. Cheap (read from the island's
+	// config, no container probe), so surfaced on both the list and detail views
+	// — the consumer needs the caps to compute "% of cap" client-side from the
+	// cached usage stats above.
+	info.Resources = &Resources{
+		Memory:      p.Resources.Memory,
+		CPUs:        p.Resources.CPUs,
+		Disk:        p.Resources.Disk,
+		OOMPriority: p.Resources.OOMPriority,
 	}
 	info.Attached = s.islandPresence(p.Name)
 	info.AgentState = s.islandAgentState(p.Name)
