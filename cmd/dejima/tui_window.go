@@ -66,7 +66,7 @@ func (m tuiModel) windowLabel(name, agentID, agentLabel string) string {
 	if suffix == "" {
 		return island
 	}
-	return island + "-" + suffix
+	return island + "/" + suffix
 }
 
 // openAgentWindow launches `dejima <verb> <name> [--agent id] [extra…]` in a
@@ -87,9 +87,11 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 	// back to the durable handles when none is set. The dashboard's own tab is
 	// titled "dejima" (set via tea.SetWindowTitle at startup).
 	winLabel := m.windowLabel(name, agentID, agentLabel)
-	// A shell command string: pin DEJIMA_HOST, then exec the verb.
-	inner := fmt.Sprintf("DEJIMA_HOST=%s exec %s %s %s",
-		shquote(m.activeHost), shquote(exe), verb, shquote(name))
+	// A shell command string: pin DEJIMA_HOST + the resolved tab title (so the
+	// spawned session's OSC title uses the agent's LABEL, not its id), then exec
+	// the verb. winLabel already prefers the label and falls back to the id.
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s %s %s",
+		shquote(m.activeHost), shquote(winLabel), shquote(exe), verb, shquote(name))
 	if agentID != "" {
 		inner += " --agent " + shquote(agentID)
 	}
