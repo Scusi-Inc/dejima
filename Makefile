@@ -18,7 +18,7 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration test-tier3-safe test-tier3-system test-tier3-action-gate test-tier3-tui-claude test-tier3-onboard-selftest test-tier4 lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration test-tier3-safe test-tier3-system test-tier3-action-gate test-tier3-reconnect test-tier3-tui-claude test-tier3-onboard-selftest test-tier4 lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
@@ -151,6 +151,15 @@ test-tier3-system:
 # colima/Docker is unreachable. See scripts/tier3/action-gate.sh.
 test-tier3-action-gate:
 	./scripts/tier3/action-gate.sh
+
+# Tier-3 RECONNECT-RESILIENCE — the live proof of #129: an attached `dejima shell`
+# session SURVIVES a daemon restart with no code-1 exit and resumes the same
+# in-container tmux session, a clean stdin close exits 0, and a genuinely-gone
+# target gives up fast with a clear message. Safe (throwaway $HOME/daemon, never
+# aoos's); island-backed so it SKIPS cleanly without colima. See
+# scripts/tier3/reconnect.sh.
+test-tier3-reconnect:
+	./scripts/tier3/reconnect.sh
 
 # Phase-C2 live UX checks (Mac-mini runner). Both SKIP cleanly without their
 # gates so they never red a partially-provisioned runner.
