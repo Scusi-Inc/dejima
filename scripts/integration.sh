@@ -155,6 +155,12 @@ run_bounded(){
   done
   wait "$pid"
 }
+# drop_island <name>...: free islands as soon as the suite is done with them, so
+# containers don't ACCUMULATE. Peak concurrent containers (not any single op) is
+# what OOM-kills the heavy clone volume-copy on a small/dedicated engine: without
+# this, ~5 islands stay alive until the EXIT trap. Best-effort + bounded so a slow
+# purge can't stall the run; the trap still sweeps anything left.
+drop_island(){ for _isl in "$@"; do run_bounded 45 dejima purge "$_isl" -f >/dev/null 2>&1 || true; done; }
 
 command -v docker >/dev/null || die "docker not found / not running"
 command -v go     >/dev/null || die "go not found"
@@ -587,6 +593,8 @@ else
   printf '  daemon log (worktree/reconcile/clone lines):\n'
   grep -iE "worktree|ensure agent|reconcile|clone|seed|not a git" "$TMP/dejimad.log" 2>/dev/null | tail -20 | sed 's/^/    /'
 fi
+# itest-multi is done — free it before the memory-heavy clone copy that follows.
+drop_island "$ISLAND_MULTI"
 
 # ---------------------------------------------------------------------------
 # Clone — a byte-for-byte copy of an island's workspace into fresh volumes; the
@@ -609,6 +617,8 @@ if [ -n "$cloned" ]; then
 else
   fail "clone never became exec-able with the copied workspace (waited 60s)"
 fi
+# Clone done — free the clone (itest-port is kept; it's still used by capability).
+drop_island "$ISLAND_CLONE"
 
 # ---------------------------------------------------------------------------
 # Inter-island exchange (Lane 5) — cross-island is deny-all; a channel exists
@@ -688,6 +698,8 @@ assert_has "$XAUDIT" "link.grant"   "grant recorded as link.grant"
 assert_has "$XAUDIT" "link.message" "delivery recorded as link.message"
 assert_has "$XAUDIT" "link.deny"    "refused send recorded as link.deny"
 expect_ok "ledger chain verifies with link.* entries" dejima audit --verify
+# Inter-island done — free both A and B.
+drop_island "$ISLAND_A" "$ISLAND_B"
 
 # ---------------------------------------------------------------------------
 # Purge unpushed-work guard — purging an island with unpushed/uncommitted work
@@ -729,6 +741,8 @@ assert_has "$CAP_LS" "script" "granted capability appears in the list"
 expect_ok "cap revoke" dejima cap revoke "$ISLAND" script
 CAP_GONE="$(dejima cap list "$ISLAND" 2>&1)"
 assert_has "$CAP_GONE" "deny-all" "revoke returns to deny-all"
+# itest-port's last use — free it; the remaining features need no prior island.
+drop_island "$ISLAND"
 
 # ---------------------------------------------------------------------------
 # Provider credentials — set / list (masked) / remove. The key is never echoed
