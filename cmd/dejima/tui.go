@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -3135,14 +3136,52 @@ func (m tuiModel) renderDetail(_ int) string {
 		b.WriteString(fmt.Sprintf("tags:      %s\n", styleMuted.Render(formatTags(d.Tags))))
 	}
 	if d.Stats != nil {
-		b.WriteString(fmt.Sprintf("memory:    %s / %s\n",
-			humanBytes(d.Stats.MemoryUsageBytes), humanBytes(d.Stats.MemoryLimitBytes)))
-		b.WriteString(fmt.Sprintf("cpu:       %.1f%%\n", d.Stats.CPUPercent))
+		memLine := fmt.Sprintf("%s / %s", humanBytes(d.Stats.MemoryUsageBytes), humanBytes(d.Stats.MemoryLimitBytes))
+		if pct, ok := memUsagePct(d.Stats); ok {
+			if st, flag := nearCapStyle(pct); flag {
+				memLine += st.Render(fmt.Sprintf("  %.0f%% ⚠ near cap", pct))
+			} else {
+				memLine += styleMuted.Render(fmt.Sprintf("  %.0f%%", pct))
+			}
+		}
+		b.WriteString(fmt.Sprintf("memory:    %s\n", memLine))
+		cpu := fmt.Sprintf("%.1f%%", d.Stats.CPUPercent)
+		if st, flag := nearCapStyle(d.Stats.CPUPercent); flag {
+			cpu = st.Render(fmt.Sprintf("%.1f%% ⚠", d.Stats.CPUPercent))
+		}
+		b.WriteString(fmt.Sprintf("cpu:       %s\n", cpu))
+	}
+	// Container health (a3 usage #3): only when unhealthy — an OOM kill or a
+	// container-level restart is a crash signal distinct from a per-agent restart.
+	if h := d.Health; h != nil && (h.OOMKilled || h.RestartCount > 0) {
+		hp := []string{}
+		if h.OOMKilled {
+			hp = append(hp, "OOM-killed")
+		}
+		if h.RestartCount > 0 {
+			hp = append(hp, fmt.Sprintf("%d container restart(s)", h.RestartCount))
+		}
+		if h.ExitCode != 0 {
+			hp = append(hp, fmt.Sprintf("last exit %d", h.ExitCode))
+		}
+		b.WriteString("health:    " + styleErrored.Render("⚠ "+strings.Join(hp, " · ")) + "\n")
 	}
 	if d.Disk != nil && d.Disk.TotalBytes > 0 {
-		b.WriteString(fmt.Sprintf("disk:      %s (ws %s · home %s)\n",
+		diskLine := fmt.Sprintf("%s (ws %s · home %s)",
 			humanBytes(uint64(d.Disk.TotalBytes)), humanBytes(uint64(d.Disk.WorkspaceBytes)),
-			humanBytes(uint64(d.Disk.HomeBytes))))
+			humanBytes(uint64(d.Disk.HomeBytes)))
+		// %-of-cap when a disk cap is configured (resources.disk, e.g. "20G").
+		if d.Resources != nil {
+			if cap, ok := parseCapBytes(d.Resources.Disk); ok {
+				pct := float64(d.Disk.TotalBytes) / float64(cap) * 100
+				if st, flag := nearCapStyle(pct); flag {
+					diskLine += st.Render(fmt.Sprintf("  %.0f%% ⚠ near cap", pct))
+				} else {
+					diskLine += styleMuted.Render(fmt.Sprintf("  %.0f%% of %s", pct, d.Resources.Disk))
+				}
+			}
+		}
+		b.WriteString(fmt.Sprintf("disk:      %s\n", diskLine))
 	}
 	if r := d.Resources; r != nil {
 		// Lead with OOM priority (the meaningful knob); show a memory cap only when
@@ -3272,6 +3311,21 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 			prov = "a provider"
 		}
 		b.WriteString("auth:      " + styleWaiting.Render("⚠ no API key for "+prov+" — press [v] to set the model + key") + "\n")
+	}
+	// Token/cost (a3 usage #1 [second]) — agent-reported, so present only for
+	// adapters that report it (Claude Code today). cost_usd is hidden for an
+	// unpriced model. "n/a" only for an AI agent that COULD report but hasn't —
+	// never for types that don't, so we don't imply uniform coverage.
+	switch {
+	case a.Usage != nil:
+		u := a.Usage
+		line := fmt.Sprintf("%s tokens (in %s · out %s)", humanCount(u.TotalTokens), humanCount(u.InputTokens), humanCount(u.OutputTokens))
+		if u.CostUSD != nil {
+			line += fmt.Sprintf(" · $%.2f", *u.CostUSD)
+		}
+		b.WriteString(fmt.Sprintf("usage:     %s %s\n", line, styleMuted.Render("("+u.Source+" · "+timeAgo(u.AsOf)+" ago)")))
+	case a.Type == "claude-code":
+		b.WriteString("usage:     " + styleMuted.Render("n/a — no usage reported yet") + "\n")
 	}
 	if a.Error != "" {
 		b.WriteString("error:     " + styleErrored.Render(truncate(a.Error, 50)) + "\n")
@@ -3736,10 +3790,69 @@ func shortStatus(isl api.IslandInfo, transient string) string {
 	parts := []string{isl.Container}
 	if isl.Stats != nil && isl.Container == "running" {
 		parts = append(parts, fmt.Sprintf("%s · %.0f%%", humanBytes(isl.Stats.MemoryUsageBytes), isl.Stats.CPUPercent))
+		// Flag memory pressure on the row so the fleet shows a runaway agent at a
+		// glance (a3 usage #1) — only when near the cap, else the row stays quiet.
+		if pct, ok := memUsagePct(isl.Stats); ok {
+			if st, flag := nearCapStyle(pct); flag {
+				parts = append(parts, st.Render(fmt.Sprintf("mem %.0f%% ⚠", pct)))
+			}
+		}
 	}
 	// Per-agent type belongs on each agent row, not here — an island's first
 	// agent's type says nothing about the rest. (See agentRowText.)
 	return strings.Join(parts, " · ")
+}
+
+// memUsagePct returns an island's memory use as a percent of its limit, and
+// whether a usable figure exists (limit > 0). The cgroup limit is the real
+// ceiling, so this approaching 100% is the runaway-agent signal (a3 usage #1).
+func memUsagePct(s *api.IslandStats) (float64, bool) {
+	if s == nil || s.MemoryLimitBytes == 0 {
+		return 0, false
+	}
+	return float64(s.MemoryUsageBytes) / float64(s.MemoryLimitBytes) * 100, true
+}
+
+// parseCapBytes parses a configured size cap like "20G" / "512m" / "2g" into
+// bytes (binary units, matching humanBytes). ok=false for empty/unparseable —
+// callers then skip the %-of-cap and just show the raw usage.
+func parseCapBytes(s string) (uint64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	mult := uint64(1)
+	switch last := s[len(s)-1]; last {
+	case 'k', 'K':
+		mult = 1 << 10
+	case 'm', 'M':
+		mult = 1 << 20
+	case 'g', 'G':
+		mult = 1 << 30
+	case 't', 'T':
+		mult = 1 << 40
+	}
+	if mult > 1 {
+		s = strings.TrimSpace(s[:len(s)-1])
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return uint64(n * float64(mult)), true
+}
+
+// nearCapStyle flags a usage percent: red at/over 90 (about to OOM), amber
+// at/over 75, else not flagged (ok=false → render it plainly).
+func nearCapStyle(pct float64) (lipgloss.Style, bool) {
+	switch {
+	case pct >= 90:
+		return styleErrored, true
+	case pct >= 75:
+		return styleWaiting, true
+	default:
+		return lipgloss.Style{}, false
+	}
 }
 
 func coloredStateText(isl *api.IslandInfo) string {
