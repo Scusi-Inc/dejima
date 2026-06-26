@@ -7,6 +7,15 @@ import (
 	"github.com/aoos/dejima/internal/api"
 )
 
+func TestHumanCount(t *testing.T) {
+	cases := map[int]string{820: "820", 1875000: "1.9M", 45000: "45.0k", 999: "999"}
+	for in, want := range cases {
+		if got := humanCount(in); got != want {
+			t.Errorf("humanCount(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestMemUsagePct(t *testing.T) {
 	if _, ok := memUsagePct(nil); ok {
 		t.Error("nil stats should not yield a percent")

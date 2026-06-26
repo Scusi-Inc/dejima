@@ -3289,6 +3289,21 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		}
 		b.WriteString("auth:      " + styleWaiting.Render("⚠ no API key for "+prov+" — press [v] to set the model + key") + "\n")
 	}
+	// Token/cost (a3 usage #1 [second]) — agent-reported, so present only for
+	// adapters that report it (Claude Code today). cost_usd is hidden for an
+	// unpriced model. "n/a" only for an AI agent that COULD report but hasn't —
+	// never for types that don't, so we don't imply uniform coverage.
+	switch {
+	case a.Usage != nil:
+		u := a.Usage
+		line := fmt.Sprintf("%s tokens (in %s · out %s)", humanCount(u.TotalTokens), humanCount(u.InputTokens), humanCount(u.OutputTokens))
+		if u.CostUSD != nil {
+			line += fmt.Sprintf(" · $%.2f", *u.CostUSD)
+		}
+		b.WriteString(fmt.Sprintf("usage:     %s %s\n", line, styleMuted.Render("("+u.Source+" · "+timeAgo(u.AsOf)+" ago)")))
+	case a.Type == "claude-code":
+		b.WriteString("usage:     " + styleMuted.Render("n/a — no usage reported yet") + "\n")
+	}
 	if a.Error != "" {
 		b.WriteString("error:     " + styleErrored.Render(truncate(a.Error, 50)) + "\n")
 	}
