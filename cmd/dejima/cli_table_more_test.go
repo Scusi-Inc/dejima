@@ -224,6 +224,46 @@ func TestCLIAgentConfigAndRm(t *testing.T) {
 	}
 }
 
+// TestCLIAgentRename: `agent rename` sets a label, and surfaces the daemon's
+// auto-increment when the requested label is already taken by another agent.
+func TestCLIAgentRename(t *testing.T) {
+	_, c := cliEnv(t)
+	seedIsland(t, c, "proj")
+
+	// Label the primary "build".
+	if out, err := runCLI(t, "agent", "rename", "proj", "p1", "build"); err != nil {
+		t.Fatalf("agent rename p1: %v", err)
+	} else if !strings.Contains(out, `"build"`) {
+		t.Errorf("rename output should show the assigned label: %q", out)
+	}
+
+	// Add a second agent and rename it to the taken "build" → daemon returns build-2.
+	if _, err := runCLI(t, "agent", "add", "proj", "--type", "claude-code"); err != nil {
+		t.Fatalf("agent add: %v", err)
+	}
+	out, err := runCLI(t, "agent", "ls", "proj")
+	if err != nil {
+		t.Fatalf("agent ls: %v", err)
+	}
+	// The added agent is the one without the "build" label.
+	id := ""
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[1] == "claude-code" && f[0] != "p1" {
+			id = f[0]
+			break
+		}
+	}
+	if id == "" {
+		t.Fatalf("could not find the second agent id in: %q", out)
+	}
+	if out, err := runCLI(t, "agent", "rename", "proj", id, "build"); err != nil {
+		t.Fatalf("agent rename %s: %v", id, err)
+	} else if !strings.Contains(out, "was taken") || !strings.Contains(out, `"build-2"`) {
+		t.Errorf("rename to a taken label should surface the auto-increment: %q", out)
+	}
+}
+
 // agentIDForType returns the id (leftmost column) of the first `agent ls` row
 // whose line mentions the given agent type.
 func agentIDForType(lsOut, typ string) string {
