@@ -199,10 +199,42 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .copy-btn:hover { opacity: 0.85; }
 .fit-hint { color: var(--muted); font-size: 0.85rem; }
 
+/* Long-form guides & posts ------------------------------------------ */
+.post-meta { color: var(--muted); font-size: 0.8rem; margin: 1.4rem 0 0.3rem;
+  text-transform: uppercase; letter-spacing: 0.06em; }
+.post-h { font-size: 2rem; line-height: 1.15; letter-spacing: -0.02em;
+  color: var(--hover); margin: 0.2rem 0 0.7rem; font-weight: 700; }
+.post .lede { font-size: 1.2rem; line-height: 1.5; color: var(--fg); margin: 0 0 1.6rem; }
+/* In an article, headings read like headings — not the homepage micro-labels. */
+.post h2 { font-size: 1.4rem; text-transform: none; letter-spacing: -0.01em;
+  color: var(--hover); margin: 2.4rem 0 0.7rem; font-weight: 700; }
+.post h3 { font-size: 1.12rem; color: var(--hover); margin: 1.7rem 0 0.5rem; }
+.post p, .post li { font-size: 1.02rem; }
+.post .demo-shot { margin: 2rem 0 1.2rem; }
+.post figcaption { margin-top: 0.55rem; font-size: 0.85rem; color: var(--muted); }
+.callout { border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  background: var(--code-bg); border-radius: 4px; padding: 0.9rem 1.1rem; margin: 1.6rem 0; }
+.callout p { margin: 0.3rem 0; }
+
+/* Guide index hub ---------------------------------------------------- */
+.guide-list { display: grid; grid-template-columns: 1fr; gap: 0.9rem; margin: 1.6rem 0; }
+.guide-card { border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem 1.3rem;
+  text-decoration: none; display: block; }
+.guide-card:hover { background: var(--card-hover-bg); }
+.guide-card h3 { margin: 0 0 0.3rem; font-size: 1.08rem; color: var(--hover); }
+.guide-card p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.guide-kicker { color: var(--muted); font-size: 0.74rem; text-transform: uppercase;
+  letter-spacing: 0.07em; margin: 2.2rem 0 0.2rem; }
+
+/* Prev/next between guides ------------------------------------------- */
+.post-more { border-top: 1px solid var(--border); margin-top: 3rem; padding-top: 1.4rem; }
+.post-more a { font-weight: 600; }
+
 @media (max-width: 720px) {
   .proof, .cards { grid-template-columns: 1fr; }
   main { padding: 2.5rem 1.25rem 5rem; }
   .hero-h { font-size: 1.7rem; }
+  .post-h { font-size: 1.6rem; }
   .pick-label { min-width: 0; }
   .compare { font-size: 0.84rem; }
 }

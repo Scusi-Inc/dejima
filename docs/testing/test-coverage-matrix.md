@@ -51,7 +51,9 @@ manual verify today · `▢` none yet.
 ## 3. Sessions, terminals, attach
 - [ ] `attach <id>` / island `session` (WS) — interactive attach · API/CLI · T2/T3 · M
 - [ ] per-agent `session` (WS) · API · T2 · M
-- [ ] **terminal auto-reconnect** — drop link (daemon restart / sleep-wake) → reattaches, doesn't close · T3 · A* (tier3/safe.sh)
+- [ ] **terminal auto-reconnect** — drop link (daemon restart / sleep-wake) → reattaches, doesn't close · T3 · A* (tier3/safe.sh exec-survival; tier3/reconnect.sh live attach-survival)
+- [ ] **#129: attached session survives a daemon restart — NO code-1 exit**, resumes the same in-container tmux session · T1/T3 · A* (T1 classifySessionClose unit; T3 tier3/reconnect.sh)
+- [ ] #129: clean stdin close exits the client cleanly (rc 0); a genuinely-gone target gives up fast with a clear message (no 5-min hang) · T3 · A* (tier3/reconnect.sh)
 - [ ] multi-attach (two clients, same session) · T3 · M
 - [ ] terminal resize propagation · T3 · M
 - [x] `exec <name> -- <cmd>` — one-shot exec · CLI/API · T2 · A
@@ -98,14 +100,17 @@ manual verify today · `▢` none yet.
 - [ ] island broadcast (`to` empty) · T2 · A
 - [ ] structured provenance `Origin{source_island,cross_island}`, unforgeable · T1/T2 · A
 - [x] `link expose/unexpose/exposed` (action types) · CLI/API · T1/T2 · A (T1: CLI expose→unexpose)
-- [ ] `link action` request — deny-all + `{B exposes} ∩ {grant.Actions}` · T2 · A
+- [ ] `link action` request — deny-all + `{B exposes} ∩ {grant.Actions}` · T2/T3 · A (T3: tier3/action-gate.sh deny-all)
 - [ ] pre-authorized action → executes immediately · T2 · A
 - [ ] non-pre-authorized → `pending` + `link.action-pending` webhook · T2 · A
 - [x] `link approvals/approve/deny` (operator only) · CLI/API · T1/T2 · A (T1: approve/deny routes wired)
 - [ ] **agent can never self-approve** (token listener lacks the route) · T1/T2 · A
 - [ ] gate re-checked at approval time (revoked grant → refused) · T1 · A
-- [ ] fail-closed: TTL expiry + queue dropped on daemon restart · T1 · A
-- [ ] `link.action`/`link.deny`/`link.approve` ledgered w/ actor · T2 · A
+- [ ] **policy auto-approve** — counted rule fires within budget, then **re-queues** when spent · T1/T3 · A* (tier3/action-gate.sh; T1 internal/policy + policy_consume_repro)
+- [ ] **DESTRUCTIVE never auto-approves** — queues even WITH a matching policy rule (budget untouched) · T1/T3 · A* (tier3/action-gate.sh)
+- [ ] `policy add/ls/rm` (counted/expiring auto-approve rules; operator) + `policy.add`/`policy.remove` ledgered · T1/T3 · A* (tier3/action-gate.sh)
+- [ ] fail-closed: TTL expiry (15m) + queue dropped on daemon restart · T1/T3 · A* (T1 unit TTL; T3 tier3/action-gate.sh restart-drop)
+- [ ] `link.action`/`link.deny`/`link.approve` ledgered w/ actor (incl. auto `link.approve` actor=policy) · T2/T3 · A (T3: tier3/action-gate.sh)
 - [ ] **wake-on-message** (P3.5): idle agent nudged at turn boundary · T3 · ▢ (needs real-adapter live run; tier4 exercises the inject seam)
 - [ ] wake: busy agent NOT interrupted mid-turn · T3 · ▢ (real-adapter live run; the key P3.5 unknown)
 - [ ] wake: hibernated recipient island wakes on message · T3 · ▢ (real-adapter live run)
