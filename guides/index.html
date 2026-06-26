@@ -42,19 +42,35 @@
   <h1 class="post-h">Guides</h1>
   <p class="lede">How to run a fleet of AI coding agents on hardware you own, without becoming an infrastructure engineer first.</p>
 
-  <p class="guide-kicker">Get started</p>
+  <p class="guide-kicker">Set up your agent server</p>
   <div class="guide-list">
     <a class="guide-card" href="mac-mini-agent-server.html">
       <h3>Turn a Mac mini into an AI agent server (5 minutes, free)</h3>
       <p>Install once, then run Claude Code, Codex, and OpenClaw contained on a mini you leave in the closet.</p>
     </a>
+    <a class="guide-card" href="linux-server-agent-server.html">
+      <h3>Run AI coding agents on a Linux server</h3>
+      <p>A VPS or a box in the closet, headless. One command, a systemd service, reachable over Tailscale.</p>
+    </a>
+    <a class="guide-card" href="cloud-vm-agent-server.html">
+      <h3>Run AI coding agents on your own cloud VM</h3>
+      <p>Self-host in your own AWS, GCP, or Hetzner account instead of renting a sandbox by the second.</p>
+    </a>
+    <a class="guide-card" href="local-agents.html">
+      <h3>Run AI coding agents locally, contained</h3>
+      <p>On the machine you already use, each agent walled off from your files, keys, and other projects.</p>
+    </a>
+  </div>
+
+  <p class="guide-kicker">Going deeper</p>
+  <div class="guide-list">
     <a class="guide-card" href="tmux-ssh-agents.html">
       <h3>You're still SSHing into tmux to run your agents?</h3>
       <p>Where the tmux + SSH setup breaks down, and how to run a contained fleet on the same box.</p>
     </a>
   </div>
 
-  <p class="small">More guides are on the way: giving agents safe read-only access to host folders, running headless agents, and comparisons with the tools you might already use. Want one written? <a href="https://github.com/aoos/dejima">Ask on GitHub.</a></p>
+  <p class="small">More guides are on the way: giving agents safe read-only access to host folders, running headless agents, and building on the API. Want one written? <a href="https://github.com/aoos/dejima">Ask on GitHub.</a> Comparing tools? See <a href="../compare/">how Dejima compares</a>.</p>
 </article>
 
 <footer class="footer">

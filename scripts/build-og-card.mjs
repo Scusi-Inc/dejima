@@ -54,6 +54,24 @@ const CARDS = [
     line2: 'Side by side.',
     sub: 'An agent-sandbox cloud, or self-hosted on your hardware.',
   },
+  {
+    out: 'og-linux-server',
+    line1: 'Run agents on',
+    line2: 'a Linux server.',
+    sub: 'Headless on a VPS or a box in the closet. One command.',
+  },
+  {
+    out: 'og-cloud-vm',
+    line1: 'Run agents on',
+    line2: 'your own cloud VM.',
+    sub: 'Self-hosted in your account. Your code, your egress, no meter.',
+  },
+  {
+    out: 'og-local',
+    line1: 'Run agents locally,',
+    line2: 'contained.',
+    sub: 'On the machine you already use, walled off from your files.',
+  },
 ]
 
 // Island / harbor motif, bottom-right: concentric arcs (water) + a dome
