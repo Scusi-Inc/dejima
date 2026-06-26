@@ -128,3 +128,63 @@ const brand = `<svg xmlns="http://www.w3.org/2000/svg" width="${BR_W}" height="$
   </g>
 </svg>`
 render(brand, BR_W, 'brand-island')
+
+/* ──────────── tmux+SSH vs Dejima — the before/after for the guide ──────────── */
+const TV_W = 1120, TV_H = 500
+const panel = (x, title, sub) => `
+  <rect x="${x}" y="70" width="512" height="400" rx="12" fill="${C.card}" stroke="${C.border}" stroke-width="1.5"/>
+  <text x="${x + 26}" y="104" font-size="20" font-weight="bold" fill="${C.fg}">${title}</text>
+  <text x="${x + 26}" y="128" font-size="15" fill="${C.muted}">${sub}</text>`
+
+// LEFT — tmux + SSH: one open box, everything reaches everything.
+const L = 24
+const agentChipL = (cx, cy) => `
+  <rect x="${cx - 56}" y="${cy - 22}" width="112" height="44" rx="7" fill="${C.bg}" stroke="${C.border}"/>`
+const leftAgents = [[L + 116, 196], [L + 256, 196], [L + 396, 196]]
+const filesNodeL = { x: L + 130, y: 360, w: 252, h: 56 }
+const tmuxVsDejima = `<svg xmlns="http://www.w3.org/2000/svg" width="${TV_W}" height="${TV_H}" viewBox="0 0 ${TV_W} ${TV_H}">
+  <rect width="${TV_W}" height="${TV_H}" fill="${C.bg}"/>
+  <g font-family="DejaVu Sans">
+    <text x="${L + 6}" y="46" font-size="16" font-weight="bold" fill="${C.muted}" letter-spacing="0.04em">TODAY — tmux + SSH</text>
+    <text x="${584 + 6}" y="46" font-size="16" font-weight="bold" fill="${C.accent}" letter-spacing="0.04em">WITH DEJIMA</text>
+    ${panel(L, 'your Mac mini', 'one shell, one box, no walls')}
+    ${panel(584, 'your Mac mini', 'Dejima daemon')}
+
+    <!-- left: open reach — every agent to the files node, and to each other -->
+    <line x1="${leftAgents[0][0]}" y1="218" x2="${leftAgents[2][0]}" y2="218" stroke="${C.muted}" stroke-width="1.4" opacity="0.5" stroke-dasharray="3 5"/>
+    ${leftAgents.map(([cx, cy]) => `
+      <line x1="${cx}" y1="${cy + 22}" x2="${filesNodeL.x + filesNodeL.w / 2}" y2="${filesNodeL.y}" stroke="${C.muted}" stroke-width="1.4" opacity="0.6"/>
+      ${agentChipL(cx, cy)}
+      <text x="${cx}" y="${cy + 5}" font-size="14" font-family="DejaVu Sans Mono" fill="${C.accent}" text-anchor="middle">claude</text>`).join('')}
+    <rect x="${filesNodeL.x}" y="${filesNodeL.y}" width="${filesNodeL.w}" height="${filesNodeL.h}" rx="7" fill="${C.bg}" stroke="${C.muted}" stroke-width="1.4"/>
+    <text x="${filesNodeL.x + filesNodeL.w / 2}" y="${filesNodeL.y + 34}" font-size="15" fill="${C.fg}" text-anchor="middle">your files · ~/.ssh · API tokens</text>
+
+    <!-- right: three sealed islands, one gated crossing, a ledger -->
+    ${[0, 1, 2].map(i => {
+      const x = 610 + i * 156
+      return `
+      <rect x="${x}" y="160" width="140" height="86" rx="8" fill="${C.code}" stroke="${C.accent}" stroke-width="1.8"/>
+      <text x="${x + 14}" y="184" font-size="13" font-family="DejaVu Sans Mono" fill="${C.muted}">a${i + 1}</text>
+      <text x="${x + 70}" y="218" font-size="14" font-family="DejaVu Sans Mono" fill="${C.accent}" text-anchor="middle">agent</text>`
+    }).join('')}
+    <!-- collapse the three islands to a single gate -->
+    ${[0, 1, 2].map(i => `<line x1="${680 + i * 156}" y1="246" x2="840" y2="300" stroke="${C.border}" stroke-width="1.4"/>`).join('')}
+    <rect x="812" y="292" width="56" height="40" rx="6" fill="${C.bg}" stroke="${C.accent}" stroke-width="1.8"/>
+    <rect x="833" y="304" width="14" height="20" rx="2" fill="none" stroke="${C.accent}" stroke-width="1.4"/>
+    <text x="840" y="356" font-size="14" font-weight="bold" fill="${C.accent}" text-anchor="middle">broker</text>
+    <line x1="840" y1="332" x2="840" y2="392" stroke="${C.accent}" stroke-width="1.6"/>
+    <rect x="690" y="392" width="252" height="50" rx="7" fill="${C.bg}" stroke="${C.muted}" stroke-width="1.4"/>
+    <text x="816" y="422" font-size="15" fill="${C.fg}" text-anchor="middle">your files — granted read-only</text>
+    <!-- ledger -->
+    <g transform="translate(986,292)">
+      <rect width="88" height="100" rx="7" fill="${C.code}" stroke="${C.border}"/>
+      ${[24, 46, 68, 90].map(y => `<line x1="14" y1="${y}" x2="74" y2="${y}" stroke="${C.muted}" stroke-width="2" opacity="0.7"/>`).join('')}
+    </g>
+    <text x="1030" y="412" font-size="13" fill="${C.muted}" text-anchor="middle">ledger</text>
+
+    <!-- captions -->
+    <text x="${L + 6}" y="496" font-size="14" fill="${C.muted}">Every agent can read everything. No record of what it touched.</text>
+    <text x="${584 + 6}" y="496" font-size="14" fill="${C.muted}">Deny-all. One gated crossing, granted read-only, every crossing logged.</text>
+  </g>
+</svg>`
+render(tmuxVsDejima, TV_W, 'tmux-vs-dejima')

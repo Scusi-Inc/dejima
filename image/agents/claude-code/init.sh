@@ -45,34 +45,37 @@ fi
 # unix-socket hook + wiring, which silently no-op'd on a TCP-only island, so the
 # agent-state heartbeat never fired (no mail-nudges, no idle-hibernate, no metric).
 cp /opt/dejima/agents/claude-code/hooks/notify.sh "$HOME_CLAUDE/hooks/dejima-notify.sh"
-chmod +x "$HOME_CLAUDE/hooks/dejima-notify.sh"
+cp /opt/dejima/agents/claude-code/hooks/usage.sh "$HOME_CLAUDE/hooks/dejima-usage.sh"
+chmod +x "$HOME_CLAUDE/hooks/dejima-notify.sh" "$HOME_CLAUDE/hooks/dejima-usage.sh"
 
 # Reconcile the Notification (Claude is waiting on user) and Stop (response
-# finished) → dejima-notify wiring IDEMPOTENTLY every boot, rather than only when
+# finished) → dejima hook wiring IDEMPOTENTLY every boot, rather than only when
 # absent. We MERGE into the existing settings: any of the user's own hooks in
-# these two events are preserved; only the dejima-owned entries are dropped and
-# re-added to the current contract. All other settings keys are untouched.
+# these two events are preserved; only the dejima-owned entries (notify + usage)
+# are dropped and re-added to the current contract. All other keys are untouched.
+# Stop carries TWO dejima hooks: notify (task-complete heartbeat) and usage
+# (cumulative token/cost report).
 SETTINGS="$HOME_CLAUDE/settings.json"
 reconcile_dejima_hooks() {
     local cur='{}'
     if [[ -f "$SETTINGS" ]] && jq -e . "$SETTINGS" >/dev/null 2>&1; then
         cur=$(cat "$SETTINGS")
     fi
-    # For each event, strip prior dejima-notify entries (refresh the contract),
-    # keep the user's other hooks, then append our canonical entry.
+    # For each event, strip prior dejima-owned entries (notify OR usage — refresh
+    # the contract without duplicating on re-runs), keep the user's other hooks,
+    # then append our canonical entries.
     printf '%s' "$cur" | jq \
         --arg notif '$HOME/.claude/hooks/dejima-notify.sh agent.waiting-for-input' \
-        --arg stop '$HOME/.claude/hooks/dejima-notify.sh agent.task-complete' '
-        def reconcile(event; command):
-            .hooks[event] = (
-                ((.hooks[event] // [])
-                 | map(select(any(.hooks[]?; .command | test("dejima-notify")) | not)))
-                + [{ hooks: [{ type: "command", command: command }] }]
-            );
+        --arg stop '$HOME/.claude/hooks/dejima-notify.sh agent.task-complete' \
+        --arg usage '$HOME/.claude/hooks/dejima-usage.sh' '
+        def strip_dejima(event):
+            (.hooks[event] // [])
+            | map(select(any(.hooks[]?; .command | test("dejima-(notify|usage)")) | not));
+        def entry(command): { hooks: [{ type: "command", command: command }] };
         (. // {})
         | .hooks = (.hooks // {})
-        | reconcile("Notification"; $notif)
-        | reconcile("Stop"; $stop)
+        | .hooks["Notification"] = (strip_dejima("Notification") + [entry($notif)])
+        | .hooks["Stop"] = (strip_dejima("Stop") + [entry($stop), entry($usage)])
     '
 }
 
@@ -101,6 +104,10 @@ else
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/dejima-notify.sh agent.task-complete"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/dejima-usage.sh"
           }
         ]
       }

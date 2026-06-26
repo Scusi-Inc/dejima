@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why running agents in tmux over SSH breaks down (and the fix) — Dejima</title>
+<meta name="description" content="The tmux + SSH setup for managing AI coding agents works until it doesn't: no isolation, no audit trail, no real fleet view. Here's where it breaks and how to run a contained fleet on the same hardware.">
+<link rel="canonical" href="https://dejima.tech/guides/tmux-ssh-agents.html">
+<meta property="og:title" content="Still SSHing into tmux to run your agents?">
+<meta property="og:description" content="Where the tmux + SSH agent setup breaks down, and how to run a contained fleet on the same box.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dejima.tech/guides/tmux-ssh-agents.html">
+<meta property="og:image" content="https://dejima.tech/assets/og-tmux-ssh.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dejima.tech/assets/og-tmux-ssh.png">
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="../index.html"><img src="../assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">free · open source</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="../index.html">Home</a>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="index.html" aria-current="page">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases"><span class="nav-ver"></span>alpha</a></span>
+</nav>
+
+<article class="post">
+  <p class="post-meta">Guide · 6 min read</p>
+  <h1 class="post-h">You're still SSHing into tmux to run your agents?</h1>
+  <p class="lede">It works. Right up until one of three agents quietly rewrites a file you didn't expect, and you have no way to say which one. Here's where the tmux setup runs out of road, and what to put in its place on the same box.</p>
+
+  <h2>The setup everyone starts with</h2>
+  <p>You bought a Mac mini, or you have a Linux box in the closet, and you want agents working while you sleep. So you do the obvious thing.</p>
+  <pre><code>ssh you@mac-mini
+tmux new -s claude
+# start an agent, detach, ssh back in later to check on it</code></pre>
+  <p>One pane per agent. You detach, you reconnect from your laptop, you scroll up to see what happened. For one agent on one repo, this is genuinely fine. Don't let anyone tell you otherwise.</p>
+  <p>The trouble starts when there are three of them.</p>
+
+  <h2>Where it breaks</h2>
+  <p>Every agent in that setup runs as you, on your box, with your everything. That's the whole problem, and it shows up in five places.</p>
+  <ul>
+    <li><strong>No isolation.</strong> Each agent can read your SSH keys, your <code>.env</code> files, your other repos, and your shell history. One prompt injection or one confused tool call, and the blast radius is your entire machine. tmux draws a box around a <em>terminal</em>, not around what runs inside it.</li>
+    <li><strong>No audit trail.</strong> When something writes to <code>~/.aws/credentials</code>, you cannot point to which agent did it or when. Scrollback isn't a record. It ages out, and it never covered the file system anyway.</li>
+    <li><strong>No real fleet view.</strong> Three agents means three panes and a window-switching habit. There's no single place that shows what's running, what's stuck, and what's burning tokens.</li>
+    <li><strong>Reconnect roulette.</strong> Wi-Fi drops, the SSH session dies, and you're guessing whether the detach was clean. Move to a second device and you're hunting for the right session name.</li>
+    <li><strong>No clean teardown.</strong> When a job is done, "cleanup" is you remembering what it touched. There's no command that removes an agent and everything it created.</li>
+  </ul>
+  <p>None of these are tmux's fault. tmux is a terminal multiplexer doing exactly its job. It was never meant to be the security boundary for an autonomous process with your credentials.</p>
+
+  <figure class="demo-shot diagram">
+    <img src="../assets/tmux-vs-dejima.png" width="1120" loading="lazy"
+         alt="Two diagrams of a Mac mini. On the left, tmux + SSH: three agents share one box, each with open lines to your files, ~/.ssh, and API tokens, and to each other. On the right, Dejima: three agents in sealed islands, all reaching host files through a single broker gate that grants read-only access and writes every crossing to a ledger.">
+    <figcaption>Same hardware. The difference is what each agent can reach, and whether you can prove what it did.</figcaption>
+  </figure>
+  <details class="ascii-fallback">
+    <summary>Text version</summary>
+<pre><code>TODAY — tmux + SSH                WITH DEJIMA
+your Mac mini                     your Mac mini
+  claude  claude  claude            [a1 agent] [a2 agent] [a3 agent]   sealed
+     \      |      /                       \      |      /
+      open reach to:                        one broker gate
+   your files · ~/.ssh · tokens          your files (read-only) → ledger
+
+Every agent reads everything.     Deny-all. One gated crossing,
+No record of what it touched.     granted read-only, every crossing logged.</code></pre>
+  </details>
+
+  <h2>The fix: same instinct, contained</h2>
+  <p>You don't have to give up the part that works. You still own the hardware, you still reach it over your own network, you still have agents running while you're away. What changes is the box each agent runs in.</p>
+  <p>Dejima puts every agent in its own container it calls an island. The island can't see your host files. It can't see the other islands. Host access is off by default, and you grant folders one at a time, read-only, through a broker that writes every crossing to a tamper-evident log. Same Mac mini. Walls added.</p>
+  <pre><code># on the Mac mini, once
+curl -fsSL https://dejima.tech/install.sh | bash
+
+# spin up an island from a repo (it seeds the first agent for you)
+dejima init --repo git@github.com:you/web.git
+
+# add a second agent in the same island
+dejima agent add web --type codex
+
+# run it: the TUI shows every island and agent in one place
+dejima</code></pre>
+  <p>From there you attach with <code>dejima connect web</code>, and the session survives a dropped connection and follows you to a second device. The same install sets up Docker, the background service, and your Tailscale identity, so "set up the infrastructure" isn't a project you do first.</p>
+  <p>Now walk back through the five failures:</p>
+  <ul>
+    <li><strong>Isolation:</strong> an agent sees its own island and nothing else. Your keys and your other repos aren't reachable from inside it.</li>
+    <li><strong>Audit:</strong> every brokered file crossing is hash-chained and verifiable with <code>dejima audit --verify</code>. You can prove what an agent touched, not guess.</li>
+    <li><strong>Fleet view:</strong> the TUI lists every island and agent with status, memory, and logs, and you start, stop, or steer any of them from one screen.</li>
+    <li><strong>Sessions:</strong> persistent and multi-attach by design. Disconnect, sleep the laptop, pick up on your phone.</li>
+    <li><strong>Teardown:</strong> <code>dejima purge web</code> destroys the island and its volumes. Nothing left behind to find.</li>
+  </ul>
+
+  <div class="callout">
+    <p><strong>The honest version:</strong> if you run exactly one agent on one repo and never touch anything sensitive, tmux is fine and you don't need this. The moment you're running a fleet, or the code is under NDA, or you'd have to answer "what did it do," the box matters.</p>
+  </div>
+
+  <p>It's the same hardware and the same habit of reaching into your own machine. The agents just stop being able to wander.</p>
+
+  <section class="post-more">
+    <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>
+    <p class="small">Next: <a href="mac-mini-agent-server.html">Turn a Mac mini into an AI agent server in 5 minutes</a> · <a href="index.html">All guides</a></p>
+  </section>
+</article>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="index.html">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</footer>
+
+</main>
+<script src="../version.js" defer></script>
+</body>
+</html>

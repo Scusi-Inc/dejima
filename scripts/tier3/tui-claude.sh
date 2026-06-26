@@ -8,14 +8,17 @@
 # This is the live counterpart to the teatest unit suite (which asserts fixed
 # frames); Claude catches clarity/rendering regressions a fixed assertion misses.
 #
-# This is the same operate-and-see loop the wake-on-message inject path uses:
-# the harness can both drive the TUI (send-keys) and read it (capture-pane).
+# DATA SOURCE: `dejima tui --demo` — a synthetic fleet baked into the binary
+# (tui_demo.go), so the harness needs NO daemon and NO Docker. (It previously
+# built a throwaway dejimad and seeded islands via `dejima init`; that broke once
+# `dejima init` started building the island image up front — no Docker on this
+# job → empty dashboard → every island-dependent judge failed. --demo renders the
+# real TUI with rich, reproducible content, which is exactly what the judge needs.)
 #
-# GATING: requires TEST_AGENT_KEY (the Claude API key) AND tmux. Missing either
-# is a SKIP (exit 0), never a failure — so a partially provisioned runner stays
-# green. Runs against a throwaway dejimad under an isolated $HOME; purges on exit.
-# No system mutation. Designed for the Mac-mini runner; authored + shellcheck-
-# clean here (no TTY/tmux/daemon in the build island to execute it).
+# GATING: requires TEST_AGENT_KEY (the Claude API key) AND tmux/curl/python3.
+# Missing any is a SKIP (exit 0), never a failure — so a partially provisioned
+# runner stays green. No daemon, no system mutation. Designed for the Mac-mini
+# runner; authored + shellcheck-clean here (no TTY/tmux in the build island).
 #
 # Usage:  TEST_AGENT_KEY=sk-ant-... scripts/tier3/tui-claude.sh
 # Env:    DEJIMA_JUDGE_MODEL (default claude-opus-4-8), DEJIMA_REPORT (JSON out)
@@ -58,43 +61,32 @@ done
 TMP="$(mktemp -d)"
 export HOME="$TMP/home"; mkdir -p "$HOME"
 BIN="$TMP/bin"; mkdir -p "$BIN"; export PATH="$BIN:$PATH"
-DAEMON_PID=""
+# --demo never dials a daemon, but the client still resolves a socket path from
+# HOME/DEJIMA_HOST — clear any inherited island-autonomy env so it stays local.
+unset DEJIMA_HOST DEJIMA_TOKEN DEJIMA_PROJECT_NAME DEJIMA_AGENT_ID 2>/dev/null || true
 cleanup(){
   set +e
   tmux kill-session -t "$PANE" >/dev/null 2>&1
-  [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" >/dev/null 2>&1
   chmod -R u+w "$TMP" 2>/dev/null
   rm -rf "$TMP"
 }
 trap cleanup EXIT
 
-# --- build + start a throwaway daemon --------------------------------------
-feature "tui-claude: build + daemon"
-if ( cd "$REPO_ROOT" && go build -o "$BIN/dejima" ./cmd/dejima && go build -o "$BIN/dejimad" ./cmd/dejimad ); then
-  pass "dejima + dejimad built"
+# --- build the client ------------------------------------------------------
+feature "tui-claude: build"
+if ( cd "$REPO_ROOT" && go build -o "$BIN/dejima" ./cmd/dejima ); then
+  pass "dejima built"
 else
   fail "build failed"; report_summary || true; exit 1
 fi
-dejimad --foreground >"$TMP/dejimad.log" 2>&1 &
-DAEMON_PID=$!
-for _ in $(seq 1 50); do [ -S "$HOME/.dejima/dejimad.sock" ] && break; sleep 0.2; done
-if [ -S "$HOME/.dejima/dejimad.sock" ]; then pass "daemon up"; else fail "daemon socket never appeared"; fi
-
-# Seed a couple of islands so the dashboard has content to render. The TUI lists
-# whatever the daemon reports; a no-Docker daemon still serves the island records.
-( cd "$TMP" && git init -q repo && cd repo && git config user.email t@t && git config user.name t \
-  && echo x > f && git add -A && git commit -qm init ) >/dev/null 2>&1
-dejima init --name tui-alpha --repo "$TMP/repo" --local-copy --agent headless --cmd "sleep infinity" >/dev/null 2>&1 || true
-dejima init --name tui-beta  --repo "$TMP/repo" --local-copy --agent headless --cmd "sleep infinity" >/dev/null 2>&1 || true
 
 # --- helpers: drive + capture + judge --------------------------------------
 
-# launch_tui starts the real TUI inside a detached tmux pane sized 120x40.
+# launch_tui starts the real TUI in --demo mode inside a detached tmux pane.
 launch_tui(){
   tmux kill-session -t "$PANE" >/dev/null 2>&1
   tmux new-session -d -s "$PANE" -x 120 -y 40
-  # Inherit the test HOME/PATH so the pane's dejima hits the throwaway daemon.
-  tmux send-keys -t "$PANE" "HOME=$HOME PATH=$PATH dejima tui" Enter
+  tmux send-keys -t "$PANE" "HOME=$HOME PATH=$PATH dejima tui --demo" Enter
   sleep 2
 }
 
@@ -173,7 +165,7 @@ PY
 # --- walk the screens ------------------------------------------------------
 feature "tui-claude: dashboard + navigation"
 launch_tui
-judge "island list" "lists islands (tui-alpha, tui-beta) with a clear header and selectable rows" "$(capture)"
+judge "island list" "lists several islands (the demo fleet: storefront, api-gateway, infra, docs-site) with a clear header and selectable rows; agent states read cleanly" "$(capture)"
 send "j"; send "k"
 judge "after j/k navigation" "the selection cursor is visible and navigation did not corrupt the layout" "$(capture)"
 
@@ -185,6 +177,12 @@ send Escape
 feature "tui-claude: purge confirm (type-the-name gate)"
 send "d"
 judge "purge confirm" "a confirm pop-up asks the user to TYPE the island name; the destructive action is clearly gated" "$(capture)"
+send Escape
+
+feature "tui-claude: action-gate approvals (V)"
+send "!"   # demo-only: stage pending cross-island actions (incl. a destructive one)
+send "V"
+judge "approvals overlay" "a pending cross-island actions list with risk tiers; the destructive row is visually distinct (red/warning); clear approve/deny affordances; no glitches" "$(capture)"
 send Escape
 
 feature "tui-claude: help overlay (?)"

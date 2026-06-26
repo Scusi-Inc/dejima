@@ -31,6 +31,11 @@ const (
 	TypeAgentWaitingForInput Type = "agent.waiting-for-input"
 	TypeAgentTaskComplete    Type = "agent.task-complete"
 	TypeAgentError           Type = "agent.error"
+	// TypeAgentUsage carries an adapter's self-reported token usage (Dejima can't
+	// see the opaque LLM call). Payload: input_tokens / cache_creation_input_tokens
+	// / cache_read_input_tokens / output_tokens / model / source. Ingested into the
+	// per-agent usage snapshot surfaced on AgentInfo.Usage.
+	TypeAgentUsage Type = "agent.usage"
 
 	// Inter-island action delegation (Lane 5, Phase 3): a cross-island action
 	// needs operator approval. Fires so an operator can approve/deny from a phone
@@ -53,7 +58,7 @@ var catalog = []Type{
 	TypeIslandAgentAdded, TypeIslandAgentRemoved,
 	TypeContainerCrashed, TypeDaemonStarted, TypePanicEngaged, TypePanicCleared,
 	TypeClientAttached, TypeClientDetached, TypeLastClientDetached,
-	TypeAgentWaitingForInput, TypeAgentTaskComplete, TypeAgentError,
+	TypeAgentWaitingForInput, TypeAgentTaskComplete, TypeAgentError, TypeAgentUsage,
 	TypeLinkActionPending,
 }
 
