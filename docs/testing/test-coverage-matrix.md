@@ -51,7 +51,9 @@ manual verify today · `▢` none yet.
 ## 3. Sessions, terminals, attach
 - [ ] `attach <id>` / island `session` (WS) — interactive attach · API/CLI · T2/T3 · M
 - [ ] per-agent `session` (WS) · API · T2 · M
-- [ ] **terminal auto-reconnect** — drop link (daemon restart / sleep-wake) → reattaches, doesn't close · T3 · A* (tier3/safe.sh)
+- [ ] **terminal auto-reconnect** — drop link (daemon restart / sleep-wake) → reattaches, doesn't close · T3 · A* (tier3/safe.sh exec-survival; tier3/reconnect.sh live attach-survival)
+- [ ] **#129: attached session survives a daemon restart — NO code-1 exit**, resumes the same in-container tmux session · T1/T3 · A* (T1 classifySessionClose unit; T3 tier3/reconnect.sh)
+- [ ] #129: clean stdin close exits the client cleanly (rc 0); a genuinely-gone target gives up fast with a clear message (no 5-min hang) · T3 · A* (tier3/reconnect.sh)
 - [ ] multi-attach (two clients, same session) · T3 · M
 - [ ] terminal resize propagation · T3 · M
 - [x] `exec <name> -- <cmd>` — one-shot exec · CLI/API · T2 · A
