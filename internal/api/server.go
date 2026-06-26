@@ -1947,6 +1947,15 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
 		return nil
 	}
+	// Install this co-located agent's per-type shim BEFORE launching it. start.sh
+	// runs the shim only for the PRIMARY agent, so an agent whose type's init.sh
+	// never ran — a different type than the primary, or any agent added after boot
+	// — would otherwise launch with no agent-state hook wired into the shared
+	// ~/.claude. A missing heartbeat silently disables wake-on-message, idle
+	// auto-hibernate, and the idle metric for that agent (the recipient never sees
+	// a delivered cross-island message). The shim is idempotent, so re-running it
+	// is safe.
+	s.runAgentShim(ctx, p, a)
 	// Both interactive and headless agents run inside a tmux session (the host
 	// process), scoped to DEJIMA_AGENT_ID via sh so we don't depend on a specific
 	// tmux version's `new-session -e`. Headless agents are marked non-attachable,
@@ -1962,6 +1971,24 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 		return fmt.Errorf("tmux new-session for %q: %s", a.ID, strings.TrimSpace(stderr))
 	}
 	return nil
+}
+
+// runAgentShim runs a co-located agent's per-type init.sh inside the container —
+// the same shim start.sh runs for the primary — so the agent's hooks/creds/
+// template land in the shared ~/.claude before it launches. DEJIMA_AGENT_ID is
+// scoped to this agent so any per-agent shim logic targets it. Best-effort: a
+// type with no shim is a clean no-op, and a shim failure is logged but must not
+// block the launch (the agent still runs; it just may lack the heartbeat hook).
+func (s *Server) runAgentShim(ctx context.Context, p *project.Project, a *project.AgentSpec) {
+	shim := "/opt/dejima/agents/" + a.Type + "/init.sh"
+	// `[ -x ] || exit 0` keeps a missing shim (unknown type / stale image) silent.
+	cmd := "[ -x " + shim + " ] || exit 0; exec " + shim
+	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"sh", "-c", "DEJIMA_AGENT_ID=" + a.ID + " " + cmd})
+	if err != nil || code != 0 {
+		s.log.Warn("agent shim", "island", p.Name, "agent", a.ID, "type", a.Type,
+			"code", code, "err", err, "stderr", strings.TrimSpace(stderr))
+	}
 }
 
 // headlessLogPath is the per-agent log file for a co-located headless agent.
