@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run AI coding agents on a Linux server (headless, free) — Dejima</title>
+<meta name="description" content="Turn an Ubuntu or Debian server, a VPS, or a box in the closet into a headless home for your AI coding agents. One install command, a systemd user service, reachable over Tailscale. Step by step.">
+<link rel="canonical" href="https://dejima.tech/guides/linux-server-agent-server.html">
+<meta property="og:title" content="Run AI coding agents on a Linux server">
+<meta property="og:description" content="Turn a VPS or a box in the closet into a headless agent server. One command, systemd, Tailscale.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dejima.tech/guides/linux-server-agent-server.html">
+<meta property="og:image" content="https://dejima.tech/assets/og-linux-server.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dejima.tech/assets/og-linux-server.png">
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="../index.html"><img src="../assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">free · open source</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="../index.html">Home</a>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="index.html" aria-current="page">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases"><span class="nav-ver"></span>alpha</a></span>
+</nav>
+
+<article class="post">
+  <p class="post-meta">Guide · 5 min read</p>
+  <h1 class="post-h">Run AI coding agents on a Linux server</h1>
+  <p class="lede">A headless Linux box is the natural home for a fleet of agents. It has no screen to babysit, it runs whether or not you're logged in, and you reach it from your laptop over your own network. This works the same on a VPS, a home server, or an old tower in the closet.</p>
+
+  <h2>What you need</h2>
+  <ul>
+    <li>A Linux box running Ubuntu 22.04+, Debian 12+, or anything close. Two cores and 4&nbsp;GB of RAM handles a few agents; more if you run many.</li>
+    <li><code>sudo</code> on that box, and <code>git</code> plus <code>curl</code>. The installer handles the rest, including Docker.</li>
+    <li><a href="https://tailscale.com">Tailscale</a> on the server and your laptop, so you can reach it without opening a port to the internet.</li>
+    <li>API keys for the agents you'll run. You bring your own.</li>
+  </ul>
+
+  <h2>Step 1: install Dejima</h2>
+  <p>SSH into the server and run the one-liner.</p>
+  <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
+  <p>It checks prerequisites and names a fix for anything missing, installs Docker if it's absent, builds the <code>dejima</code> and <code>dejimad</code> binaries, and registers <code>dejimad</code> as a systemd user service. When it's done, the daemon is running under your user.</p>
+
+  <h2>Step 2: make it survive logout and reboots</h2>
+  <p>This is the one step that's specific to a headless Linux server, and it's easy to miss. A systemd <em>user</em> service stops when your login session ends, which on a server you mostly stay logged out of, means the daemon would stop the moment you close SSH. Turn on lingering so it keeps running.</p>
+  <pre><code>loginctl enable-linger $USER</code></pre>
+  <p>Now <code>dejimad</code> starts at boot and stays up between your SSH sessions. You can confirm the whole setup is healthy at any time:</p>
+  <pre><code>dejima doctor   # flags it if linger is off, Docker is down, etc.</code></pre>
+
+  <h2>Step 3: make an island and add agents</h2>
+  <p>An island is one container with its own home, credentials, and network. Point one at a repo, then add whatever agents you want alongside the first.</p>
+  <pre><code>dejima init --repo git@github.com:you/your-project.git
+
+# a second terminal agent, and a headless one
+dejima agent add your-project --type codex
+dejima agent add your-project --type openclaw</code></pre>
+  <p>Terminal agents (Claude Code, Codex, or a plain <code>shell</code>) are the ones you attach to. Headless runtimes like OpenClaw, Letta, and Hermes run on their own and stream to <code>dejima logs</code>.</p>
+
+  <h2>Step 4: drive it from your laptop</h2>
+  <p>You don't work on the server. You point Dejima at it from your own machine, over Tailscale, by setting one variable.</p>
+  <pre><code>DEJIMA_HOST=your-server.your-tailnet.ts.net:7273 dejima        # the TUI
+DEJIMA_HOST=your-server.your-tailnet.ts.net:7273 dejima connect your-project</code></pre>
+  <p>The TUI lists every island and agent with status, memory, and logs. Attach to an agent, and the session keeps running on the server when you detach, drop off Wi-Fi, or switch to another device.</p>
+
+  <div class="callout">
+    <p><strong>Why a container instead of just running agents on the server?</strong> An agent running as your user can read every repo on the box, your SSH keys, and your shell history, and nothing records what it touched. Inside an island it can't, and host access is deny-all until you grant a folder, read-only, through a logged broker. See <a href="tmux-ssh-agents.html">the tmux + SSH guide</a> for the longer version.</p>
+  </div>
+
+  <h2>Day-to-day</h2>
+  <ul>
+    <li><code>dejima service restart</code> bounces the daemon (or <code>systemctl --user restart dejimad</code>).</li>
+    <li><code>dejima hibernate your-project</code> frees resources on an idle island; <code>dejima wake</code> brings it back.</li>
+    <li><code>dejima purge your-project</code> destroys the island and its volumes. Push your work out first.</li>
+  </ul>
+
+  <section class="post-more">
+    <p><a href="../quickstart.html">See the full quickstart →</a></p>
+    <p class="small">Other ways to run: <a href="mac-mini-agent-server.html">Mac mini</a> · <a href="cloud-vm-agent-server.html">your own cloud VM</a> · <a href="local-agents.html">your own machine</a> · <a href="index.html">all guides</a></p>
+  </section>
+</article>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="index.html">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</footer>
+
+</main>
+<script src="../version.js" defer></script>
+</body>
+</html>
