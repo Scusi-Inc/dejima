@@ -36,6 +36,24 @@ const CARDS = [
     line2: 'an AI agent server.',
     sub: 'Claude Code, Codex, and OpenClaw, contained. Up in 5 minutes.',
   },
+  {
+    out: 'og-vs-coder',
+    line1: 'Coder vs Dejima',
+    line2: 'Side by side.',
+    sub: 'Platform-team CDEs, or one command on your own box.',
+  },
+  {
+    out: 'og-vs-daytona',
+    line1: 'Daytona vs Dejima',
+    line2: 'Side by side.',
+    sub: 'Ephemeral code sandboxes, or a fleet you run and watch.',
+  },
+  {
+    out: 'og-vs-e2b',
+    line1: 'E2B vs Dejima',
+    line2: 'Side by side.',
+    sub: 'An agent-sandbox cloud, or self-hosted on your hardware.',
+  },
 ]
 
 // Island / harbor motif, bottom-right: concentric arcs (water) + a dome
