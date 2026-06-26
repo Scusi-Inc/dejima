@@ -1939,6 +1939,20 @@ components:
         model: { type: string }
         provider_key_set: { type: boolean }
         auth_state: { type: string, description: "\"missing-provider-auth\" or \"\" (ready)" }
+        usage: { $ref: "#/components/schemas/AgentUsage" }
+    AgentUsage:
+      type: object
+      description: >-
+        Adapter-reported token/cost for the agent's session (Claude Code today),
+        ingested from the agent's own usage hook over the in-island token path.
+        Omitted entirely for adapters that don't report (clients render "n/a").
+      properties:
+        input_tokens: { type: integer, description: "all input-side tokens (fresh + cached), so input + output == total" }
+        output_tokens: { type: integer }
+        total_tokens: { type: integer }
+        cost_usd: { type: number, description: "omitted when the model isn't priced (cost renders n/a; tokens still show)" }
+        source: { type: string, description: "reporting adapter, e.g. claude-code" }
+        as_of: { type: string, format: date-time }
     PresenceEntry:
       type: object
       properties:
