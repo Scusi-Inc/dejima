@@ -21,11 +21,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/aoos/dejima/internal/version"
 )
+
+// githubToken returns a GitHub token from the environment, if any, used to lift
+// the release-check off the unauthenticated 60/hr rate limit (→ 5000/hr).
+func githubToken() string {
+	for _, e := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if v := strings.TrimSpace(os.Getenv(e)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 // Mode is how this install updates itself.
 type Mode string
@@ -60,11 +72,19 @@ func LatestRelease(ctx context.Context) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	if tok := githubToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("query latest release: %w", err)
 	}
 	defer resp.Body.Close()
+	// 403/429 from the GitHub API is almost always the unauthenticated rate limit
+	// (60/hr) — surface that plainly + the remedy, rather than a bare HTTP code.
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return "", fmt.Errorf("github API rate-limited (HTTP %d) — retry shortly, or set GITHUB_TOKEN to raise the limit", resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
 	}
