@@ -927,9 +927,13 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 	}
 	id := p.NextAgentID()
 	spec := project.AgentSpec{
-		ID:        id,
-		Type:      typ,
-		Label:     strings.TrimSpace(req.Label),
+		ID:   id,
+		Type: typ,
+		// Dedupe the requested label against existing agents so two agents can't
+		// share a name: "build" → "build-2" if taken. Empty labels pass through
+		// (they're allowed and never deduped). The returned AgentInfo carries the
+		// final assigned label so the CLI/TUI can surface "named it build-2".
+		Label:     p.UniqueAgentLabel(req.Label, ""),
 		Cmd:       cmd,
 		Tmux:      "agent-" + id,
 		Branch:    "agent/" + id,
@@ -1206,7 +1210,11 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
-	a.Label = strings.TrimSpace(req.Label) // empty clears the label
+	// Dedupe against other agents (excluding this one, so renaming to its own
+	// current label is a no-op, not "-2"). Empty clears the label and passes
+	// through unchanged. The returned AgentInfo carries the assigned label, so a
+	// collision-driven "build" → "build-2" is discoverable by request/response diff.
+	a.Label = p.UniqueAgentLabel(req.Label, id)
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

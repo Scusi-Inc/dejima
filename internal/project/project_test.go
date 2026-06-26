@@ -179,6 +179,74 @@ func TestAddRemoveAgent(t *testing.T) {
 	}
 }
 
+func TestUniqueAgentLabel(t *testing.T) {
+	// Empty / whitespace-only desired labels pass through untouched (empty labels
+	// are allowed and never deduped).
+	t.Run("empty passthrough", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{{ID: "a1", Label: "build"}}}
+		if got := p.UniqueAgentLabel("", ""); got != "" {
+			t.Errorf(`UniqueAgentLabel("") = %q, want ""`, got)
+		}
+		if got := p.UniqueAgentLabel("   ", ""); got != "   " {
+			t.Errorf(`UniqueAgentLabel("   ") = %q, want "   "`, got)
+		}
+	})
+
+	t.Run("no collision returns trimmed", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{{ID: "a1", Label: "build"}}}
+		if got := p.UniqueAgentLabel("  frontend  ", ""); got != "frontend" {
+			t.Errorf("UniqueAgentLabel(frontend) = %q, want frontend", got)
+		}
+	})
+
+	t.Run("collision auto-increments", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{{ID: "a1", Label: "build"}}}
+		if got := p.UniqueAgentLabel("build", ""); got != "build-2" {
+			t.Errorf("UniqueAgentLabel(build) = %q, want build-2", got)
+		}
+	})
+
+	t.Run("case-insensitive collision", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{{ID: "a1", Label: "Build"}}}
+		if got := p.UniqueAgentLabel("build", ""); got != "build-2" {
+			t.Errorf("UniqueAgentLabel(build) = %q, want build-2", got)
+		}
+	})
+
+	t.Run("chains build build-2 build-3", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{
+			{ID: "a1", Label: "build"},
+			{ID: "a2", Label: "build-2"},
+		}}
+		if got := p.UniqueAgentLabel("build", ""); got != "build-3" {
+			t.Errorf("UniqueAgentLabel(build) = %q, want build-3", got)
+		}
+		// Skips a hole: build and build-3 taken → build-2 is free.
+		p2 := &Project{Agents: []AgentSpec{
+			{ID: "a1", Label: "build"},
+			{ID: "a2", Label: "build-3"},
+		}}
+		if got := p2.UniqueAgentLabel("build", ""); got != "build-2" {
+			t.Errorf("UniqueAgentLabel(build) = %q, want build-2 (skip to first free)", got)
+		}
+	})
+
+	t.Run("rename to own label is a no-op", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{
+			{ID: "a1", Label: "build"},
+			{ID: "a2", Label: "test"},
+		}}
+		// a1 renaming to its own current label must not become build-2.
+		if got := p.UniqueAgentLabel("build", "a1"); got != "build" {
+			t.Errorf("UniqueAgentLabel(build, exclude a1) = %q, want build", got)
+		}
+		// a2 renaming to build (held by a1) still dedupes.
+		if got := p.UniqueAgentLabel("build", "a2"); got != "build-2" {
+			t.Errorf("UniqueAgentLabel(build, exclude a2) = %q, want build-2", got)
+		}
+	})
+}
+
 func TestMoveAgent(t *testing.T) {
 	order := func(p *Project) string {
 		ids := make([]string, len(p.Agents))
