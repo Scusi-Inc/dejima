@@ -1898,12 +1898,20 @@ components:
         attached:
           type: array
           items: { $ref: "#/components/schemas/PresenceEntry" }
-        stats: { $ref: "#/components/schemas/IslandStats" }
+        stats:
+          allOf: [ { $ref: "#/components/schemas/IslandStats" } ]
+          description: cached container resource usage (running islands); on both list and detail
         agent_state: { $ref: "#/components/schemas/AgentStateInfo" }
         git: { $ref: "#/components/schemas/GitInfo" }
-        health: { $ref: "#/components/schemas/IslandHealth" }
-        disk: { $ref: "#/components/schemas/IslandDisk" }
-        resources: { $ref: "#/components/schemas/Resources" }
+        health:
+          allOf: [ { $ref: "#/components/schemas/IslandHealth" } ]
+          description: container crash health (oom/restart/exit); detail endpoint only
+        disk:
+          allOf: [ { $ref: "#/components/schemas/IslandDisk" } ]
+          description: on-disk volume usage; detail endpoint only
+        resources:
+          allOf: [ { $ref: "#/components/schemas/Resources" } ]
+          description: configured caps + OOM priority; on both list and detail (pairs with stats to compute % of cap)
         agents:
           type: array
           items: { $ref: "#/components/schemas/AgentInfo" }

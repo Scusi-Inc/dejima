@@ -186,6 +186,7 @@ type fakeRuntime struct {
 	lastMemoryUpdate [2]string // {container, memory} from UpdateResources
 	status           runtime.ContainerStatus
 	health           runtime.Health
+	statsByName      map[string]runtime.Stats // returned by StatsAll
 	volumeSizes      map[string]int64
 	volumeCopies     [][2]string
 	startCalls       int
@@ -241,7 +242,12 @@ func (f *fakeRuntime) Stats(context.Context, string) (runtime.Stats, error) {
 	return runtime.Stats{}, nil
 }
 func (f *fakeRuntime) StatsAll(context.Context) (map[string]runtime.Stats, error) {
-	return map[string]runtime.Stats{}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.statsByName == nil {
+		return map[string]runtime.Stats{}, nil
+	}
+	return f.statsByName, nil
 }
 func (f *fakeRuntime) VolumeSizes(context.Context) (map[string]int64, error) {
 	f.mu.Lock()
