@@ -152,6 +152,29 @@ jobs:
       - name: tier-3 action-gate live suite
         run: make test-tier3-action-gate
 
+  # --- Tier 3: reconnect resilience (live, #129) ----------------------------
+  # Live confirmation that an attached `dejima shell` session SURVIVES a daemon
+  # restart with no code-1 exit and resumes the same in-container tmux session,
+  # that a clean stdin close exits 0, and that a genuinely-gone target gives up
+  # fast with a clear message. Island-backed → SKIPS cleanly if colima is down
+  # (the fast-give-up half needs no island). No secret dependency.
+  reconnect:
+    name: tier3-reconnect (Mac mini)
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
+      - name: tier-3 reconnect-resilience live suite
+        run: make test-tier3-reconnect
+
   # --- Tier 3 (system-mutating): OPT-IN only --------------------------------
   # service install --system --audit (-> verify -> uninstall), onboard
   # --provision-host --yes (idempotent), reboot survival (double-gated). Only
