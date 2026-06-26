@@ -57,11 +57,11 @@ none blocking.
 
 ---
 
-## 🗺️ 2026-06-23 scoping session — roadmap items + GTM (not yet built)
+## 🗺️ 2026-06-23 scoping session — roadmap items (not yet built)
 
-Output of a roadmap-scoping pass (scope verdicts against the containment thesis;
-GTM corrections from a verified competitive research run). Strategy detail lives
-in the gitignored `/strategy/` docs; this is the committable summary.
+Output of a roadmap-scoping pass (scope verdicts against the containment thesis).
+This file is the public, technical roadmap; GTM / competitive / positioning notes
+live in the internal gitignored `/strategy/` docs, not here.
 
 ### Substrate / TUI items (scoped, pending)
 - [ ] **Global host-terminal band (TUI).** Builds on merged `feat/host-terminals`
@@ -113,48 +113,10 @@ in the gitignored `/strategy/` docs; this is the committable summary.
   release downloads) + counting the existing update-check pings server-side (no new
   client IDs, disclosed, `--no-update-check` opt-out). Homebrew *tap* installs are invisible.
 
-### GTM / launch (decided)
-- **Segment: bottom-up solo devs → startups; not chasing Coder's enterprise tier yet.**
-- **TUI is enough for launch** (HN-led dev wedge); a local web UI over the existing
-  API is the GUI fast-follow if PH/broader audience warrants. No native app.
-- **Show HN primary**, dev channels secondary, ProductHunt deferred. Install must be flawless.
-- **Pre-launch work = polish/reliability/narrative, NOT features** (substrate shipped).
-  Tier-1: bulletproof install + first-run; no-lost-work (ship `--keep-islands`);
-  multi-agent "aha" in first session. Tier-2: visible "run agents without fear"
-  hook (scope picker/grants view); agents-they-use OOTB; solo-flavored landing page.
-- **#1 launch action:** build 2 demo GIFs (multi-agent dashboard + containment
-  "denied + ledger") — fixes site "hobby" feel, IS the Show HN centerpiece, and shows
-  the one differentiator that survives scrutiny. Plus fix the hero-copy regression.
-
-### Competitive corrections (verified research, 2026-06-23 — see `/strategy/`)
-- **Coder is the closest direct competitor** ("Coder Agents", self-hosted/air-gap/
-  model-agnostic + Premium-gated AI Governance). **CORRECTION: do NOT claim
-  "Coder = heavy/K8s" (refuted) or that nothing leaves its perimeter (refuted).**
-- **Rivet** has the strongest universal-API (1 API → 6 CLIs) but `sandbox-agent` has
-  **zero isolation of its own**; `agentOS` is in-process V8/WASM (lighter than containers).
-- **Isolation strength is NOT our moat** — E2B uses Firecracker microVM (stronger than
-  our Docker). **Anchor the pitch on sovereignty (code never leaves) + provable
-  governance (brokered host-file access + tamper-evident ledger), never "we isolate harder."**
-- **Moat (structurally uncopyable):** brokered-file + tamper-evident ledger (nobody else);
-  self-owned + multi-vendor-agents + neither code nor reasoning leaves; free governance.
-- microVM (LOW for single-tenant wedge) and inbound preview URLs (MEDIUM, mailbox answer)
-  are the only near-table-stakes gaps; neither blocks launch.
-
-### Positioning calls (Rivet / agentOS / our own apps)
-- **Why solo picks Dejima:** Coder = a platform you deploy; Rivet = a library you build on;
-  **Dejima = a tool you just run.** Solo wants the last (agents without fear, one dashboard, minutes).
-- **Build our own management apps ON Dejima, not Rivet** — Rivet doesn't provide sovereignty/
-  governance; building on it inherits a cloud-sandbox dep or means rebuilding Dejima. Don't put
-  the moat on a competitor's primitive. (Rule: sovereignty/governance → Dejima; speed/scale/embed → Rivet.)
-- **Compose, don't substitute:** run Rivet `sandbox-agent` inside a Dejima island for its
-  universal multi-CLI driver — that's API ergonomics, NOT speed (6ms = agentOS isolates, not used in a container).
-- **One-API-drives-many-CLIs:** invest NARROWLY (normalized control/event API over our
-  first-class agents — serves the build-apps-on-Dejima goal); don't chase Rivet's 6-CLI breadth; compose for breadth.
-- **"agentOS" is a misnomer** (theirs is a fast execution sandbox); Dejima is the one that
-  behaves like an OS for agents (isolation + FS permission model + lifecycle + audit). Internal
-  frame only — don't fight for the label publicly; position on "run any agents on your own box, sandboxed and provable."
-- **Site: not an overhaul** — bones are good; launch needs hero-regression fix + the 2 GIFs +
-  confident headers + compare-table framing. Brand-spine/island-diagram = fast-follow.
+### GTM / launch / competitive / positioning
+*Intentionally not in this public repo. GTM, competitive analysis, and positioning notes
+live in the internal, gitignored `/strategy/` directory (see `.gitignore`). The technical
+roadmap items above and below stay here.*
 
 ### Action gate (cross-island orchestration approval) — see docs/action-gate-spec.md
 - [ ] Built per the spec: grant=envelope / gate=per-action; risk tiers; **prompt-everything
