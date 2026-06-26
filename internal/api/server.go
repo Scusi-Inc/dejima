@@ -28,6 +28,7 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/usage"
 	"github.com/aoos/dejima/internal/version"
 )
 
@@ -73,6 +74,11 @@ type Server struct {
 	// Per-island latest agent state, derived from agent-event hooks.
 	agentStateMu sync.Mutex
 	agentStates  map[string]AgentStateInfo
+
+	// Per-(island,agent) latest adapter-reported token/cost usage, derived from
+	// agent.usage hooks (Claude Code today). Surfaced on AgentInfo.Usage.
+	agentUsageMu sync.Mutex
+	agentUsage   map[string]AgentUsage
 
 	// Per-(island,agent) last orchestration error (failed worktree/session
 	// setup), surfaced in AgentInfo so failures aren't silent.
@@ -227,6 +233,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		wakeNudges:  newWakeNotifier(),
 		historyCap:  200,
 		agentStates: map[string]AgentStateInfo{},
+		agentUsage:  map[string]AgentUsage{},
 		agentErrors: map[string]agentErrInfo{},
 		events_:     map[string][]events.Event{},
 		eventsCap:   50,
@@ -291,6 +298,7 @@ func (s *Server) emit(e events.Event) {
 	}
 	s.recordEvent(e)
 	s.maybeUpdateAgentState(e)
+	s.maybeUpdateAgentUsage(e)
 	s.auditLifecycle(e) // append governance-relevant lifecycle events to the ledger (opt-in)
 	if s.events != nil {
 		s.events.Emit(e)
@@ -357,6 +365,104 @@ func (s *Server) agentStateOf(island, agentID string) *AgentStateInfo {
 		return &st
 	}
 	return nil
+}
+
+// maybeUpdateAgentUsage ingests an agent.usage event (token counts an adapter
+// reported over the in-island token path) into the per-(island,agent) usage
+// snapshot. Cost is derived here from the model + token breakdown; Dejima can't
+// see the LLM call so the counts must come from the agent itself.
+func (s *Server) maybeUpdateAgentUsage(e events.Event) {
+	if e.Island == "" || e.Type != events.TypeAgentUsage {
+		return
+	}
+	u, ok := agentUsageFromPayload(e.Payload, e.Timestamp)
+	if !ok {
+		return
+	}
+	s.agentUsageMu.Lock()
+	s.agentUsage[agentStateKey(e.Island, e.Agent)] = u
+	s.agentUsageMu.Unlock()
+}
+
+// agentUsageFromPayload builds an AgentUsage from an agent.usage event payload.
+// Expected keys (all numbers; absent → 0): input_tokens,
+// cache_creation_input_tokens, cache_read_input_tokens, output_tokens; plus
+// model + source strings. Returns ok=false when there are no tokens at all (a
+// malformed/empty report shouldn't overwrite a real snapshot with zeros).
+func agentUsageFromPayload(p map[string]any, ts time.Time) (AgentUsage, bool) {
+	if p == nil {
+		return AgentUsage{}, false
+	}
+	in := payloadInt(p, "input_tokens")
+	cacheCreate := payloadInt(p, "cache_creation_input_tokens")
+	cacheRead := payloadInt(p, "cache_read_input_tokens")
+	out := payloadInt(p, "output_tokens")
+	if in == 0 && cacheCreate == 0 && cacheRead == 0 && out == 0 {
+		return AgentUsage{}, false
+	}
+	// Surface all input-side tokens (fresh + cached) as InputTokens so that
+	// InputTokens + OutputTokens == TotalTokens for the UI; cost below still
+	// prices the cache tiers separately for accuracy.
+	inputAll := in + cacheCreate + cacheRead
+	model := payloadString(p, "model")
+	source := payloadString(p, "source")
+	if source == "" {
+		source = "agent"
+	}
+	u := AgentUsage{
+		InputTokens:  inputAll,
+		OutputTokens: out,
+		TotalTokens:  inputAll + out,
+		Source:       source,
+		AsOf:         ts,
+	}
+	if cost, ok := usage.CostUSD(model, usage.Tokens{
+		Input: in, CacheCreation: cacheCreate, CacheRead: cacheRead, Output: out,
+	}); ok {
+		u.CostUSD = &cost
+	}
+	return u, true
+}
+
+// agentUsageOf returns the latest usage snapshot for one agent, or nil.
+func (s *Server) agentUsageOf(island, agentID string) *AgentUsage {
+	s.agentUsageMu.Lock()
+	defer s.agentUsageMu.Unlock()
+	if u, ok := s.agentUsage[agentStateKey(island, agentID)]; ok {
+		return &u
+	}
+	return nil
+}
+
+// payloadInt reads a non-negative integer from an event payload value. JSON
+// decoding yields float64 (or json.Number); both are handled. Missing/invalid
+// or negative → 0.
+func payloadInt(p map[string]any, key string) int {
+	switch v := p[key].(type) {
+	case float64:
+		if v < 0 {
+			return 0
+		}
+		return int(v)
+	case int:
+		if v < 0 {
+			return 0
+		}
+		return v
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n >= 0 {
+			return int(n)
+		}
+	}
+	return 0
+}
+
+// payloadString reads a string from an event payload value (missing → "").
+func payloadString(p map[string]any, key string) string {
+	if s, ok := p[key].(string); ok {
+		return s
+	}
+	return ""
 }
 
 // agentErrInfo is a captured orchestration failure for one agent.
@@ -921,9 +1027,13 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 	}
 	id := p.NextAgentID()
 	spec := project.AgentSpec{
-		ID:        id,
-		Type:      typ,
-		Label:     strings.TrimSpace(req.Label),
+		ID:   id,
+		Type: typ,
+		// Dedupe the requested label against existing agents so two agents can't
+		// share a name: "build" → "build-2" if taken. Empty labels pass through
+		// (they're allowed and never deduped). The returned AgentInfo carries the
+		// final assigned label so the CLI/TUI can surface "named it build-2".
+		Label:     p.UniqueAgentLabel(req.Label, ""),
 		Cmd:       cmd,
 		Tmux:      "agent-" + id,
 		Branch:    "agent/" + id,
@@ -1200,7 +1310,11 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
-	a.Label = strings.TrimSpace(req.Label) // empty clears the label
+	// Dedupe against other agents (excluding this one, so renaming to its own
+	// current label is a no-op, not "-2"). Empty clears the label and passes
+	// through unchanged. The returned AgentInfo carries the assigned label, so a
+	// collision-driven "build" → "build-2" is discoverable by request/response diff.
+	a.Label = p.UniqueAgentLabel(req.Label, id)
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -2493,9 +2607,14 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 		}
 		ai.Attached = s.presenceSnapshot(p.Name, a.ID)
 		ai.AgentState = s.agentStateOf(p.Name, a.ID)
+		ai.Usage = s.agentUsageOf(p.Name, a.ID)
 		if ai.AgentState == nil && i == 0 {
 			// Surface legacy agent-less events (no DEJIMA_AGENT_ID) on the primary.
 			ai.AgentState = s.agentStateOf(p.Name, "")
+		}
+		if ai.Usage == nil && i == 0 {
+			// Same legacy fallback: usage reported with no DEJIMA_AGENT_ID.
+			ai.Usage = s.agentUsageOf(p.Name, "")
 		}
 		if msg, at, ok := s.agentErrorOf(p.Name, a.ID); ok {
 			ai.Error, ai.ErrorAt = msg, at

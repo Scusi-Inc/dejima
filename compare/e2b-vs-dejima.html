@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E2B vs Dejima: agent-sandbox cloud vs self-hosted fleet — Dejima</title>
+<meta name="description" content="E2B is a managed cloud of ephemeral sandboxes for AI-generated code, with self-host on the enterprise tier. Dejima is a free, self-hosted runtime for a persistent fleet of coding agents on hardware you own. An honest comparison.">
+<link rel="canonical" href="https://dejima.tech/compare/e2b-vs-dejima.html">
+<meta property="og:title" content="E2B vs Dejima">
+<meta property="og:description" content="A managed agent-sandbox cloud, or a free self-hosted fleet on hardware you own.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dejima.tech/compare/e2b-vs-dejima.html">
+<meta property="og:image" content="https://dejima.tech/assets/og-vs-e2b.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dejima.tech/assets/og-vs-e2b.png">
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="../index.html"><img src="../assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">free · open source</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="../index.html">Home</a>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="../guides/">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases"><span class="nav-ver"></span>alpha</a></span>
+</nav>
+
+<article class="post">
+  <p class="post-meta">Comparison · updated June 2026</p>
+  <h1 class="post-h">E2B vs Dejima</h1>
+  <p class="lede">E2B and Dejima both put AI agents in sandboxes, but at opposite ends of the spectrum. E2B is a managed cloud for spinning up ephemeral sandboxes that run AI-generated code, built for teams shipping agent products. Dejima is a free, self-hosted runtime for running your own coding agents on your own box. Where your code and your money live is the real question.</p>
+
+  <div class="callout">
+    <p><strong>Short version:</strong> if you're building an agent product and want a hosted sandbox you call from an SDK, with enterprise support behind it, E2B is built for that. If you want to run your own coding agents on hardware you own, for free, with the code never leaving your perimeter, that's Dejima.</p>
+  </div>
+
+  <h2>What E2B is</h2>
+  <p>E2B calls itself the enterprise AI agent cloud. It gives you secure, isolated sandboxes that boot in about 150 milliseconds and run sessions up to 24 hours, created from an SDK so the agents your product runs can execute code safely. It's open source, and it's used heavily; the company cites Perplexity, Manus, and most of the Fortune 100.</p>
+  <p>The product is the cloud. There's a free Hobby tier with a one-time credit, a Pro tier around $150 a month plus usage, and an Enterprise tier that adds bring-your-own-cloud, on-prem, and fully self-hosted deployment. You can self-host from the open-source repo if you're technical enough, but supported self-hosting is the enterprise path, and the default experience is the managed cloud.</p>
+
+  <h2>What Dejima is</h2>
+  <p>Dejima starts from the other side: self-hosted first, free, on hardware you already own. <a href="../index.html">See the overview.</a></p>
+  <p>You run a fleet of coding agents in islands, persistent containers each with their own home, credentials, and git worktrees. You bring your own agents and keys. The agents' model calls go out, but your source, your files, and your credentials never leave your box, because there's no managed cloud in the loop. Host access is deny-all and brokered, every crossing written to a tamper-evident log, and the whole thing installs with one command on a Mac mini or a server.</p>
+
+  <h2>Side by side</h2>
+  <div class="table-scroll">
+  <table class="compare">
+    <tr><th>What you need</th><th>Dejima</th><th>E2B</th></tr>
+    <tr><td>Free and self-hosted on your own hardware</td><td><strong>✓</strong></td><td>$ enterprise</td></tr>
+    <tr><td>Your code never leaves your perimeter</td><td><strong>✓</strong></td><td>~ cloud by default</td></tr>
+    <tr><td>Persistent agents you attach to and watch</td><td><strong>✓</strong></td><td>✗ ephemeral</td></tr>
+    <tr><td>SDK to spin up sandboxes for generated code</td><td>~</td><td>✓</td></tr>
+    <tr><td>Boots a fresh sandbox in ~150ms</td><td>✗</td><td>✓</td></tr>
+    <tr><td>No monthly fee or per-second usage bill</td><td><strong>✓</strong></td><td>✗ Pro + usage</td></tr>
+    <tr><td>Brokered deny-all host access + audit ledger</td><td><strong>✓</strong></td><td>✗</td></tr>
+    <tr><td>One dashboard for your whole fleet</td><td><strong>✓</strong></td><td>✗</td></tr>
+  </table>
+  </div>
+  <p class="small"><strong>$ enterprise</strong> = supported self-host / on-prem is the Enterprise tier; Hobby and Pro are the managed cloud.</p>
+
+  <h2>When E2B is the better choice</h2>
+  <p>Pick E2B if you're shipping an agent product and code execution is a feature of it. You want sandboxes on demand from an SDK, fast cold starts, generous concurrency, and an enterprise contract with BYOC when you need it. That's a real and different need, and E2B serves it well. Dejima is not a sandbox API for your application to call.</p>
+
+  <h2>When Dejima is the better choice</h2>
+  <p>Pick Dejima if the agents are yours and the box should be too. You want Claude Code and Codex running on your own Mac mini or server, for free, with your code staying inside your perimeter and no usage meter running. You want persistent sessions, one dashboard, brokered host access, and an audit trail you can verify. If "self-hosted" shouldn't mean "call sales for a quote," this is the one.</p>
+
+  <section class="post-more">
+    <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>
+    <p class="small">More comparisons: <a href="coder-vs-dejima.html">Coder vs Dejima</a> · <a href="daytona-vs-dejima.html">Daytona vs Dejima</a> · <a href="index.html">all comparisons</a></p>
+  </section>
+</article>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="../guides/">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</footer>
+
+</main>
+<script src="../version.js" defer></script>
+</body>
+</html>

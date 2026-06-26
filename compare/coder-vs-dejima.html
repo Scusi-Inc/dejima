@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coder vs Dejima: self-hosted agents, compared — Dejima</title>
+<meta name="description" content="Coder and Dejima both run AI coding agents on infrastructure you control. Coder is platform-team CDE infra with a paid governance tier; Dejima is one command on your own box with free audit and brokered host access. An honest comparison.">
+<link rel="canonical" href="https://dejima.tech/compare/coder-vs-dejima.html">
+<meta property="og:title" content="Coder vs Dejima">
+<meta property="og:description" content="Platform-team dev-environment infra, or one command on your own box. An honest comparison.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dejima.tech/compare/coder-vs-dejima.html">
+<meta property="og:image" content="https://dejima.tech/assets/og-vs-coder.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dejima.tech/assets/og-vs-coder.png">
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="../index.html"><img src="../assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">free · open source</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="../index.html">Home</a>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="../guides/">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases"><span class="nav-ver"></span>alpha</a></span>
+</nav>
+
+<article class="post">
+  <p class="post-meta">Comparison · updated June 2026</p>
+  <h1 class="post-h">Coder vs Dejima</h1>
+  <p class="lede">Both let you run AI coding agents on hardware you control instead of someone else's cloud. The difference is who they're built for. Coder is dev-environment infrastructure for a platform team standardizing hundreds of engineers. Dejima is one command for a developer who wants a contained fleet on their own box.</p>
+
+  <div class="callout">
+    <p><strong>Short version:</strong> if you're a platform team that already runs Kubernetes and needs enterprise governance across an org, Coder is built for exactly that. If you're a solo developer or a small team who wants agents running on a Mac mini or a single server today, without standing up infrastructure first, that's Dejima.</p>
+  </div>
+
+  <h2>What Coder is</h2>
+  <p>Coder is an open-source platform for self-hosted cloud development environments, and as of May 2026 it also runs AI coding agents on that same infrastructure. You describe a workspace with a Terraform template, and Coder provisions it as a Kubernetes pod, a VM, or a Docker container on infrastructure you run. Developers get a consistent environment; their agents run in the same place.</p>
+  <p>It's aimed at the enterprise. The open-source edition covers the developer-facing features, and the governance you'd want at scale, multi-organization access control, audit logging, SSO, lands on the paid Premium tier. That's the right shape for a company rolling out standardized environments and agent access to a large team, with a platform group to run it.</p>
+
+  <h2>What Dejima is</h2>
+  <p>Dejima is a self-hosted runtime for a fleet of coding agents, installed with one command. Each project runs in an island, a container with its own home and credentials, and each agent inside gets its own git worktree. You bring your own agents (Claude Code, Codex, OpenClaw, others) and your own keys. <a href="../index.html">See the overview.</a></p>
+  <p>There's no Terraform and no Kubernetes to stand up. The installer sets up Docker, the background service, and your Tailscale identity, and you're running. The things you'd pay for elsewhere, an audit log and brokered host access, are free and built in.</p>
+
+  <h2>Side by side</h2>
+  <div class="table-scroll">
+  <table class="compare">
+    <tr><th>What you need</th><th>Dejima</th><th>Coder</th></tr>
+    <tr><td>Up and running without Terraform or Kubernetes</td><td><strong>✓</strong></td><td>✗</td></tr>
+    <tr><td>One install command on a Mac mini or single box</td><td><strong>✓</strong></td><td>✗</td></tr>
+    <tr><td>Run terminal + headless agents, one dashboard</td><td><strong>✓</strong></td><td>✓</td></tr>
+    <tr><td>Audit log of agent and host-file access</td><td><strong>✓</strong></td><td>$ Premium</td></tr>
+    <tr><td>Brokered, deny-all access to host files</td><td><strong>✓</strong></td><td>✗</td></tr>
+    <tr><td>Multi-org RBAC, SSO, enterprise governance</td><td>roles + tokens</td><td>$ Premium</td></tr>
+    <tr><td>Standardize environments for hundreds of devs</td><td>~</td><td>✓</td></tr>
+    <tr><td>Fully open source, self-host free</td><td><strong>✓</strong></td><td>✓</td></tr>
+  </table>
+  </div>
+  <p class="small"><strong>$ Premium</strong> = paid tier (contact sales). Coder's developer features are open source; governance is Premium.</p>
+
+  <h2>When Coder is the better choice</h2>
+  <p>Pick Coder if you're the platform team. You're handing standardized, reproducible environments to a large group of engineers, you already run Kubernetes, and you need org-wide RBAC, SSO, and audit with a support contract behind it. Coder is purpose-built for that, and Dejima isn't trying to be.</p>
+
+  <h2>When Dejima is the better choice</h2>
+  <p>Pick Dejima if you're the developer, not the platform team. You want agents working on a box you own without a provisioning project first. You want each agent walled off from your machine and the others, brokered host access that's deny-all by default, and a tamper-evident audit log, without any of it being a paid add-on. And you want to bring whatever agents you like rather than adopt one vendor's.</p>
+
+  <section class="post-more">
+    <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>
+    <p class="small">More comparisons: <a href="daytona-vs-dejima.html">Daytona vs Dejima</a> · <a href="e2b-vs-dejima.html">E2B vs Dejima</a> · <a href="index.html">all comparisons</a></p>
+  </section>
+</article>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="../guides/">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</footer>
+
+</main>
+<script src="../version.js" defer></script>
+</body>
+</html>
