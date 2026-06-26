@@ -66,15 +66,20 @@ jobs:
       # install. Matches scripts/clean-mac/lib.sh's default.
       DEJIMA_PREFIX: ${{ github.workspace }}/.cleanmac-prefix
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # install.sh bakes its version from `git describe --tags`; a shallow
           # checkout has no tags → a hash version. Fetch everything so the gate
           # also catches a version-baking regression.
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
 
       # Refuse to run as the operator account — the proof loop deletes ~/.dejima
       # during teardown, so a misconfigured runner must fail here, not wipe aoos.
@@ -110,7 +115,7 @@ jobs:
           ls -la "${{ github.workspace }}/gate-logs" || true
       - name: upload the gate logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: clean-mac-gate-logs
           path: gate-logs

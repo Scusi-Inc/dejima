@@ -189,17 +189,23 @@ func (s *Server) wakeIslandFor(ctx context.Context, name string) {
 
 // DefaultWakeFlushInterval bounds how often queued nudges are retried for
 // delivery (a busy agent's nudge waits here until it next hits a turn boundary).
+// It's the fallback when RunWakeNotifier is given a non-positive interval; the
+// daemon exposes the live value via --wake-flush-interval / DEJIMAD_WAKE_FLUSH_INTERVAL.
 const DefaultWakeFlushInterval = 15 * time.Second
 
 // RunWakeNotifier periodically flushes queued nudges so a message that arrived
-// while an agent was busy is delivered once it reaches a turn boundary. Run it in
+// while an agent was busy is delivered once it reaches a turn boundary. interval
+// sets the retry cadence; <= 0 falls back to DefaultWakeFlushInterval. Run it in
 // its own goroutine; returns when ctx is cancelled. A no-op loop when soft-notify
 // is disabled.
-func (s *Server) RunWakeNotifier(ctx context.Context) {
+func (s *Server) RunWakeNotifier(ctx context.Context, interval time.Duration) {
 	if !s.wakeEnabled {
 		return
 	}
-	t := time.NewTicker(DefaultWakeFlushInterval)
+	if interval <= 0 {
+		interval = DefaultWakeFlushInterval
+	}
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {

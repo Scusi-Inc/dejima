@@ -58,10 +58,15 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
       # The suite builds dejima/dejimad itself, builds the island image on first
       # run, and purges its throwaway islands + daemon on exit. DEJIMA_REPORT
       # makes it also emit the structured per-feature JSON summary. We capture
@@ -78,7 +83,7 @@ jobs:
       # per feature without scraping logs.
       - name: upload the structured run summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tier2-integration-report
           path: report.json
@@ -111,12 +116,41 @@ jobs:
       # poll budget (the safe suite exercises both the fire and the wake halves).
       DEJIMAD_IDLE_HIBERNATE: "2m"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
       - name: tier-3 safe macOS-host suite
         run: make test-tier3-safe
+
+  # --- Tier 3: action-gate (live, end-to-end) -------------------------------
+  # Live confirmation of the cross-island action gate's POLICY DELTA against the
+  # runner's own dejimad + colima with two throwaway islands: deny-all default,
+  # exposed-but-unruled → queue, counted auto-approve within budget then re-queue,
+  # DESTRUCTIVE always queues even with a rule, policy.add/remove + auto
+  # link.approve ledgered, and the fail-closed queue dropped on a daemon restart.
+  # Island-backed → SKIPS cleanly if colima is down. No secret dependency.
+  action-gate:
+    name: tier3-action-gate (Mac mini)
+    runs-on: [self-hosted, macos-mini]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
+      - name: tier-3 action-gate live suite
+        run: make test-tier3-action-gate
 
   # --- Tier 3 (system-mutating): OPT-IN only --------------------------------
   # service install --system --audit (-> verify -> uninstall), onboard
@@ -134,10 +168,15 @@ jobs:
       DEJIMA_RUN_SYSTEM: "1"
       DEJIMA_RUN_REBOOT: ${{ inputs.run_reboot_test && '1' || '0' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
       - name: tier-3 system-mutating macOS-host suite
         run: make test-tier3-system
 
@@ -157,10 +196,15 @@ jobs:
       # Defaults inside the script if unset (falls back to a local seed).
       TEST_GH_REPO: ${{ vars.TEST_GH_REPO }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
       - name: skip notice when the agent key is missing
         if: ${{ env.TEST_AGENT_KEY == '' }}
         run: echo "::notice::TEST_AGENT_KEY not set — skipping the Tier-4 real-agent smoke"
@@ -179,10 +223,15 @@ jobs:
     env:
       TEST_AGENT_KEY: ${{ secrets.TEST_AGENT_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
       - name: skip notice when the agent key is missing
         if: ${{ env.TEST_AGENT_KEY == '' }}
         run: echo "::notice::TEST_AGENT_KEY not set — skipping the C2 TUI-Claude screen analysis"
@@ -205,9 +254,14 @@ jobs:
       DEJIMA_RUN_SYSTEM: "1"
       TEST_AGENT_KEY: ${{ secrets.TEST_AGENT_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
+          # Self-hosted Mac mini: skip setup-go's tar-based module-cache
+          # restore (the runner's tar errors on it — a benign but noisy
+          # "Failed to restore /usr/bin/tar" warning). The mini's on-disk
+          # GOMODCACHE/GOCACHE persist across runs anyway, so builds stay fast.
+          cache: false
       - name: onboarding self-test (timer + Claude UX critique)
         run: make test-tier3-onboard-selftest
