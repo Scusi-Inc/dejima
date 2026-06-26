@@ -447,6 +447,13 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	if !execContains(calls, "tmux", "new-session", "agent-p2", "DEJIMA_AGENT_ID=p2", "claude") {
 		t.Errorf("expected a tmux new-session running claude for p2; execs=%v", calls)
 	}
+	// The co-located agent must get its per-type shim run (installs the
+	// agent-state hook into the shared ~/.claude) before launch — start.sh only
+	// runs the primary's. Without this, p2 has no heartbeat → wake-on-message,
+	// idle-hibernate, and the idle metric are silently dead for it.
+	if !execContains(calls, "/opt/dejima/agents/claude-code/init.sh", "DEJIMA_AGENT_ID=p2") {
+		t.Errorf("expected p2's per-type shim (init.sh) to run before launch; execs=%v", calls)
+	}
 
 	// List shows both agents.
 	rr = do(t, h, http.MethodGet, "/v1/islands/proj/agents", "")
