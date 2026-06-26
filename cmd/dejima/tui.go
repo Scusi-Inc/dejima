@@ -406,10 +406,24 @@ type detailMsg struct {
 }
 type errMsg struct{ err error }
 type opCompleteMsg struct {
-	name string
-	verb string
-	err  error
+	name   string
+	verb   string
+	err    error
+	notice string // optional success notice to surface (e.g. an auto-renamed label)
 }
+
+// renameNotice returns an operator notice when the daemon auto-incremented a
+// requested agent label that collided ("build" taken → "build-2"), or "" when
+// the label landed as typed. Case-insensitive (a pure-casing match isn't
+// flagged) and an empty requested label is never deduped — matching the
+// daemon's UniqueAgentLabel rules. The response label is the source of truth.
+func renameNotice(requested, final string) string {
+	if strings.TrimSpace(requested) == "" || strings.EqualFold(requested, final) {
+		return ""
+	}
+	return fmt.Sprintf("'%s' was taken — named it %s", requested, final)
+}
+
 type imageBuildDoneMsg struct{ err error }
 type terminalCreatedMsg struct {
 	id  string
@@ -925,6 +939,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
 			}
 			m.lastError = fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err)
+		} else if msg.notice != "" {
+			m.lastNotice = msg.notice // e.g. "'build' was taken — named it build-2"
 		}
 		cmds := []tea.Cmd{m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd()}
 		if m.approvals != nil {
@@ -973,6 +989,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.agentAdder = nil
+		}
+		if msg.notice != "" {
+			m.lastNotice = msg.notice // e.g. "'build' was taken — named it build-2"
 		}
 		m.expanded[msg.island] = true // reveal the island so the new agent shows
 		// Launch the freshly-added agent in a new tab, leaving the dashboard up.
@@ -1563,8 +1582,12 @@ func (m tuiModel) relabelAgentCmd(name, agentID, label string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := m.client.RelabelAgent(ctx, name, agentID, label)
-		return opCompleteMsg{name: name, verb: "relabel-agent", err: err}
+		ag, err := m.client.RelabelAgent(ctx, name, agentID, label)
+		notice := ""
+		if err == nil && ag != nil {
+			notice = renameNotice(label, ag.Label) // daemon auto-increments collisions
+		}
+		return opCompleteMsg{name: name, verb: "relabel-agent", err: err, notice: notice}
 	}
 }
 
