@@ -66,7 +66,7 @@ func (m tuiModel) windowLabel(name, agentID, agentLabel string) string {
 	if suffix == "" {
 		return island
 	}
-	return island + "-" + suffix
+	return island + "/" + suffix
 }
 
 // openAgentWindow launches `dejima <verb> <name> [--agent id] [extra…]` in a
@@ -87,9 +87,11 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 	// back to the durable handles when none is set. The dashboard's own tab is
 	// titled "dejima" (set via tea.SetWindowTitle at startup).
 	winLabel := m.windowLabel(name, agentID, agentLabel)
-	// A shell command string: pin DEJIMA_HOST, then exec the verb.
-	inner := fmt.Sprintf("DEJIMA_HOST=%s exec %s %s %s",
-		shquote(m.activeHost), shquote(exe), verb, shquote(name))
+	// A shell command string: pin DEJIMA_HOST + the resolved tab title (so the
+	// spawned session's OSC title uses the agent's LABEL, not its id), then exec
+	// the verb. winLabel already prefers the label and falls back to the id.
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s %s %s",
+		shquote(m.activeHost), shquote(winLabel), shquote(exe), verb, shquote(name))
 	if agentID != "" {
 		inner += " --agent " + shquote(agentID)
 	}
@@ -130,7 +132,16 @@ func openWindowsTerminal(exe, verb, name, agentID, title string, extra []string,
 	for _, e := range extra {
 		run += " " + e
 	}
-	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& %s`, host, run)
+	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
+	// title matches the tab name. Strip cmd.exe-special chars from the title
+	// before interpolating it (it's a user label, unlike name/agentID/host above).
+	safeTitle := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`"&|<>^%!`, r) {
+			return -1
+		}
+		return r
+	}, title)
+	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& set "DEJIMA_TAB_TITLE=%s"&& %s`, host, safeTitle, run)
 	if wt, err := exec.LookPath("wt.exe"); err == nil {
 		// -w 0 targets the CURRENT Windows Terminal window (a new tab in it).
 		// -w -1 / "new" would force a separate window every time — which is the

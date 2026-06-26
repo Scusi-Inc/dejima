@@ -1484,6 +1484,11 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, dial fun
 		// Title the local tab to what we're attached to. Emitted to the local
 		// terminal (not into the websocket), so it sits above any inner tmux and
 		// works regardless of the container's tmux config. Cleared on detach.
+		// A TUI-spawned tab passes DEJIMA_TAB_TITLE (island/label, label preferred
+		// over id) so the OSC title matches the tab name instead of the bare id.
+		if t := os.Getenv("DEJIMA_TAB_TITLE"); t != "" {
+			title = t
+		}
 		setTerminalTitle(title)
 		defer setTerminalTitle("")
 	}
