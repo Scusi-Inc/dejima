@@ -1840,7 +1840,7 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Manage the agents within an island.",
 	}
-	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd())
+	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRenameCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd())
 	return cmd
 }
 
@@ -1973,6 +1973,11 @@ func newAgentAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The daemon dedupes labels: a requested "build" already in use comes
+			// back as "build-2". Surface that so the auto-increment isn't silent.
+			if want := strings.TrimSpace(label); want != "" && a.Label != want {
+				fmt.Printf("note: label %q was taken; named it %q\n", want, a.Label)
+			}
 			fmt.Printf("added agent %s (%s) to %s — attach with `dejima connect %s/%s`\n",
 				a.ID, a.Type, args[0], args[0], a.ID)
 			if a.AuthState == "missing-provider-auth" {
@@ -1987,6 +1992,34 @@ func newAgentAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&provider, "provider", "", "LLM provider for key-requiring agent types")
 	cmd.Flags().StringVar(&model, "model", "", "model string, e.g. anthropic/claude-sonnet-4-6")
 	return cmd
+}
+
+func newAgentRenameCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <island> <agent-id> <label>",
+		Short: "Rename an agent (its label; an empty label clears it).",
+		Long: "Set an agent's cosmetic label. Labels are deduped within an island: " +
+			"renaming to a name another agent already holds auto-increments " +
+			"(\"build\" → \"build-2\"). Renaming an agent to its own current label is a no-op.",
+		Args: cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			want := strings.TrimSpace(args[2])
+			a, err := c.RelabelAgent(cmd.Context(), args[0], args[1], want)
+			if err != nil {
+				return err
+			}
+			// The daemon dedupes labels; surface the auto-increment if it happened.
+			if want != "" && a.Label != want {
+				fmt.Printf("note: label %q was taken; named it %q\n", want, a.Label)
+			}
+			fmt.Printf("renamed agent %s to %q in %s\n", a.ID, a.Label, args[0])
+			return nil
+		},
+	}
 }
 
 func newAgentRmCmd() *cobra.Command {

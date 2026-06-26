@@ -228,6 +228,41 @@ func (p *Project) NextAgentID() string {
 	return fmt.Sprintf("%s%d", agentIDPrefix(p.Name), max+1)
 }
 
+// UniqueAgentLabel returns a label not in use by any existing agent in this
+// island, deduping case-insensitively on the trimmed value. If desired is empty
+// (or all whitespace) it is returned as-is — empty labels are allowed and never
+// deduped. Otherwise, on a collision it appends "-2", "-3", … skipping any
+// variant already taken ("build" → "build-2" → "build-3"), mirroring the spirit
+// of NextAgentID. exclude lets a rename ignore the agent being renamed so
+// renaming to its own current label is a no-op (not "build-2"); pass "" at
+// create time when there is nothing to exclude.
+func (p *Project) UniqueAgentLabel(desired, excludeID string) string {
+	trimmed := strings.TrimSpace(desired)
+	if trimmed == "" {
+		return desired
+	}
+	taken := func(candidate string) bool {
+		for i := range p.Agents {
+			if p.Agents[i].ID == excludeID {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(p.Agents[i].Label), candidate) {
+				return true
+			}
+		}
+		return false
+	}
+	if !taken(trimmed) {
+		return trimmed
+	}
+	for n := 2; ; n++ {
+		candidate := fmt.Sprintf("%s-%d", trimmed, n)
+		if !taken(candidate) {
+			return candidate
+		}
+	}
+}
+
 // agentIDPrefix is the per-island letter that leads its agent ids: the first
 // ASCII letter of the island name, lowercased ("Port" → "p"). It is purely a
 // mnemonic — ids are island-scoped and addressed as island/<id>, so two islands
