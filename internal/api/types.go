@@ -108,6 +108,26 @@ type AgentInfo struct {
 	// when a key-requiring agent has no resolvable key (it will fail at first
 	// task), else "" (ready, or the agent needs no provider key).
 	AuthState string `json:"auth_state,omitempty"`
+	// Usage is the agent's adapter-REPORTED token/cost (Claude Code today).
+	// OMITTED entirely for adapters that don't report — clients render "n/a"
+	// rather than a fake zero. Detail endpoint only.
+	Usage *AgentUsage `json:"usage,omitempty"`
+}
+
+// AgentUsage is an agent's self-reported token/cost for its session, ingested
+// from the agent's own usage hook over the in-island token path. Dejima can't
+// observe the (opaque, outbound) LLM call, so these numbers come FROM the agent;
+// an adapter that doesn't report leaves AgentInfo.Usage nil → "n/a" (we never
+// fake uniform coverage). InputTokens aggregates fresh + cached input so
+// InputTokens + OutputTokens == TotalTokens. CostUSD is nil when the model
+// isn't in the price table (tokens still show; cost renders n/a).
+type AgentUsage struct {
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	TotalTokens  int       `json:"total_tokens"`
+	CostUSD      *float64  `json:"cost_usd,omitempty"`
+	Source       string    `json:"source"` // reporting adapter, e.g. "claude-code"
+	AsOf         time.Time `json:"as_of"`
 }
 
 // IslandHealth surfaces crash-relevant facts that a remote client can't observe
