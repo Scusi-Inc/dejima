@@ -1780,6 +1780,7 @@ components:
       properties:
         source_island: { type: string }
         cross_island: { type: boolean }
+        from_label: { type: string, description: "sender's display label, daemon-stamped from the source island's roster at send time (display-only; absent → fall back to the message's from id)" }
     MailboxPollResponse:
       type: object
       properties:
@@ -1869,10 +1870,13 @@ components:
         id: { type: string }
         from: { type: string }
         from_agent: { type: string }
+        from_label: { type: string, description: "sender display label, daemon-stamped from the source roster at send time (display-only; absent → fall back to from_agent)" }
         to: { type: string }
         to_agent: { type: string }
+        to_label: { type: string, description: "recipient display label, daemon-stamped from the destination roster (display-only; absent → fall back to to_agent)" }
         topic: { type: string }
         action: { type: string }
+        tier: { type: string, enum: [benign, mutating, destructive] }
         params: { type: string }
         created_at: { type: string, format: date-time }
     LinkPendingResponse:

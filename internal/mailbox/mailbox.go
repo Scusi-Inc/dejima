@@ -50,6 +50,13 @@ type MessageAction struct {
 type Origin struct {
 	SourceIsland string `json:"source_island"`
 	CrossIsland  bool   `json:"cross_island"`
+	// FromLabel is the sender agent's display label, stamped by the daemon at
+	// send time from the SOURCE island's roster. A receiving island can't resolve
+	// another island's roster (containment), so this is the only way it can show
+	// a sender name instead of a bare id. Display-only + omitempty: absent when
+	// the sender has no label, and consumers fall back to From (the id). Like the
+	// rest of Origin it's unforgeable — only the cross-island delivery path sets it.
+	FromLabel string `json:"from_label,omitempty"`
 }
 
 // Store is an in-memory, per-island ring of recent messages. Intra-island
@@ -110,15 +117,16 @@ func (s *Store) Send(island, from, to, topic, payload string) Message {
 
 // DeliverExternal appends a message delivered into `island`'s mailbox from
 // another island (sourceIsland) over a brokered link, stamping daemon-controlled
-// Origin (CrossIsland=true). `from` is the source agent's literal id and `to` the
-// local recipient agent. It is distinct from Send precisely so the intra-island
-// path can never set Origin — provenance is the daemon's to assert.
-func (s *Store) DeliverExternal(island, sourceIsland, from, to, topic, payload string) Message {
+// Origin (CrossIsland=true). `from` is the source agent's literal id, `fromLabel`
+// its display label resolved by the caller from the source roster (may be ""),
+// and `to` the local recipient agent. It is distinct from Send precisely so the
+// intra-island path can never set Origin — provenance is the daemon's to assert.
+func (s *Store) DeliverExternal(island, sourceIsland, from, fromLabel, to, topic, payload string) Message {
 	s.mu.Lock()
 	s.seq++
 	m := Message{
 		Seq: s.seq, Island: island, From: from, To: to, Topic: topic, Payload: payload, Time: s.now(),
-		Origin: &Origin{SourceIsland: sourceIsland, CrossIsland: true},
+		Origin: &Origin{SourceIsland: sourceIsland, CrossIsland: true, FromLabel: fromLabel},
 	}
 	q := append(s.byIsl[island], m)
 	if len(q) > s.max {
@@ -135,12 +143,12 @@ func (s *Store) DeliverExternal(island, sourceIsland, from, to, topic, payload s
 // action gate authorized. Like DeliverExternal it stamps Origin; it additionally
 // sets the structured Action field. Distinct from Send/DeliverExternal so only
 // the gated action path can mark a message as an action.
-func (s *Store) DeliverAction(island, sourceIsland, from, to, topic, actionType, params string) Message {
+func (s *Store) DeliverAction(island, sourceIsland, from, fromLabel, to, topic, actionType, params string) Message {
 	s.mu.Lock()
 	s.seq++
 	m := Message{
 		Seq: s.seq, Island: island, From: from, To: to, Topic: topic, Time: s.now(),
-		Origin: &Origin{SourceIsland: sourceIsland, CrossIsland: true},
+		Origin: &Origin{SourceIsland: sourceIsland, CrossIsland: true, FromLabel: fromLabel},
 		Action: &MessageAction{Type: actionType, Params: params},
 	}
 	q := append(s.byIsl[island], m)
