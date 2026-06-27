@@ -19,6 +19,20 @@
 <link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
 <link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Comparisons","item":"https://dejima.tech/compare/"},
+{"@type":"ListItem","position":3,"name":"Daytona vs Dejima","item":"https://dejima.tech/compare/daytona-vs-dejima.html"}]},
+{"@type":"TechArticle","headline":"Daytona vs Dejima","description":"Daytona runs ephemeral sandboxes for AI-generated code, SDK-first and cloud-first. Dejima runs a persistent fleet of coding agents on hardware you own, with a dashboard, brokered host access, and audit.","image":"https://dejima.tech/assets/og-vs-daytona.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/compare/daytona-vs-dejima.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Are Daytona and Dejima the same kind of tool?","acceptedAnswer":{"@type":"Answer","text":"No. Daytona spins up fast, ephemeral sandboxes to execute AI-generated code, driven by an SDK. Dejima runs a persistent fleet of coding agents you attach to and watch, on hardware you own, with a dashboard and audit. One is a code-execution API; the other is where you run your agents."}},
+{"@type":"Question","name":"Can I attach to a running agent in Daytona?","acceptedAnswer":{"@type":"Answer","text":"Not the way you can in Dejima. Daytona sandboxes are ephemeral and SDK-driven, meant to run code and disappear. Dejima sessions are persistent and multi-attach, so you connect to a live agent like Claude Code, watch it work, detach, and reconnect from another device."}},
+{"@type":"Question","name":"Is Daytona free to self-host?","acceptedAnswer":{"@type":"Answer","text":"It is open source under AGPL, so a technical team can self-host it, but the product is a usage-billed managed cloud and supported on-prem is the enterprise tier. Dejima is self-hosted first and free, designed to run on your own Mac mini or server from the start."}}
+]}
+]}
+</script>
 </head>
 <body>
 <main>
@@ -76,6 +90,22 @@
 
   <h2>When Dejima is the better choice</h2>
   <p>Pick Dejima if you're running agents, not executing snippets. You want Claude Code or Codex working on your repo, on your hardware, with sessions that stay alive while you step away. You want to see the whole fleet on one screen, grant host access deliberately, and read back an audit trail of what crossed. And you'd rather own the box than watch a per-second meter.</p>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>Are Daytona and Dejima the same kind of tool?</h3>
+      <p>No. Daytona spins up fast, ephemeral sandboxes to execute AI-generated code, driven by an SDK. Dejima runs a persistent fleet of coding agents you attach to and watch, on hardware you own, with a dashboard and audit. One is a code-execution API; the other is where you run your agents.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Can I attach to a running agent in Daytona?</h3>
+      <p>Not the way you can in Dejima. Daytona sandboxes are ephemeral and SDK-driven, meant to run code and disappear. Dejima sessions are persistent and multi-attach, so you connect to a live agent like Claude Code, watch it work, detach, and reconnect from another device.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Is Daytona free to self-host?</h3>
+      <p>It's open source under AGPL, so a technical team can self-host it, but the product is a usage-billed managed cloud and supported on-prem is the enterprise tier. Dejima is self-hosted first and free, designed to run on your own Mac mini or server from the start.</p>
+    </div>
+  </div>
 
   <section class="post-more">
     <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>

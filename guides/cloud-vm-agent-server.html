@@ -19,6 +19,20 @@
 <link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
 <link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
+{"@type":"ListItem","position":3,"name":"Cloud VM","item":"https://dejima.tech/guides/cloud-vm-agent-server.html"}]},
+{"@type":"TechArticle","headline":"Run AI coding agents on your own cloud VM","description":"Self-host a fleet of AI coding agents on a cloud VM in your own AWS, GCP, or Hetzner account, instead of renting a managed sandbox by the second. Your code stays in your perimeter, you set egress, and there is no usage meter.","image":"https://dejima.tech/assets/og-cloud-vm.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/cloud-vm-agent-server.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Why self-host agents on my own cloud VM instead of a managed sandbox?","acceptedAnswer":{"@type":"Answer","text":"A VM in your own account keeps your code inside your boundary, lets you set egress with your own security groups, and costs a fixed monthly amount instead of a per-second meter. Managed sandboxes run your agents on a vendor's infrastructure; a VM you own does not."}},
+{"@type":"Question","name":"How big a cloud VM do I need?","acceptedAnswer":{"@type":"Answer","text":"Two vCPUs and 4 GB of RAM run a handful of agents comfortably. Step up to 4 vCPU and 8 GB for many at once. Give it at least 20 GB of disk, since each island keeps its own Docker volume. Ubuntu 22.04+ or Debian 12+ keeps the install simple."}},
+{"@type":"Question","name":"Which cloud providers work with Dejima?","acceptedAnswer":{"@type":"Answer","text":"Any of them. AWS, GCP, Hetzner, DigitalOcean, Fly, or your own OpenStack all work, because the VM is just a Linux box. Hetzner and DigitalOcean are the cheap, low-friction picks; AWS or GCP make sense if your code already lives there."}}
+]}
+]}
+</script>
 </head>
 <body>
 <main>
@@ -74,6 +88,22 @@ dejima init --repo git@github.com:you/your-project.git</code></pre>
 
   <div class="callout">
     <p><strong>Cleaning up.</strong> When a project's done, <code>dejima purge your-project</code> removes the island and its volume. When you're done with the whole box, destroy the VM in your provider's console. Nothing of yours was anywhere else.</p>
+  </div>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>Why self-host agents on my own cloud VM instead of a managed sandbox?</h3>
+      <p>A VM in your own account keeps your code inside your boundary, lets you set egress with your own security groups, and costs a fixed monthly amount instead of a per-second meter. Managed sandboxes run your agents on a vendor's infrastructure; a VM you own does not.</p>
+    </div>
+    <div class="faq-item">
+      <h3>How big a cloud VM do I need?</h3>
+      <p>Two vCPUs and 4&nbsp;GB of RAM run a handful of agents comfortably. Step up to 4&nbsp;vCPU and 8&nbsp;GB for many at once. Give it at least 20&nbsp;GB of disk, since each island keeps its own Docker volume. Ubuntu 22.04+ or Debian 12+ keeps the install simple.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Which cloud providers work with Dejima?</h3>
+      <p>Any of them. AWS, GCP, Hetzner, DigitalOcean, Fly, or your own OpenStack all work, because the VM is just a Linux box. Hetzner and DigitalOcean are the cheap, low-friction picks; AWS or GCP make sense if your code already lives there.</p>
+    </div>
   </div>
 
   <section class="walkthrough">

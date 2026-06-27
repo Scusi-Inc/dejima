@@ -19,6 +19,20 @@
 <link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
 <link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
+{"@type":"ListItem","position":3,"name":"Linux server","item":"https://dejima.tech/guides/linux-server-agent-server.html"}]},
+{"@type":"TechArticle","headline":"Run AI coding agents on a Linux server","description":"Turn an Ubuntu or Debian server, a VPS, or a box in the closet into a headless home for your AI coding agents. One install command, a systemd user service, reachable over Tailscale.","image":"https://dejima.tech/assets/og-linux-server.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/linux-server-agent-server.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"How do I keep Dejima running after I log out of the server?","acceptedAnswer":{"@type":"Answer","text":"Run loginctl enable-linger $USER. Dejima runs as a systemd user service, which normally stops when your login session ends. Lingering keeps it running between SSH sessions and across reboots. Check it with dejima doctor, which flags linger if it is off."}},
+{"@type":"Question","name":"Can I run AI coding agents on a VPS?","acceptedAnswer":{"@type":"Answer","text":"Yes. Any Ubuntu or Debian VPS works. Install Dejima with one command, enable linger so the daemon survives logout, and reach it from your laptop over Tailscale. A small VPS with two cores and 4 GB of RAM runs several agents."}},
+{"@type":"Question","name":"Do I need a screen or desktop on the server?","acceptedAnswer":{"@type":"Answer","text":"No. Dejima is headless. You drive everything from the CLI and TUI, either over SSH or by pointing Dejima at the server from your own machine with the DEJIMA_HOST variable. The server just needs Docker and a network connection."}}
+]}
+]}
+</script>
 </head>
 <body>
 <main>
@@ -87,6 +101,22 @@ DEJIMA_HOST=your-server.your-tailnet.ts.net:7273 dejima connect your-project</co
     <li><code>dejima hibernate your-project</code> frees resources on an idle island; <code>dejima wake</code> brings it back.</li>
     <li><code>dejima purge your-project</code> destroys the island and its volumes. Push your work out first.</li>
   </ul>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>How do I keep Dejima running after I log out of the server?</h3>
+      <p>Run <code>loginctl enable-linger $USER</code>. Dejima runs as a systemd user service, which normally stops when your login session ends. Lingering keeps it running between SSH sessions and across reboots. Check it with <code>dejima doctor</code>, which flags linger if it's off.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Can I run AI coding agents on a VPS?</h3>
+      <p>Yes. Any Ubuntu or Debian VPS works. Install Dejima with one command, enable linger so the daemon survives logout, and reach it from your laptop over Tailscale. A small VPS with two cores and 4&nbsp;GB of RAM runs several agents.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Do I need a screen or desktop on the server?</h3>
+      <p>No. Dejima is headless. You drive everything from the CLI and TUI, either over SSH or by pointing Dejima at the server from your own machine with the <code>DEJIMA_HOST</code> variable. The server just needs Docker and a network connection.</p>
+    </div>
+  </div>
 
   <section class="walkthrough">
     <h2>Have an AI walk you through it</h2>
