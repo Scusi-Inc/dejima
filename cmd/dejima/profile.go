@@ -71,7 +71,7 @@ func newProfileCmd() *cobra.Command {
 			"`switch` persists the active profile (shared by every dejima invocation);\n" +
 			"the root `-p NAME` flag selects one for a single command without persisting it.",
 	}
-	cmd.AddCommand(newProfileLsCmd(), newProfileAddCmd(), newProfileSwitchCmd())
+	cmd.AddCommand(newProfileLsCmd(), newProfileAddCmd(), newProfileSwitchCmd(), newProfileRmCmd())
 	return cmd
 }
 
@@ -127,6 +127,25 @@ func newProfileAddCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "added profile %q → %s\n", name, host)
+			return nil
+		},
+	}
+}
+
+func newProfileRmCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "rm <name>",
+		Aliases: []string{"remove", "delete"},
+		Short:   "Delete a saved profile (CLI parity with the TUI switcher's [d]).",
+		Long: "Remove a saved remote target. If it was the active profile, the active\n" +
+			"selection falls back to the local socket. \"local\" can't be removed.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			if err := clientcfg.RemoveProfile(name); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "removed profile %q\n", name)
 			return nil
 		},
 	}

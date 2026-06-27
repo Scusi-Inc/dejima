@@ -131,14 +131,10 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 	s := m.switcher
 	target := s.profiles[s.cursor]
-	cfg, _ := clientcfg.Load()
-	kept := cfg.Profiles[:0]
-	for _, p := range cfg.Profiles {
-		if p.Name != target.Name || p.Host != target.Host {
-			kept = append(kept, p)
-		}
-	}
-	cfg.Profiles = kept
+	// Shared store mutation — the same path as `dejima profile rm`. Removes the
+	// profile and clears ActiveProfile if it was the one deleted (profile names
+	// are unique, so a name match is exact).
+	_ = clientcfg.RemoveProfile(target.Name)
 
 	// If we just deleted the profile we're connected through, the live client
 	// still points at the now-gone host — and that host may be exactly why the
@@ -147,9 +143,6 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 	// session instead of leaving it wedged on a dead connection.
 	var cmd tea.Cmd
 	if target.Host == m.activeHost {
-		if cfg.ActiveProfile == target.Name {
-			cfg.ActiveProfile = ""
-		}
 		if c, err := clientForHost(""); err == nil {
 			m.client = c
 			m.activeHost = ""
@@ -165,9 +158,9 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	_ = clientcfg.Save(cfg)
-	// Rebuild the displayed list (keep synthetic local at 0).
-	s.profiles = append([]clientcfg.Profile{{Name: "local", Host: ""}}, kept...)
+	// Rebuild the displayed list from the persisted config (keep synthetic local at 0).
+	cfg, _ := clientcfg.Load()
+	s.profiles = append([]clientcfg.Profile{{Name: "local", Host: ""}}, cfg.Profiles...)
 	if s.cursor >= len(s.profiles) {
 		s.cursor = len(s.profiles) - 1
 	}

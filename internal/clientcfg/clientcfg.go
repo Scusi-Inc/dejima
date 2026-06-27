@@ -125,6 +125,39 @@ func SwitchProfile(name string) error {
 	return Save(cfg)
 }
 
+// RemoveProfile deletes a saved profile by name and persists. If it was the
+// active profile, ActiveProfile is cleared (back to the local socket) so no
+// dangling reference is left. It's the store half of both the TUI delete and the
+// CLI `dejima profile rm`, so the two share one code path. "local" can't be
+// removed (it's the synthetic socket target), and an unknown name errors loudly
+// rather than silently no-op'ing.
+func RemoveProfile(name string) error {
+	if name == "" || name == "local" {
+		return fmt.Errorf("%q is the local socket and can't be removed", name)
+	}
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	kept := cfg.Profiles[:0]
+	found := false
+	for _, p := range cfg.Profiles {
+		if p.Name == name {
+			found = true
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if !found {
+		return fmt.Errorf("no profile named %q (use `dejima profile ls` to see saved profiles)", name)
+	}
+	cfg.Profiles = kept
+	if cfg.ActiveProfile == name {
+		cfg.ActiveProfile = ""
+	}
+	return Save(cfg)
+}
+
 func configPath() (string, error) {
 	root, err := paths.Root()
 	if err != nil {
