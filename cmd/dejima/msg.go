@@ -92,7 +92,19 @@ func newMsgPollCmd() *cobra.Command {
 				if to == "" {
 					to = "(all)"
 				}
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", m.Seq, m.From, to, m.Topic, m.Payload)
+				// A cross-island message carries daemon-stamped provenance (Origin):
+				// show the sender's NAME + island ("janus/planning") instead of a bare
+				// id the recipient can't resolve. Same-island has no Origin → the
+				// agent's own id (it knows its island-mates).
+				from := m.From
+				if m.Origin != nil {
+					name := m.Origin.FromLabel
+					if name == "" {
+						name = m.From
+					}
+					from = m.Origin.SourceIsland + "/" + name
+				}
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", m.Seq, from, to, m.Topic, m.Payload)
 			}
 			_ = tw.Flush()
 			fmt.Printf("cursor: %d  (poll again with --since %d)\n", resp.Latest, resp.Latest)
