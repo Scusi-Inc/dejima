@@ -243,6 +243,11 @@ git -C <dejima checkout> worktree prune
 These shipped to `master` with unit/security review but can't be exercised from the
 build island (no live Docker/macOS host here). Run them on Minion and feed findings back.
 
+- [ ] **TUI verify pass v0.6.1 → v0.6.8 (consolidated)** → [`operator-tests/v0.6.8-verify.md`](operator-tests/v0.6.8-verify.md).
+  One eyeball pass covering agents-by-name, usage signals + near-cap flags, the
+  name-collision notice, wake-on-message, tab titles, visual-identity/keys, and
+  the `used`-counter `link ls` question. Ping a2 with results (a2 relays to
+  d5/the owner + closes the counter with a1). Supersedes the stale v0.6.1 doc.
 - [ ] **Inter-island exchange (Lane 5, Phases 1–3.5) — full live-verify** → gates `v0.6.0`.
   Run [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md) on Minion:
   deny-all default, grant + cross-island delivery (tagged + ledgered), action-gate approve/deny
