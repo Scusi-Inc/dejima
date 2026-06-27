@@ -17,6 +17,7 @@ import (
 
 	"github.com/aoos/dejima/internal/agentcreds"
 	"github.com/aoos/dejima/internal/capability"
+	"github.com/aoos/dejima/internal/egress"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/handlers"
@@ -115,6 +116,17 @@ type Server struct {
 	// authenticate. Empty on the Linux/unix-socket path.
 	autonomyDial string
 
+	// egressDial / egressLog gate the island egress proxy (Phase 1, observe-
+	// first). When egressDial is non-empty (the host:port islands dial to reach
+	// the daemon's egress proxy, e.g. "host.docker.internal:7280"), every new
+	// container gets HTTPS_PROXY pointed at it and the proxy records each
+	// destination into egressLog (served by GET /v1/islands/{name}/egress). Both
+	// zero when the proxy is disabled (the default) — islands then have direct
+	// egress, unchanged. Set via EnableEgress; the listener is owned by
+	// dejimad/main.
+	egressDial string
+	egressLog  *egress.Log
+
 	// sshAddr is the SSH-façade listen addr, recorded via EnableSSH purely so
 	// /v1/overview can report it to clients. Empty unless dejimad has --ssh.
 	sshAddr string
@@ -178,6 +190,16 @@ func (s *Server) HostTerminalsEnabled() bool { return s.hostTerminals }
 // host.docker.internal:<port>). Call only when the token listener is bound; an
 // empty dial is a no-op.
 func (s *Server) EnableAutonomy(dial string) { s.autonomyDial = dial }
+
+// EnableEgress wires the island egress proxy: dial is the host:port islands
+// reach the proxy at (injected as HTTPS_PROXY into new containers), and log is
+// where the proxy records destinations and the read API serves from. Off by
+// default; dejimad/main owns the proxy listener itself. A nil log or empty dial
+// leaves egress unchanged (direct).
+func (s *Server) EnableEgress(dial string, log *egress.Log) {
+	s.egressDial = dial
+	s.egressLog = log
+}
 
 // EnableSSH records the SSH-façade listen addr so clients (the TUI,
 // `dejima ssh config/info`) can surface the connection target. Reporting only —
@@ -615,6 +637,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PATCH /v1/terminals/{id}", s.handleRelabelTerminal)
 	mux.HandleFunc("GET /v1/terminals/{id}/session", s.terminalSessionWS)
 	mux.HandleFunc("GET /v1/islands/{name}/events", s.handleIslandEvents)
+	mux.HandleFunc("GET /v1/islands/{name}/egress", s.handleIslandEgress)
 	mux.HandleFunc("POST /v1/islands/{name}/exec", s.handleExec)
 	mux.HandleFunc("GET /v1/islands/{name}/files/{path...}", s.handleReadFile)
 	mux.HandleFunc("PUT /v1/islands/{name}/files/{path...}", s.handleWriteFile)
@@ -1887,6 +1910,15 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		env["DEJIMA_HOST"] = s.autonomyDial
 		env["DEJIMA_TOKEN"] = tok
 	}
+	// Egress proxy (Phase 1, observe-first): route the island's outbound HTTP(S)
+	// through the daemon's proxy so destinations are visible. Attribution is the
+	// island name (the proxy username); NO_PROXY exempts the autonomy/telemetry
+	// path + loopback. Off (no env) unless EnableEgress was called.
+	if s.egressDial != "" {
+		for k, v := range egress.ProxyEnv(p.Name, s.egressDial) {
+			env[k] = v
+		}
+	}
 	// Everything the entrypoint needs about the primary agent flows via env, so
 	// the launch command lives in one place (the handler registry) rather than
 	// being duplicated in start.sh. Non-primary agents are launched by the daemon
@@ -1942,7 +1974,10 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	// listener needs host.docker.internal to resolve: built in on Docker Desktop /
 	// colima; add-host wires it on engines that don't provide it.
 	var extraHosts []string
-	if s.autonomyDial != "" {
+	if s.autonomyDial != "" || s.egressDial != "" {
+		// Both the autonomy path and the egress proxy are reached via
+		// host.docker.internal; ensure it resolves on engines that don't provide
+		// it. (Added once even when both are set.)
 		extraHosts = append(extraHosts, "host.docker.internal:host-gateway")
 	}
 

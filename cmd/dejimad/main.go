@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/egress"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/paths"
@@ -50,6 +51,8 @@ func main() {
 		tcpAddr       string
 		tokenAddr     string
 		autonomyDial  string
+		egressAddr    string
+		egressDial    string
 		sshAddr       string
 		hostTerminals bool
 		requireToken  bool
@@ -68,6 +71,8 @@ func main() {
 	flag.StringVar(&tcpAddr, "tcp", os.Getenv("DEJIMAD_TCP"), "TCP listen addr (e.g. \":7273\"); empty disables. Accepts only Tailscale IPs.")
 	flag.StringVar(&tokenAddr, "token-tcp", os.Getenv("DEJIMAD_TOKEN_TCP"), "host-internal TCP addr for the token-authenticated in-island autonomy path (e.g. \"127.0.0.1:7274\"); empty disables. Never bind a wildcard/LAN address.")
 	flag.StringVar(&autonomyDial, "autonomy-dial", os.Getenv("DEJIMAD_AUTONOMY_DIAL"), "host:port an in-island brain dials to reach this daemon over --token-tcp (default \"host.docker.internal:<token-tcp port>\")")
+	flag.StringVar(&egressAddr, "egress-proxy", os.Getenv("DEJIMAD_EGRESS_PROXY"), "host-internal TCP addr for the island egress proxy (e.g. \"127.0.0.1:7280\"); empty disables. When set, islands route outbound HTTP(S) through it so destinations are observable (Phase 1: observe-only, nothing blocked). Off by default.")
+	flag.StringVar(&egressDial, "egress-dial", os.Getenv("DEJIMAD_EGRESS_DIAL"), "host:port islands dial to reach the egress proxy (default \"host.docker.internal:<egress-proxy port>\")")
 	flag.StringVar(&sshAddr, "ssh", os.Getenv("DEJIMAD_SSH"), "SSH-façade listen addr (e.g. \"100.x.y.z:2222\" on the tailnet, or \":2222\"); empty disables. Auth is per-island public key; ssh <island>@<addr>.")
 	flag.BoolVar(&hostTerminals, "host-terminals", os.Getenv("DEJIMAD_HOST_TERMINALS") == "1", "enable operator host terminals — UNCONTAINED shells on the daemon host (operator-only, never reachable by an island). Off by default.")
 	flag.BoolVar(&requireToken, "require-token", os.Getenv("DEJIMAD_REQUIRE_TOKEN") == "1", "require an Authorization: Bearer <token> on the operator API (reject anonymous callers). Off by default — the unix socket and tailnet listener are otherwise trusted. Turn on when the daemon is reached by callers that should hold only an attenuated team-auth token.")
@@ -91,7 +96,7 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(log, tcpAddr, tokenAddr, autonomyDial, sshAddr, hostTerminals, requireToken,
+	if err := run(log, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressDial, sshAddr, hostTerminals, requireToken,
 		auditConfig{enabled: audit, reads: auditReads, hmacKeyFile: auditHMACKeyFile}, idleHibernate, wakeNotify, wakeFlush); err != nil {
 		log.Error("dejimad fatal", "err", err)
 		os.Exit(1)
@@ -110,7 +115,7 @@ type auditConfig struct {
 // socket is no longer mounted into containers — this is the only in-island path.
 const defaultTokenAddr = "127.0.0.1:7274"
 
-func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hostTerminals, requireToken bool, audit auditConfig, idleHibernate time.Duration, wakeNotify bool, wakeFlush time.Duration) error {
+func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressDial, sshAddr string, hostTerminals, requireToken bool, audit auditConfig, idleHibernate time.Duration, wakeNotify bool, wakeFlush time.Duration) error {
 	socketPath, err := paths.SocketPath()
 	if err != nil {
 		return err
@@ -215,6 +220,38 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hos
 		log.Info("autonomy enabled", "token_listener", tokenAddr, "container_dials", dial)
 	}
 
+	// Optional island egress proxy (Phase 1, observe-first): when enabled, every
+	// new island routes outbound HTTP(S) through this proxy so destinations are
+	// observable (nothing is blocked yet). Off unless --egress-proxy is set.
+	// Mirrors the token-listener bind/dial split (host-internal bind; islands
+	// dial host.docker.internal).
+	var egressSrv *http.Server
+	var egressLn net.Listener
+	if egressAddr != "" {
+		if err := assertHostInternalBind(log, egressAddr); err != nil {
+			return err
+		}
+		eDial := egressDial
+		if eDial == "" {
+			_, port, splitErr := net.SplitHostPort(egressAddr)
+			if splitErr != nil {
+				return fmt.Errorf("parse egress-proxy addr %q: %w", egressAddr, splitErr)
+			}
+			eDial = "host.docker.internal:" + port
+		}
+		if egressLn, err = net.Listen("tcp", egressAddr); err != nil {
+			return fmt.Errorf("egress-proxy listen %s: %w", egressAddr, err)
+		}
+		defer egressLn.Close()
+		elog := egress.NewLog(256)
+		egressSrv = &http.Server{
+			Handler:           egress.NewProxy(elog, egress.AllowAll{}),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		server.EnableEgress(eDial, elog)
+		log.Info("island egress proxy enabled (observe-only)", "listener", egressAddr, "container_dials", eDial)
+	}
+
 	// Optional SSH-façade: the daemon is the single SSH endpoint for every island
 	// (auth is per-island public key; the username names the island), bridging
 	// into containers via `docker exec`. Unlike the token listener this is meant
@@ -294,6 +331,14 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hos
 		}()
 	}
 
+	// Optional island egress proxy listener.
+	if egressSrv != nil {
+		go func() {
+			log.Info("dejimad listening (egress-proxy)", "addr", egressLn.Addr().String())
+			errCh <- egressSrv.Serve(egressLn)
+		}()
+	}
+
 	// Announce the daemon is up (push signal for headless hosts) and start the
 	// container watchdog that emits container.crashed on unexpected exits.
 	listenModes := []string{"unix"}
@@ -305,6 +350,9 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hos
 	}
 	if sshSrv != nil {
 		listenModes = append(listenModes, "ssh")
+	}
+	if egressSrv != nil {
+		listenModes = append(listenModes, "egress-proxy")
 	}
 	server.EmitDaemonStarted(listenModes)
 	go server.RunWatchdog(ctx, 0)
@@ -320,6 +368,9 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, sshAddr string, hos
 		_ = httpServer.Shutdown(shutdownCtx)
 		if tokenSrv != nil {
 			_ = tokenSrv.Shutdown(shutdownCtx)
+		}
+		if egressSrv != nil {
+			_ = egressSrv.Shutdown(shutdownCtx)
 		}
 		return nil
 	case err := <-errCh:
