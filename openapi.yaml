@@ -287,6 +287,34 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EgressEventsResponse" }
+  /v1/islands/{name}/egress/policy:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: The island's egress policy (Phase 2). Reports the effective default (observe) when none is set.
+      operationId: getEgressPolicy
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressPolicy" }
+    patch:
+      tags: [islands]
+      summary: Set the island's egress policy — mode + add/remove allow/deny hosts (operator-only; ledgered)
+      operationId: patchEgressPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EgressPolicyPatch" }
+      responses:
+        "200":
+          description: OK — the resulting policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressPolicy" }
+        "503": { description: egress proxy not enabled on this daemon }
   /v1/islands/{name}/agents:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -2037,6 +2065,22 @@ components:
         events:
           type: array
           items: { $ref: "#/components/schemas/EgressEvent" }
+    EgressPolicy:
+      type: object
+      description: One island's egress policy. Host matching is exact-or-subdomain (a rule "github.com" covers "api.github.com").
+      properties:
+        mode: { type: string, enum: [observe, enforce], description: "observe = allow all + log (default); enforce = deny-all except allow" }
+        allow: { type: array, items: { type: string }, description: hosts permitted in enforce mode }
+        deny: { type: array, items: { type: string }, description: hosts always blocked (even in observe mode) }
+    EgressPolicyPatch:
+      type: object
+      description: Incremental change to an island's egress policy. Empty mode leaves it unchanged; add/remove lists are applied as sets.
+      properties:
+        mode: { type: string, enum: [observe, enforce] }
+        add_allow: { type: array, items: { type: string } }
+        remove_allow: { type: array, items: { type: string } }
+        add_deny: { type: array, items: { type: string } }
+        remove_deny: { type: array, items: { type: string } }
     PortScopeRequest:
       type: object
       required: [host_path]

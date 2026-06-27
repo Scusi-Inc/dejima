@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -244,12 +245,17 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 		}
 		defer egressLn.Close()
 		elog := egress.NewLog(256)
+		var policyPath string
+		if root, perr := paths.Root(); perr == nil {
+			policyPath = filepath.Join(root, "egress-policy.json")
+		}
+		epolicy := egress.OpenPolicy(policyPath) // persisted per-island allow/deny; default observe (allow-all)
 		egressSrv = &http.Server{
-			Handler:           egress.NewProxy(elog, egress.AllowAll{}),
+			Handler:           egress.NewProxy(elog, epolicy),
 			ReadHeaderTimeout: 10 * time.Second,
 		}
-		server.EnableEgress(eDial, elog)
-		log.Info("island egress proxy enabled (observe-only)", "listener", egressAddr, "container_dials", eDial)
+		server.EnableEgress(eDial, elog, epolicy)
+		log.Info("island egress proxy enabled (observe-first; per-island policy)", "listener", egressAddr, "container_dials", eDial)
 	}
 
 	// Optional SSH-façade: the daemon is the single SSH endpoint for every island
