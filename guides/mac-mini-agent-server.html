@@ -19,6 +19,20 @@
 <link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
 <link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
+{"@type":"ListItem","position":3,"name":"Mac mini agent server","item":"https://dejima.tech/guides/mac-mini-agent-server.html"}]},
+{"@type":"TechArticle","headline":"Turn a Mac mini into an AI agent server in 5 minutes","description":"Run Claude Code, Codex, and OpenClaw on a Mac mini, each sandboxed in its own container, reachable from your laptop over Tailscale. One install command, free and open source.","image":"https://dejima.tech/assets/og-mac-mini.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/mac-mini-agent-server.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Can I run Claude Code on a Mac mini?","acceptedAnswer":{"@type":"Answer","text":"Yes. Install Dejima with one command, point an island at your repo, and add a Claude Code agent. You can run Codex and headless agents like OpenClaw alongside it on the same mini, each contained in its own island, and attach from your laptop over Tailscale."}},
+{"@type":"Question","name":"Will the agents keep running when I close my laptop?","acceptedAnswer":{"@type":"Answer","text":"Yes. The agents run on the Mac mini, not your laptop. Dejima registers a background service that starts at boot, and sessions survive disconnects, so you can close the laptop, switch devices, and reconnect later with the work still going."}},
+{"@type":"Question","name":"Does an old or low-end Mac mini work?","acceptedAnswer":{"@type":"Answer","text":"Yes. An M1 from 2020 is plenty, and older Intel minis work too. Two cores and 4 GB of RAM handle a few agents; add more RAM if you plan to run many at once. Each island has its own Docker volume, so leave some disk free."}}
+]}
+]}
+</script>
 </head>
 <body>
 <main>
@@ -95,6 +109,22 @@ dejima agent add your-project --type openclaw</code></pre>
   </ul>
 
   <p>That's the whole thing. A quiet box in the corner, a fleet of agents that can't wander off it, and one command from your laptop to check in.</p>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>Can I run Claude Code on a Mac mini?</h3>
+      <p>Yes. Install Dejima with one command, point an island at your repo, and add a Claude Code agent. You can run Codex and headless agents like OpenClaw alongside it on the same mini, each contained in its own island, and attach from your laptop over Tailscale.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Will the agents keep running when I close my laptop?</h3>
+      <p>Yes. The agents run on the Mac mini, not your laptop. Dejima registers a background service that starts at boot, and sessions survive disconnects, so you can close the laptop, switch devices, and reconnect later with the work still going.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Does an old or low-end Mac mini work?</h3>
+      <p>Yes. An M1 from 2020 is plenty, and older Intel minis work too. Two cores and 4&nbsp;GB of RAM handle a few agents; add more RAM if you plan to run many at once. Each island has its own Docker volume, so leave some disk free.</p>
+    </div>
+  </div>
 
   <section class="walkthrough">
     <h2>Have an AI walk you through it</h2>

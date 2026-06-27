@@ -19,6 +19,20 @@
 <link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
 <link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
+{"@type":"ListItem","position":3,"name":"Local machine","item":"https://dejima.tech/guides/local-agents.html"}]},
+{"@type":"TechArticle","headline":"Run AI coding agents locally, contained","description":"Run AI coding agents on the laptop or workstation you already use, each walled off from your files, keys, and other projects. Work against local repos, no remote box or cloud needed.","image":"https://dejima.tech/assets/og-local.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/local-agents.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Why run agents in a container on my own machine?","acceptedAnswer":{"@type":"Answer","text":"An agent running loose on your machine can read every repo, your SSH keys, and your shell history, with no record of what it touched. A container walls it off: it sees only its own island, and reaches your files only through folders you grant, read-only, with every crossing logged."}},
+{"@type":"Question","name":"Can an agent mess up my local repo?","acceptedAnswer":{"@type":"Answer","text":"No, if you use dejima init --local-copy. The island gets its own copy of your working tree, so an agent experimenting inside it cannot touch your real checkout. When you like the result, pull it out through git or dejima cp. Your original directory stays as you left it."}},
+{"@type":"Question","name":"Do I need Tailscale to run Dejima locally?","acceptedAnswer":{"@type":"Answer","text":"No. Running on your own machine is all local, so there is no remote box and no Tailscale needed. You just need Docker, which the installer sets up, and the TUI talks to the daemon on localhost. Tailscale only matters when you reach a separate server."}}
+]}
+]}
+</script>
 </head>
 <body>
 <main>
@@ -67,6 +81,22 @@ dejima agent add my-project --type codex</code></pre>
 
   <div class="callout">
     <p><strong>When to graduate to a dedicated box.</strong> Local is great for trying agents and for work you want to keep on your own machine. Once you want them running while your laptop is closed, or you don't want a fleet eating your RAM mid-meeting, move to a <a href="mac-mini-agent-server.html">Mac mini</a>, a <a href="linux-server-agent-server.html">Linux server</a>, or a <a href="cloud-vm-agent-server.html">cloud VM</a>. The commands are identical; only the box changes.</p>
+  </div>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>Why run agents in a container on my own machine?</h3>
+      <p>An agent running loose on your machine can read every repo, your SSH keys, and your shell history, with no record of what it touched. A container walls it off: it sees only its own island, and reaches your files only through folders you grant, read-only, with every crossing logged.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Can an agent mess up my local repo?</h3>
+      <p>No, if you use <code>dejima init --local-copy</code>. The island gets its own copy of your working tree, so an agent experimenting inside it can't touch your real checkout. When you like the result, pull it out through git or <code>dejima cp</code>. Your original directory stays as you left it.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Do I need Tailscale to run Dejima locally?</h3>
+      <p>No. Running on your own machine is all local, so there's no remote box and no Tailscale needed. You just need Docker, which the installer sets up, and the TUI talks to the daemon on localhost. Tailscale only matters when you reach a separate server.</p>
+    </div>
   </div>
 
   <section class="walkthrough">
