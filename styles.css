@@ -215,6 +215,8 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .callout { border: 1px solid var(--border); border-left: 3px solid var(--accent);
   background: var(--code-bg); border-radius: 4px; padding: 0.9rem 1.1rem; margin: 1.6rem 0; }
 .callout p { margin: 0.3rem 0; }
+.walkthrough { margin: 2.6rem 0; }
+.walkthrough > p { color: var(--muted); font-size: 0.95rem; margin: 0.3rem 0 0.9rem; }
 
 /* Guide index hub ---------------------------------------------------- */
 .guide-list { display: grid; grid-template-columns: 1fr; gap: 0.9rem; margin: 1.6rem 0; }

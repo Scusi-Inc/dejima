@@ -88,6 +88,33 @@ DEJIMA_HOST=your-server.your-tailnet.ts.net:7273 dejima connect your-project</co
     <li><code>dejima purge your-project</code> destroys the island and its volumes. Push your work out first.</li>
   </ul>
 
+  <section class="walkthrough">
+    <h2>Have an AI walk you through it</h2>
+    <p>Paste this into your own AI and it'll guide you through the steps, adapted to your setup.</p>
+    <div class="fitcheck">
+      <div class="fit-actions">
+        <button type="button" class="copy-btn" data-copy>Copy prompt</button>
+        <a class="deeplink" data-claude href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+        <a class="deeplink" data-chatgpt href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+        <span class="fit-hint">Opens in your own AI. Nothing is sent to us.</span>
+      </div>
+      <textarea class="fit-prompt" data-prompt rows="12" spellcheck="false" aria-label="Prompt to paste into an AI">I want to set up a Linux server (a VPS or a home box) to run AI coding agents with Dejima, headless, and I'd like you to walk me through it one step at a time.
+
+First, FETCH and read these so your steps match Dejima's own docs rather than your training data:
+- This guide: https://dejima.tech/guides/linux-server-agent-server.html
+- Install and quickstart: https://dejima.tech/quickstart.html
+- Overview: https://dejima.tech/
+
+Then walk me through it:
+- Before any commands, ask what I have: distro and version, whether I have sudo, whether Docker and Tailscale are installed, and which agents I want to run.
+- Go one step at a time and wait for me to confirm each before the next.
+- Don't skip making the daemon survive logout: remind me to run `loginctl enable-linger $USER`, then have me check with `dejima doctor`.
+- Give the exact command for my setup, say what it does, and how to know it worked. If something fails, help me debug it before continuing.
+
+Goal: a headless Linux server running my agents, each contained in its own island, that I reach from my laptop over Tailscale.</textarea>
+    </div>
+  </section>
+
   <section class="post-more">
     <p><a href="../quickstart.html">See the full quickstart →</a></p>
     <p class="small">Other ways to run: <a href="mac-mini-agent-server.html">Mac mini</a> · <a href="cloud-vm-agent-server.html">your own cloud VM</a> · <a href="local-agents.html">your own machine</a> · <a href="index.html">all guides</a></p>
@@ -104,6 +131,7 @@ DEJIMA_HOST=your-server.your-tailnet.ts.net:7273 dejima connect your-project</co
 </footer>
 
 </main>
+<script src="../walkthrough.js" defer></script>
 <script src="../version.js" defer></script>
 </body>
 </html>

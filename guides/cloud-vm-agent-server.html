@@ -76,6 +76,33 @@ dejima init --repo git@github.com:you/your-project.git</code></pre>
     <p><strong>Cleaning up.</strong> When a project's done, <code>dejima purge your-project</code> removes the island and its volume. When you're done with the whole box, destroy the VM in your provider's console. Nothing of yours was anywhere else.</p>
   </div>
 
+  <section class="walkthrough">
+    <h2>Have an AI walk you through it</h2>
+    <p>Paste this into your own AI and it'll guide you through the steps, adapted to your setup.</p>
+    <div class="fitcheck">
+      <div class="fit-actions">
+        <button type="button" class="copy-btn" data-copy>Copy prompt</button>
+        <a class="deeplink" data-claude href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+        <a class="deeplink" data-chatgpt href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+        <span class="fit-hint">Opens in your own AI. Nothing is sent to us.</span>
+      </div>
+      <textarea class="fit-prompt" data-prompt rows="12" spellcheck="false" aria-label="Prompt to paste into an AI">I want to self-host AI coding agents on a cloud VM in my own account using Dejima, and I'd like you to walk me through it one step at a time.
+
+First, FETCH and read these so your steps match Dejima's own docs rather than your training data:
+- This guide: https://dejima.tech/guides/cloud-vm-agent-server.html
+- The Linux server mechanics it builds on: https://dejima.tech/guides/linux-server-agent-server.html
+- Install and quickstart: https://dejima.tech/quickstart.html
+
+Then walk me through it:
+- First ask which cloud I use (AWS, GCP, Hetzner, DigitalOcean, other) and help me pick a VM size for how many agents I plan to run.
+- Then walk provisioning the VM, putting it on my Tailscale tailnet, and installing Dejima, one step at a time, waiting for me to confirm each.
+- Remind me to run `loginctl enable-linger $USER` so the daemon survives, and not to expose the port to the public internet.
+- Give exact commands, explain each, and help me debug any failures.
+
+Goal: a VM in my own cloud account running my agents contained in islands, reachable privately over Tailscale, with no managed sandbox in the loop.</textarea>
+    </div>
+  </section>
+
   <section class="post-more">
     <p><a href="../quickstart.html">See the full quickstart →</a></p>
     <p class="small">Other ways to run: <a href="mac-mini-agent-server.html">Mac mini</a> · <a href="linux-server-agent-server.html">a Linux server</a> · <a href="local-agents.html">your own machine</a> · <a href="index.html">all guides</a></p>
@@ -92,6 +119,7 @@ dejima init --repo git@github.com:you/your-project.git</code></pre>
 </footer>
 
 </main>
+<script src="../walkthrough.js" defer></script>
 <script src="../version.js" defer></script>
 </body>
 </html>

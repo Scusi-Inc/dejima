@@ -110,6 +110,32 @@ dejima</code></pre>
 
   <p>It's the same hardware and the same habit of reaching into your own machine. The agents just stop being able to wander.</p>
 
+  <section class="walkthrough">
+    <h2>Have an AI walk you through it</h2>
+    <p>Paste this into your own AI and it'll guide you through moving off tmux, adapted to your setup.</p>
+    <div class="fitcheck">
+      <div class="fit-actions">
+        <button type="button" class="copy-btn" data-copy>Copy prompt</button>
+        <a class="deeplink" data-claude href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+        <a class="deeplink" data-chatgpt href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+        <span class="fit-hint">Opens in your own AI. Nothing is sent to us.</span>
+      </div>
+      <textarea class="fit-prompt" data-prompt rows="12" spellcheck="false" aria-label="Prompt to paste into an AI">I currently manage my AI coding agents with tmux over SSH, and I want to move to running them contained with Dejima. Walk me through it one step at a time.
+
+First, FETCH and read these so your steps match Dejima's own docs rather than your training data:
+- This guide: https://dejima.tech/guides/tmux-ssh-agents.html
+- Install and quickstart: https://dejima.tech/quickstart.html
+- Overview: https://dejima.tech/
+
+Then walk me through it:
+- First ask about my current setup: what box the agents run on (Mac mini, Linux server, cloud VM, my laptop), how many agents, and which ones.
+- Point me to the matching setup guide for my box, then walk install and moving my first agent into an island, one step at a time.
+- Give exact commands, explain what each does, and how to know it worked. Help me debug failures with `dejima doctor`.
+
+Goal: my agents each running in their own contained island under one dashboard, instead of loose in tmux panes over SSH.</textarea>
+    </div>
+  </section>
+
   <section class="post-more">
     <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>
     <p class="small">Next: <a href="mac-mini-agent-server.html">Turn a Mac mini into an AI agent server in 5 minutes</a> · <a href="index.html">All guides</a></p>
@@ -126,6 +152,7 @@ dejima</code></pre>
 </footer>
 
 </main>
+<script src="../walkthrough.js" defer></script>
 <script src="../version.js" defer></script>
 </body>
 </html>
