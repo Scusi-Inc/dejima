@@ -28,8 +28,8 @@
 {"@type":"TechArticle","headline":"Coder vs Dejima","description":"Coder and Dejima both run AI coding agents on infrastructure you control. Coder is platform-team dev-environment infrastructure with a paid governance tier; Dejima is one command on your own box with free audit and brokered host access.","image":"https://dejima.tech/assets/og-vs-coder.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/compare/coder-vs-dejima.html"},
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Is Coder or Dejima better for a solo developer?","acceptedAnswer":{"@type":"Answer","text":"Dejima, in most cases. Coder is built for platform teams standardizing environments across an org, with governance on a paid tier. Dejima installs with one command on a single box, with audit and brokered host access free and built in, which fits a solo developer or small team better."}},
-{"@type":"Question","name":"Do I need Kubernetes to run Dejima?","acceptedAnswer":{"@type":"Answer","text":"No. Coder provisions workspaces with Terraform templates, often on Kubernetes. Dejima needs none of that. One install command sets up Docker, the background service, and your Tailscale identity, and you are running on a Mac mini, a server, or a cloud VM without a platform team."}},
-{"@type":"Question","name":"Is Coder's audit logging free?","acceptedAnswer":{"@type":"Answer","text":"No. Coder's audit logging, multi-organization access control, and SSO are part of its paid Premium tier. Dejima's tamper-evident audit ledger and role-scoped tokens are free and built into the open-source release, with no paid tier gating the governance features."}}
+{"@type":"Question","name":"Do I need Kubernetes to run Dejima?","acceptedAnswer":{"@type":"Answer","text":"No. Dejima installs with one command that sets up Docker, the background service, and your Tailscale identity. There is no cluster or orchestration to deploy; it runs the same on a Mac mini, a Linux server, or a cloud VM."}},
+{"@type":"Question","name":"Is Coder's audit logging free?","acceptedAnswer":{"@type":"Answer","text":"No. Coder's audit logging and multi-organization access control are part of its paid Premium tier, per Coder's pricing and docs as of June 2026. Dejima's tamper-evident audit ledger and role-scoped tokens are free and built into the open-source release, with no paid tier gating governance."}}
 ]}
 ]}
 </script>
@@ -55,38 +55,37 @@
 <article class="post">
   <p class="post-meta">Comparison · updated June 2026</p>
   <h1 class="post-h">Coder vs Dejima</h1>
-  <p class="lede">Both let you run AI coding agents on hardware you control instead of someone else's cloud. The difference is who they're built for. Coder is dev-environment infrastructure for a platform team standardizing hundreds of engineers. Dejima is one command for a developer who wants a contained fleet on their own box.</p>
+  <p class="lede">Both let you run AI coding agents on hardware you control instead of someone else's cloud. The difference is who they're built for. Coder is enterprise dev-environment infrastructure for a platform team standardizing hundreds of engineers. Dejima is one command for a developer who wants a contained fleet on their own box.</p>
 
   <div class="callout">
-    <p><strong>Short version:</strong> if you're a platform team that already runs Kubernetes and needs enterprise governance across an org, Coder is built for exactly that. If you're a solo developer or a small team who wants agents running on a Mac mini or a single server today, without standing up infrastructure first, that's Dejima.</p>
+    <p><strong>Short version:</strong> if you're a platform team that needs enterprise governance across an org, Coder is built for exactly that. If you're a solo developer or a small team who wants agents running on a Mac mini or a single server today, without standing up infrastructure first, that's Dejima.</p>
   </div>
 
   <h2>What Coder is</h2>
-  <p>Coder is an open-source platform for self-hosted cloud development environments, and as of May 2026 it also runs AI coding agents on that same infrastructure. You describe a workspace with a Terraform template, and Coder provisions it as a Kubernetes pod, a VM, or a Docker container on infrastructure you run. Developers get a consistent environment; their agents run in the same place.</p>
-  <p>It's aimed at the enterprise. The open-source edition covers the developer-facing features, and the governance you'd want at scale, multi-organization access control, audit logging, SSO, lands on the paid Premium tier. That's the right shape for a company rolling out standardized environments and agent access to a large team, with a platform group to run it.</p>
+  <p>Coder is an open-source platform for self-hosted cloud development environments, and as of May 2026 it also runs AI coding agents on that same infrastructure. You define a workspace with a template, and Coder provisions it as a VM or container on infrastructure you run. Developers get a consistent environment, and their agents run in the same place.</p>
+  <p>It's aimed at the enterprise; Coder's own tagline is enterprise AI development infrastructure and governance. The open-source edition covers the developer-facing features, and the governance you'd want at scale, multi-organization access control and audit logging, lands on the paid Premium tier. That's the right shape for a company rolling out standardized environments and agent access to a large team.</p>
 
   <h2>What Dejima is</h2>
   <p>Dejima is a self-hosted runtime for a fleet of coding agents, installed with one command. Each project runs in an island, a container with its own home and credentials, and each agent inside gets its own git worktree. You bring your own agents (Claude Code, Codex, OpenClaw, others) and your own keys. <a href="../index.html">See the overview.</a></p>
-  <p>There's no Terraform and no Kubernetes to stand up. The installer sets up Docker, the background service, and your Tailscale identity, and you're running. The things you'd pay for elsewhere, an audit log and brokered host access, are free and built in.</p>
+  <p>It installs with one command that sets up Docker, the background service, and your Tailscale identity, and you're running in minutes. The things you'd pay for elsewhere, an audit log and brokered host access, are free and built in.</p>
 
   <h2>Side by side</h2>
   <div class="table-scroll">
   <table class="compare">
     <tr><th>What you need</th><th>Dejima</th><th>Coder</th></tr>
-    <tr><td>Up and running without Terraform or Kubernetes</td><td><strong>✓</strong></td><td>✗</td></tr>
     <tr><td>One install command on a Mac mini or single box</td><td><strong>✓</strong></td><td>✗</td></tr>
     <tr><td>Run terminal + headless agents, one dashboard</td><td><strong>✓</strong></td><td>✓</td></tr>
     <tr><td>Audit log of agent and host-file access</td><td><strong>✓</strong></td><td>$ Premium</td></tr>
     <tr><td>Brokered, deny-all access to host files</td><td><strong>✓</strong></td><td>✗</td></tr>
-    <tr><td>Multi-org RBAC, SSO, enterprise governance</td><td>roles + tokens</td><td>$ Premium</td></tr>
+    <tr><td>Org-wide access control and governance</td><td>roles + tokens</td><td>$ Premium</td></tr>
     <tr><td>Standardize environments for hundreds of devs</td><td>~</td><td>✓</td></tr>
     <tr><td>Fully open source, self-host free</td><td><strong>✓</strong></td><td>✓</td></tr>
   </table>
   </div>
-  <p class="small"><strong>$ Premium</strong> = paid tier (contact sales). Coder's developer features are open source; governance is Premium.</p>
+  <p class="small"><strong>$ Premium</strong> = paid tier (contact sales). Coder's developer features are open source; audit logging and multi-organization access control are Premium.</p>
 
   <h2>When Coder is the better choice</h2>
-  <p>Pick Coder if you're the platform team. You're handing standardized, reproducible environments to a large group of engineers, you already run Kubernetes, and you need org-wide RBAC, SSO, and audit with a support contract behind it. Coder is purpose-built for that, and Dejima isn't trying to be.</p>
+  <p>Pick Coder if you're the platform team. You're handing standardized, reproducible environments to a large group of engineers, and you need org-wide access control and audit with a support contract behind it. Coder is purpose-built for that, and Dejima isn't trying to be.</p>
 
   <h2>When Dejima is the better choice</h2>
   <p>Pick Dejima if you're the developer, not the platform team. You want agents working on a box you own without a provisioning project first. You want each agent walled off from your machine and the others, brokered host access that's deny-all by default, and a tamper-evident audit log, without any of it being a paid add-on. And you want to bring whatever agents you like rather than adopt one vendor's.</p>
@@ -99,13 +98,15 @@
     </div>
     <div class="faq-item">
       <h3>Do I need Kubernetes to run Dejima?</h3>
-      <p>No. Coder provisions workspaces with Terraform templates, often on Kubernetes. Dejima needs none of that. One install command sets up Docker, the background service, and your Tailscale identity, and you're running on a Mac mini, a server, or a cloud VM without a platform team.</p>
+      <p>No. Dejima installs with one command that sets up Docker, the background service, and your Tailscale identity. There's no cluster or orchestration to deploy; it runs the same on a Mac mini, a Linux server, or a cloud VM.</p>
     </div>
     <div class="faq-item">
       <h3>Is Coder's audit logging free?</h3>
-      <p>No. Coder's audit logging, multi-organization access control, and SSO are part of its paid Premium tier. Dejima's tamper-evident audit ledger and role-scoped tokens are free and built into the open-source release, with no paid tier gating the governance features.</p>
+      <p>No. Coder's audit logging and multi-organization access control are part of its paid Premium tier, per Coder's pricing and docs as of June 2026. Dejima's tamper-evident audit ledger and role-scoped tokens are free and built into the open-source release, with no paid tier gating governance.</p>
     </div>
   </div>
+
+  <p class="small"><strong>Sources, last verified June 2026:</strong> <a href="https://coder.com/pricing">Coder pricing</a> · <a href="https://coder.com/docs/admin/security/audit-logs">Coder audit logs (Premium)</a>. Competitor details change; <a href="https://github.com/aoos/dejima">tell us</a> if something here is out of date.</p>
 
   <section class="post-more">
     <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>
