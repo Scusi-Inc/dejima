@@ -124,8 +124,9 @@ type Server struct {
 	// zero when the proxy is disabled (the default) — islands then have direct
 	// egress, unchanged. Set via EnableEgress; the listener is owned by
 	// dejimad/main.
-	egressDial string
-	egressLog  *egress.Log
+	egressDial   string
+	egressLog    *egress.Log
+	egressPolicy *egress.PolicyStore // Phase 2: per-island allow/deny policy (operator-set; the proxy enforces it)
 
 	// sshAddr is the SSH-façade listen addr, recorded via EnableSSH purely so
 	// /v1/overview can report it to clients. Empty unless dejimad has --ssh.
@@ -192,13 +193,14 @@ func (s *Server) HostTerminalsEnabled() bool { return s.hostTerminals }
 func (s *Server) EnableAutonomy(dial string) { s.autonomyDial = dial }
 
 // EnableEgress wires the island egress proxy: dial is the host:port islands
-// reach the proxy at (injected as HTTPS_PROXY into new containers), and log is
-// where the proxy records destinations and the read API serves from. Off by
-// default; dejimad/main owns the proxy listener itself. A nil log or empty dial
-// leaves egress unchanged (direct).
-func (s *Server) EnableEgress(dial string, log *egress.Log) {
+// reach the proxy at (injected as HTTPS_PROXY into new containers), log is where
+// the proxy records destinations and the read API serves from, and policy is the
+// per-island allow/deny store the operator mutates via the API (the same store
+// the proxy enforces). Off by default; dejimad/main owns the proxy listener.
+func (s *Server) EnableEgress(dial string, log *egress.Log, policy *egress.PolicyStore) {
 	s.egressDial = dial
 	s.egressLog = log
+	s.egressPolicy = policy
 }
 
 // EnableSSH records the SSH-façade listen addr so clients (the TUI,
@@ -654,6 +656,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/terminals/{id}/session", s.terminalSessionWS)
 	mux.HandleFunc("GET /v1/islands/{name}/events", s.handleIslandEvents)
 	mux.HandleFunc("GET /v1/islands/{name}/egress", s.handleIslandEgress)
+	mux.HandleFunc("GET /v1/islands/{name}/egress/policy", s.handleGetEgressPolicy)
+	mux.HandleFunc("PATCH /v1/islands/{name}/egress/policy", s.handlePatchEgressPolicy)
 	mux.HandleFunc("POST /v1/islands/{name}/exec", s.handleExec)
 	mux.HandleFunc("GET /v1/islands/{name}/files/{path...}", s.handleReadFile)
 	mux.HandleFunc("PUT /v1/islands/{name}/files/{path...}", s.handleWriteFile)

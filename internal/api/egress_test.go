@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +46,7 @@ func TestIslandEgressReadAPI(t *testing.T) {
 	// Enable egress with a log and record events → the API surfaces them for the
 	// right island only.
 	log := egress.NewLog(8)
-	srv.EnableEgress("host.docker.internal:7280", log)
+	srv.EnableEgress("host.docker.internal:7280", log, nil)
 	log.Record(egress.Event{Island: "alpha", Host: "api.anthropic.com", Port: "443", Method: http.MethodConnect, Decision: egress.DecisionAllow, Time: time.Now().UTC()})
 	log.Record(egress.Event{Island: "beta", Host: "elsewhere.example", Port: "443", Decision: egress.DecisionAllow})
 
@@ -78,5 +79,55 @@ func TestEgressProxyEnvInjection(t *testing.T) {
 		if env[k] == "" || !strings.Contains(env[k], "host.docker.internal") || !strings.Contains(env[k], "127.0.0.1") {
 			t.Errorf("%s missing bypass entries: %q", k, env[k])
 		}
+	}
+}
+
+func TestEgressPolicyAPI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ledger.ResetDefault()
+	f := &fakeRuntime{status: runtime.StatusRunning}
+	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	h := srv.Handler()
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"alpha","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: got %d", rr.Code)
+	}
+
+	// PATCH before enable → 503 (proxy not enabled).
+	if rr := do(t, h, http.MethodPatch, "/v1/islands/alpha/egress/policy", `{"mode":"enforce"}`); rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("patch w/o egress enabled: got %d, want 503", rr.Code)
+	}
+
+	srv.EnableEgress("host.docker.internal:7280", egress.NewLog(8), egress.OpenPolicy(filepath.Join(t.TempDir(), "p.json")))
+
+	// GET default → observe (the effective posture, not "").
+	rr := do(t, h, http.MethodGet, "/v1/islands/alpha/egress/policy", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get policy: got %d", rr.Code)
+	}
+	var p egress.IslandPolicy
+	_ = json.Unmarshal(rr.Body.Bytes(), &p)
+	if p.Mode != egress.ModeObserve {
+		t.Fatalf("default mode = %q, want observe", p.Mode)
+	}
+
+	// PATCH: enforce + allow a host.
+	rr = do(t, h, http.MethodPatch, "/v1/islands/alpha/egress/policy",
+		`{"mode":"enforce","add_allow":["github.com"],"add_deny":["evil.com"]}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("patch policy: got %d", rr.Code)
+	}
+	var after egress.IslandPolicy
+	_ = json.Unmarshal(rr.Body.Bytes(), &after)
+	if after.Mode != egress.ModeEnforce || len(after.Allow) != 1 || after.Allow[0] != "github.com" || len(after.Deny) != 1 {
+		t.Fatalf("patch result wrong: %+v", after)
+	}
+
+	// GET reflects the persisted change.
+	rr = do(t, h, http.MethodGet, "/v1/islands/alpha/egress/policy", "")
+	var reread egress.IslandPolicy
+	_ = json.Unmarshal(rr.Body.Bytes(), &reread)
+	if reread.Mode != egress.ModeEnforce || len(reread.Allow) != 1 {
+		t.Fatalf("GET after PATCH wrong: %+v", reread)
 	}
 }
