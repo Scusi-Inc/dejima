@@ -135,7 +135,16 @@ func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("to, to_agent, topic, and action are required"))
 		return
 	}
-	ar := link.ActionRequest{From: from, FromAgent: strings.TrimSpace(req.FromAgent), To: to, ToAgent: toAgent, Topic: topic, Action: action, Tier: link.ClassifyTier(action), Params: req.Params}
+	fromAgent := strings.TrimSpace(req.FromAgent)
+	// Daemon-stamp display labels at request (send) time from each island's
+	// roster — the receiving island can't resolve the sender's roster, and the
+	// send-time label is the correct one to record. Empty when unset → consumers
+	// fall back to the id.
+	ar := link.ActionRequest{
+		From: from, FromAgent: fromAgent, FromLabel: s.agentLabel(from, fromAgent),
+		To: to, ToAgent: toAgent, ToLabel: s.agentLabel(to, toAgent),
+		Topic: topic, Action: action, Tier: link.ClassifyTier(action), Params: req.Params,
+	}
 	grant, allowed, exposed, agentOK, err := s.linkActionGate(ar)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -207,6 +216,25 @@ func (s *Server) linkActionGate(ar link.ActionRequest) (grant link.Grant, allowe
 	return grant, allowed, exposed, agentOK, nil
 }
 
+// agentLabel resolves an agent's display label from its island roster, for
+// daemon-stamped cross-island provenance (a receiving island can't resolve
+// another island's roster — containment). Returns "" when the island/agent is
+// gone or has no label set, so callers degrade to the bare id.
+func (s *Server) agentLabel(island, agentID string) string {
+	if island == "" || agentID == "" {
+		return ""
+	}
+	p, err := project.Load(island)
+	if err != nil {
+		return ""
+	}
+	p.EnsureAgents()
+	if a, ok := p.AgentByID(agentID); ok {
+		return a.Label
+	}
+	return ""
+}
+
 // executeLinkAction delivers the named action into the destination agent's
 // mailbox (typed Action, cross-island Origin) and ledgers link.action. When
 // approvedBy is non-empty it also writes the approval record (who, when).
@@ -217,7 +245,7 @@ func (s *Server) executeLinkAction(ar link.ActionRequest, approvedBy string) {
 			Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "]", Actor: approvedBy, Decision: "allowed",
 		})
 	}
-	s.mailbox.DeliverAction(ar.To, ar.From, ar.FromAgent, ar.ToAgent, ar.Topic, ar.Action, ar.Params)
+	s.mailbox.DeliverAction(ar.To, ar.From, ar.FromAgent, ar.FromLabel, ar.ToAgent, ar.Topic, ar.Action, ar.Params)
 	s.ledgerAppend(ledger.Entry{
 		Type: "link.action", Island: ar.From, Scope: ar.Topic,
 		Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "]", Decision: "allowed",

@@ -14,13 +14,15 @@ import (
 // exposed, never free text.
 type ActionRequest struct {
 	ID        string    `json:"id"`
-	From      string    `json:"from"`           // source island
-	FromAgent string    `json:"from_agent"`     // source agent (self-reported within A)
-	To        string    `json:"to"`             // destination island
-	ToAgent   string    `json:"to_agent"`       // destination agent
-	Topic     string    `json:"topic"`          // the granted channel
-	Action    string    `json:"action"`         // named, typed action exposed by B
-	Tier      Tier      `json:"tier,omitempty"` // risk class (benign/mutating/destructive)
+	From      string    `json:"from"`                 // source island
+	FromAgent string    `json:"from_agent"`           // source agent (self-reported within A)
+	FromLabel string    `json:"from_label,omitempty"` // sender display label, daemon-stamped from A's roster (display-only; falls back to from_agent)
+	To        string    `json:"to"`                   // destination island
+	ToAgent   string    `json:"to_agent"`             // destination agent
+	ToLabel   string    `json:"to_label,omitempty"`   // recipient display label, daemon-stamped from B's roster (display-only; falls back to to_agent)
+	Topic     string    `json:"topic"`                // the granted channel
+	Action    string    `json:"action"`               // named, typed action exposed by B
+	Tier      Tier      `json:"tier,omitempty"`       // risk class (benign/mutating/destructive)
 	Params    string    `json:"params,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }

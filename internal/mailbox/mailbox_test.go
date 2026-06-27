@@ -64,3 +64,34 @@ func TestRingEviction(t *testing.T) {
 		t.Errorf("Latest = %d, want 5", s.Latest("isl"))
 	}
 }
+
+func TestDeliverStampsFromLabelOnOrigin(t *testing.T) {
+	s := NewStore(8)
+
+	// DeliverExternal stamps the sender's display label into Origin.
+	m := s.DeliverExternal("dst", "src", "j2", "frontend", "a1", "ops", "hi")
+	if m.Origin == nil || !m.Origin.CrossIsland {
+		t.Fatal("cross-island Origin not set")
+	}
+	if m.Origin.FromLabel != "frontend" {
+		t.Errorf("from_label = %q, want frontend", m.Origin.FromLabel)
+	}
+	if m.From != "j2" {
+		t.Errorf("from id must remain the addressing handle, got %q", m.From)
+	}
+
+	// An empty label leaves from_label empty (consumer falls back to the id).
+	m2 := s.DeliverExternal("dst", "src", "j2", "", "a1", "ops", "hi")
+	if m2.Origin.FromLabel != "" {
+		t.Errorf("unset label should be empty, got %q", m2.Origin.FromLabel)
+	}
+
+	// DeliverAction stamps it too.
+	ma := s.DeliverAction("dst", "src", "j2", "frontend", "a1", "ops", "deploy", "")
+	if ma.Origin == nil || ma.Origin.FromLabel != "frontend" {
+		t.Errorf("action delivery from_label = %q, want frontend", ma.Origin.FromLabel)
+	}
+	if ma.Action == nil || ma.Action.Type != "deploy" {
+		t.Error("action delivery should still carry the typed Action")
+	}
+}
