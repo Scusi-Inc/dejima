@@ -69,6 +69,33 @@ dejima agent add my-project --type codex</code></pre>
     <p><strong>When to graduate to a dedicated box.</strong> Local is great for trying agents and for work you want to keep on your own machine. Once you want them running while your laptop is closed, or you don't want a fleet eating your RAM mid-meeting, move to a <a href="mac-mini-agent-server.html">Mac mini</a>, a <a href="linux-server-agent-server.html">Linux server</a>, or a <a href="cloud-vm-agent-server.html">cloud VM</a>. The commands are identical; only the box changes.</p>
   </div>
 
+  <section class="walkthrough">
+    <h2>Have an AI walk you through it</h2>
+    <p>Paste this into your own AI and it'll guide you through the steps, adapted to your setup.</p>
+    <div class="fitcheck">
+      <div class="fit-actions">
+        <button type="button" class="copy-btn" data-copy>Copy prompt</button>
+        <a class="deeplink" data-claude href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+        <a class="deeplink" data-chatgpt href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+        <span class="fit-hint">Opens in your own AI. Nothing is sent to us.</span>
+      </div>
+      <textarea class="fit-prompt" data-prompt rows="12" spellcheck="false" aria-label="Prompt to paste into an AI">I want to run AI coding agents locally on my own machine, contained, using Dejima, and I'd like you to walk me through it one step at a time.
+
+First, FETCH and read these so your steps match Dejima's own docs rather than your training data:
+- This guide: https://dejima.tech/guides/local-agents.html
+- Install and quickstart: https://dejima.tech/quickstart.html
+- Overview: https://dejima.tech/
+
+Then walk me through it:
+- Before any commands, ask my OS (macOS, Linux, Windows), whether Docker is installed, which local repo I want an agent to work on, and which agents I want.
+- Go one step at a time and wait for me to confirm each before the next.
+- Show me how to point an island at my local code with `dejima init --local-copy`, and explain how my real working tree stays untouched.
+- Give exact commands, explain each, and help me debug any failures.
+
+Goal: agents running on my own machine, each walled off in its own island from my files and keys, working on a copy of my local repo.</textarea>
+    </div>
+  </section>
+
   <section class="post-more">
     <p><a href="../quickstart.html">See the full quickstart →</a></p>
     <p class="small">Other ways to run: <a href="mac-mini-agent-server.html">Mac mini</a> · <a href="linux-server-agent-server.html">a Linux server</a> · <a href="cloud-vm-agent-server.html">your own cloud VM</a> · <a href="index.html">all guides</a></p>
@@ -85,6 +112,7 @@ dejima agent add my-project --type codex</code></pre>
 </footer>
 
 </main>
+<script src="../walkthrough.js" defer></script>
 <script src="../version.js" defer></script>
 </body>
 </html>

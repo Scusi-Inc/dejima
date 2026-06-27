@@ -46,7 +46,7 @@
   <h2>What you need</h2>
   <ul>
     <li>A Mac mini. An M1 from 2020 is plenty; an old Intel one works too.</li>
-    <li>About ten minutes, most of which is the installer downloading things.</li>
+    <li>About five minutes of your attention. The installer does the slow part, downloading Docker and building the binaries, on its own while you do something else.</li>
     <li>A <a href="https://tailscale.com">Tailscale</a> account, so you can reach the mini from your laptop without opening any ports. Free for personal use.</li>
     <li>API keys for whatever agents you want to run. You bring your own; Dejima never holds them in a cloud.</li>
   </ul>
@@ -96,6 +96,33 @@ dejima agent add your-project --type openclaw</code></pre>
 
   <p>That's the whole thing. A quiet box in the corner, a fleet of agents that can't wander off it, and one command from your laptop to check in.</p>
 
+  <section class="walkthrough">
+    <h2>Have an AI walk you through it</h2>
+    <p>Paste this into your own AI and it'll guide you through the steps, adapted to your setup.</p>
+    <div class="fitcheck">
+      <div class="fit-actions">
+        <button type="button" class="copy-btn" data-copy>Copy prompt</button>
+        <a class="deeplink" data-claude href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+        <a class="deeplink" data-chatgpt href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+        <span class="fit-hint">Opens in your own AI. Nothing is sent to us.</span>
+      </div>
+      <textarea class="fit-prompt" data-prompt rows="12" spellcheck="false" aria-label="Prompt to paste into an AI">I want to set up a Mac mini as an always-on server for AI coding agents using Dejima, and I'd like you to walk me through it one step at a time.
+
+First, FETCH and read these so your steps match Dejima's own docs rather than your training data (which may be stale or about other tools):
+- This guide: https://dejima.tech/guides/mac-mini-agent-server.html
+- Install and quickstart: https://dejima.tech/quickstart.html
+- Overview: https://dejima.tech/
+
+Then walk me through it:
+- Before any commands, ask what I have: Mac model and macOS version, whether Docker Desktop and Tailscale are set up, and which agents I want (Claude Code, Codex, OpenClaw, a shell).
+- Go one step at a time and wait for me to confirm each worked before the next.
+- Give the exact command for my setup, say what it does, and tell me how to know it succeeded.
+- If a step fails, help me debug it (start with `dejima doctor`) before moving on.
+
+Goal: a Mac mini I can leave running, with my agents each contained in their own island, reachable from my laptop over Tailscale.</textarea>
+    </div>
+  </section>
+
   <section class="post-more">
     <p><a href="../quickstart.html">See the full quickstart, including Linux and cloud VMs →</a></p>
     <p class="small">Related: <a href="tmux-ssh-agents.html">You're still SSHing into tmux to run your agents?</a> · <a href="index.html">All guides</a></p>
@@ -112,6 +139,7 @@ dejima agent add your-project --type openclaw</code></pre>
 </footer>
 
 </main>
+<script src="../walkthrough.js" defer></script>
 <script src="../version.js" defer></script>
 </body>
 </html>
