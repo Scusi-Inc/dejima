@@ -10,6 +10,10 @@
 package mailbox
 
 import (
+	"encoding/json"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -59,9 +63,12 @@ type Origin struct {
 	FromLabel string `json:"from_label,omitempty"`
 }
 
-// Store is an in-memory, per-island ring of recent messages. Intra-island
-// coordination is ephemeral by design in Phase 1 — durable mail is a later
-// concern; the ring bounds memory so a chatty island can't grow unbounded.
+// Store is a per-island ring of recent messages. The ring bounds memory so a
+// chatty island can't grow it unbounded. When opened with a path (see Open) the
+// store also persists every append to disk so undelivered messages AND the seq
+// cursor survive a daemon restart — without that, a restart wiped the ring and
+// reset seq to 1, silently dropping unread cross-session coordination (the
+// no-lost-work bar). NewStore keeps the pure in-memory form for tests.
 type Store struct {
 	mu      sync.Mutex
 	seq     int64
@@ -69,14 +76,106 @@ type Store struct {
 	byIsl   map[string][]Message
 	now     func() time.Time // injectable for tests
 	arrival func(m Message)  // optional: fired (async) after each delivery, for wake-on-message
+	path    string           // "" = in-memory only (no persistence)
+	log     *slog.Logger     // optional, for persist warnings
 }
 
-// NewStore returns a store retaining up to maxPerIsland messages per island.
+// NewStore returns an in-memory store retaining up to maxPerIsland messages per
+// island. Nothing is persisted — use Open for a restart-durable store.
 func NewStore(maxPerIsland int) *Store {
 	if maxPerIsland <= 0 {
 		maxPerIsland = 256
 	}
 	return &Store{max: maxPerIsland, byIsl: map[string][]Message{}, now: time.Now}
+}
+
+// persisted is the on-disk shape: the global seq counter plus every island's
+// retained ring. Persisting seq (not just the messages) is what keeps a client's
+// saved `since` cursor valid across a restart.
+type persisted struct {
+	Seq   int64                `json:"seq"`
+	ByIsl map[string][]Message `json:"by_island"`
+}
+
+// Open returns a store backed by path: it loads any previously persisted
+// messages + seq on startup, and persists every append back to path so they
+// survive a daemon restart. A missing file starts empty; a corrupt/unreadable
+// one is logged and started empty (the daemon must still come up). A nil logger
+// is tolerated. maxPerIsland bounds each island's ring as in NewStore.
+func Open(path string, maxPerIsland int, log *slog.Logger) *Store {
+	s := NewStore(maxPerIsland)
+	s.path = path
+	s.log = log
+	s.load()
+	return s
+}
+
+// load reads the persisted state into the store (best-effort).
+func (s *Store) load() {
+	if s.path == "" {
+		return
+	}
+	b, err := os.ReadFile(s.path)
+	if err != nil {
+		if !os.IsNotExist(err) && s.log != nil {
+			s.log.Warn("mailbox: could not read persisted store; starting empty", "path", s.path, "err", err)
+		}
+		return
+	}
+	var ps persisted
+	if err := json.Unmarshal(b, &ps); err != nil {
+		if s.log != nil {
+			s.log.Warn("mailbox: persisted store is corrupt; starting empty", "path", s.path, "err", err)
+		}
+		return
+	}
+	s.seq = ps.Seq
+	if ps.ByIsl != nil {
+		s.byIsl = ps.ByIsl
+	}
+}
+
+// persistLocked writes the store to disk atomically (temp + rename). The caller
+// MUST hold s.mu. A no-op for an in-memory store; best-effort otherwise (a write
+// failure is logged but never breaks the in-memory delivery that already
+// happened).
+func (s *Store) persistLocked() {
+	if s.path == "" {
+		return
+	}
+	b, err := json.MarshalIndent(persisted{Seq: s.seq, ByIsl: s.byIsl}, "", "  ")
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("mailbox: marshal failed; state not persisted", "err", err)
+		}
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".mailbox-*.tmp")
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("mailbox: persist failed", "err", err)
+		}
+		return
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	_ = tmp.Chmod(0o600)
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		if s.log != nil {
+			s.log.Warn("mailbox: persist write failed", "err", err)
+		}
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		if s.log != nil {
+			s.log.Warn("mailbox: persist close failed", "err", err)
+		}
+		return
+	}
+	if err := os.Rename(tmpName, s.path); err != nil && s.log != nil {
+		s.log.Warn("mailbox: persist rename failed", "err", err)
+	}
 }
 
 // SetArrivalHook registers a callback fired (in its own goroutine, so it never
@@ -110,6 +209,7 @@ func (s *Store) Send(island, from, to, topic, payload string) Message {
 		q = q[len(q)-s.max:] // evict oldest
 	}
 	s.byIsl[island] = q
+	s.persistLocked()
 	s.mu.Unlock()
 	s.notify(m)
 	return m
@@ -133,6 +233,7 @@ func (s *Store) DeliverExternal(island, sourceIsland, from, fromLabel, to, topic
 		q = q[len(q)-s.max:]
 	}
 	s.byIsl[island] = q
+	s.persistLocked()
 	s.mu.Unlock()
 	s.notify(m)
 	return m
@@ -156,6 +257,7 @@ func (s *Store) DeliverAction(island, sourceIsland, from, fromLabel, to, topic, 
 		q = q[len(q)-s.max:]
 	}
 	s.byIsl[island] = q
+	s.persistLocked()
 	s.mu.Unlock()
 	s.notify(m)
 	return m

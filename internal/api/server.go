@@ -242,6 +242,22 @@ func (s *Server) volumeSizes(ctx context.Context) map[string]int64 {
 }
 
 // NewServer constructs a server backed by the given runtime.
+// openMailbox returns the intra-island mailbox store, persisted to
+// ~/.dejima/mailbox.json so undelivered messages + the seq cursor survive a
+// daemon restart (self-update, crash, colima resize). If the state dir can't be
+// resolved it degrades to an in-memory store — messaging still works, just not
+// across a restart.
+func openMailbox(log *slog.Logger) *mailbox.Store {
+	root, err := paths.Root()
+	if err != nil {
+		if log != nil {
+			log.Warn("mailbox: no state dir; messages won't survive a daemon restart", "err", err)
+		}
+		return mailbox.NewStore(256)
+	}
+	return mailbox.Open(filepath.Join(root, "mailbox.json"), 256, log)
+}
+
 func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server {
 	s := &Server{
 		rt:          rt,
@@ -249,7 +265,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		locks:       map[string]*sync.Mutex{},
 		presence:    map[string]*presenceTracker{},
 		events:      ev,
-		mailbox:     mailbox.NewStore(256),
+		mailbox:     openMailbox(log),
 		linkQueue:   link.NewQueue(15 * time.Minute),
 		wakeEnabled: true, // default soft-notify on, so it works with no wrapper
 		wakeNudges:  newWakeNotifier(),

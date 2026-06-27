@@ -1,9 +1,66 @@
 package mailbox
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+// TestPersistenceSurvivesRestart is the no-lost-work guarantee: a message sent
+// before a daemon restart is still there after, and the seq cursor is preserved
+// (it does NOT reset to 1), so an agent's saved `since` keeps working. This is
+// the exact failure a3 reported — a restart wiped the ring and reset seq, losing
+// undelivered cross-session coordination.
+func TestPersistenceSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mailbox.json")
+
+	// First daemon lifetime: an intra-island message and a cross-island delivery
+	// (the kind that was actually lost).
+	s1 := Open(path, 8, nil)
+	m1 := s1.Send("isl", "a1", "a2", "", "hello a2")
+	mx := s1.DeliverExternal("isl", "other", "j2", "frontend", "a2", "ops", "cross hi")
+	if m1.Seq != 1 || mx.Seq != 2 {
+		t.Fatalf("seq not as expected: %d, %d", m1.Seq, mx.Seq)
+	}
+
+	// Restart: a brand-new store from the same path (simulates daemon bounce).
+	s2 := Open(path, 8, nil)
+
+	got := s2.Poll("isl", "a2", 0)
+	if len(got) != 2 {
+		t.Fatalf("messages lost across restart: got %d, want 2", len(got))
+	}
+	if got[0].Payload != "hello a2" || got[1].Payload != "cross hi" {
+		t.Errorf("payloads not restored: %+v", got)
+	}
+	// Cross-island provenance must survive too (it's what lets the recipient show
+	// a sender name, and proves the full Message round-tripped).
+	if got[1].Origin == nil || got[1].Origin.SourceIsland != "other" || got[1].Origin.FromLabel != "frontend" {
+		t.Errorf("Origin not restored: %+v", got[1].Origin)
+	}
+
+	// Cursor preserved: the next send continues from seq 2, NOT reset to 1.
+	m3 := s2.Send("isl", "a1", "a2", "", "after restart")
+	if m3.Seq != 3 {
+		t.Fatalf("seq reset across restart: next seq = %d, want 3", m3.Seq)
+	}
+	// An agent that had read up to mx.Seq still only sees the new message.
+	after := s2.Poll("isl", "a2", mx.Seq)
+	if len(after) != 1 || after[0].Payload != "after restart" {
+		t.Fatalf("saved cursor broken across restart: %+v", after)
+	}
+}
+
+// TestInMemoryStoreDoesNotPersist confirms NewStore (no path) writes nothing —
+// the test/ephemeral form is unchanged.
+func TestInMemoryStoreDoesNotPersist(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(8) // no path
+	s.Send("isl", "a1", "a2", "", "ephemeral")
+	if entries, _ := filepath.Glob(filepath.Join(dir, "*")); len(entries) != 0 {
+		t.Errorf("in-memory store should not write files, found %v", entries)
+	}
+}
 
 func TestSendStampsSeqAndTime(t *testing.T) {
 	s := NewStore(8)
