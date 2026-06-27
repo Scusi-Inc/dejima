@@ -29,7 +29,7 @@
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Are Daytona and Dejima the same kind of tool?","acceptedAnswer":{"@type":"Answer","text":"No. Daytona spins up fast, ephemeral sandboxes to execute AI-generated code, driven by an SDK. Dejima runs a persistent fleet of coding agents you attach to and watch, on hardware you own, with a dashboard and audit. One is a code-execution API; the other is where you run your agents."}},
 {"@type":"Question","name":"Can I attach to a running agent in Daytona?","acceptedAnswer":{"@type":"Answer","text":"Not the way you can in Dejima. Daytona sandboxes are ephemeral and SDK-driven, meant to run code and disappear. Dejima sessions are persistent and multi-attach, so you connect to a live agent like Claude Code, watch it work, detach, and reconnect from another device."}},
-{"@type":"Question","name":"Is Daytona free to self-host?","acceptedAnswer":{"@type":"Answer","text":"It is open source under AGPL, so a technical team can self-host it, but the product is a usage-billed managed cloud and supported on-prem is the enterprise tier. Dejima is self-hosted first and free, designed to run on your own Mac mini or server from the start."}}
+{"@type":"Question","name":"Is Daytona free to self-host?","acceptedAnswer":{"@type":"Answer","text":"Not in a maintained way anymore. Daytona moved its core closed-source in June 2026, and the old open-source repository is frozen and unmaintained, so there is no supported self-host path. Dejima is self-hosted first and free, built to run on your own Mac mini or server."}}
 ]}
 ]}
 </script>
@@ -63,7 +63,7 @@
 
   <h2>What Daytona is</h2>
   <p>Daytona is infrastructure for running AI-generated code. A sandbox boots in under 100 milliseconds, with its own kernel, filesystem, and network, and you create and destroy them programmatically from a Python or TypeScript SDK. It's the execution layer you'd reach for when an agent your product runs needs to actually run the code it just wrote.</p>
-  <p>The product is a managed cloud, billed by the second for compute and memory after a free credit. It's open source under AGPL, so a technical team can self-host it, though as of June 2026 core development moved to a private codebase, and supported on-prem deployment is the enterprise path. Daytona raised a $24M Series A in February 2026 to build this out.</p>
+  <p>The product is a managed cloud, billed by the second for compute and memory after a free credit. In June 2026 Daytona moved its core closed-source; the previous open-source repository is frozen and no longer maintained, so self-hosting is no longer a maintained path. Daytona raised a $24M Series A in February 2026.</p>
 
   <h2>What Dejima is</h2>
   <p>Dejima isn't a sandbox API. It's a self-hosted runtime where you run a fleet of coding agents on your own hardware and operate them from one place. <a href="../index.html">See the overview.</a></p>
@@ -77,13 +77,13 @@
     <tr><td>Run Claude Code / Codex as terminal agents</td><td><strong>✓</strong></td><td>✗</td></tr>
     <tr><td>Sub-100ms programmatic sandbox spin-up (SDK)</td><td>~</td><td>✓</td></tr>
     <tr><td>Execute untrusted AI-generated code at scale</td><td>~</td><td>✓</td></tr>
-    <tr><td>Runs on your own Mac mini or server</td><td><strong>✓</strong></td><td>$ enterprise</td></tr>
+    <tr><td>Runs on your own hardware, self-hosted</td><td><strong>✓</strong></td><td>✗ cloud only</td></tr>
     <tr><td>No per-second cloud bill</td><td><strong>✓</strong></td><td>✗ usage-billed</td></tr>
     <tr><td>Brokered deny-all host access + audit ledger</td><td><strong>✓</strong></td><td>✗</td></tr>
     <tr><td>One dashboard for the whole fleet</td><td><strong>✓</strong></td><td>✗</td></tr>
   </table>
   </div>
-  <p class="small"><strong>$ enterprise</strong> = supported on-prem is the enterprise tier; the managed cloud is the default product.</p>
+  <p class="small">Daytona moved its core closed-source in June 2026; the open-source repo is frozen and unmaintained, and the managed cloud is the product.</p>
 
   <h2>When Daytona is the better choice</h2>
   <p>Pick Daytona if code execution is the product. You're building an agent or an app that generates code and has to run it, you want sandboxes that appear and vanish in milliseconds, and you'd rather call an SDK than operate a box. Throughput and isolation of untrusted code are the whole game, and Daytona is built for it. Dejima isn't a code-execution API and won't pretend to be one.</p>
@@ -103,9 +103,11 @@
     </div>
     <div class="faq-item">
       <h3>Is Daytona free to self-host?</h3>
-      <p>It's open source under AGPL, so a technical team can self-host it, but the product is a usage-billed managed cloud and supported on-prem is the enterprise tier. Dejima is self-hosted first and free, designed to run on your own Mac mini or server from the start.</p>
+      <p>Not in a maintained way anymore. Daytona moved its core closed-source in June 2026, and the old open-source repository is frozen and unmaintained, so there's no supported self-host path. Dejima is self-hosted first and free, built to run on your own Mac mini or server.</p>
     </div>
   </div>
+
+  <p class="small"><strong>Sources, last verified June 2026:</strong> <a href="https://www.daytona.io/dotfiles/updates/daytona-is-going-closed-source">Daytona: going closed source</a> · <a href="https://github.com/daytonaio/daytona">daytonaio/daytona (frozen)</a>. Competitor details change; <a href="https://github.com/aoos/dejima">tell us</a> if something here is out of date.</p>
 
   <section class="post-more">
     <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>
