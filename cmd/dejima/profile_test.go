@@ -169,3 +169,42 @@ func TestSwitchProfilePersists(t *testing.T) {
 		t.Fatal("switch to unknown profile should error")
 	}
 }
+
+// End-to-end through the cobra tree: `dejima profile rm` deletes a saved profile
+// (CLI parity with the TUI switcher's [d]) and is the freshness-gate's reference
+// for the subcommand.
+func TestProfileRmCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resetEphemeralFlags(t)
+	if err := clientcfg.Save(clientcfg.Config{
+		Profiles:      []clientcfg.Profile{{Name: "cloud", Host: "100.64.0.9:7273"}},
+		ActiveProfile: "cloud",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	root := newRootCmd()
+	root.SetOut(&out)
+	root.SetArgs([]string{"profile", "rm", "cloud"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("profile rm: %v", err)
+	}
+	cfg, _ := clientcfg.Load()
+	if len(cfg.Profiles) != 0 {
+		t.Fatalf("rm did not delete the profile: %+v", cfg.Profiles)
+	}
+	if cfg.ActiveProfile != "" {
+		t.Fatalf("rm of the active profile should clear active_profile, got %q", cfg.ActiveProfile)
+	}
+	if !strings.Contains(out.String(), "removed profile") {
+		t.Fatalf("rm output missing confirmation:\n%s", out.String())
+	}
+
+	// Removing an unknown profile is a loud error.
+	root = newRootCmd()
+	root.SetArgs([]string{"profile", "rm", "nope"})
+	if err := root.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("rm of an unknown profile should error")
+	}
+}

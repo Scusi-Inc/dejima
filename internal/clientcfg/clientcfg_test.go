@@ -53,6 +53,54 @@ func TestAddProfile(t *testing.T) {
 	}
 }
 
+func TestRemoveProfile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := AddProfile("cloud", "100.64.0.9:7273"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddProfile("work", "work.tailnet:7273"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SwitchProfile("cloud"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Removing the ACTIVE profile clears the active selection (back to local).
+	if err := RemoveProfile("cloud"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := Load()
+	if len(cfg.Profiles) != 1 || cfg.Profiles[0].Name != "work" {
+		t.Fatalf("cloud not removed / work not kept: %+v", cfg.Profiles)
+	}
+	if cfg.ActiveProfile != "" {
+		t.Errorf("active profile should clear when the active one is removed, got %q", cfg.ActiveProfile)
+	}
+
+	// Removing a non-active profile leaves the active selection alone.
+	if err := SwitchProfile("work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddProfile("staging", "stg:7273"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveProfile("staging"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = Load()
+	if cfg.ActiveProfile != "work" {
+		t.Errorf("active profile should be untouched removing a different one, got %q", cfg.ActiveProfile)
+	}
+
+	// Unknown name errors; "local" is reserved.
+	if err := RemoveProfile("nope"); err == nil {
+		t.Error("removing an unknown profile should error")
+	}
+	if err := RemoveProfile("local"); err == nil {
+		t.Error("removing the reserved local target should error")
+	}
+}
+
 func TestActiveHost(t *testing.T) {
 	profiles := []Profile{
 		{Name: "minion", Host: "100.77.85.107:7273"},
