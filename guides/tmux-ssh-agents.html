@@ -19,6 +19,19 @@
 <link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
 <link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
+{"@type":"ListItem","position":3,"name":"tmux + SSH vs a contained fleet","item":"https://dejima.tech/guides/tmux-ssh-agents.html"}]},
+{"@type":"TechArticle","headline":"Why running agents in tmux over SSH breaks down (and the fix)","description":"The tmux + SSH setup for managing AI coding agents works until it doesn't: no isolation, no audit trail, no real fleet view. Here is where it breaks and how to run a contained fleet on the same hardware.","image":"https://dejima.tech/assets/og-tmux-ssh.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/tmux-ssh-agents.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"What is wrong with running agents in tmux over SSH?","acceptedAnswer":{"@type":"Answer","text":"tmux draws a box around a terminal, not around what runs in it. Each agent runs as you, with access to your keys, every repo, and your shell history, and nothing records what it touched. For one agent it is fine; for several it leaves you no isolation and no audit trail."}},
+{"@type":"Question","name":"How do I move from tmux to Dejima?","acceptedAnswer":{"@type":"Answer","text":"Install Dejima on the same box, point an island at your repo, and add your agent. You still own the hardware and reach it the same way, but each agent now runs in a sealed container with brokered host access and a dashboard. The walkthrough prompt on the page guides you through it."}}
+]}
+]}
+</script>
 </head>
 <body>
 <main>
@@ -109,6 +122,18 @@ dejima</code></pre>
   </div>
 
   <p>It's the same hardware and the same habit of reaching into your own machine. The agents just stop being able to wander.</p>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>What's wrong with running agents in tmux over SSH?</h3>
+      <p>tmux draws a box around a terminal, not around what runs in it. Each agent runs as you, with access to your keys, every repo, and your shell history, and nothing records what it touched. For one agent it's fine; for several it leaves you no isolation and no audit trail.</p>
+    </div>
+    <div class="faq-item">
+      <h3>How do I move from tmux to Dejima?</h3>
+      <p>Install Dejima on the same box, point an island at your repo, and add your agent. You still own the hardware and reach it the same way, but each agent now runs in a sealed container with brokered host access and a dashboard. The walkthrough prompt below guides you through it.</p>
+    </div>
+  </div>
 
   <section class="walkthrough">
     <h2>Have an AI walk you through it</h2>

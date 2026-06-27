@@ -218,6 +218,13 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .walkthrough { margin: 2.6rem 0; }
 .walkthrough > p { color: var(--muted); font-size: 0.95rem; margin: 0.3rem 0 0.9rem; }
 
+/* FAQ (visible Q&A, mirrored by FAQPage JSON-LD) --------------------- */
+.faq { margin: 2.6rem 0; }
+.faq-item { border-top: 1px solid var(--border); padding: 1rem 0; }
+.faq-item:last-child { border-bottom: 1px solid var(--border); }
+.faq-item h3 { margin: 0 0 0.4rem; font-size: 1.05rem; color: var(--hover); }
+.faq-item p { margin: 0; color: var(--muted); }
+
 /* Guide index hub ---------------------------------------------------- */
 .guide-list { display: grid; grid-template-columns: 1fr; gap: 0.9rem; margin: 1.6rem 0; }
 .guide-card { border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem 1.3rem;

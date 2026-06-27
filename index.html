@@ -18,6 +18,20 @@
 <link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
 <link rel="stylesheet" href="styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"},
+{"@type":"Organization","name":"Dejima","url":"https://dejima.tech/","logo":"https://dejima.tech/assets/logo.png","sameAs":["https://github.com/aoos/dejima"]},
+{"@type":"SoftwareApplication","name":"Dejima","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","url":"https://dejima.tech/","description":"Free, open-source, self-hosted infrastructure for running a fleet of AI coding agents (Claude Code, Codex, OpenClaw, and more) on hardware you own. Each agent is sandboxed in its own container, with brokered deny-all host access and a tamper-evident audit log.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"sameAs":["https://github.com/aoos/dejima"]},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Is Dejima free?","acceptedAnswer":{"@type":"Answer","text":"Yes. Dejima is free and open source under Apache 2.0. You run it on hardware you already own, so there is no subscription and no per-second usage bill. You bring your own agents and API keys, and pay only your normal LLM provider costs."}},
+{"@type":"Question","name":"Does my code leave my machine?","acceptedAnswer":{"@type":"Answer","text":"No. Your source, your files, and your credentials stay on your own box. The agents' model calls go out to whatever LLM provider you use, but there is no Dejima cloud in the loop and no vendor account holding your work. Auth is your own Tailscale identity."}},
+{"@type":"Question","name":"Which AI coding agents can I run?","acceptedAnswer":{"@type":"Answer","text":"Terminal agents you attach to, like Claude Code, Codex, or a plain shell, and headless runtimes like OpenClaw, Letta, and Hermes, or your own SDK loop. You bring your own API keys and can mix vendors freely across islands."}},
+{"@type":"Question","name":"What hardware do I need?","acceptedAnswer":{"@type":"Answer","text":"A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4 GB of RAM run a few agents comfortably. The same one install command works on all of them."}},
+{"@type":"Question","name":"How is this different from a cloud agent sandbox?","acceptedAnswer":{"@type":"Answer","text":"Services like E2B and Daytona run your agents on their infrastructure and bill by the second. Dejima runs on hardware you own, for free, with persistent sessions you attach to, a dashboard, brokered host access, and an audit log. Your code never leaves your perimeter."}}
+]}
+]}
+</script>
 </head>
 <body>
 <main>
@@ -176,6 +190,30 @@
   </a>
 </div>
 <p class="small"><a href="guides/">All guides →</a></p>
+
+<h2 id="faq">Common questions</h2>
+<div class="faq">
+  <div class="faq-item">
+    <h3>Is Dejima free?</h3>
+    <p>Yes. Dejima is free and open source under Apache 2.0. You run it on hardware you already own, so there's no subscription and no per-second usage bill. You bring your own agents and API keys, and pay only your normal LLM provider costs.</p>
+  </div>
+  <div class="faq-item">
+    <h3>Does my code leave my machine?</h3>
+    <p>No. Your source, your files, and your credentials stay on your own box. The agents' model calls go out to whatever LLM provider you use, but there's no Dejima cloud in the loop and no vendor account holding your work. Auth is your own Tailscale identity.</p>
+  </div>
+  <div class="faq-item">
+    <h3>Which AI coding agents can I run?</h3>
+    <p>Terminal agents you attach to, like Claude Code, Codex, or a plain shell, and headless runtimes like OpenClaw, Letta, and Hermes, or your own SDK loop. You bring your own API keys and can mix vendors freely across islands.</p>
+  </div>
+  <div class="faq-item">
+    <h3>What hardware do I need?</h3>
+    <p>A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4&nbsp;GB of RAM run a few agents comfortably. The same one install command works on all of them.</p>
+  </div>
+  <div class="faq-item">
+    <h3>How is this different from a cloud agent sandbox?</h3>
+    <p>Services like E2B and Daytona run your agents on their infrastructure and bill by the second. Dejima runs on hardware you own, for free, with persistent sessions you attach to, a dashboard, brokered host access, and an audit log. Your code never leaves your perimeter.</p>
+  </div>
+</div>
 
 
 <section class="cta-band">
