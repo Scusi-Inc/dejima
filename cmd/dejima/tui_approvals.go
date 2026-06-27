@@ -281,7 +281,11 @@ func (m tuiModel) renderApprovalsView() string {
 			word = "⚠ " + word
 		}
 		tier := tierStyle(a.Tier).Render(fmt.Sprintf("%-13s", word))
-		route := fmt.Sprintf("%s/%s → %s → %s/%s", a.From, a.FromAgent, styleAccent.Render(a.Action), a.To, a.ToAgent)
+		// Show agent NAMES (labels), not bare ids — the operator's roster resolves
+		// both islands; the id stays the addressing handle elsewhere.
+		route := fmt.Sprintf("%s/%s → %s → %s/%s",
+			a.From, m.agentDisplayIn(a.From, a.FromAgent), styleAccent.Render(a.Action),
+			a.To, m.agentDisplayIn(a.To, a.ToAgent))
 		line := fmt.Sprintf("%s  %s  %s", tier, route, styleMuted.Render(timeAgo(a.CreatedAt)))
 		if m.approvals.focus == focusPending && i == m.approvals.sel {
 			line = styleSelected.Render("▶ " + line)
