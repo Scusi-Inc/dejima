@@ -11,24 +11,22 @@ claimed this passed** — that's what this run is for.
 
 ---
 
-## Batched Minion-session checklist
+## One Minion session — this gate, then the TUI verify pass
 
-Several live checks all need the same thing this gate needs — a real macOS host with a
-running daemon/TUI, which can't exist inside a dev island — so batch them into **one Minion
-session** instead of waiting on each. **Item 1 is the Show HN blocker; 2–5 are lower-priority
-live eyeballs** that are merged + unit-green and only await a human look. Run 1 first; do 2–5
-in the same session while you're on the box.
+This gate and the v0.6.x TUI live-verifies all need the same scarce thing — a real macOS host
+with a running daemon/TUI, which can't exist inside a dev island — so do them in **one Minion
+session**:
 
-| # | Check | Priority | Owner | Where |
-|---|---|---|---|---|
-| 1 | **Clean-Mac install/uninstall/re-adopt gate** | **P0 — launch blocker** | d5 (harness) | this doc, below |
-| 2 | **TUI usage render** (#167) + **name-collision UX** (#168) | P1 | a2 (render) | §Batched live-verifies |
-| 3 | **v0.6.5 wake-on-message** re-check | P1 | a1 (wake) | §Batched live-verifies |
-| 4 | **v0.6.4 tab labels** | P2 | a2 (TUI) | §Batched live-verifies |
-| 5 | **used-counter `link ls`** | P2 | a2 (link) | §Batched live-verifies |
+1. **This doc (P0 — the Show HN blocker):** the clean-Mac install/uninstall/re-adopt gate, below.
+2. **Then, same session:** the consolidated **TUI verify pass** in
+   [`v0.6.8-verify.md`](./v0.6.8-verify.md) — usage render (#167), name-collision UX (#168),
+   wake-on-message, tab titles, used-counter, visual identity (it supersedes
+   `v0.6.1-tui-verify.md`; **ping a2 with results** and a2 relays to the owner). Those are
+   **lower-priority polish eyeballs, not launch gates** — a red there is a bug to file, not a
+   Show HN stop.
 
-Report results back per item (a2/a1 relay 2–5 to d5 for the owner). 2–5 are **not** gates on
-the launch — a red there is a polish bug to file, not a Show HN stop.
+The canonical per-item TUI checklist lives in that doc; this doc stays focused on the install
+gate so the two don't drift.
 
 ---
 
@@ -155,57 +153,6 @@ assertion failure (`✗`) makes the run **red** and the workflow job fail; read 
 When this run is green for all three channels on Minion, flip the §19 launch-gate rows in
 `docs/testing/test-coverage-matrix.md` from `A†` (wired) to verified, and tick the install +
 uninstall-safety rows in `docs/launch-checklist.md`.
-
----
-
-## Batched live-verifies (items 2–5 — same Minion session, after the gate)
-
-All of these are **merged + unit-green**; what's pending is purely the live eyeball in a real
-running TUI/daemon. None gates the launch — file a red as a polish bug. The exact expected
-strings for 3–5 are the listed owner's to confirm; verify against the current TUI build on
-the box (≥ v0.6.7).
-
-### 2 — TUI usage render (#167) + name-collision UX (#168) · owner a2
-
-In a running TUI against a daemon with at least one island + a claude-code agent:
-
-- **Island list row:** an island near its memory cap shows a near-cap flag, e.g. `mem 92% ⚠`
-  (amber ≥ 75%, red ≥ 90%), computed from `stats.memory_{usage,limit}_bytes`. Healthy or
-  stats-absent islands show no flag (no false alarms).
-- **Island detail:** mem + cpu **%-of-limit** (flagged), disk **%-of-cap** from
-  `disk.total_bytes` vs `resources.disk`, and a **health line only** when `oom_killed` /
-  `restart_count > 0` / nonzero exit.
-- **Agent detail:** model + key-health badge (`AuthState`), restarts, last error; and
-  `usage: N tokens (in/out) · $cost (source · age)` for a claude-code agent that **has**
-  reported. A claude-code agent that **hasn't** reported shows `n/a — no usage reported yet`;
-  a **non-reporting adapter type shows nothing** (no faked uniform coverage).
-- **Name-collision (#168):** add or rename an agent to a label already in use (e.g. `build`
-  when one exists) → the TUI surfaces `'build' was taken — named it build-2`. CLI parity:
-  `dejima agent add … --label build` and `dejima agent rename <island> <agent-id> build`
-  print the **assigned** label. Renaming an agent to its own current label is a no-op (not
-  `-2`); empty labels pass through unchanged.
-
-### 3 — v0.6.5 wake-on-message re-check · owner a1
-
-Re-checks the wake chain that the socket→TCP version-skew silently broke. With an agent
-**idle** (heartbeat `waiting-for-input` / `task-complete`), send it a message from another
-session — `dejima msg send --to <agent-id> "<text>"` — and confirm the idle agent's terminal
-gets the batched nudge `📬 N new message(s) — run: dejima msg poll` at the next turn boundary
-(within ~15s flush). Confirms the Notification/Stop hook → `agent-event` → wake nudge path is
-live end-to-end on the current island image (not a stale in-island hook). *(a1: confirm the
-exact nudge string / flush window for this build.)*
-
-### 4 — v0.6.4 tab labels · owner a2
-
-In the TUI, confirm island/agent **tab labels** render correctly — the right names, not
-stale, blank, or duplicated — as you switch tabs and after a rename. *(a2: confirm the exact
-expected labeling for this build before the run.)*
-
-### 5 — used-counter `link ls` · owner a2
-
-After a brokered inter-island exchange, run `dejima link ls` and confirm the per-link
-**used-counter** reflects the exchange (increments as expected, not stuck/blank). *(a2:
-confirm the exact column/expected value for this build.)*
 
 ---
 

@@ -275,6 +275,18 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Event" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/egress:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: The island's recent outbound connections, as observed by the egress proxy (Phase 1, observe-only)
+      operationId: islandEgress
+      responses:
+        "200":
+          description: OK (empty when the egress proxy is disabled or the island hasn't connected out)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressEventsResponse" }
   /v1/islands/{name}/agents:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -2009,6 +2021,22 @@ components:
         agent: { type: string }
         timestamp: { type: string, format: date-time }
         payload: { type: object, additionalProperties: true }
+    EgressEvent:
+      type: object
+      description: One outbound connection from an island observed by the egress proxy. Destination host only (no payload/path) — egress observability is "who did it talk to," not content.
+      properties:
+        island: { type: string }
+        host: { type: string, description: destination hostname }
+        port: { type: string }
+        method: { type: string, description: "\"CONNECT\" (HTTPS tunnel) or the HTTP verb" }
+        decision: { type: string, enum: [allow, deny] }
+        time: { type: string, format: date-time }
+    EgressEventsResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/EgressEvent" }
     PortScopeRequest:
       type: object
       required: [host_path]
