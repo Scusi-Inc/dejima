@@ -2900,6 +2900,25 @@ func agentDisplayName(a api.AgentInfo) string {
 	return a.ID
 }
 
+// agentDisplayIn resolves an agent id to its display name (label, else id)
+// within an island the operator can see — for surfaces that carry a bare id
+// (e.g. the action-gate queue's from_agent/to_agent). Falls back to the id when
+// the island/agent isn't in the local roster. id stays the addressing handle;
+// this is display only.
+func (m tuiModel) agentDisplayIn(island, agentID string) string {
+	if agentID == "" {
+		return ""
+	}
+	if isl, ok := m.islandByName(island); ok {
+		for _, a := range isl.Agents {
+			if a.ID == agentID {
+				return agentDisplayName(a)
+			}
+		}
+	}
+	return agentID
+}
+
 // terminalRowText renders one host-terminal row: terminal glyph, name (label or
 // id), and the muted id handle.
 func terminalRowText(t hostterm.Terminal) string {
