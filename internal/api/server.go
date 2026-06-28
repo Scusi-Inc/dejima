@@ -1070,13 +1070,8 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 	}
 	id := p.NextAgentID()
 	spec := project.AgentSpec{
-		ID:   id,
-		Type: typ,
-		// Dedupe the requested label against existing agents so two agents can't
-		// share a name: "build" → "build-2" if taken. Empty labels pass through
-		// (they're allowed and never deduped). The returned AgentInfo carries the
-		// final assigned label so the CLI/TUI can surface "named it build-2".
-		Label:     p.UniqueAgentLabel(req.Label, ""),
+		ID:        id,
+		Type:      typ,
 		Cmd:       cmd,
 		Tmux:      "agent-" + id,
 		Branch:    "agent/" + id,
@@ -1084,6 +1079,19 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 		Provider:  strings.TrimSpace(req.Provider),
 		Model:     normalizeModel(req.Provider, req.Model),
 		CreatedAt: time.Now().UTC(),
+	}
+	// Assign the agent's label. Root cause of "Dejima shows raw ids everywhere":
+	// agents used to default to a blank label, so every surface fell back to the
+	// bare id. Now an agent always gets a meaningful, unique, non-blank label:
+	//   - no label requested → derive a readable default from the Type
+	//     ("claude-code" → "claude", unknown → "agent"), deduped to "claude-2", …;
+	//   - a label requested → keep it, deduped against existing agents ("build" →
+	//     "build-2" if taken). Empty labels never reach the spec.
+	// The returned AgentInfo carries the final label so the CLI/TUI can surface it.
+	if strings.TrimSpace(req.Label) == "" {
+		spec.Label = p.DefaultAgentLabel(spec, "")
+	} else {
+		spec.Label = p.UniqueAgentLabel(req.Label, "")
 	}
 	// A plain terminal pokes at the island's workspace directly — no isolated
 	// worktree/branch, just a shell on /workspace.
@@ -1871,6 +1879,10 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 			p.AddAgent(spec)
 		}
 	}
+	// Give every agent (primary included) a meaningful, unique default label when
+	// none was provided, so no surface falls back to the bare id. Idempotent and
+	// only touches blank labels, so any seed-provided names above are preserved.
+	p.BackfillAgentLabels()
 	if err := project.EnsureProjectSubdirs(name); err != nil {
 		return p, err
 	}

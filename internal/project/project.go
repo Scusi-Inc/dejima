@@ -263,6 +263,100 @@ func (p *Project) UniqueAgentLabel(desired, excludeID string) string {
 	}
 }
 
+// genericAgentLabelBase is the default readable base used when an agent's Type
+// is empty or yields no nicer name. It's the floor: DefaultAgentLabel never
+// returns blank, so the worst case is "agent", "agent-2", …
+const genericAgentLabelBase = "agent"
+
+// agentLabelBase maps a known agent Type to a short, human-readable label base.
+// It's intentionally small and self-contained (the data layer doesn't depend on
+// the handlers registry) — the goal is a friendly stem like "claude" rather than
+// the wire type "claude-code". A Type with no entry falls back to its own first
+// path/word segment (see agentLabelBaseFor), and a blank/unknown Type to the
+// generic base. Keep these lowercase, alnum, and collision-free with each other.
+var agentLabelBase = map[string]string{
+	"claude-code": "claude",
+	"codex":       "codex",
+	"shell":       "shell",
+	"openclaw":    "openclaw",
+	"letta":       "letta",
+	"hermes":      "hermes",
+	"goose":       "goose",
+	"headless":    "agent",
+}
+
+// agentLabelBaseFor derives a readable label stem from an agent Type without any
+// uniqueness handling. Known types use the curated agentLabelBase; an unknown
+// (custom) type is reduced to a clean lowercase stem of its own string (the part
+// before the first space or '/', alnum/'-' only); anything that reduces to empty
+// falls back to the generic base. Never returns blank.
+func agentLabelBaseFor(agentType string) string {
+	t := strings.ToLower(strings.TrimSpace(agentType))
+	if t == "" {
+		return genericAgentLabelBase
+	}
+	if base, ok := agentLabelBase[t]; ok {
+		return base
+	}
+	// Unknown/custom type (e.g. a bare command run as a generic agent): take the
+	// leading word/path segment and keep it readable.
+	if i := strings.IndexAny(t, " /\t"); i >= 0 {
+		t = t[:i]
+	}
+	var b strings.Builder
+	for _, r := range t {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		}
+	}
+	stem := strings.Trim(b.String(), "-")
+	if stem == "" {
+		return genericAgentLabelBase
+	}
+	return stem
+}
+
+// DefaultAgentLabel derives the unique, non-blank label an agent should get when
+// it is created (or backfilled) WITHOUT an explicit label. It maps the agent's
+// Type to a readable base (e.g. "claude-code" → "claude", unknown → "agent") and
+// runs that base through UniqueAgentLabel so the stored default never collides
+// with an existing agent ("claude", "claude-2", …). It NEVER returns blank.
+// exclude lets a caller ignore one agent (e.g. the one being (re)labeled) when
+// checking for collisions; pass "" at create time.
+func (p *Project) DefaultAgentLabel(spec AgentSpec, excludeID string) string {
+	return p.UniqueAgentLabel(agentLabelBaseFor(spec.Type), excludeID)
+}
+
+// BackfillAgentLabels assigns a derived default label to every agent whose Label
+// is blank (empty or all-whitespace), so islands created before default labels
+// existed get readable names with no manual step. It is:
+//   - idempotent: agents that already have a label are left untouched, so a second
+//     run is a no-op (it never re-derives or appends "-2" to a settled label);
+//   - order-stable: it walks Agents in slice order and derives each label against
+//     the labels already present (including ones it just assigned), so the same
+//     island always yields the same names; and
+//   - collision-safe within the island: two blank "claude-code" agents become
+//     "claude" and "claude-2", never two "claude".
+//
+// It mutates in place and returns whether it changed anything, so callers can
+// persist (Save) only when needed and avoid a write storm on already-backfilled
+// islands.
+func (p *Project) BackfillAgentLabels() (changed bool) {
+	for i := range p.Agents {
+		if strings.TrimSpace(p.Agents[i].Label) != "" {
+			continue
+		}
+		// Derive against the current state of the list (earlier agents already
+		// have labels, later blank ones get theirs on subsequent iterations), so
+		// the result is unique and order-stable. excludeID is the agent's own id so
+		// its (blank) slot doesn't shadow the lookup.
+		p.Agents[i].Label = p.DefaultAgentLabel(p.Agents[i], p.Agents[i].ID)
+		changed = true
+	}
+	return changed
+}
+
 // agentIDPrefix is the per-island letter that leads its agent ids: the first
 // ASCII letter of the island name, lowercased ("Port" → "p"). It is purely a
 // mnemonic — ids are island-scoped and addressed as island/<id>, so two islands
@@ -473,6 +567,16 @@ func Load(name string) (*Project, error) {
 		return nil, fmt.Errorf("unmarshal project %q: %w", name, err)
 	}
 	p.EnsureAgents()
+	// Backfill default labels for agents created before default-labeling existed,
+	// so every surface has a non-blank name to show instead of the bare id. This is
+	// the single load-time choke point every Project flows through; it's idempotent
+	// (a no-op once labels are settled) so steady-state Loads do no extra writes —
+	// we persist only on an actual change, the one time an island is migrated.
+	if p.BackfillAgentLabels() {
+		if err := p.Save(); err != nil {
+			return nil, fmt.Errorf("backfill agent labels for %q: %w", name, err)
+		}
+	}
 	return &p, nil
 }
 
