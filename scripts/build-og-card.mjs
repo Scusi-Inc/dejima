@@ -84,6 +84,18 @@ const CARDS = [
     line2: 'Side by side.',
     sub: 'A primitive you build on, or a tool you just run.',
   },
+  {
+    out: 'og-scope-folder',
+    line1: 'Give an agent access',
+    line2: 'to one folder.',
+    sub: 'Deny-all by default. Grant a single folder, read-only, logged.',
+  },
+  {
+    out: 'og-audit-agent',
+    line1: 'Audit what your',
+    line2: 'agent actually did.',
+    sub: 'A tamper-evident ledger of every file an agent touched.',
+  },
 ]
 
 // Island / harbor motif, bottom-right: concentric arcs (water) + a dome
