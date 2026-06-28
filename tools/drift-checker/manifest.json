@@ -42,7 +42,7 @@
       ],
       "claims": [
         { "id": "e2b-pro-price", "verified": "2026-06", "text": "E2B's Pro tier is about $150/month plus usage." },
-        { "id": "e2b-selfhost-enterprise", "verified": "2026-06", "text": "E2B's supported self-host / on-prem deployment is the Enterprise tier; the default product is a managed cloud." },
+        { "id": "e2b-selfhost-diy", "verified": "2026-06-28", "text": "E2B can be self-hosted DIY in your own cloud from the open-source repo (not enterprise-gated); the default product is the managed cloud. Enterprise adds BYOC/on-prem with support." },
         { "id": "e2b-firecracker", "verified": "2026-06", "text": "E2B sandboxes use Firecracker microVMs." }
       ]
     },
@@ -63,9 +63,9 @@
       "competitor": "Rivet",
       "sources": [
         "https://github.com/rivet-dev/sandbox-agent",
-        "https://rivet.dev/agent-os"
+        "https://github.com/rivet-dev/agentos"
       ],
-      "source_notes": "rivet.dev/agent-os 301-redirects to agentos-sdk.dev (403 to plain fetch) as of 2026-06-28; agentOS may have rebranded. github sandbox-agent repo is the reliable source.",
+      "source_notes": "Renamed ~2026-06: github rivet-dev/agent-os -> rivet-dev/agentos (hyphen dropped); marketing site moved to agentos-sdk.dev (blocks plain crawlers, hence 403). Still Rivet, still Apache-2.0; facts unchanged.",
       "claims": [
         { "id": "rivet-apache-oss", "verified": "2026-06", "text": "Rivet is Apache-2.0 open source and self-hostable." },
         { "id": "rivet-primitive", "verified": "2026-06", "text": "Rivet is a developer primitive (composable building blocks), not a finished run-it product." },
