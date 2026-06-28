@@ -52,12 +52,13 @@ func newMsgSendCmd() *cobra.Command {
 			// live yet, and the roster can be transiently empty), but the daemon
 			// flags it so we warn the sender — to stderr, so it never corrupts the
 			// "sent #N" line a script may parse on stdout. Each roster entry is
-			// rendered with the shared agentDisplay helper, id-first so the sender
-			// sees the handle to re-address with.
+			// rendered with the shared agentDisplay helper, label-first to match
+			// the names-primary house style (#198) everywhere else (ls/ledger);
+			// the id stays visible since it (and the label) both still resolve.
 			if m.UnknownRecipient {
 				roster := make([]string, 0, len(m.Roster))
 				for _, a := range m.Roster {
-					roster = append(roster, agentDisplay(a.ID, a.Label))
+					roster = append(roster, agentDisplay(a.Label, a.ID))
 				}
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"warning: no agent %q in island roster (current: %s) — delivered anyway\n",
