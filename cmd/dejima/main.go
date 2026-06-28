@@ -26,6 +26,7 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/pasteimg"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/reposrc"
@@ -1372,27 +1373,54 @@ func sessionTitle(name, agentID string) string {
 	return name + "/" + agentID
 }
 
-// islandDropHandler returns the drag-drop handler for an island session: it
-// uploads a client-local file (the one the user dropped into the terminal) into
-// the island's paste intake dir and returns the in-island path to inject, so the
-// agent can Read it. Host-terminal sessions (no island) pass nil — no interception.
-func islandDropHandler(ctx context.Context, c *api.Client, island string) func(string) (string, error) {
-	return func(localPath string) (string, error) {
-		f, err := os.Open(localPath)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
-		dest := fmt.Sprintf("%s/drop-%d-%s", pasteIntakeDir, time.Now().UnixNano(), filepath.Base(localPath))
-		if err := c.WriteFile(ctx, island, dest, f); err != nil {
-			return "", err
-		}
-		return dest, nil
+// sessionPaste bundles the two client→agent image bridges for an island session:
+// drag-drop (a dropped local file) and clipboard paste (Ctrl-V/Alt-V image). Both
+// upload into the island and return the in-island path the session injects. nil
+// (host-terminal sessions, no island) disables interception entirely.
+type sessionPaste struct {
+	// drop uploads a dropped client-local file; returns the in-island path.
+	drop func(localPath string) (islandPath string, err error)
+	// clip captures the OS clipboard image and uploads it; ok=false when there's
+	// no image (so the keystroke is forwarded to the agent unchanged).
+	clip func() (islandPath string, ok bool, err error)
+}
+
+// islandPaste builds the drag-drop + clipboard handlers for an island session,
+// both uploading into the island's paste intake dir (agent-readable via the
+// write path). Host-terminal sessions pass nil instead.
+func islandPaste(ctx context.Context, c *api.Client, island string) *sessionPaste {
+	return &sessionPaste{
+		drop: func(localPath string) (string, error) {
+			f, err := os.Open(localPath)
+			if err != nil {
+				return "", err
+			}
+			defer f.Close()
+			dest := fmt.Sprintf("%s/drop-%d-%s", pasteIntakeDir, time.Now().UnixNano(), filepath.Base(localPath))
+			if err := c.WriteFile(ctx, island, dest, f); err != nil {
+				return "", err
+			}
+			return dest, nil
+		},
+		clip: func() (string, bool, error) {
+			img, err := pasteimg.Capture()
+			if errors.Is(err, pasteimg.ErrNoImage) || errors.Is(err, pasteimg.ErrUnsupported) {
+				return "", false, nil // no image / can't capture → forward the keystroke
+			}
+			if err != nil {
+				return "", false, err
+			}
+			dest := fmt.Sprintf("%s/clip-%d.%s", pasteIntakeDir, time.Now().UnixNano(), img.Ext)
+			if err := c.WriteFile(ctx, island, dest, bytes.NewReader(img.Bytes)); err != nil {
+				return "", false, err
+			}
+			return dest, true, nil
+		},
 	}
 }
 
 func runSession(ctx context.Context, c *api.Client, name, agentID, label string) error {
-	return runSessionLoop(ctx, false, sessionTitle(name, agentID), islandDropHandler(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, false, sessionTitle(name, agentID), islandPaste(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialAgentSession(ctx, name, agentID, label)
 	})
 }
@@ -1400,14 +1428,14 @@ func runSession(ctx context.Context, c *api.Client, name, agentID, label string)
 // runSessionSummonable is runSession with the summon chord (Ctrl-\) enabled — used
 // when the attach was launched from the TUI, so the chord can return there.
 func runSessionSummonable(ctx context.Context, c *api.Client, name, agentID, label string) error {
-	return runSessionLoop(ctx, true, sessionTitle(name, agentID), islandDropHandler(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, true, sessionTitle(name, agentID), islandPaste(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialAgentSession(ctx, name, agentID, label)
 	})
 }
 
 // runTerminalSession attaches the local terminal to a host terminal's session.
-// summonable enables the summon chord (true when launched from the TUI). No drop
-// handler — a host terminal isn't an island, so there's nowhere to upload.
+// summonable enables the summon chord (true when launched from the TUI). No paste
+// bridge — a host terminal isn't an island, so there's nowhere to upload.
 func runTerminalSession(ctx context.Context, c *api.Client, id, label string, summonable bool) error {
 	return runSessionLoop(ctx, summonable, "host: "+id, nil, func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialTerminalSession(ctx, id, label)
@@ -1418,7 +1446,7 @@ func runTerminalSession(ctx context.Context, c *api.Client, id, label string, su
 // a contained bash session at /workspace inside the container. summonable=true
 // when launched from the TUI so the Ctrl-\ chord returns to the dashboard.
 func runInShellSession(ctx context.Context, c *api.Client, name, label string, summonable bool) error {
-	return runSessionLoop(ctx, summonable, name+" — shell", islandDropHandler(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, summonable, name+" — shell", islandPaste(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialIslandShell(ctx, name, label)
 	})
 }
@@ -1481,7 +1509,7 @@ func classifySessionClose(err error, ctx context.Context) sessReason {
 // so a daemon restart, the host sleeping, or a network blip no longer closes the
 // terminal out from under you when you next type. Stdin is read by one long-lived
 // goroutine that outlives individual connections; raw mode is entered once.
-func runSessionLoop(ctx context.Context, summonable bool, title string, dropHandler func(localPath string) (islandPath string, err error), dial func(context.Context) (*websocket.Conn, error)) error {
+func runSessionLoop(ctx context.Context, summonable bool, title string, paste *sessionPaste, dial func(context.Context) (*websocket.Conn, error)) error {
 	// The first dial surfaces real errors (auth, no such island/agent) directly —
 	// no reconnect spinner on a connect that was never going to work.
 	conn, err := dial(ctx)
@@ -1541,7 +1569,7 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, dropHand
 	}()
 
 	for {
-		switch runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone, summonable, dropHandler) {
+		switch runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone, summonable, paste) {
 		case sessReconnect:
 			// fall through to the reconnect path below
 		case sessExitSummon:
@@ -1610,18 +1638,22 @@ func reconnectSession(ctx context.Context, dial func(context.Context) (*websocke
 // runOneSessionConn pumps one connection until it ends, returning why. The
 // websocket is closed on return; stdin/resize are owned by the caller's
 // long-lived reader, so a reconnect resumes without re-reading the terminal.
-func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}, summonable bool, dropHandler func(localPath string) (islandPath string, err error)) sessReason {
+func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}, summonable bool, bridge *sessionPaste) sessReason {
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	// Drag-drop bridge (P2a): when this is an island session on a real terminal,
-	// watch the keystroke stream for a dropped local file (a bracketed paste that
-	// is an existing client-local path) → upload it + inject the in-island path so
-	// the agent can Read it. Everything else passes through byte-exact. nil handler
-	// / non-TTY → no interception at all.
-	interceptDrops := dropHandler != nil && term.IsTerminal(stdinFd)
+	// Image bridge: when this is an island session on a real terminal, watch the
+	// keystroke stream for (P2a) a drag-dropped local file — a bracketed paste of
+	// an existing client-local path — and (P2b) a Ctrl-V/Alt-V clipboard image, and
+	// in either case upload + inject the in-island path so the agent can Read it.
+	// Everything else passes through BYTE-EXACT. nil bridge (host terminal) / non-
+	// TTY → no interception at all.
+	intercept := bridge != nil && term.IsTerminal(stdinFd)
 	var paste pasteScanner
+	if intercept {
+		paste.triggers = configuredPasteTriggers()
+	}
 
 	// Re-send the size on (re)attach so tmux opens/resumes at the right dimensions.
 	if rows, cols, err := terminalSize(stdinFd); err == nil {
@@ -1673,20 +1705,40 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 			// keystrokes before it, then end the session with sessExitSummon. The
 			// deferred NormalClosure detaches cleanly — the tmux session lives on.
 			before, summon := splitOnSummon(b, summonable)
-			// Intercept a dropped local file: upload it and inject the in-island
-			// path, swallowing the dropped path text. Byte-exact for everything else.
-			if interceptDrops {
-				before = paste.process(before, func(localPath string) {
-					islandPath, err := dropHandler(localPath)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "\r\n[dejima] couldn't upload %s: %v\r\n", localPath, err)
-						return
-					}
+			// Intercept a dropped local file (P2a) or a Ctrl-V/Alt-V clipboard image
+			// (P2b): upload it and inject the in-island path. Byte-exact otherwise.
+			if intercept {
+				inject := func(islandPath string) {
 					// Inject the in-island path as if typed (no Enter) so the agent
 					// reads it and the user can add context before submitting.
 					_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode([]byte(islandPath))})
-					fmt.Fprintf(os.Stderr, "\r\n[dejima] uploaded → %s\r\n", islandPath)
-				})
+				}
+				before = paste.process(before,
+					func(localPath string) { // drag-drop
+						islandPath, err := bridge.drop(localPath)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "\r\n[dejima] couldn't upload %s: %v\r\n", localPath, err)
+							return
+						}
+						inject(islandPath)
+						fmt.Fprintf(os.Stderr, "\r\n[dejima] uploaded → %s\r\n", islandPath)
+					},
+					func() bool { // Ctrl-V / Alt-V clipboard image
+						if bridge.clip == nil {
+							return false
+						}
+						islandPath, ok, err := bridge.clip()
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "\r\n[dejima] clipboard paste failed: %v\r\n", err)
+							return false // forward the keystroke
+						}
+						if !ok {
+							return false // no image on the clipboard → forward the keystroke
+						}
+						inject(islandPath)
+						fmt.Fprintf(os.Stderr, "\r\n[dejima] pasted image → %s\r\n", islandPath)
+						return true
+					})
 			}
 			if len(before) > 0 {
 				_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(before)})

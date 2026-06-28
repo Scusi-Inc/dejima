@@ -18,68 +18,97 @@ const (
 // text paste, so we stop trying to detect and pass it straight through.
 const maxPasteScan = 8192
 
-// pasteScanner sits on the session's raw stdin stream and detects a drag-dropped
-// LOCAL file — delivered by the terminal as a bracketed paste whose content is a
-// single existing client-local file path. On detection it surfaces the path (via
-// the onDrop callback in process) and SWALLOWS the paste, so the caller can
-// upload the file and inject the in-island path instead. Everything else passes
-// through BYTE-EXACT: this is on the keystroke path, so a non-drop must never be
-// altered. State is carried across process() calls (a paste can span reads).
+// Paste-key trigger byte sequences: Ctrl-V (0x16) and Alt-V (ESC v). These are
+// app-level keystrokes — the only way to bring a clipboard IMAGE in, since the
+// remote agent can't see the client's clipboard and no terminal escape carries
+// an image.
+var (
+	keyCtrlV = []byte{0x16}
+	keyAltV  = []byte{0x1b, 'v'}
+)
+
+const (
+	markerNone = iota
+	markerPaste
+	markerTrigger
+)
+
+// pasteScanner sits on the session's raw stdin stream and bridges two things the
+// remote agent can't otherwise receive: a drag-dropped LOCAL file (delivered as a
+// bracketed paste of its path) and a clipboard IMAGE (the Ctrl-V/Alt-V keystroke).
+// On detection it surfaces them via callbacks and SWALLOWS the bytes, so the
+// caller can upload + inject the in-island path. Everything else passes through
+// BYTE-EXACT: this is on the keystroke path, so a non-match must never be altered.
+// State is carried across process() calls (a paste can span reads).
 type pasteScanner struct {
-	inPaste bool
-	buf     []byte // content buffered while inside a (possible) bracketed paste
+	inPaste  bool
+	buf      []byte   // content buffered while inside a (possible) bracketed paste
+	triggers [][]byte // configured paste-key sequences; empty = no key interception
 }
 
 // process feeds raw stdin bytes through the scanner. It returns the bytes to
-// forward to the agent (byte-exact for everything that isn't a swallowed file
-// drop) and calls onDrop(localPath) for each detected dropped local file. Bytes
-// that belong to an incomplete sequence are held internally and emitted later.
-func (s *pasteScanner) process(in []byte, onDrop func(localPath string)) []byte {
+// forward to the agent (byte-exact for everything not bridged) and:
+//   - calls onDrop(localPath) for a detected dropped local file (swallowed);
+//   - calls onPasteKey() on a Ctrl-V/Alt-V trigger — if it returns true (an image
+//     was pasted) the keystroke is swallowed, else it's forwarded unchanged.
+//
+// Either callback may be nil. Bytes belonging to an incomplete sequence are held
+// internally and emitted later.
+func (s *pasteScanner) process(in []byte, onDrop func(localPath string), onPasteKey func() (handled bool)) []byte {
 	data := append(s.buf, in...)
 	s.buf = nil
 	var out []byte
 
 	for len(data) > 0 {
 		if !s.inPaste {
-			i := indexOf(data, bpStart)
-			if i < 0 {
-				// No start marker. Forward everything except a trailing run that
-				// could be the beginning of a split bpStart (hold it for next call).
-				keep := splitPartialSuffix(data, bpStart)
+			idx, kind, mlen := s.earliest(data)
+			if kind == markerNone {
+				// Forward everything except a trailing run (len ≥ 2) that could be
+				// the start of a split marker; hold that for the next call. The ≥2
+				// floor means a lone trailing ESC is forwarded immediately (never
+				// held), so pressing Escape isn't delayed.
+				keep := s.holdback(data)
 				out = append(out, data[:len(data)-keep]...)
 				s.buf = append(s.buf, data[len(data)-keep:]...)
 				return out
 			}
-			// Forward bytes before the marker verbatim; consume the marker.
-			out = append(out, data[:i]...)
-			data = data[i+len(bpStart):]
-			s.inPaste = true
+			out = append(out, data[:idx]...)
+			seg := data[idx : idx+mlen]
+			data = data[idx+mlen:]
+			if kind == markerPaste {
+				s.inPaste = true
+				continue
+			}
+			// kind == markerTrigger: a Ctrl-V/Alt-V keystroke.
+			handled := false
+			if onPasteKey != nil {
+				handled = onPasteKey()
+			}
+			if !handled {
+				out = append(out, seg...) // forward the keystroke unchanged
+			}
 			continue
 		}
 
-		// Inside a paste: look for the end marker.
+		// Inside a bracketed paste: look for the end marker.
 		j := indexOf(data, bpEnd)
 		if j < 0 {
-			// Incomplete. If it's already too big or multi-line, it's not a single
-			// path — abort detection: re-emit the start marker + what we have and
-			// fall back to verbatim passthrough (the eventual end marker just flows
-			// through as ordinary bytes), keeping output byte-exact.
+			// Incomplete. Too big or multi-line → not a single path; abort detection,
+			// re-emit the start marker + content and fall back to verbatim (the end
+			// marker later flows through as ordinary bytes), keeping output byte-exact.
 			if len(data) > maxPasteScan || hasNewline(data) {
 				out = append(out, []byte(bpStart)...)
 				out = append(out, data...)
 				s.inPaste = false
 				return out
 			}
-			// Hold the content (it may be a path still arriving). Also avoid
-			// splitting a trailing partial bpEnd — keep it all buffered.
-			s.buf = append(s.buf, data...)
+			s.buf = append(s.buf, data...) // hold; the path may still be arriving
 			return out
 		}
-
 		content := data[:j]
 		data = data[j+len(bpEnd):]
 		s.inPaste = false
-		if path, ok := droppedLocalFile(content); ok {
+		if path, ok := droppedLocalFile(content); ok && onDrop != nil {
 			onDrop(path) // swallow the paste; caller uploads + injects the island path
 			continue
 		}
@@ -89,6 +118,46 @@ func (s *pasteScanner) process(in []byte, onDrop func(localPath string)) []byte 
 		out = append(out, []byte(bpEnd)...)
 	}
 	return out
+}
+
+// earliest returns the first index in data of either bpStart (markerPaste) or any
+// configured trigger (markerTrigger), with that marker's length. kind=markerNone
+// when none is present.
+func (s *pasteScanner) earliest(data []byte) (idx, kind, mlen int) {
+	best, bestKind, bestLen := -1, markerNone, 0
+	if i := indexOf(data, bpStart); i >= 0 {
+		best, bestKind, bestLen = i, markerPaste, len(bpStart)
+	}
+	for _, t := range s.triggers {
+		if i := indexOfBytes(data, t); i >= 0 && (best < 0 || i < best) {
+			best, bestKind, bestLen = i, markerTrigger, len(t)
+		}
+	}
+	return best, bestKind, bestLen
+}
+
+// holdback returns how many trailing bytes of data form a partial (length ≥ 2)
+// prefix of bpStart or any trigger — bytes to hold so a marker split across reads
+// isn't missed. The ≥2 floor deliberately never holds a lone byte (e.g. a lone
+// trailing ESC), trading a (rare) missed split for not delaying single keystrokes.
+func (s *pasteScanner) holdback(data []byte) int {
+	markers := append([][]byte{[]byte(bpStart)}, s.triggers...)
+	keep := 0
+	for _, m := range markers {
+		hi := len(m) - 1
+		if hi > len(data) {
+			hi = len(data)
+		}
+		for n := hi; n >= 2; n-- {
+			if string(data[len(data)-n:]) == string(m[:n]) {
+				if n > keep {
+					keep = n
+				}
+				break
+			}
+		}
+	}
+	return keep
 }
 
 // droppedLocalFile reports whether content is a single existing client-local
@@ -111,23 +180,23 @@ func droppedLocalFile(content []byte) (string, bool) {
 	return p, true
 }
 
-// indexOf returns the first index of sub in b, or -1.
 func indexOf(b []byte, sub string) int { return strings.Index(string(b), sub) }
+func indexOfBytes(b, sub []byte) int   { return strings.Index(string(b), string(sub)) }
+func hasNewline(b []byte) bool         { return strings.ContainsAny(string(b), "\n\r") }
 
-func hasNewline(b []byte) bool { return strings.ContainsAny(string(b), "\n\r") }
-
-// splitPartialSuffix returns how many trailing bytes of b form a (non-full)
-// prefix of marker — bytes to hold back so a marker split across reads isn't
-// missed. 0 when no trailing prefix.
-func splitPartialSuffix(b []byte, marker string) int {
-	max := len(marker) - 1
-	if max > len(b) {
-		max = len(b)
+// configuredPasteTriggers selects which paste-key(s) the session intercepts for a
+// clipboard image, via DEJIMA_PASTE_KEY: "ctrl-v", "alt-v", "off"/"none", or
+// "both" (default). The operator may not know which key their agent uses, so both
+// are on by default; "off" disables clipboard-image interception entirely.
+func configuredPasteTriggers() [][]byte {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEJIMA_PASTE_KEY"))) {
+	case "off", "none":
+		return nil
+	case "ctrl-v", "ctrl+v", "c-v":
+		return [][]byte{keyCtrlV}
+	case "alt-v", "alt+v", "m-v":
+		return [][]byte{keyAltV}
+	default:
+		return [][]byte{keyCtrlV, keyAltV}
 	}
-	for n := max; n > 0; n-- {
-		if string(b[len(b)-n:]) == marker[:n] {
-			return n
-		}
-	}
-	return 0
 }
