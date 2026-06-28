@@ -260,7 +260,7 @@ git -C <dejima checkout> worktree prune
 These shipped to `master` with unit/security review but can't be exercised from the
 build island (no live Docker/macOS host here). Run them on Minion and feed findings back.
 
-- [ ] **TUI verify pass v0.6.1 → v0.6.8 (consolidated)** → [`operator-tests/v0.6.8-verify.md`](operator-tests/v0.6.8-verify.md).
+- [ ] **TUI verify pass v0.6.1 → v0.6.9 (consolidated)** → [`operator-tests/v0.6.9-verify.md`](operator-tests/v0.6.9-verify.md).
   One eyeball pass covering agents-by-name, usage signals + near-cap flags, the
   name-collision notice, wake-on-message, tab titles, visual-identity/keys, and
   the `used`-counter `link ls` question. Ping a2 with results (a2 relays to
