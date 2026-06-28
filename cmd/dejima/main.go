@@ -223,6 +223,7 @@ func newRootCmd() *cobra.Command {
 		newCapCmd(),
 		newLinkCmd(),
 		newPolicyCmd(),
+		newEgressCmd(),
 		newMCPCmd(),
 		newAuditCmd(),
 		newActivityCmd(),
