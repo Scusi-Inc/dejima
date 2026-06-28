@@ -137,6 +137,17 @@ roadmap items above and below stay here.*
   today; "approve before this agent calls out" is a plausible future governance ask. Out of
   scope now; fold into the unified grant+gate model if pursued.
 
+### Later — lifecycle / session continuity
+- [ ] **Resume the agent session on wake (don't cold-start).** Today hibernate stops the
+  container, killing the tmux server + agent process; only the workspace volume persists, so
+  wake recreates the container and `start.sh` launches a **fresh** agent — the workspace
+  resumes but the live agent's conversation/context is lost. Fix = a **per-adapter
+  resume-on-wake seam**: on wake, restart terminal agents with their resume flag (Claude Code
+  `--continue`/`--resume`, Codex equivalent) so the agent reattaches its prior context (new
+  tmux is fine). Pragmatic over `docker pause` (doesn't free RAM) / CRIU (fragile). Matters
+  for interactive/terminal agents; headless/stateless agents are fine cold-starting. Pairs
+  with the daemon scheduled-wake primitive.
+
 ---
 
 ## v1 (current — dogfood phase)
