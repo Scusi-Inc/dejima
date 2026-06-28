@@ -1,6 +1,6 @@
 # Dejima Roadmap
 
-**Last updated:** 2026-06-20
+**Last updated:** 2026-06-28
 
 This is the living roadmap for Dejima. Items are grouped by phase and sized roughly. Status legend: `[x]` = built, `[~]` = in progress, `[ ]` = pending.
 
@@ -68,6 +68,14 @@ The things only you can do (on Minion / as owner), in priority order:
 5. **SDK publish:** claim the `dejima` name on **PyPI** + **npm**, add repo secrets
    `PYPI_API_TOKEN` / `NPM_TOKEN`, then push a `v*` tag (or `workflow_dispatch`).
 6. **Housekeeping:** remove the stray `.agents/d7` worktree (see Housekeeping below).
+7. **Stand up the competitive drift-checker watchtower** (when you want it live — it's
+   built, but agents can't self-spawn). Create the island + agent and grant scoped access:
+   `dejima home create --island watchtower` · `dejima agent add watchtower --type claude-code`
+   · grant a per-island GitHub identity (site repo only), an LLM provider key, and an egress
+   allow-list (the cited competitor domains + github.com). It then self-schedules a monthly
+   drift-check that opens **draft** PRs for a3 to verify. Tooling: `tools/drift-checker/`;
+   design: [`drift-checker-design.md`](drift-checker-design.md). Dry run already validated it
+   (caught a real E2B drift + a Rivet rename, both since fixed).
 
 *(✅ Done this session — the test-harness operator setup: a dedicated macOS `dejimaqa` user,
 a caged self-hosted runner, its own colima Docker, the bot GitHub account +
@@ -200,6 +208,15 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   Code, which is for coding). The enabling new primitive is a **scheduler** (cron-wake
   islands, the time-driven twin of wake-on-message); actions route through Lane 5's
   action-delegation gate. Design + phasing: [`ambient-agents-design.md`](ambient-agents-design.md).
+  **First built instance:** the competitive **drift-checker watchtower** (`tools/drift-checker/`),
+  a self-scheduling Claude Code agent that re-verifies the comparison pages' cited facts and
+  opens **draft** PRs on drift (design: [`drift-checker-design.md`](drift-checker-design.md)).
+  It validates the pattern today by self-re-arming a short harness wakeup (the harness cron
+  expires ~7d and `ScheduleWakeup` is clamped ≤1h, so it re-arms each cycle). The durable
+  **scheduler primitive** it wants — daemon-level `dejima wake --at/--every`, symmetric to
+  idle-hibernate and covering headless agents too — is spec'd in
+  [`scheduled-wake-spec.md`](scheduled-wake-spec.md) (filed with backend); once it lands the
+  watchtower hibernates between runs instead of staying resident.
 - **Randomized soak / combination "backbone"** — the stress layer above the deterministic
   full-feature suite: run *valid* lifecycle/agent/Port/link op-sequences in random orders +
   combinations, repeatedly, with invariant checks after each (no orphan containers/worktrees,
