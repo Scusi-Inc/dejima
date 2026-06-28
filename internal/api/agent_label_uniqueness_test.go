@@ -49,9 +49,15 @@ func TestAddAgentDedupesLabel(t *testing.T) {
 	if a := add("frontend"); a.Label != "frontend" {
 		t.Errorf("add frontend (free) → label %q, want frontend", a.Label)
 	}
-	// An empty label stays empty (empty labels are allowed, never deduped).
-	if a := add(""); a.Label != "" {
-		t.Errorf("add empty → label %q, want empty", a.Label)
+	// An OMITTED label no longer stays blank: the daemon now derives a Type-based
+	// default ("claude-code" → "claude") and dedupes it. The island's primary is a
+	// claude-code agent already backfilled to "claude", so the first defaulted add
+	// is "claude-2", and the next is "claude-3" — never blank, never a bare id.
+	if a := add(""); a.Label != "claude-2" {
+		t.Errorf("add empty → label %q, want claude-2 (Type-derived default, deduped)", a.Label)
+	}
+	if a := add(""); a.Label != "claude-3" {
+		t.Errorf("add empty again → label %q, want claude-3", a.Label)
 	}
 }
 

@@ -2071,9 +2071,14 @@ func newAgentAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The daemon dedupes labels: a requested "build" already in use comes
-			// back as "build-2". Surface that so the auto-increment isn't silent.
-			if want := strings.TrimSpace(label); want != "" && a.Label != want {
+			// The daemon always assigns a non-blank, unique label: a requested
+			// "build" already in use comes back as "build-2", and an omitted label
+			// gets a Type-derived default ("claude", "claude-2", …). Surface what was
+			// assigned so neither the auto-increment nor the default is silent.
+			switch want := strings.TrimSpace(label); {
+			case want == "":
+				fmt.Printf("named it %q\n", a.Label)
+			case a.Label != want:
 				fmt.Printf("note: label %q was taken; named it %q\n", want, a.Label)
 			}
 			fmt.Printf("added agent %s (%s) to %s — attach with `dejima connect %s/%s`\n",

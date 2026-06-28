@@ -247,6 +247,141 @@ func TestUniqueAgentLabel(t *testing.T) {
 	})
 }
 
+func TestDefaultAgentLabel(t *testing.T) {
+	t.Run("derives a readable base from known types", func(t *testing.T) {
+		p := &Project{}
+		cases := map[string]string{
+			"claude-code": "claude",
+			"codex":       "codex",
+			"openclaw":    "openclaw",
+			"shell":       "shell",
+			"headless":    "agent",
+		}
+		for typ, want := range cases {
+			if got := p.DefaultAgentLabel(AgentSpec{Type: typ}, ""); got != want {
+				t.Errorf("DefaultAgentLabel(type=%q) = %q, want %q", typ, got, want)
+			}
+		}
+	})
+
+	t.Run("empty or unknown type falls back to a generic, non-blank base", func(t *testing.T) {
+		p := &Project{}
+		if got := p.DefaultAgentLabel(AgentSpec{Type: ""}, ""); got != "agent" {
+			t.Errorf("DefaultAgentLabel(type=empty) = %q, want agent", got)
+		}
+		// A custom type is reduced to a clean stem (leading word, alnum/'-').
+		if got := p.DefaultAgentLabel(AgentSpec{Type: "my-bot --flag"}, ""); got != "my-bot" {
+			t.Errorf("DefaultAgentLabel(type=custom) = %q, want my-bot", got)
+		}
+		// A type that reduces to nothing still never returns blank.
+		if got := p.DefaultAgentLabel(AgentSpec{Type: "///"}, ""); got != "agent" {
+			t.Errorf("DefaultAgentLabel(type=junk) = %q, want agent", got)
+		}
+	})
+
+	t.Run("dedups the derived default against existing agents", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{{ID: "a1", Type: "claude-code", Label: "claude"}}}
+		if got := p.DefaultAgentLabel(AgentSpec{Type: "claude-code"}, ""); got != "claude-2" {
+			t.Errorf("DefaultAgentLabel(claude-code, claude taken) = %q, want claude-2", got)
+		}
+		// Chains: claude, claude-2 taken → claude-3.
+		p.Agents = append(p.Agents, AgentSpec{ID: "a2", Type: "claude-code", Label: "claude-2"})
+		if got := p.DefaultAgentLabel(AgentSpec{Type: "claude-code"}, ""); got != "claude-3" {
+			t.Errorf("DefaultAgentLabel(claude-code, claude+claude-2 taken) = %q, want claude-3", got)
+		}
+	})
+
+	t.Run("never returns blank", func(t *testing.T) {
+		p := &Project{}
+		for _, typ := range []string{"", "   ", "claude-code", "totally-unknown", "/"} {
+			if got := strings.TrimSpace(p.DefaultAgentLabel(AgentSpec{Type: typ}, "")); got == "" {
+				t.Errorf("DefaultAgentLabel(type=%q) returned blank", typ)
+			}
+		}
+	})
+}
+
+func TestBackfillAgentLabels(t *testing.T) {
+	t.Run("fills blanks, dedupes within island, preserves existing labels", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{
+			{ID: "a1", Type: "claude-code"},              // blank → claude
+			{ID: "a2", Type: "claude-code"},              // blank → claude-2
+			{ID: "a3", Type: "claude-code", Label: "ui"}, // kept
+			{ID: "a4", Type: "codex"},                    // blank → codex
+		}}
+		if !p.BackfillAgentLabels() {
+			t.Fatal("BackfillAgentLabels reported no change, want changed")
+		}
+		want := []string{"claude", "claude-2", "ui", "codex"}
+		for i, w := range want {
+			if p.Agents[i].Label != w {
+				t.Errorf("Agents[%d].Label = %q, want %q", i, p.Agents[i].Label, w)
+			}
+		}
+	})
+
+	t.Run("idempotent: a second run is a no-op", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{
+			{ID: "a1", Type: "claude-code"},
+			{ID: "a2", Type: "claude-code"},
+		}}
+		p.BackfillAgentLabels()
+		before := []string{p.Agents[0].Label, p.Agents[1].Label}
+		if changed := p.BackfillAgentLabels(); changed {
+			t.Error("second BackfillAgentLabels reported changed, want no-op")
+		}
+		if p.Agents[0].Label != before[0] || p.Agents[1].Label != before[1] {
+			t.Errorf("labels drifted on re-run: %q,%q → %q,%q",
+				before[0], before[1], p.Agents[0].Label, p.Agents[1].Label)
+		}
+	})
+
+	t.Run("order-stable: same agents yield same labels", func(t *testing.T) {
+		mk := func() *Project {
+			return &Project{Agents: []AgentSpec{
+				{ID: "a1", Type: "claude-code"},
+				{ID: "a2", Type: "claude-code"},
+				{ID: "a3", Type: "claude-code"},
+			}}
+		}
+		p1, p2 := mk(), mk()
+		p1.BackfillAgentLabels()
+		p2.BackfillAgentLabels()
+		for i := range p1.Agents {
+			if p1.Agents[i].Label != p2.Agents[i].Label {
+				t.Errorf("Agents[%d]: %q != %q (not order-stable)", i, p1.Agents[i].Label, p2.Agents[i].Label)
+			}
+		}
+		if p1.Agents[0].Label != "claude" || p1.Agents[1].Label != "claude-2" || p1.Agents[2].Label != "claude-3" {
+			t.Errorf("got %q,%q,%q, want claude,claude-2,claude-3",
+				p1.Agents[0].Label, p1.Agents[1].Label, p1.Agents[2].Label)
+		}
+	})
+
+	t.Run("collision-safe with pre-existing manual labels", func(t *testing.T) {
+		// An operator already named one agent "claude"; a blank claude-code agent
+		// must not become a second "claude".
+		p := &Project{Agents: []AgentSpec{
+			{ID: "a1", Type: "codex", Label: "claude"},
+			{ID: "a2", Type: "claude-code"}, // blank → must skip to claude-2
+		}}
+		p.BackfillAgentLabels()
+		if p.Agents[1].Label != "claude-2" {
+			t.Errorf("Agents[1].Label = %q, want claude-2", p.Agents[1].Label)
+		}
+	})
+
+	t.Run("no blanks → no change", func(t *testing.T) {
+		p := &Project{Agents: []AgentSpec{
+			{ID: "a1", Type: "claude-code", Label: "frontend"},
+			{ID: "a2", Type: "codex", Label: "backend"},
+		}}
+		if changed := p.BackfillAgentLabels(); changed {
+			t.Error("BackfillAgentLabels reported changed on an all-labeled island, want no-op")
+		}
+	})
+}
+
 func TestMoveAgent(t *testing.T) {
 	order := func(p *Project) string {
 		ids := make([]string, len(p.Agents))
