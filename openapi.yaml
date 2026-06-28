@@ -2124,8 +2124,8 @@ components:
         max_total: { type: integer, description: max lifetime spawns (0 = unlimited within the grant) }
         types: { type: array, items: { type: string }, description: allowed agent types (empty = any spawnable) }
         ttl: { type: integer, format: int64, description: per-sub-agent max lifetime in nanoseconds (0 = no time cap) }
-        per_agent_memory: { type: string, description: per-sub-agent memory cap, e.g. "512m" }
-        per_agent_cpus: { type: string, description: per-sub-agent cpu cap, e.g. "1.0" }
+        per_agent_memory: { type: string, description: "per-sub-agent memory cap, e.g. 512m" }
+        per_agent_cpus: { type: string, description: "per-sub-agent cpu cap, e.g. 1.0" }
         created_at: { type: string, format: date-time }
         created_by: { type: string }
     SpawnGrantRequest:
