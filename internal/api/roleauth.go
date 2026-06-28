@@ -109,6 +109,9 @@ var roleRouteCap = map[string]roleCap{
 	"POST /v1/islands/{name}/agents/{id}/move":             capOperate,
 	"PATCH /v1/islands/{name}/agents/{id}/config":          capOperate,
 	"PATCH /v1/islands/{name}/egress/policy":               capOperate, // set island egress allow/deny (operator)
+	"GET /v1/islands/{name}/spawn-grant":                   capRead,    // read the spawn budget (operator/viewer)
+	"POST /v1/islands/{name}/spawn-grant":                  capOperate, // grant ephemeral-sub-agent spawn budget (operator-only; never an in-island token)
+	"DELETE /v1/islands/{name}/spawn-grant":                capOperate, // revoke spawn grant (operator)
 	"GET /v1/islands/{name}/session":                       capOperate, // interactive attach (control)
 	"GET /v1/islands/{name}/shell/session":                 capOperate, // in-island contained shell at /workspace
 	"GET /v1/islands/{name}/agents/{id}/session":           capOperate,
