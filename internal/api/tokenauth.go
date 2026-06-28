@@ -73,7 +73,13 @@ var tokenRouteAccess = map[string]tokenAccess{
 	// until the route exists the router matches no pattern and it stays denied.
 	"POST /v1/mcp/call": accessTokenOwn,
 
-	"GET /v1/islands/{name}":              accessOwnIsland, // status
+	"GET /v1/islands/{name}": accessOwnIsland, // status
+	// Agent-initiated spawn: reachable for the token's OWN island, but the handler
+	// gates it hard — only an EPHEMERAL add within an operator spawn grant (and
+	// within budget) is allowed; a token can never do a general/persistent agent
+	// add or grant itself spawn rights. Operator callers (no token island) are
+	// unaffected. See addAgent's spawn gate + internal/spawn.
+	"POST /v1/islands/{name}/agents":      accessOwnIsland,
 	"GET /v1/islands/{name}/events":       accessOwnIsland,
 	"GET /v1/islands/{name}/logs":         accessOwnIsland,
 	"GET /v1/islands/{name}/port/scopes":  accessOwnIsland, // list own grants only

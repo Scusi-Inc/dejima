@@ -43,6 +43,11 @@ type Grant struct {
 	PerAgentMemory string `json:"per_agent_memory,omitempty"`
 	PerAgentCPUs   string `json:"per_agent_cpus,omitempty"`
 
+	// Used is the LIFETIME count of sub-agents spawned under this grant — the
+	// max_total backstop. Incremented atomically by the spawn handler; reset when
+	// the grant is replaced (a fresh grant is a fresh budget).
+	Used int `json:"used,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	CreatedBy string    `json:"created_by,omitempty"`
 }
@@ -170,6 +175,19 @@ func (s *Store) Remove(island string) bool {
 	}
 	delete(s.Grants, island)
 	return true
+}
+
+// Consume increments an island's lifetime spawn counter (Used) — the max_total
+// backstop. The caller has already verified the budget under the per-island lock
+// (so this is part of the atomic check-and-reserve). No-op if no grant. Use
+// within Update.
+func (s *Store) Consume(island string) {
+	g, ok := s.Grants[island]
+	if !ok {
+		return
+	}
+	g.Used++
+	s.Grants[island] = g
 }
 
 // List returns all grants.

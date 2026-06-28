@@ -22,6 +22,7 @@ import (
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/islandimage"
+	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
@@ -29,6 +30,7 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/spawn"
 	"github.com/aoos/dejima/internal/usage"
 	"github.com/aoos/dejima/internal/version"
 )
@@ -1081,6 +1083,8 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 		Worktree:  agentsWorktreeRoot + "/" + id,
 		Provider:  strings.TrimSpace(req.Provider),
 		Model:     normalizeModel(req.Provider, req.Model),
+		Ephemeral: req.Ephemeral,
+		SpawnedBy: strings.TrimSpace(req.SpawnedBy),
 		CreatedAt: time.Now().UTC(),
 	}
 	// Assign the agent's label. Root cause of "Dejima shows raw ids everywhere":
@@ -1131,12 +1135,37 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	// Spawn gate: an in-island token caller is an agent-INITIATED spawn — governed
+	// by the operator's spawn grant (deny by default). Enforced here, under the
+	// per-island projectLock held above, so the budget check is ATOMIC with the
+	// create (no TOCTOU on a concurrent spawn burst). Operator callers
+	// (TokenIslandFromContext == "") are unaffected.
+	isSpawn := TokenIslandFromContext(r.Context()) != ""
+	if isSpawn {
+		if err := s.authorizeSpawn(p, spec); err != nil {
+			s.ledgerAppend(ledger.Entry{
+				Type: "spawn.deny", Island: name, Scope: spec.Type,
+				Detail: err.Error(), Actor: "agent:" + spec.SpawnedBy, Decision: "denied",
+			})
+			writeError(w, http.StatusForbidden, err)
+			return
+		}
+	}
 	id := spec.ID
 	typ := spec.Type
 	p.AddAgent(spec)
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+	if isSpawn {
+		// Reserve a lifetime-budget slot (max_total) atomically — still under the
+		// projectLock — and ledger the spawn with its lineage.
+		_, _ = spawn.Update(func(st *spawn.Store) error { st.Consume(name); return nil })
+		s.ledgerAppend(ledger.Entry{
+			Type: "spawn.create", Island: name, Scope: spec.Type,
+			Detail: "sub-agent " + id + " spawned by " + spec.SpawnedBy, Actor: "agent:" + spec.SpawnedBy, Decision: "allowed",
+		})
 	}
 	if s.agentsLive(r.Context(), p) {
 		if err := s.ensureAgentSession(r.Context(), p, &p.Agents[len(p.Agents)-1]); err != nil {
@@ -2668,6 +2697,8 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 			Worktree:   a.Worktree,
 			Attachable: handlers.Attachable(a.Type),
 			CreatedAt:  a.CreatedAt,
+			Ephemeral:  a.Ephemeral,
+			SpawnedBy:  a.SpawnedBy,
 		}
 		if live && a.Tmux != "" {
 			ai.State = s.agentLiveness(ctx, p, a)

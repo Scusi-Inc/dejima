@@ -5,12 +5,78 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/spawn"
 )
+
+// spawnDenied is a refused agent-initiated spawn; addAgent maps it to 403 + a
+// spawn.deny ledger entry.
+type spawnDenied struct{ reason string }
+
+func (e *spawnDenied) Error() string { return e.reason }
+
+// authorizeSpawn enforces the spawn gate for an agent-INITIATED add (an in-island
+// token caller). It MUST be called under the island's projectLock so the budget
+// check is ATOMIC with the create that follows — a3's load-bearing requirement:
+// a burst of concurrent spawns can't TOCTOU past max_concurrent/max_total. p is
+// the freshly-loaded roster (so the live count reflects already-saved spawns) and
+// spec is the resolved agent spec. Returns nil to allow, or *spawnDenied to refuse.
+//
+// The budget is the hard, daemon-enforced safety (never client-trusted). The
+// depth-cap (no recursion) is structural defense-in-depth via the self-reported
+// lineage — sound here because co-located agents are ONE trust domain (shared
+// island token/sandbox); cryptographic token-separation belongs to the future
+// ephemeral-island variant.
+func (s *Server) authorizeSpawn(p *project.Project, spec project.AgentSpec) error {
+	st, err := spawn.Load()
+	if err != nil {
+		return err
+	}
+	g, ok := st.Get(p.Name)
+	if !ok {
+		return &spawnDenied{"no spawn grant — this island's agents cannot spawn sub-agents (operator: `dejima spawn grant`)"}
+	}
+	if !spec.Ephemeral {
+		return &spawnDenied{"an in-island token may only create EPHEMERAL sub-agents (set ephemeral=true)"}
+	}
+	if len(g.Types) > 0 && !containsStr(g.Types, spec.Type) {
+		return &spawnDenied{fmt.Sprintf("agent type %q is not allowed by the grant (allowed: %v)", spec.Type, g.Types)}
+	}
+	// Depth cap 1: a sub-agent (itself ephemeral) cannot spawn.
+	p.EnsureAgents()
+	if parent := strings.TrimSpace(spec.SpawnedBy); parent != "" {
+		if a, ok := p.AgentByID(parent); ok && a.Ephemeral {
+			return &spawnDenied{"a spawned sub-agent cannot itself spawn (depth capped at 1)"}
+		}
+	}
+	// Budget — counted from the locked roster (atomic with the create).
+	live := 0
+	for _, a := range p.Agents {
+		if a.Ephemeral {
+			live++
+		}
+	}
+	if live >= g.MaxConcurrent {
+		return &spawnDenied{fmt.Sprintf("spawn budget reached: %d/%d concurrent sub-agents", live, g.MaxConcurrent)}
+	}
+	if g.MaxTotal > 0 && g.Used >= g.MaxTotal {
+		return &spawnDenied{fmt.Sprintf("spawn budget reached: %d/%d lifetime spawns", g.Used, g.MaxTotal)}
+	}
+	return nil
+}
+
+func containsStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
 
 // SpawnGrantRequest is the body of POST /v1/islands/{name}/spawn-grant — the
 // operator opting an island into agent-initiated ephemeral sub-agents, with an
