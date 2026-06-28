@@ -1150,7 +1150,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		Type:    events.TypeIslandAgentAdded,
 		Island:  name,
 		Agent:   id,
-		Payload: map[string]any{"type": typ},
+		Payload: map[string]any{"type": typ, "label": spec.Label},
 	})
 	for _, ai := range s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)) {
 		if ai.ID == id {
@@ -1212,9 +1212,10 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	s.emit(events.Event{
-		Type:   events.TypeIslandAgentRemoved,
-		Island: name,
-		Agent:  id,
+		Type:    events.TypeIslandAgentRemoved,
+		Island:  name,
+		Agent:   id,
+		Payload: map[string]any{"label": agentCopy.Label},
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
