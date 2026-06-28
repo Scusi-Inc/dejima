@@ -434,6 +434,10 @@ func newLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A label is accepted anywhere an agent id is (id still wins).
+			if agent, err = resolveAgentRef(cmd.Context(), c, name, agent); err != nil {
+				return err
+			}
 			rc, err := c.StreamLogs(cmd.Context(), name, agent, follow)
 			if err != nil {
 				return err
@@ -1236,6 +1240,11 @@ func newConnectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A label is accepted anywhere an agent id is (id still wins). An empty
+			// agent passes through as "" → a bare shell at /workspace.
+			if agent, err = resolveAgentRef(cmd.Context(), c, name, agent); err != nil {
+				return err
+			}
 			info, err := c.GetIsland(cmd.Context(), name)
 			if err != nil {
 				return err
@@ -1305,6 +1314,26 @@ func splitIslandAgent(arg string) (island, agent string) {
 		return arg[:i], arg[i+1:]
 	}
 	return arg, ""
+}
+
+// resolveAgentRef turns a user-supplied agent reference (an id or a label) into a
+// concrete agent id by fetching the island's agent list and matching with the
+// shared project.ResolveAgentRef resolver: an exact id wins (ids always work), a
+// case-insensitive label resolves, an ambiguous label errors with the matches,
+// and an unknown ref errors. An empty ref passes straight through (it means "the
+// island's primary / a bare shell" to the callers and must not be resolved).
+//
+// This is the single CLI-side resolution point shared by exec/logs/connect/
+// rename/config/rm — every verb that targets a specific agent.
+func resolveAgentRef(ctx context.Context, c *api.Client, island, ref string) (string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return ref, nil
+	}
+	agents, err := c.ListAgents(ctx, island)
+	if err != nil {
+		return "", err
+	}
+	return project.ResolveAgentRef(agents, ref)
 }
 
 // defaultLabel produces a client label for presence: $HOSTNAME or "cli".
@@ -1961,11 +1990,15 @@ func newAgentConfigCmd() *cobra.Command {
 			if cmd.Flags().Changed("model") {
 				req.Model = &model
 			}
-			resp, err := c.ConfigureAgent(cmd.Context(), args[0], args[1], req)
+			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
 			if err != nil {
 				return err
 			}
-			fmt.Printf("agent %s/%s → provider=%q model=%q\n", args[0], args[1], resp.Provider, resp.Model)
+			resp, err := c.ConfigureAgent(cmd.Context(), args[0], id, req)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("agent %s/%s → provider=%q model=%q\n", args[0], id, resp.Provider, resp.Model)
 			if resp.RestartRequired {
 				fmt.Printf("recreate the island to apply: dejima upgrade %s\n", args[0])
 			}
@@ -2115,7 +2148,11 @@ func newAgentRenameCmd() *cobra.Command {
 				return err
 			}
 			want := strings.TrimSpace(args[2])
-			a, err := c.RelabelAgent(cmd.Context(), args[0], args[1], want)
+			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			a, err := c.RelabelAgent(cmd.Context(), args[0], id, want)
 			if err != nil {
 				return err
 			}
@@ -2139,10 +2176,14 @@ func newAgentRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.RemoveAgent(cmd.Context(), args[0], args[1]); err != nil {
+			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
+			if err != nil {
 				return err
 			}
-			fmt.Printf("removed agent %s from %s\n", args[1], args[0])
+			if err := c.RemoveAgent(cmd.Context(), args[0], id); err != nil {
+				return err
+			}
+			fmt.Printf("removed agent %s from %s\n", id, args[0])
 			return nil
 		},
 	}

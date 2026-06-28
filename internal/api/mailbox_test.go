@@ -55,6 +55,47 @@ func TestMailboxEndpoints(t *testing.T) {
 	}
 }
 
+// TestMailboxSendByLabel: the mailbox `to` field accepts an agent LABEL, not just
+// an id. The daemon resolves it server-side (the only place it can — `to` only
+// travels in the request body) so the labelled recipient, polling with its id,
+// receives the message. An unknown recipient label is a 400.
+func TestMailboxSendByLabel(t *testing.T) {
+	h, _ := newTestServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"proj","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create island: got %d", rr.Code)
+	}
+	// Label the primary "backend" via PATCH.
+	if rr := do(t, h, http.MethodPatch, "/v1/islands/proj/agents/p1",
+		`{"label":"backend"}`); rr.Code != http.StatusOK {
+		t.Fatalf("relabel p1: got %d", rr.Code)
+	}
+
+	// Address a message to "backend" (case-insensitively) — must resolve to p1.
+	if rr := do(t, h, http.MethodPost, "/v1/islands/proj/mailbox",
+		`{"from":"p2","to":"Backend","payload":"for the backend"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("send to label: got %d", rr.Code)
+	}
+	// p1 (the labelled agent) receives it; an unrelated agent does not.
+	if got := pollMessages(t, h, "proj", "p1", 0); len(got) != 1 || got[0].Payload != "for the backend" {
+		t.Errorf("p1 should receive the label-addressed message, got %+v", got)
+	}
+	if got := pollMessages(t, h, "proj", "p9", 0); len(got) != 0 {
+		t.Errorf("unrelated agent should see nothing, got %+v", got)
+	}
+
+	// The mailbox is permissive about an unknown target (you may address an id
+	// that isn't a live agent yet): a no-match passes THROUGH as a literal id, so
+	// it is accepted (201) and delivered to that literal handle.
+	if rr := do(t, h, http.MethodPost, "/v1/islands/proj/mailbox",
+		`{"from":"p2","to":"ghost","payload":"x"}`); rr.Code != http.StatusCreated {
+		t.Errorf("unknown recipient should pass through: got %d, want 201", rr.Code)
+	}
+	if got := pollMessages(t, h, "proj", "ghost", 0); len(got) != 1 {
+		t.Errorf("literal-id recipient should get its message, got %+v", got)
+	}
+}
+
 func pollMessages(t *testing.T, h http.Handler, island, agent string, since int64) []mailbox.Message {
 	t.Helper()
 	path := "/v1/islands/" + island + "/mailbox?agent=" + agent

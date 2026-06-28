@@ -265,6 +265,43 @@ func TestCLIAgentRename(t *testing.T) {
 	}
 }
 
+// TestCLIAgentAddressByName drives the CLI-side id/label resolver end-to-end:
+// a command that takes an <agent-id> also accepts the agent's label, and the id
+// keeps working. Mirrors TestCLIAgentRename but targets the agent BY LABEL.
+func TestCLIAgentAddressByName(t *testing.T) {
+	_, c := cliEnv(t)
+	seedIsland(t, c, "proj")
+
+	// Label the primary "frontend".
+	if _, err := runCLI(t, "agent", "rename", "proj", "p1", "frontend"); err != nil {
+		t.Fatalf("agent rename p1: %v", err)
+	}
+
+	// Now address it BY LABEL (case-insensitively) in a subsequent rename. The
+	// resolver must turn "FrontEnd" → p1 before the relabel runs.
+	out, err := runCLI(t, "agent", "rename", "proj", "FrontEnd", "frontend-ui")
+	if err != nil {
+		t.Fatalf("rename by label: %v", err)
+	}
+	if !strings.Contains(out, "p1") || !strings.Contains(out, `"frontend-ui"`) {
+		t.Errorf("label should have resolved to p1: %q", out)
+	}
+
+	// An unknown ref errors clearly.
+	if _, err := runCLI(t, "agent", "rename", "proj", "ghost", "x"); err == nil {
+		t.Error("unknown agent ref should error")
+	} else if !strings.Contains(err.Error(), "no such agent") {
+		t.Errorf("unexpected error for unknown ref: %v", err)
+	}
+
+	// The id still works unchanged (back-compat).
+	if out, err := runCLI(t, "agent", "rename", "proj", "p1", "frontend"); err != nil {
+		t.Fatalf("rename by id: %v", err)
+	} else if !strings.Contains(out, "p1") {
+		t.Errorf("id should still resolve: %q", out)
+	}
+}
+
 // agentIDForType returns the id of the first `agent ls` row whose line mentions
 // the given agent type. The listing is name-first (NAME ID TYPE …), so the id is
 // the second column.
