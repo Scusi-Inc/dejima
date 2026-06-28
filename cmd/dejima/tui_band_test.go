@@ -72,6 +72,38 @@ func TestTerminalsLeftIslandList(t *testing.T) {
 	}
 }
 
+// TestBandFooterAndHelpUseSlash: the footer advertises [/] when host terminals
+// are on, the help headlines `/` (not `t`), and the disabled-note fits the
+// footer status strip (truncate width) so it never shows an ellipsis.
+func TestBandFooterAndHelpUseSlash(t *testing.T) {
+	if got := plain(bandModel().renderFooter()); !strings.Contains(got, "[/] terminals") {
+		t.Errorf("footer should advertise [/] terminals when enabled:\n%s", got)
+	}
+	help := plain((tuiModel{width: 100}).renderHelp())
+	if !strings.Contains(help, "host terminals") {
+		t.Errorf("help should document the host-terminals key")
+	}
+	if strings.Contains(help, "new host terminal — an uncontained shell") {
+		t.Error("help still headlines the old `t` entry; should headline `/`")
+	}
+	if len(hostTerminalsOffNote) > 76 {
+		t.Errorf("off-note is %d chars; >76 will be truncated in the footer strip", len(hostTerminalsOffNote))
+	}
+}
+
+// TestBandKeysWhenDisabled: with host terminals off, `/` and `t` are not silent
+// — both leave the explanatory note (so the operator isn't left guessing).
+func TestBandKeysWhenDisabled(t *testing.T) {
+	for _, k := range []string{"/", "t"} {
+		m := initialTUIModel(nil)
+		m.overview = &api.OverviewResponse{HostTerminalsEnabled: false}
+		out, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+		if got := out.(tuiModel).lastNotice; got != hostTerminalsOffNote {
+			t.Errorf("key %q while disabled: note = %q, want the off-note", k, got)
+		}
+	}
+}
+
 // TestBandToggleKey: backtick expands + focuses the band; esc inside it
 // collapses and blurs (auto-collapse on blur).
 func TestBandToggleKey(t *testing.T) {
