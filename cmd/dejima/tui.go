@@ -1175,9 +1175,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.bandSel = 0
 			}
 		} else {
-			// Say why the key's a no-op rather than leaving the operator guessing
-			// (host terminals are an opt-in daemon capability, off by default).
-			m.lastNotice = "host terminals are off — start dejimad with --host-terminals to enable the host band"
+			// Say why the key's a no-op rather than leaving the operator guessing.
+			// (On by default now; this only shows when the daemon disabled it.)
+			m.lastNotice = hostTerminalsOffNote
 		}
 		return m, nil
 	case "t":
@@ -1185,6 +1185,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.hostTerminalsEnabled() {
 			return m, m.createTerminalCmd("")
 		}
+		m.lastNotice = hostTerminalsOffNote
+		return m, nil
 	case "s", ",":
 		// General settings (editor · group-by-repo · connection target). Server
 		// switching now lives inside here rather than owning its own hotkey.
@@ -1676,6 +1678,11 @@ type treeRow struct {
 func (m tuiModel) hostTerminalsEnabled() bool {
 	return m.overview != nil && m.overview.HostTerminalsEnabled
 }
+
+// hostTerminalsOffNote explains the `/` and `t` no-op when the daemon has host
+// terminals disabled. On by default, so this is the explicit-opt-out case. Kept
+// short so it isn't truncated in the footer's status strip.
+const hostTerminalsOffNote = "host terminals are disabled on this daemon (--host-terminals=false)"
 
 // islandExpanded reports whether an island's agents are revealed. Multi-agent
 // islands default to expanded. Either can be toggled (space / ←/→), or all at
@@ -3452,7 +3459,7 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n")
 	basic := [][2]string{
 		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
-		{"t", "new host terminal — an uncontained shell on the daemon host (if enabled)"},
+		{"/", "host terminals — open the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
 		{"⏎ / o", "island → opens all its agents (each in a new tab); agent → its session; headless agent → its logs"},
 		{">", "open a shell at /workspace inside the highlighted island (contained)"},
 		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh setup, purge…)"},
