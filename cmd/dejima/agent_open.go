@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/aoos/dejima/internal/project"
 	"github.com/spf13/cobra"
 )
 
@@ -37,18 +38,19 @@ func newAgentOpenCmd() *cobra.Command {
 			if len(isl.Agents) == 0 {
 				return fmt.Errorf("island %q has no agents", island)
 			}
-			// Resolve the target agent (explicit id, or the primary).
+			// Resolve the target agent (explicit id or label — id wins — or the
+			// primary). Reuses the shared id/label resolver over the island's agents.
 			agentType := ""
 			agentID := ""
 			if len(args) == 2 {
-				agentID = args[1]
+				agentID, err = project.ResolveAgentRef(isl.Agents, args[1])
+				if err != nil {
+					return err
+				}
 				for _, a := range isl.Agents {
 					if a.ID == agentID {
 						agentType = a.Type
 					}
-				}
-				if agentType == "" {
-					return fmt.Errorf("island %q has no agent %q", island, agentID)
 				}
 			} else {
 				agentID, agentType = isl.Agents[0].ID, isl.Agents[0].Type

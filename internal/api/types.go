@@ -120,6 +120,12 @@ type AgentInfo struct {
 	SpawnedBy string `json:"spawned_by,omitempty"`
 }
 
+// RefID / RefLabel let an AgentInfo satisfy project.AgentRef, so the CLI can
+// resolve a user-supplied agent ref (id or label) against the island's agent
+// list with the same shared resolver the daemon uses.
+func (a AgentInfo) RefID() string    { return a.ID }
+func (a AgentInfo) RefLabel() string { return a.Label }
+
 // AgentUsage is an agent's self-reported token/cost for its session, ingested
 // from the agent's own usage hook over the in-island token path. Dejima can't
 // observe the (opaque, outbound) LLM call, so these numbers come FROM the agent;
