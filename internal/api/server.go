@@ -1107,8 +1107,10 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 		spec.Worktree = "/workspace"
 	}
 	// Co-located headless agents self-restart by default so a crash doesn't end
-	// the agent silently.
-	if !handlers.Attachable(typ) {
+	// the agent silently — EXCEPT ephemeral sub-agents, which are run-once: they
+	// must exit when done so the reaper can free their budget slot (a restarting
+	// ephemeral agent would never exit).
+	if !handlers.Attachable(typ) && !spec.Ephemeral {
 		spec.Restart = true
 	}
 	return spec, nil

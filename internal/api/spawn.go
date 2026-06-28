@@ -175,5 +175,8 @@ func (s *Server) revokeSpawnGrant(w http.ResponseWriter, r *http.Request) {
 		by = id.Subject
 	}
 	s.ledgerAppend(ledger.Entry{Type: "spawn.revoke", Island: name, Actor: by, Decision: "allowed"})
+	// Revoking the grant pulls the authorization out from under any live ephemeral
+	// sub-agents, so reap them now rather than leaving orphans running.
+	s.reapAllEphemeral(r.Context(), name)
 	w.WriteHeader(http.StatusNoContent)
 }

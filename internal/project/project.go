@@ -82,9 +82,13 @@ type AgentSpec struct {
 	// the island's spawn budget. SpawnedBy is the id of the agent that spawned it
 	// (lineage; "" for operator-created agents). Co-located sub-agents share this
 	// island's sandbox — they are NOT isolated from the parent.
-	Ephemeral bool      `toml:"ephemeral,omitempty"`
-	SpawnedBy string    `toml:"spawned_by,omitempty"`
-	CreatedAt time.Time `toml:"created_at,omitempty"`
+	Ephemeral bool   `toml:"ephemeral,omitempty"`
+	SpawnedBy string `toml:"spawned_by,omitempty"`
+	// CreatedAt has no omitempty: go-toml/v2 omits a non-zero time.Time under
+	// omitempty, which silently dropped this field on every save — so it must be
+	// written unconditionally. The spawn reaper's TTL check depends on it surviving
+	// a daemon reload.
+	CreatedAt time.Time `toml:"created_at"`
 }
 
 // Project is the persisted record for a single island.
