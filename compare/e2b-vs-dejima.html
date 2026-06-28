@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>E2B vs Dejima: agent-sandbox cloud vs self-hosted fleet — Dejima</title>
-<meta name="description" content="E2B is a managed cloud of ephemeral sandboxes for AI-generated code, with self-host on the enterprise tier. Dejima is a free, self-hosted runtime for a persistent fleet of coding agents on hardware you own. An honest comparison.">
+<meta name="description" content="E2B is a managed cloud of ephemeral sandboxes for AI-generated code, with self-host available DIY in your own cloud. Dejima is a free, self-hosted runtime for a persistent fleet of coding agents on hardware you own. An honest comparison.">
 <link rel="canonical" href="https://dejima.tech/compare/e2b-vs-dejima.html">
 <meta property="og:title" content="E2B vs Dejima">
 <meta property="og:description" content="A managed agent-sandbox cloud, or a free self-hosted fleet on hardware you own.">
@@ -25,11 +25,11 @@
 {"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
 {"@type":"ListItem","position":2,"name":"Comparisons","item":"https://dejima.tech/compare/"},
 {"@type":"ListItem","position":3,"name":"E2B vs Dejima","item":"https://dejima.tech/compare/e2b-vs-dejima.html"}]},
-{"@type":"TechArticle","headline":"E2B vs Dejima","description":"E2B is a managed cloud of ephemeral sandboxes for AI-generated code, with self-host on the enterprise tier. Dejima is a free, self-hosted runtime for a persistent fleet of coding agents on hardware you own.","image":"https://dejima.tech/assets/og-vs-e2b.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/compare/e2b-vs-dejima.html"},
+{"@type":"TechArticle","headline":"E2B vs Dejima","description":"E2B is a managed cloud of ephemeral sandboxes for AI-generated code, with self-host available DIY in your own cloud. Dejima is a free, self-hosted runtime for a persistent fleet of coding agents on hardware you own.","image":"https://dejima.tech/assets/og-vs-e2b.png","datePublished":"2026-06-26","dateModified":"2026-06-28","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/compare/e2b-vs-dejima.html"},
 {"@type":"FAQPage","mainEntity":[
-{"@type":"Question","name":"Is E2B free to self-host?","acceptedAnswer":{"@type":"Answer","text":"You can self-host from the open-source repo, but E2B's product is a managed cloud, and supported on-prem or self-hosted deployment is its Enterprise tier. Dejima is free and self-hosted first: one command on hardware you own, with no plan gating the self-host path."}},
+{"@type":"Question","name":"Is E2B free to self-host?","acceptedAnswer":{"@type":"Answer","text":"Yes. You can self-host E2B yourself in your own cloud from the open-source repo, without an enterprise plan; E2B's default product is the managed cloud. Dejima is self-hosted first: one command on hardware you own, with the dashboard, brokered host access, and audit built in."}},
 {"@type":"Question","name":"Should I use E2B or Dejima for my agents?","acceptedAnswer":{"@type":"Answer","text":"Use E2B if you are building a product that runs AI-generated code in ephemeral cloud sandboxes via an SDK. Use Dejima if you want to run your own coding agents, like Claude Code, on your own hardware, persistently, with your code staying inside your perimeter and no usage meter."}},
-{"@type":"Question","name":"Does my code stay private with E2B?","acceptedAnswer":{"@type":"Answer","text":"By default E2B runs in its managed cloud, so your code runs on their infrastructure unless you are on an enterprise self-hosted plan. With Dejima your source and credentials never leave your box; the agents' model calls go out, but there is no Dejima cloud holding your work."}}
+{"@type":"Question","name":"Does my code stay private with E2B?","acceptedAnswer":{"@type":"Answer","text":"By default E2B runs in its managed cloud, so your code runs on their infrastructure unless you self-host it yourself. With Dejima your source and credentials never leave your box; the agents' model calls go out, but there is no Dejima cloud holding your work."}}
 ]}
 ]}
 </script>
@@ -65,7 +65,7 @@
 
   <h2>What E2B is</h2>
   <p>E2B calls itself the enterprise AI agent cloud. It gives you secure, isolated sandboxes that boot in about 150 milliseconds and run sessions up to 24 hours, created from an SDK so the agents your product runs can execute code safely. It's open source, and it's used heavily; the company cites Perplexity, Manus, and most of the Fortune 100.</p>
-  <p>The product is the cloud. There's a free Hobby tier with a one-time credit, a Pro tier around $150 a month plus usage, and an Enterprise tier that adds bring-your-own-cloud, on-prem, and fully self-hosted deployment. You can self-host from the open-source repo if you're technical enough, but supported self-hosting is the enterprise path, and the default experience is the managed cloud.</p>
+  <p>The product is the cloud. There's a free Hobby tier with a one-time credit, a Pro tier around $150 a month plus usage, and an Enterprise tier for bring-your-own-cloud and on-prem with support. You can also self-host E2B yourself in your own cloud from the open-source repo, without an enterprise plan. The default experience is still the managed cloud.</p>
 
   <h2>What Dejima is</h2>
   <p>Dejima starts from the other side: self-hosted first, free, on hardware you already own. <a href="../index.html">See the overview.</a></p>
@@ -75,7 +75,7 @@
   <div class="table-scroll">
   <table class="compare">
     <tr><th>What you need</th><th>Dejima</th><th>E2B</th></tr>
-    <tr><td>Free and self-hosted on your own hardware</td><td><strong>✓</strong></td><td>$ enterprise</td></tr>
+    <tr><td>Free and self-hosted on your own hardware</td><td><strong>✓</strong></td><td>~ DIY</td></tr>
     <tr><td>Your code never leaves your perimeter</td><td><strong>✓</strong></td><td>~ cloud by default</td></tr>
     <tr><td>Persistent agents you attach to and watch</td><td><strong>✓</strong></td><td>✗ ephemeral</td></tr>
     <tr><td>SDK to spin up sandboxes for generated code</td><td>~</td><td>✓</td></tr>
@@ -85,19 +85,19 @@
     <tr><td>One dashboard for your whole fleet</td><td><strong>✓</strong></td><td>✗</td></tr>
   </table>
   </div>
-  <p class="small"><strong>$ enterprise</strong> = supported self-host / on-prem is the Enterprise tier; Hobby and Pro are the managed cloud.</p>
+  <p class="small">E2B's default product is the managed cloud (Hobby and Pro). Self-hosting is do-it-yourself in your own cloud from the open-source repo; Enterprise adds BYOC and on-prem with support.</p>
 
   <h2>When E2B is the better choice</h2>
   <p>Pick E2B if you're shipping an agent product and code execution is a feature of it. You want sandboxes on demand from an SDK, fast cold starts, generous concurrency, and an enterprise contract with BYOC when you need it. That's a real and different need, and E2B serves it well. Dejima is not a sandbox API for your application to call.</p>
 
   <h2>When Dejima is the better choice</h2>
-  <p>Pick Dejima if the agents are yours and the box should be too. You want Claude Code and Codex running on your own Mac mini or server, for free, with your code staying inside your perimeter and no usage meter running. You want persistent sessions, one dashboard, brokered host access, and an audit trail you can verify. If "self-hosted" shouldn't mean "call sales for a quote," this is the one.</p>
+  <p>Pick Dejima if the agents are yours and the box should be too. You want Claude Code and Codex running on your own Mac mini or server, for free, with your code staying inside your perimeter and no usage meter running. You want persistent sessions, one dashboard, brokered host access, and an audit trail you can verify. If you want self-hosting that's first-class and free rather than a do-it-yourself afterthought, this is the one.</p>
 
   <h2 id="faq">Common questions</h2>
   <div class="faq">
     <div class="faq-item">
       <h3>Is E2B free to self-host?</h3>
-      <p>You can self-host from the open-source repo, but E2B's product is a managed cloud, and supported on-prem or self-hosted deployment is its Enterprise tier. Dejima is free and self-hosted first: one command on hardware you own, with no plan gating the self-host path.</p>
+      <p>Yes. You can self-host E2B yourself in your own cloud from the open-source repo, without an enterprise plan; E2B's default product is the managed cloud. Dejima is self-hosted first: one command on hardware you own, with the dashboard, brokered host access, and audit built in.</p>
     </div>
     <div class="faq-item">
       <h3>Should I use E2B or Dejima for my agents?</h3>
@@ -105,7 +105,7 @@
     </div>
     <div class="faq-item">
       <h3>Does my code stay private with E2B?</h3>
-      <p>By default E2B runs in its managed cloud, so your code runs on their infrastructure unless you're on an enterprise self-hosted plan. With Dejima your source and credentials never leave your box; the agents' model calls go out, but there's no Dejima cloud holding your work.</p>
+      <p>By default E2B runs in its managed cloud, so your code runs on their infrastructure unless you self-host it yourself. With Dejima your source and credentials never leave your box; the agents' model calls go out, but there's no Dejima cloud holding your work.</p>
     </div>
   </div>
 
