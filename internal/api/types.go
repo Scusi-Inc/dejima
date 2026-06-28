@@ -114,6 +114,10 @@ type AgentInfo struct {
 	// OMITTED entirely for adapters that don't report — clients render "n/a"
 	// rather than a fake zero. Detail endpoint only.
 	Usage *AgentUsage `json:"usage,omitempty"`
+	// Ephemeral / SpawnedBy surface an agent-spawned sub-agent and its lineage
+	// (the spawning agent's id). Empty/false for operator-created agents.
+	Ephemeral bool   `json:"ephemeral,omitempty"`
+	SpawnedBy string `json:"spawned_by,omitempty"`
 }
 
 // AgentUsage is an agent's self-reported token/cost for its session, ingested
@@ -323,6 +327,12 @@ type AgentSpecRequest struct {
 	// RequiresProviderKey.
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
+	// Ephemeral requests an auto-reaped sub-agent. An in-island token (an
+	// agent-initiated spawn) MUST set this — a token may only create ephemeral
+	// sub-agents within the operator's spawn grant, never persistent agents.
+	// SpawnedBy is the spawning agent's id (lineage / depth-cap input).
+	Ephemeral bool   `json:"ephemeral,omitempty"`
+	SpawnedBy string `json:"spawned_by,omitempty"`
 }
 
 // Resources mirrors project.Resources for API transport.

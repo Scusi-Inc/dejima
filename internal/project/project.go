@@ -76,7 +76,14 @@ type AgentSpec struct {
 	// Model is the "provider/model" string handed to the framework (via the
 	// DEJIMA_MODEL env the per-agent shim translates). Empty → unset (the user
 	// picks explicitly; there is no baked-in default).
-	Model     string    `toml:"model,omitempty"`
+	Model string `toml:"model,omitempty"`
+	// Ephemeral marks an agent-spawned sub-agent (orchestrator pattern): it's
+	// reaped automatically (on exit/TTL/parent-removal/revoke) and counts against
+	// the island's spawn budget. SpawnedBy is the id of the agent that spawned it
+	// (lineage; "" for operator-created agents). Co-located sub-agents share this
+	// island's sandbox — they are NOT isolated from the parent.
+	Ephemeral bool      `toml:"ephemeral,omitempty"`
+	SpawnedBy string    `toml:"spawned_by,omitempty"`
 	CreatedAt time.Time `toml:"created_at,omitempty"`
 }
 
