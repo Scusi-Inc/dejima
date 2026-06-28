@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Managed Agents vs Dejima: where the agent actually runs — Dejima</title>
+<meta name="description" content="Claude Managed Agents runs the agent's reasoning loop on Anthropic's servers and is Claude-only, even when you self-host the execution sandbox. Dejima runs the whole agent on hardware you own, with any vendor, plus brokered host access and an audit log. An honest comparison, as of June 2026.">
+<link rel="canonical" href="https://dejima.tech/compare/claude-managed-agents-vs-dejima.html">
+<meta property="og:title" content="Claude Managed Agents vs Dejima">
+<meta property="og:description" content="The reasoning loop on Anthropic's servers and Claude-only, or the whole agent on your own box with any vendor.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dejima.tech/compare/claude-managed-agents-vs-dejima.html">
+<meta property="og:image" content="https://dejima.tech/assets/og-vs-cma.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dejima.tech/assets/og-vs-cma.png">
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Comparisons","item":"https://dejima.tech/compare/"},
+{"@type":"ListItem","position":3,"name":"Claude Managed Agents vs Dejima","item":"https://dejima.tech/compare/claude-managed-agents-vs-dejima.html"}]},
+{"@type":"TechArticle","headline":"Claude Managed Agents vs Dejima","description":"Claude Managed Agents runs the agent's reasoning loop on Anthropic's servers and is Claude-only, even when the execution sandbox is self-hosted. Dejima runs the whole agent on hardware you own, with any vendor, plus brokered host access and an audit log.","image":"https://dejima.tech/assets/og-vs-cma.png","datePublished":"2026-06-28","dateModified":"2026-06-28","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/compare/claude-managed-agents-vs-dejima.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Does Claude Managed Agents run on my own infrastructure?","acceptedAnswer":{"@type":"Answer","text":"Partly. You can self-host the execution sandbox in your own VPC, but the agent loop that handles orchestration, context, and session stays on Anthropic's servers. With Dejima the whole agent runs on your own box, and only the model API call leaves."}},
+{"@type":"Question","name":"Is Claude Managed Agents only for Claude?","acceptedAnswer":{"@type":"Answer","text":"Yes. Claude Managed Agents runs Claude. Dejima runs agents from multiple vendors, including Claude Code, Codex, and OpenClaw, on one dashboard, and you bring your own API keys and mix them freely across islands."}},
+{"@type":"Question","name":"Should I use Claude Managed Agents or Dejima?","acceptedAnswer":{"@type":"Answer","text":"Use Claude Managed Agents if you want a fully managed, zero-ops Claude agent and you are fine with Anthropic running the orchestration. Use Dejima if you want to run the whole agent on hardware you own, mix vendors, and have brokered host access plus an audit trail."}}
+]}
+]}
+</script>
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="../index.html"><img src="../assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">free · open source</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="../index.html">Home</a>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="../guides/">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases"><span class="nav-ver"></span>alpha</a></span>
+</nav>
+
+<article class="post">
+  <p class="post-meta">Comparison · updated June 2026</p>
+  <h1 class="post-h">Claude Managed Agents vs Dejima</h1>
+  <p class="lede">Both run autonomous coding agents, but they split the work in opposite places. Claude Managed Agents keeps the agent's reasoning on Anthropic's infrastructure and runs Claude. Dejima runs the whole agent on hardware you own, with whatever vendor you like. The question is how much you want to hand off.</p>
+
+  <div class="callout">
+    <p><strong>Short version:</strong> if you want a fully managed Claude agent and you're happy for Anthropic to run the orchestration while you configure it, Claude Managed Agents is built for that. If you want the entire agent running on a box you own, with any vendor, plus brokered host access and an audit trail, that's Dejima.</p>
+  </div>
+
+  <h2>What Claude Managed Agents is</h2>
+  <p>Claude Managed Agents, launched in 2026, splits an agent into a brain and a pair of hands. You define the agent (its model, prompt, tools, and skills) and Anthropic runs it. The clever part is decoupling the reasoning from the execution: the agent loop that handles orchestration, context, and the session lives on Anthropic's infrastructure, while the sandbox where code actually runs can live elsewhere.</p>
+  <p>That sandbox can be self-hosted in your own VPC, so the code an agent runs and the files it touches can stay in your environment. But the loop that drives it does not. The orchestration stays on Anthropic's servers, and it runs Claude. It's a managed service for teams that want Anthropic to operate the agent and are building on Claude. <a href="https://www.anthropic.com/engineering/managed-agents">See Anthropic's writeup.</a></p>
+
+  <h2>What Dejima is</h2>
+  <p>Dejima doesn't split the agent. The whole thing runs on your hardware. <a href="../index.html">See the overview.</a></p>
+  <p>Each project is an island, a container on your own box holding one or more agents. The agent process and its loop run inside the island; the only thing that leaves is the model API call to whatever provider you chose. You run Claude Code, Codex, OpenClaw, or others side by side, with your own keys. Host-file access is deny-all by default and granted folder by folder through a broker that writes every crossing to a tamper-evident log. Sessions are persistent and you attach to them from anywhere on your network.</p>
+
+  <h2>Side by side</h2>
+  <div class="table-scroll">
+  <table class="compare">
+    <tr><th>What you need</th><th>Dejima</th><th>Claude Managed Agents</th></tr>
+    <tr><td>The agent's reasoning loop runs on your box</td><td><strong>✓</strong></td><td>✗ on Anthropic</td></tr>
+    <tr><td>Run agents from any vendor, not just Claude</td><td><strong>✓</strong></td><td>✗ Claude only</td></tr>
+    <tr><td>Self-host where code executes</td><td><strong>✓</strong></td><td>✓ optional</td></tr>
+    <tr><td>Brokered deny-all host access + audit ledger</td><td><strong>✓</strong></td><td>✗</td></tr>
+    <tr><td>Persistent sessions you attach to and watch</td><td><strong>✓</strong></td><td>~ managed</td></tr>
+    <tr><td>Fully managed, zero ops</td><td>~</td><td>✓</td></tr>
+    <tr><td>Free and open source</td><td><strong>✓</strong></td><td>✗</td></tr>
+  </table>
+  </div>
+
+  <h2>When Claude Managed Agents is the better choice</h2>
+  <p>Pick Claude Managed Agents if you want the orchestration handled for you. You're building on Claude, you'd rather configure an agent than operate one, and you want Anthropic to run the loop, manage context, and scale it. Self-hosting the execution sandbox gives you control over where code runs without running the rest. That's a real convenience, and Dejima asks you to run the whole thing yourself.</p>
+
+  <h2>When Dejima is the better choice</h2>
+  <p>Pick Dejima if you want the whole agent on hardware you own, reasoning included, with only the model call going out. You want to run more than one vendor's agent, not commit to a single brain. You want host access that's deny-all and brokered, and an audit ledger you can read and verify. And you'd rather own the box than hand the loop to a managed service.</p>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>Does Claude Managed Agents run on my own infrastructure?</h3>
+      <p>Partly. You can self-host the execution sandbox in your own VPC, but the agent loop that handles orchestration, context, and session stays on Anthropic's servers. With Dejima the whole agent runs on your own box, and only the model API call leaves.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Is Claude Managed Agents only for Claude?</h3>
+      <p>Yes. Claude Managed Agents runs Claude. Dejima runs agents from multiple vendors, including Claude Code, Codex, and OpenClaw, on one dashboard, and you bring your own API keys and mix them freely across islands.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Should I use Claude Managed Agents or Dejima?</h3>
+      <p>Use Claude Managed Agents if you want a fully managed, zero-ops Claude agent and you're fine with Anthropic running the orchestration. Use Dejima if you want to run the whole agent on hardware you own, mix vendors, and have brokered host access plus an audit trail.</p>
+    </div>
+  </div>
+
+  <p class="small"><strong>Sources, last verified June 2026:</strong> <a href="https://www.anthropic.com/engineering/managed-agents">Anthropic: Scaling Managed Agents</a>. Competitor details change; <a href="https://github.com/aoos/dejima">tell us</a> if something here is out of date.</p>
+
+  <section class="post-more">
+    <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>
+    <p class="small">More comparisons: <a href="coder-vs-dejima.html">Coder vs Dejima</a> · <a href="daytona-vs-dejima.html">Daytona vs Dejima</a> · <a href="e2b-vs-dejima.html">E2B vs Dejima</a> · <a href="index.html">all comparisons</a></p>
+  </section>
+</article>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="../guides/">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</footer>
+
+</main>
+<script src="../version.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rivet vs Dejima: a primitive you build on, or a tool you run — Dejima</title>
+<meta name="description" content="Rivet is an open-source developer primitive for agent infrastructure: building blocks you assemble into your own system. Dejima is a finished tool you install and run, with brokered host access, a tamper-evident audit ledger, and persistent islands. An honest comparison, as of June 2026.">
+<link rel="canonical" href="https://dejima.tech/compare/rivet-vs-dejima.html">
+<meta property="og:title" content="Rivet vs Dejima">
+<meta property="og:description" content="An open-source primitive you build on, or a governed tool you just run.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dejima.tech/compare/rivet-vs-dejima.html">
+<meta property="og:image" content="https://dejima.tech/assets/og-vs-rivet.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dejima.tech/assets/og-vs-rivet.png">
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Comparisons","item":"https://dejima.tech/compare/"},
+{"@type":"ListItem","position":3,"name":"Rivet vs Dejima","item":"https://dejima.tech/compare/rivet-vs-dejima.html"}]},
+{"@type":"TechArticle","headline":"Rivet vs Dejima","description":"Rivet is an open-source developer primitive for agent infrastructure, a set of building blocks you assemble. Dejima is a finished tool you install and run, with brokered host access, a tamper-evident audit ledger, and persistent islands.","image":"https://dejima.tech/assets/og-vs-rivet.png","datePublished":"2026-06-28","dateModified":"2026-06-28","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/compare/rivet-vs-dejima.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Is Rivet a finished tool or a building block?","acceptedAnswer":{"@type":"Answer","text":"Rivet is a developer primitive: open-source building blocks, like a universal agent API and an actor runtime, that you assemble into your own system. Dejima is a finished tool you install and run, with a dashboard, brokered host access, and an audit ledger built in."}},
+{"@type":"Question","name":"Do Rivet and Dejima both run on my own hardware?","acceptedAnswer":{"@type":"Answer","text":"Yes. Both are open source and self-hostable. The difference is what you get: Rivet is a primitive you build on, while Dejima is a runnable tool with brokered deny-all host access and a tamper-evident audit ledger built in."}},
+{"@type":"Question","name":"Should I use Rivet or Dejima?","acceptedAnswer":{"@type":"Answer","text":"Use Rivet if you are a developer assembling your own agent platform from open-source primitives. Use Dejima if you want to run a governed agent fleet today, with brokered host access, an audit ledger, persistent sessions, and a dashboard, without building it yourself."}}
+]}
+]}
+</script>
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="../index.html"><img src="../assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">free · open source</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="../index.html">Home</a>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="../guides/">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases"><span class="nav-ver"></span>alpha</a></span>
+</nav>
+
+<article class="post">
+  <p class="post-meta">Comparison · updated June 2026</p>
+  <h1 class="post-h">Rivet vs Dejima</h1>
+  <p class="lede">Both are open source and run on your own hardware, so this isn't about who self-hosts. It's about what you get out of the box. Rivet hands you primitives to build an agent system. Dejima hands you a finished system to run.</p>
+
+  <div class="callout">
+    <p><strong>Short version:</strong> if you're a developer assembling your own agent platform and you want open-source building blocks to compose, Rivet is built for that. If you want to run a governed agent fleet today, with brokered host access and an audit trail, without building the plumbing, that's Dejima.</p>
+  </div>
+
+  <h2>What Rivet is</h2>
+  <p>Rivet is open-source infrastructure for building agent systems, under Apache 2.0, and it's self-hostable. It's a primitive, a set of building blocks rather than a finished product. Its sandbox-agent is a universal API that drives several agent CLIs (Claude Code, Codex, and others), running them on sandbox providers you plug in. Its actor runtime gives you lightweight isolates to build on.</p>
+  <p>That's a strong position if you're a developer who wants to assemble your own platform. You get composable, open pieces and you decide how they fit together. What you don't get is an opinionated, operate-it-today product; you build that part.</p>
+
+  <h2>What Dejima is</h2>
+  <p>Dejima is the finished product. You install it with one command and run a governed agent fleet, no assembly required. <a href="../index.html">See the overview.</a></p>
+  <p>Each project is an island, a container on your own box holding one or more agents, each on its own git worktree. Host-file access is deny-all by default and granted folder by folder through a broker that records every crossing to a tamper-evident, hash-chained ledger you can read and verify. Sessions are persistent and multi-attach, and a dashboard shows the whole fleet with lifecycle controls. It's open source and free, like Rivet, but it's a tool you run rather than a kit you build with.</p>
+
+  <h2>Side by side</h2>
+  <div class="table-scroll">
+  <table class="compare">
+    <tr><th>What you need</th><th>Dejima</th><th>Rivet</th></tr>
+    <tr><td>Run it as a finished tool, one command</td><td><strong>✓</strong></td><td>✗ build it</td></tr>
+    <tr><td>Open source, self-hostable</td><td><strong>✓</strong></td><td>✓</td></tr>
+    <tr><td>Drive several agent CLIs from one API</td><td><strong>✓</strong></td><td>✓</td></tr>
+    <tr><td>Brokered, deny-all host-file access</td><td><strong>✓</strong></td><td>✗</td></tr>
+    <tr><td>Tamper-evident audit ledger</td><td><strong>✓</strong></td><td>✗</td></tr>
+    <tr><td>Persistent, multi-attach agent sessions</td><td><strong>✓</strong></td><td>~</td></tr>
+    <tr><td>Dashboard + lifecycle to operate a fleet</td><td><strong>✓</strong></td><td>✗</td></tr>
+    <tr><td>Composable primitives to build your own platform</td><td>~</td><td>✓</td></tr>
+  </table>
+  </div>
+
+  <h2>When Rivet is the better choice</h2>
+  <p>Pick Rivet if you're building, not just running. You want open-source primitives, an agent API and an actor runtime, to compose into a platform of your own design, and you're happy to own the assembly. Rivet gives you the pieces and stays out of your way. Dejima is a finished tool, not a construction kit.</p>
+
+  <h2>When Dejima is the better choice</h2>
+  <p>Pick Dejima if you want to run a fleet today, not build the platform first. You want brokered, deny-all host access and a tamper-evident audit ledger you can verify, persistent sessions you attach to, and one dashboard to drive it all. It's open source and self-hosted like Rivet, but the governance and the operating surface are already built.</p>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>Is Rivet a finished tool or a building block?</h3>
+      <p>Rivet is a developer primitive: open-source building blocks, like a universal agent API and an actor runtime, that you assemble into your own system. Dejima is a finished tool you install and run, with a dashboard, brokered host access, and an audit ledger built in.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Do Rivet and Dejima both run on my own hardware?</h3>
+      <p>Yes. Both are open source and self-hostable. The difference is what you get: Rivet is a primitive you build on, while Dejima is a runnable tool with brokered deny-all host access and a tamper-evident audit ledger built in.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Should I use Rivet or Dejima?</h3>
+      <p>Use Rivet if you're a developer assembling your own agent platform from open-source primitives. Use Dejima if you want to run a governed agent fleet today, with brokered host access, an audit ledger, persistent sessions, and a dashboard, without building it yourself.</p>
+    </div>
+  </div>
+
+  <p class="small"><strong>Sources, last verified June 2026:</strong> <a href="https://rivet.dev/agent-os">Rivet agentOS</a> · <a href="https://github.com/rivet-dev/sandbox-agent">rivet-dev/sandbox-agent</a>. Competitor details change; <a href="https://github.com/aoos/dejima">tell us</a> if something here is out of date.</p>
+
+  <section class="post-more">
+    <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>
+    <p class="small">More comparisons: <a href="coder-vs-dejima.html">Coder vs Dejima</a> · <a href="daytona-vs-dejima.html">Daytona vs Dejima</a> · <a href="e2b-vs-dejima.html">E2B vs Dejima</a> · <a href="claude-managed-agents-vs-dejima.html">Claude Managed Agents vs Dejima</a> · <a href="index.html">all comparisons</a></p>
+  </section>
+</article>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="../guides/">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
+</footer>
+
+</main>
+<script src="../version.js" defer></script>
+</body>
+</html>
