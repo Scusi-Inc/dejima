@@ -85,18 +85,41 @@ func newMsgPollCmd() *cobra.Command {
 				fmt.Printf("no new messages (cursor: %d)\n", resp.Latest)
 				return nil
 			}
+			// Resolve same-island agent ids to their human labels so the operator
+			// sees "backend (a1)" not a bare "a1". The roster (id→Label, set via
+			// `dejima agent rename`) is the source d5 owns; we only read it here.
+			// Best-effort: on error, fall back to bare ids.
+			label := func(string) string { return "" }
+			if agents, lerr := c.ListAgents(cmd.Context(), island); lerr == nil {
+				labelOf := map[string]string{}
+				for _, a := range agents {
+					if a.Label != "" {
+						labelOf[a.ID] = a.Label
+					}
+				}
+				label = func(id string) string { return labelOf[id] }
+			}
+			// display renders an agent id as "label (id)" when it has a label, else
+			// the bare id.
+			display := func(id string) string {
+				if l := label(id); l != "" {
+					return l + " (" + id + ")"
+				}
+				return id
+			}
+
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 			fmt.Fprintln(tw, "SEQ\tFROM\tTO\tTOPIC\tPAYLOAD")
 			for _, m := range resp.Messages {
-				to := m.To
-				if to == "" {
-					to = "(all)"
+				to := "(all)"
+				if m.To != "" {
+					to = display(m.To)
 				}
 				// A cross-island message carries daemon-stamped provenance (Origin):
 				// show the sender's NAME + island ("janus/planning") instead of a bare
-				// id the recipient can't resolve. Same-island has no Origin → the
-				// agent's own id (it knows its island-mates).
-				from := m.From
+				// id the recipient can't resolve. Same-island resolves the id to its
+				// label via the local roster above.
+				from := display(m.From)
 				if m.Origin != nil {
 					name := m.Origin.FromLabel
 					if name == "" {
