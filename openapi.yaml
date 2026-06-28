@@ -554,7 +554,7 @@ paths:
           description: Created
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MailboxMessage" }
+              schema: { $ref: "#/components/schemas/MailboxSendResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/files/{path}:
@@ -1837,6 +1837,32 @@ components:
           $ref: "#/components/schemas/MailboxOrigin"
         action:
           $ref: "#/components/schemas/MailboxAction"
+    MailboxSendResponse:
+      description: >
+        Response to a mailbox send. The delivered message is embedded inline, so
+        the JSON stays byte-compatible with the bare MailboxMessage older clients
+        decode. The additive fields are present only when a DIRECTED `to` matched
+        NEITHER an id NOR a label in the island's current roster: delivery still
+        happens (the mailbox is permissive), but the sender is warned. The signal
+        is server-authoritative — derived from the same roster the daemon resolved
+        the recipient against.
+      allOf:
+        - $ref: "#/components/schemas/MailboxMessage"
+        - type: object
+          properties:
+            unknown_recipient:
+              type: boolean
+              description: True when the directed recipient matched no agent in the roster (still delivered).
+            roster:
+              type: array
+              description: The island's current agents at send time, so the sender can name a valid recipient. Present only with unknown_recipient.
+              items: { $ref: "#/components/schemas/RosterAgent" }
+    RosterAgent:
+      type: object
+      description: Minimal (id, label) view of a current agent, carried in a MailboxSendResponse.
+      properties:
+        id: { type: string }
+        label: { type: string }
     MailboxAction:
       type: object
       description: >
