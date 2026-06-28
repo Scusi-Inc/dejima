@@ -191,7 +191,8 @@ type fakeRuntime struct {
 	volumeCopies     [][2]string
 	startCalls       int
 	stopCalls        int
-	failNewSession   bool // when true, `tmux new-session` exits non-zero
+	lastCopyMode     os.FileMode // mode of the source file last handed to CopyToContainer
+	failNewSession   bool        // when true, `tmux new-session` exits non-zero
 	// execHook, when set, can intercept an Exec call and return a canned
 	// (stdout, stderr, exitCode); returning handled=false falls through to the
 	// default behavior. Lets a test drive e.g. git-status output.
@@ -301,7 +302,14 @@ func (f *fakeRuntime) ExecStream(_ context.Context, _ string, cmd []string) (io.
 func (f *fakeRuntime) BuildImage(context.Context, string, string, string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
-func (f *fakeRuntime) CopyToContainer(context.Context, string, string, string) error   { return nil }
+func (f *fakeRuntime) CopyToContainer(_ context.Context, _, hostPath, _ string) error {
+	if fi, err := os.Stat(hostPath); err == nil {
+		f.mu.Lock()
+		f.lastCopyMode = fi.Mode().Perm()
+		f.mu.Unlock()
+	}
+	return nil
+}
 func (f *fakeRuntime) CopyFromContainer(context.Context, string, string, string) error { return nil }
 func (f *fakeRuntime) Logs(context.Context, string, bool) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("container logs\n")), nil

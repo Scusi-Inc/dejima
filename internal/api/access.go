@@ -103,6 +103,16 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	tmp.Close()
 
+	// `docker cp` preserves the SOURCE file's mode, and the daemon's temp file is
+	// 0600 owned by the daemon's host uid (e.g. 501 on macOS) — which the in-island
+	// agent (uid 1000) then can't read. Make it world-readable so a copied-in file
+	// (e.g. an image for the agent to ingest) is agent-readable with no in-container
+	// chmod (we can't chown: `docker exec` runs as the non-root container user).
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	// docker cp wants a path that exists; ensure parent dir on the container side.
 	parent := filepath.Dir(target)
 	_, _, _, _ = s.rt.Exec(r.Context(), p.ContainerName(), []string{"mkdir", "-p", parent})
