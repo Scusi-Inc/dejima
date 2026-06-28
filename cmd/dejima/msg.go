@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/aoos/dejima/internal/api"
@@ -45,6 +46,22 @@ func newMsgSendCmd() *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+			// Permissive delivery: a directed `--to` that matches no agent in the
+			// island roster is still delivered (you may address a handle that isn't
+			// live yet, and the roster can be transiently empty), but the daemon
+			// flags it so we warn the sender — to stderr, so it never corrupts the
+			// "sent #N" line a script may parse on stdout. Each roster entry is
+			// rendered with the shared agentDisplay helper, id-first so the sender
+			// sees the handle to re-address with.
+			if m.UnknownRecipient {
+				roster := make([]string, 0, len(m.Roster))
+				for _, a := range m.Roster {
+					roster = append(roster, agentDisplay(a.ID, a.Label))
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"warning: no agent %q in island roster (current: %s) — delivered anyway\n",
+					m.To, strings.Join(roster, ", "))
 			}
 			dest := "(broadcast)"
 			if m.To != "" {

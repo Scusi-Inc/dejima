@@ -310,9 +310,12 @@ func (c *Client) RevokeSpawnGrant(ctx context.Context, island string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/islands/"+url.PathEscape(island)+"/spawn-grant", nil, nil)
 }
 
-// SendMailbox posts a message into an island's intra-island mailbox.
-func (c *Client) SendMailbox(ctx context.Context, island string, req MailboxSendRequest) (*mailbox.Message, error) {
-	var out mailbox.Message
+// SendMailbox posts a message into an island's intra-island mailbox. The
+// response embeds the delivered mailbox.Message (so existing callers read
+// .Seq/.To unchanged) plus the additive UnknownRecipient/Roster signal the CLI
+// uses to warn when a directed `--to` matched no agent in the roster.
+func (c *Client) SendMailbox(ctx context.Context, island string, req MailboxSendRequest) (*MailboxSendResponse, error) {
+	var out MailboxSendResponse
 	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(island)+"/mailbox", req, &out); err != nil {
 		return nil, err
 	}

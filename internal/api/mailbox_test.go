@@ -96,6 +96,73 @@ func TestMailboxSendByLabel(t *testing.T) {
 	}
 }
 
+// TestMailboxUnknownRecipientWarning: a DIRECTED send whose `to` matches neither
+// an id nor a label is STILL delivered (permissive, 201), but the response flags
+// unknown_recipient and returns the current roster so the CLI can warn. A send to
+// a known id or label, and a broadcast, leave the flag false/absent.
+func TestMailboxUnknownRecipientWarning(t *testing.T) {
+	h, _ := newTestServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"proj","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create island: got %d", rr.Code)
+	}
+	// Give the primary (p1) a label so the roster carries an (id,label) pair and
+	// the label-resolution path is exercised.
+	if rr := do(t, h, http.MethodPatch, "/v1/islands/proj/agents/p1",
+		`{"label":"backend"}`); rr.Code != http.StatusOK {
+		t.Fatalf("relabel p1: got %d", rr.Code)
+	}
+
+	// Unknown recipient: delivered (201) AND flagged, with the roster populated.
+	resp := sendMsg(t, h, "proj", `{"from":"p2","to":"ghost","payload":"x"}`)
+	if !resp.UnknownRecipient {
+		t.Errorf("unknown recipient: unknown_recipient = false, want true")
+	}
+	if resp.To != "ghost" {
+		t.Errorf("unknown recipient: to = %q, want the literal handle %q", resp.To, "ghost")
+	}
+	var sawBackend bool
+	for _, a := range resp.Roster {
+		if a.ID == "p1" && a.Label == "backend" {
+			sawBackend = true
+		}
+	}
+	if !sawBackend {
+		t.Errorf("unknown recipient: roster %+v missing p1/backend", resp.Roster)
+	}
+	// It really was delivered to the literal handle.
+	if got := pollMessages(t, h, "proj", "ghost", 0); len(got) != 1 {
+		t.Errorf("literal-id recipient should get its message, got %+v", got)
+	}
+
+	// Known recipient by id → not flagged, no roster.
+	if r := sendMsg(t, h, "proj", `{"from":"p2","to":"p1","payload":"y"}`); r.UnknownRecipient || len(r.Roster) != 0 {
+		t.Errorf("known id: unknown_recipient=%v roster=%+v, want false/empty", r.UnknownRecipient, r.Roster)
+	}
+	// Known recipient by label → not flagged.
+	if r := sendMsg(t, h, "proj", `{"from":"p2","to":"backend","payload":"z"}`); r.UnknownRecipient {
+		t.Errorf("known label: unknown_recipient = true, want false")
+	}
+	// Broadcast (no `to`) → unaffected.
+	if r := sendMsg(t, h, "proj", `{"from":"p2","payload":"all"}`); r.UnknownRecipient || len(r.Roster) != 0 {
+		t.Errorf("broadcast: unknown_recipient=%v roster=%+v, want false/empty", r.UnknownRecipient, r.Roster)
+	}
+}
+
+// sendMsg POSTs a mailbox send, asserts 201, and decodes the MailboxSendResponse.
+func sendMsg(t *testing.T, h http.Handler, island, body string) MailboxSendResponse {
+	t.Helper()
+	rr := do(t, h, http.MethodPost, "/v1/islands/"+island+"/mailbox", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("send %s: got %d, want 201", body, rr.Code)
+	}
+	var resp MailboxSendResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode send response: %v", err)
+	}
+	return resp
+}
+
 func pollMessages(t *testing.T, h http.Handler, island, agent string, since int64) []mailbox.Message {
 	t.Helper()
 	path := "/v1/islands/" + island + "/mailbox?agent=" + agent
