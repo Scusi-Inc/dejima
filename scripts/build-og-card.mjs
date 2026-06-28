@@ -72,6 +72,18 @@ const CARDS = [
     line2: 'contained.',
     sub: 'On the machine you already use, walled off from your files.',
   },
+  {
+    out: 'og-vs-cma',
+    line1: 'Claude Managed Agents',
+    line2: 'vs Dejima.',
+    sub: 'The brain on their servers, or the whole agent on your box.',
+  },
+  {
+    out: 'og-vs-rivet',
+    line1: 'Rivet vs Dejima',
+    line2: 'Side by side.',
+    sub: 'A primitive you build on, or a tool you just run.',
+  },
 ]
 
 // Island / harbor motif, bottom-right: concentric arcs (water) + a dome
