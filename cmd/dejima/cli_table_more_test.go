@@ -245,12 +245,13 @@ func TestCLIAgentRename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent ls: %v", err)
 	}
-	// The added agent is the one without the "build" label.
+	// The added agent is the one without the "build" label. Listing is name-first
+	// (NAME ID TYPE …): name in column 0, id in column 1, type in column 2.
 	id := ""
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) >= 2 && f[1] == "claude-code" && f[0] != "p1" {
-			id = f[0]
+		if len(f) >= 3 && f[2] == "claude-code" && f[0] != "build" && f[0] != "NAME" {
+			id = f[1]
 			break
 		}
 	}
@@ -264,30 +265,67 @@ func TestCLIAgentRename(t *testing.T) {
 	}
 }
 
-// agentIDForType returns the id (leftmost column) of the first `agent ls` row
-// whose line mentions the given agent type.
+// TestCLIAgentAddressByName drives the CLI-side id/label resolver end-to-end:
+// a command that takes an <agent-id> also accepts the agent's label, and the id
+// keeps working. Mirrors TestCLIAgentRename but targets the agent BY LABEL.
+func TestCLIAgentAddressByName(t *testing.T) {
+	_, c := cliEnv(t)
+	seedIsland(t, c, "proj")
+
+	// Label the primary "frontend".
+	if _, err := runCLI(t, "agent", "rename", "proj", "p1", "frontend"); err != nil {
+		t.Fatalf("agent rename p1: %v", err)
+	}
+
+	// Now address it BY LABEL (case-insensitively) in a subsequent rename. The
+	// resolver must turn "FrontEnd" → p1 before the relabel runs.
+	out, err := runCLI(t, "agent", "rename", "proj", "FrontEnd", "frontend-ui")
+	if err != nil {
+		t.Fatalf("rename by label: %v", err)
+	}
+	if !strings.Contains(out, "p1") || !strings.Contains(out, `"frontend-ui"`) {
+		t.Errorf("label should have resolved to p1: %q", out)
+	}
+
+	// An unknown ref errors clearly.
+	if _, err := runCLI(t, "agent", "rename", "proj", "ghost", "x"); err == nil {
+		t.Error("unknown agent ref should error")
+	} else if !strings.Contains(err.Error(), "no such agent") {
+		t.Errorf("unexpected error for unknown ref: %v", err)
+	}
+
+	// The id still works unchanged (back-compat).
+	if out, err := runCLI(t, "agent", "rename", "proj", "p1", "frontend"); err != nil {
+		t.Fatalf("rename by id: %v", err)
+	} else if !strings.Contains(out, "p1") {
+		t.Errorf("id should still resolve: %q", out)
+	}
+}
+
+// agentIDForType returns the id of the first `agent ls` row whose line mentions
+// the given agent type. The listing is name-first (NAME ID TYPE …), so the id is
+// the second column.
 func agentIDForType(lsOut, typ string) string {
 	for _, line := range strings.Split(lsOut, "\n") {
 		if !strings.Contains(line, typ) {
 			continue
 		}
-		if f := strings.Fields(line); len(f) > 0 && !strings.EqualFold(f[0], "ID") {
-			return f[0]
+		if f := strings.Fields(line); len(f) >= 2 && !strings.EqualFold(f[0], "NAME") {
+			return f[1]
 		}
 	}
 	return ""
 }
 
-// firstAgentID pulls the first token that looks like an agent id from `agent ls`
-// output (the leftmost column). It tolerates whatever id scheme the fake uses.
-func firstAgentID(lsOut string) string {
+// firstTableID returns the leftmost column of the first non-header row of a
+// tabwriter table — for id-first listings (e.g. `token ls`: ID ROLE LABEL …).
+func firstTableID(lsOut string) string {
 	for _, line := range strings.Split(lsOut, "\n") {
 		f := strings.Fields(line)
 		if len(f) == 0 {
 			continue
 		}
-		// skip the header row.
-		if strings.EqualFold(f[0], "ID") || strings.EqualFold(f[0], "AGENT") {
+		if strings.EqualFold(f[0], "ID") {
 			continue
 		}
 		return f[0]
@@ -324,7 +362,7 @@ func TestCLITokenRevoke(t *testing.T) {
 		if lerr != nil {
 			t.Fatalf("token ls: %v", lerr)
 		}
-		id = firstAgentID(lsOut) // same leftmost-id heuristic
+		id = firstTableID(lsOut) // token ls is id-first (ID ROLE LABEL …)
 	}
 	if id == "" {
 		t.Fatalf("could not determine token id from: %q", out)

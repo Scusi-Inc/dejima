@@ -35,7 +35,8 @@ type MailboxPollResponse struct {
 // exchange is the separate, brokered "link" layer).
 func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if _, err := project.Load(name); err != nil {
+	proj, err := project.Load(name)
+	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
@@ -47,6 +48,23 @@ func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 	if req.Payload == "" {
 		writeError(w, http.StatusBadRequest, errors.New("payload is required"))
 		return
+	}
+	// A directed message may address the recipient by id OR by label (id wins);
+	// resolve a label to the concrete id so the recipient — who polls with its id
+	// — actually receives it. Resolved server-side because the mailbox `to` only
+	// travels in the request body, so there is no CLI-side API call to resolve
+	// against (no new route/role change). The mailbox is intentionally permissive
+	// about the target (you may address an id that isn't a live agent — e.g. one
+	// that will be added, or a stale handle), so a no-match passes THROUGH
+	// unchanged for back-compat; only a genuinely AMBIGUOUS label is rejected,
+	// since silently picking one recipient would mis-deliver.
+	if to := strings.TrimSpace(req.To); to != "" {
+		if id, rerr := project.ResolveAgentRef(proj.Agents, to); rerr == nil {
+			req.To = id
+		} else if errors.Is(rerr, project.ErrAmbiguousAgent) {
+			writeError(w, http.StatusBadRequest, rerr)
+			return
+		}
 	}
 	// Belt-and-suspenders: cross-island provenance is the structured Origin field
 	// (set only by the daemon's DeliverExternal), but also reserve a "link:"

@@ -99,13 +99,10 @@ func newMsgPollCmd() *cobra.Command {
 				}
 				label = func(id string) string { return labelOf[id] }
 			}
-			// display renders an agent id as "label (id)" when it has a label, else
-			// the bare id.
+			// display renders an agent id name-first as "label (id)", falling back
+			// to the bare id. Shared helper so every CLI surface reads identically.
 			display := func(id string) string {
-				if l := label(id); l != "" {
-					return l + " (" + id + ")"
-				}
-				return id
+				return agentDisplay(label(id), id)
 			}
 
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)

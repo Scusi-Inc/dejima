@@ -434,6 +434,10 @@ func newLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A label is accepted anywhere an agent id is (id still wins).
+			if agent, err = resolveAgentRef(cmd.Context(), c, name, agent); err != nil {
+				return err
+			}
 			rc, err := c.StreamLogs(cmd.Context(), name, agent, follow)
 			if err != nil {
 				return err
@@ -1236,6 +1240,11 @@ func newConnectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A label is accepted anywhere an agent id is (id still wins). An empty
+			// agent passes through as "" → a bare shell at /workspace.
+			if agent, err = resolveAgentRef(cmd.Context(), c, name, agent); err != nil {
+				return err
+			}
 			info, err := c.GetIsland(cmd.Context(), name)
 			if err != nil {
 				return err
@@ -1305,6 +1314,26 @@ func splitIslandAgent(arg string) (island, agent string) {
 		return arg[:i], arg[i+1:]
 	}
 	return arg, ""
+}
+
+// resolveAgentRef turns a user-supplied agent reference (an id or a label) into a
+// concrete agent id by fetching the island's agent list and matching with the
+// shared project.ResolveAgentRef resolver: an exact id wins (ids always work), a
+// case-insensitive label resolves, an ambiguous label errors with the matches,
+// and an unknown ref errors. An empty ref passes straight through (it means "the
+// island's primary / a bare shell" to the callers and must not be resolved).
+//
+// This is the single CLI-side resolution point shared by exec/logs/connect/
+// rename/config/rm — every verb that targets a specific agent.
+func resolveAgentRef(ctx context.Context, c *api.Client, island, ref string) (string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return ref, nil
+	}
+	agents, err := c.ListAgents(ctx, island)
+	if err != nil {
+		return "", err
+	}
+	return project.ResolveAgentRef(agents, ref)
 }
 
 // defaultLabel produces a client label for presence: $HOSTNAME or "cli".
@@ -1831,11 +1860,9 @@ func newLsCmd() *cobra.Command {
 				}
 				if showAgents && len(i.Agents) > 1 {
 					for _, a := range i.Agents {
-						label := a.Type
-						if a.Label != "" {
-							label = a.Label
-						}
-						fmt.Fprintf(tw, "  └ %s\t%s\t%s\t%s\t\n", a.ID, label, "", a.State)
+						// Name-first: "label (id)" leads, type follows. Falls back to
+						// the bare id when an agent somehow has no label.
+						fmt.Fprintf(tw, "  └ %s\t%s\t%s\t%s\t\n", agentDisplay(a.Label, a.ID), a.Type, "", a.State)
 					}
 				}
 			}
@@ -1963,11 +1990,15 @@ func newAgentConfigCmd() *cobra.Command {
 			if cmd.Flags().Changed("model") {
 				req.Model = &model
 			}
-			resp, err := c.ConfigureAgent(cmd.Context(), args[0], args[1], req)
+			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
 			if err != nil {
 				return err
 			}
-			fmt.Printf("agent %s/%s → provider=%q model=%q\n", args[0], args[1], resp.Provider, resp.Model)
+			resp, err := c.ConfigureAgent(cmd.Context(), args[0], id, req)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("agent %s/%s → provider=%q model=%q\n", args[0], id, resp.Provider, resp.Model)
 			if resp.RestartRequired {
 				fmt.Printf("recreate the island to apply: dejima upgrade %s\n", args[0])
 			}
@@ -2031,14 +2062,20 @@ func newAgentLsCmd() *cobra.Command {
 				return err
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "ID\tTYPE\tLABEL\tSTATE\tBRANCH\tWORKTREE")
+			// Name-first: the agent's label leads (with its id alongside to
+			// disambiguate), matching the rest of the CLI and the TUI.
+			fmt.Fprintln(tw, "NAME\tID\tTYPE\tSTATE\tBRANCH\tWORKTREE")
 			for _, a := range agents {
 				state := a.State
 				if a.Error != "" {
 					state = "error"
 				}
+				name := a.Label
+				if name == "" {
+					name = a.ID
+				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-					a.ID, a.Type, a.Label, state, a.Branch, a.Worktree)
+					name, a.ID, a.Type, state, a.Branch, a.Worktree)
 			}
 			if err := tw.Flush(); err != nil {
 				return err
@@ -2081,8 +2118,8 @@ func newAgentAddCmd() *cobra.Command {
 			case a.Label != want:
 				fmt.Printf("note: label %q was taken; named it %q\n", want, a.Label)
 			}
-			fmt.Printf("added agent %s (%s) to %s — attach with `dejima connect %s/%s`\n",
-				a.ID, a.Type, args[0], args[0], a.ID)
+			fmt.Printf("added agent %s [%s] to %s — attach with `dejima connect %s/%s`\n",
+				agentDisplay(a.Label, a.ID), a.Type, args[0], args[0], a.ID)
 			if a.AuthState == "missing-provider-auth" {
 				fmt.Printf("note: %s has no model key yet — set one with `dejima provider set %s`\n",
 					a.ID, a.Provider)
@@ -2111,7 +2148,11 @@ func newAgentRenameCmd() *cobra.Command {
 				return err
 			}
 			want := strings.TrimSpace(args[2])
-			a, err := c.RelabelAgent(cmd.Context(), args[0], args[1], want)
+			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			a, err := c.RelabelAgent(cmd.Context(), args[0], id, want)
 			if err != nil {
 				return err
 			}
@@ -2135,10 +2176,14 @@ func newAgentRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.RemoveAgent(cmd.Context(), args[0], args[1]); err != nil {
+			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
+			if err != nil {
 				return err
 			}
-			fmt.Printf("removed agent %s from %s\n", args[1], args[0])
+			if err := c.RemoveAgent(cmd.Context(), args[0], id); err != nil {
+				return err
+			}
+			fmt.Printf("removed agent %s from %s\n", id, args[0])
 			return nil
 		},
 	}
@@ -2342,6 +2387,24 @@ func parseTags(pairs []string) (map[string]string, error) {
 }
 
 // formatTags renders a tag map as "k=v k=v" in sorted key order (stable output).
+// agentDisplay renders an agent name-first as "label (id)" — the human-given
+// label leads, with the id kept in parentheses only to disambiguate. When the
+// label is blank (which Part 1 / #195 now makes rare: every agent gets a
+// non-blank, unique label), it degrades to the bare id. This is the SAME
+// convention the mailbox poll display shipped (#190: "backend (a1)"); reuse it
+// everywhere an agent is listed so the whole CLI reads consistently. The id
+// stays the addressing handle — this is presentation only.
+func agentDisplay(label, id string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return id
+	}
+	if id == "" {
+		return label
+	}
+	return label + " (" + id + ")"
+}
+
 func formatTags(tags map[string]string) string {
 	keys := make([]string, 0, len(tags))
 	for k := range tags {
