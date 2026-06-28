@@ -96,6 +96,18 @@ const CARDS = [
     line2: 'agent actually did.',
     sub: 'A tamper-evident ledger of every file an agent touched.',
   },
+  {
+    out: 'og-uc-private-files',
+    line1: 'Keep AI agents off',
+    line2: 'your private files.',
+    sub: 'Deny-all by default. They touch only what you grant, and it is logged.',
+  },
+  {
+    out: 'og-uc-team-host',
+    line1: 'One agent host',
+    line2: 'for your whole team.',
+    sub: 'Self-hosted, role-scoped, audited. No per-seat SaaS.',
+  },
 ]
 
 // Island / harbor motif, bottom-right: concentric arcs (water) + a dome
