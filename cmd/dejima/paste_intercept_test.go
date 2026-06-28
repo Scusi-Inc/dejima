@@ -8,14 +8,27 @@ import (
 )
 
 // feedAll runs the input (optionally split into chunks) through one scanner and
-// returns the concatenated forwarded bytes + any dropped paths.
+// returns the concatenated forwarded bytes + any dropped paths. No paste-key
+// handler (drag-drop only).
 func feedAll(s *pasteScanner, chunks ...[]byte) (string, []string) {
 	var out strings.Builder
 	var drops []string
 	for _, c := range chunks {
-		out.Write(s.process(c, func(p string) { drops = append(drops, p) }))
+		out.Write(s.process(c, func(p string) { drops = append(drops, p) }, nil))
 	}
 	return out.String(), drops
+}
+
+// feedKeys runs input through a scanner with paste-key triggers, returning the
+// forwarded bytes and how many times onPasteKey reported "handled". handledImage
+// controls whether the simulated clipboard had an image (handled=true swallows).
+func feedKeys(s *pasteScanner, handledImage bool, chunks ...[]byte) (string, int) {
+	var out strings.Builder
+	calls := 0
+	for _, c := range chunks {
+		out.Write(s.process(c, nil, func() bool { calls++; return handledImage }))
+	}
+	return out.String(), calls
 }
 
 func TestPasteScanner_PlainBytesAreByteExact(t *testing.T) {
@@ -78,13 +91,26 @@ func TestPasteScanner_SplitAcrossChunks(t *testing.T) {
 	f := filepath.Join(dir, "a.png")
 	_ = os.WriteFile(f, []byte("x"), 0o644)
 	full := []byte("pre" + bpStart + f + bpEnd + "post")
-	// Split at every offset; the result must be identical regardless of chunking.
+	// Split at every offset. The invariant under ANY chunking: NEVER corrupt the
+	// stream — either the drop is cleanly detected (out="prepost") OR it's passed
+	// through byte-exact (out==full). The only accepted miss is a split landing
+	// right after the lead ESC of bpStart (we don't hold a lone ESC, to avoid
+	// delaying the Escape key); even then the output is verbatim, not garbled.
+	detected := 0
 	for cut := 1; cut < len(full); cut++ {
 		s := &pasteScanner{}
 		out, drops := feedAll(s, full[:cut], full[cut:])
-		if out != "prepost" || len(drops) != 1 || drops[0] != f {
-			t.Errorf("cut %d: out=%q drops=%v, want prepost + [%s]", cut, out, drops, f)
+		switch {
+		case out == "prepost" && len(drops) == 1 && drops[0] == f:
+			detected++
+		case out == string(full) && len(drops) == 0:
+			// accepted miss — byte-exact passthrough
+		default:
+			t.Errorf("cut %d CORRUPTED stream: out=%q drops=%v", cut, out, drops)
 		}
+	}
+	if detected < len(full)-2 { // at most a couple of ESC-split cuts may miss
+		t.Errorf("too many missed drops: detected %d of %d cuts", detected, len(full)-1)
 	}
 }
 
@@ -121,5 +147,69 @@ func TestPasteScanner_StartMarkerSplitHeldBack(t *testing.T) {
 	}
 	if len(drops) != 0 {
 		t.Errorf("unexpected drops: %v", drops)
+	}
+}
+
+func TestPasteScanner_TriggerCtrlVImageHandledSwallows(t *testing.T) {
+	s := &pasteScanner{triggers: [][]byte{keyCtrlV, keyAltV}}
+	// Ctrl-V with an image on the clipboard → swallowed (caller injects the path).
+	out, calls := feedKeys(s, true, []byte("ab\x16cd"))
+	if out != "abcd" {
+		t.Errorf("Ctrl-V should be swallowed when an image is handled: got %q want %q", out, "abcd")
+	}
+	if calls != 1 {
+		t.Errorf("onPasteKey calls = %d, want 1", calls)
+	}
+}
+
+func TestPasteScanner_TriggerCtrlVNoImageForwarded(t *testing.T) {
+	s := &pasteScanner{triggers: [][]byte{keyCtrlV, keyAltV}}
+	// No image (handled=false) → the keystroke passes through unchanged.
+	out, calls := feedKeys(s, false, []byte("ab\x16cd"))
+	if out != "ab\x16cd" {
+		t.Errorf("Ctrl-V should pass through when no image: got %q", out)
+	}
+	if calls != 1 {
+		t.Errorf("onPasteKey calls = %d, want 1", calls)
+	}
+}
+
+func TestPasteScanner_TriggerAltV(t *testing.T) {
+	s := &pasteScanner{triggers: [][]byte{keyCtrlV, keyAltV}}
+	out, calls := feedKeys(s, true, []byte("x\x1bvy"))
+	if out != "xy" || calls != 1 {
+		t.Errorf("Alt-V handled: got out=%q calls=%d, want xy/1", out, calls)
+	}
+}
+
+func TestPasteScanner_AltVSplitAcrossReads_notHeld(t *testing.T) {
+	// A lone trailing ESC must be forwarded immediately (not held), so a plain
+	// Escape keypress isn't delayed. Here ESC then 'v' arrive split: because we
+	// don't hold the lone ESC, this is NOT treated as Alt-V (safe degradation) —
+	// the bytes pass through verbatim and no handler fires.
+	s := &pasteScanner{triggers: [][]byte{keyCtrlV, keyAltV}}
+	out, calls := feedKeys(s, true, []byte("hi\x1b"), []byte("v"))
+	if out != "hi\x1bv" {
+		t.Errorf("split Alt-V should pass through verbatim (lone ESC not held): got %q", out)
+	}
+	if calls != 0 {
+		t.Errorf("split Alt-V should not fire the handler, got %d calls", calls)
+	}
+}
+
+func TestPasteScanner_LoneEscNotHeld(t *testing.T) {
+	// Pressing Escape (lone 0x1b at end of a read) must be forwarded right away.
+	s := &pasteScanner{triggers: [][]byte{keyCtrlV, keyAltV}}
+	out, _ := feedKeys(s, true, []byte("\x1b"))
+	if out != "\x1b" {
+		t.Errorf("lone ESC must forward immediately, got %q", out)
+	}
+}
+
+func TestPasteScanner_NoTriggersConfigured_CtrlVPassesThrough(t *testing.T) {
+	s := &pasteScanner{} // no triggers
+	out, drops := feedAll(s, []byte("a\x16b"))
+	if out != "a\x16b" || len(drops) != 0 {
+		t.Errorf("without triggers, Ctrl-V is a normal byte: got %q drops=%v", out, drops)
 	}
 }
