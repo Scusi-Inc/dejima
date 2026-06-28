@@ -1772,6 +1772,8 @@ components:
         cmd: { type: string, description: required for a generic headless type }
         provider: { type: string, description: names a daemon provider credential }
         model: { type: string, description: "\"provider/model\" string" }
+        ephemeral: { type: boolean, description: "agent-initiated spawn: an in-island token MUST set this (it may only create ephemeral sub-agents, within the operator spawn grant)" }
+        spawned_by: { type: string, description: spawning agent's id (lineage / depth-cap input) }
     AgentConfigRequest:
       type: object
       description: Pointer-style — omit a field to leave it unchanged; "" clears it.
@@ -2026,6 +2028,8 @@ components:
         provider_key_set: { type: boolean }
         auth_state: { type: string, description: "\"missing-provider-auth\" or \"\" (ready)" }
         usage: { $ref: "#/components/schemas/AgentUsage" }
+        ephemeral: { type: boolean, description: an agent-spawned sub-agent (auto-reaped; counts against the spawn budget) }
+        spawned_by: { type: string, description: id of the agent that spawned this one (lineage; empty for operator-created) }
     AgentUsage:
       type: object
       description: >-
