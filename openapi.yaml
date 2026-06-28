@@ -315,6 +315,40 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EgressPolicy" }
         "503": { description: egress proxy not enabled on this daemon }
+  /v1/islands/{name}/spawn-grant:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: The island's ephemeral-sub-agent spawn grant (Granted=false when none — the deny default)
+      operationId: getSpawnGrant
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpawnGrantResponse" }
+    post:
+      tags: [islands]
+      summary: Grant/update an island's spawn budget (operator-only; ledgered). In-island tokens can never reach this.
+      operationId: setSpawnGrant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SpawnGrantRequest" }
+      responses:
+        "200":
+          description: OK — the resulting grant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpawnGrantResponse" }
+    delete:
+      tags: [islands]
+      summary: Revoke an island's spawn grant (operator-only; ledgered)
+      operationId: revokeSpawnGrant
+      responses:
+        "204": { description: revoked }
+        "404": { description: no spawn grant for this island }
   /v1/islands/{name}/agents:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -2081,6 +2115,34 @@ components:
         remove_allow: { type: array, items: { type: string } }
         add_deny: { type: array, items: { type: string } }
         remove_deny: { type: array, items: { type: string } }
+    SpawnGrant:
+      type: object
+      description: An island's operator-granted budget for ephemeral sub-agents. Co-located sub-agents SHARE the parent island's sandbox (not isolated from it).
+      properties:
+        island: { type: string }
+        max_concurrent: { type: integer, description: max live sub-agents at once }
+        max_total: { type: integer, description: max lifetime spawns (0 = unlimited within the grant) }
+        types: { type: array, items: { type: string }, description: allowed agent types (empty = any spawnable) }
+        ttl: { type: integer, format: int64, description: per-sub-agent max lifetime in nanoseconds (0 = no time cap) }
+        per_agent_memory: { type: string, description: per-sub-agent memory cap, e.g. "512m" }
+        per_agent_cpus: { type: string, description: per-sub-agent cpu cap, e.g. "1.0" }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+    SpawnGrantRequest:
+      type: object
+      required: [max_concurrent]
+      properties:
+        max_concurrent: { type: integer }
+        max_total: { type: integer }
+        types: { type: array, items: { type: string } }
+        ttl: { type: string, description: "per-sub-agent lifetime, e.g. \"1h\"" }
+        per_agent_memory: { type: string }
+        per_agent_cpus: { type: string }
+    SpawnGrantResponse:
+      type: object
+      properties:
+        granted: { type: boolean }
+        grant: { $ref: "#/components/schemas/SpawnGrant" }
     PortScopeRequest:
       type: object
       required: [host_path]
