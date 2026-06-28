@@ -287,6 +287,29 @@ func (c *Client) PatchEgressPolicy(ctx context.Context, island string, patch egr
 	return &out, nil
 }
 
+// GetSpawnGrant returns an island's ephemeral-sub-agent spawn grant (or Granted=false).
+func (c *Client) GetSpawnGrant(ctx context.Context, island string) (*SpawnGrantResponse, error) {
+	var out SpawnGrantResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+url.PathEscape(island)+"/spawn-grant", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetSpawnGrant grants (or updates) an island's spawn budget (operator-only).
+func (c *Client) SetSpawnGrant(ctx context.Context, island string, req SpawnGrantRequest) (*SpawnGrantResponse, error) {
+	var out SpawnGrantResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(island)+"/spawn-grant", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RevokeSpawnGrant removes an island's spawn grant (operator-only).
+func (c *Client) RevokeSpawnGrant(ctx context.Context, island string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/islands/"+url.PathEscape(island)+"/spawn-grant", nil, nil)
+}
+
 // SendMailbox posts a message into an island's intra-island mailbox.
 func (c *Client) SendMailbox(ctx context.Context, island string, req MailboxSendRequest) (*mailbox.Message, error) {
 	var out mailbox.Message
