@@ -17,6 +17,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/aoos/dejima/internal/egress"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
@@ -253,6 +254,34 @@ func (c *Client) ConfigureAgent(ctx context.Context, island, id string, req Agen
 	var out AgentConfigResponse
 	path := "/v1/islands/" + url.PathEscape(island) + "/agents/" + url.PathEscape(id) + "/config"
 	if err := c.do(ctx, http.MethodPatch, path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetEgress returns an island's recent observed outbound connections.
+func (c *Client) GetEgress(ctx context.Context, island string) (*EgressEventsResponse, error) {
+	var out EgressEventsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+url.PathEscape(island)+"/egress", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetEgressPolicy returns an island's egress policy (effective default = observe).
+func (c *Client) GetEgressPolicy(ctx context.Context, island string) (*egress.IslandPolicy, error) {
+	var out egress.IslandPolicy
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+url.PathEscape(island)+"/egress/policy", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PatchEgressPolicy applies an incremental change to an island's egress policy
+// (set mode, add/remove allow/deny hosts) and returns the resulting policy.
+func (c *Client) PatchEgressPolicy(ctx context.Context, island string, patch egress.PolicyPatch) (*egress.IslandPolicy, error) {
+	var out egress.IslandPolicy
+	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+url.PathEscape(island)+"/egress/policy", patch, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
