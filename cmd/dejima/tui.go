@@ -2969,13 +2969,13 @@ func (m tuiModel) renderBand(width int) (string, int) {
 			count = fmt.Sprintf("%d terminal%s", n, s)
 		}
 		line := fmt.Sprintf("%s %s %s %s   %s",
-			styleHeader.Render("⌨ Host"), dot, styleMuted.Render(count),
+			styleHeader.Render("▸ Host"), dot, styleMuted.Render(count),
 			styleMuted.Render("· not contained"), styleMuted.Render("[/] expand"))
 		return clip(line), 1
 	}
 
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("⌨ Host terminals") + " " +
+	b.WriteString(styleHeader.Render("▾ Host terminals") + " " +
 		styleMuted.Render("· not contained") + "   " + styleMuted.Render("[/] collapse") + "\n")
 	for i, t := range m.terminals {
 		line := "  " + terminalRowText(t)
