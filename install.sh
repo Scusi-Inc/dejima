@@ -37,6 +37,12 @@ OS=$(uname -s)
 bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
 info()  { printf '  %s\n' "$*"; }
 fail()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+# A ref can be a branch, a tag, or a raw commit SHA. `git clone --branch` and a
+# refspec fetch only accept a branch/tag name — a bare SHA makes them fail with
+# "Remote branch <sha> not found". So when the ref looks like a commit hash we
+# clone the whole repo (all branches + tags) and check the commit out directly.
+# The launch gate pins a frozen SHA this way (e.g. DEJIMA_REF=99001ba…).
+is_commit_sha() { [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; }
 
 bold "Dejima installer"
 info "source:  $SRC_DIR (ref: $REF)"
@@ -81,17 +87,33 @@ fi
 # a bare commit hash instead of a real release.
 if [[ -d "$SRC_DIR/.git" ]] && git -C "$SRC_DIR" rev-parse --git-dir >/dev/null 2>&1; then
     info "Updating existing checkout at $SRC_DIR"
-    git -C "$SRC_DIR" fetch --quiet --tags origin "$REF" || fail "couldn't fetch updates in $SRC_DIR — check your network, or remove it (\`rm -rf $SRC_DIR\`) and re-run."
-    git -C "$SRC_DIR" checkout --quiet "$REF" || fail "couldn't check out '$REF' in $SRC_DIR — remove it (\`rm -rf $SRC_DIR\`) and re-run."
-    git -C "$SRC_DIR" pull --quiet --ff-only origin "$REF" || true
+    if is_commit_sha "$REF"; then
+        # A bare SHA can't be a fetch refspec — pull every branch so the commit
+        # is reachable locally, then detach onto it.
+        git -C "$SRC_DIR" fetch --quiet --tags origin || fail "couldn't fetch updates in $SRC_DIR — check your network, or remove it (\`rm -rf $SRC_DIR\`) and re-run."
+        git -C "$SRC_DIR" checkout --quiet "$REF" || fail "couldn't check out commit '$REF' in $SRC_DIR — remove it (\`rm -rf $SRC_DIR\`) and re-run."
+    else
+        git -C "$SRC_DIR" fetch --quiet --tags origin "$REF" || fail "couldn't fetch updates in $SRC_DIR — check your network, or remove it (\`rm -rf $SRC_DIR\`) and re-run."
+        git -C "$SRC_DIR" checkout --quiet "$REF" || fail "couldn't check out '$REF' in $SRC_DIR — remove it (\`rm -rf $SRC_DIR\`) and re-run."
+        git -C "$SRC_DIR" pull --quiet --ff-only origin "$REF" || true
+    fi
 else
     if [[ -e "$SRC_DIR" ]]; then
         info "Found a partial/incomplete checkout at $SRC_DIR (likely an interrupted run) — re-cloning"
         rm -rf "$SRC_DIR"
     fi
     info "Cloning Dejima to $SRC_DIR"
-    git clone --quiet --branch "$REF" "$REPO_URL" "$SRC_DIR" \
-        || fail "git clone failed — check your network and that '$REF' exists, then re-run."
+    if is_commit_sha "$REF"; then
+        # `--branch` rejects a SHA; clone the repo (all branches + tags), then
+        # check the commit out directly.
+        git clone --quiet "$REPO_URL" "$SRC_DIR" \
+            || fail "git clone failed — check your network, then re-run."
+        git -C "$SRC_DIR" checkout --quiet "$REF" \
+            || fail "couldn't check out commit '$REF' — verify it exists on a pushed branch, then re-run."
+    else
+        git clone --quiet --branch "$REF" "$REPO_URL" "$SRC_DIR" \
+            || fail "git clone failed — check your network and that '$REF' exists, then re-run."
+    fi
 fi
 
 # --- Hand off to make setup ----------------------------------------------
