@@ -44,7 +44,7 @@
 </section>
 
 <h2 id="install">Install</h2>
-<p>Pick where you're installing it. The steps rewrite themselves for your choice.</p>
+<p>Pick where you're installing it. The steps rewrite themselves for your choice. A <strong>server</strong> (it hosts the islands) uses the one-line bootstrap below, which also sets up Docker, Tailscale, and the background service. A <strong>client</strong> is just the CLI that drives a remote server — install it with <code>npm install -g dejima</code>, <code>brew install aoos/dejima/dejima</code>, or the guided installer below.</p>
 
 <div class="picker" role="group" aria-label="Install configuration">
   <div class="pick-row">
@@ -162,6 +162,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
         <li>Downloads the latest <code>dejima</code> CLI from GitHub Releases, verifies SHA256, installs to <code>/usr/local/bin/dejima</code>.</li>
         <li>Prompts for your server's tailnet IP (the one the server installer printed — e.g. <code>100.84.12.7</code>), probes it on port <code>7273</code>, and persists <code>DEJIMA_HOST</code> to <code>~/.zshenv</code>.</li>
       </ul>
+      <p class="small">Already on the tailnet and just want the CLI? <code>brew install aoos/dejima/dejima</code> or <code>npm install -g dejima</code> installs the client binary on its own; then point it at your server by setting <code>DEJIMA_HOST</code> yourself.</p>
     </li>
     <li><strong>Open the dashboard:</strong>
 <pre><code>dejima                              # interactive TUI</code></pre>
@@ -182,6 +183,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
         <li>Downloads the latest <code>dejima</code> CLI from GitHub Releases, verifies SHA256, installs to <code>/usr/local/bin/dejima</code>.</li>
         <li>Prompts for your server's tailnet IP, probes it on port <code>7273</code>, and persists <code>DEJIMA_HOST</code> to <code>~/.bashrc</code>.</li>
       </ul>
+      <p class="small">Already on the tailnet and just want the CLI? <code>npm install -g dejima</code> (or <code>brew install aoos/dejima/dejima</code> if you use Homebrew) installs the client binary on its own; then point it at your server by setting <code>DEJIMA_HOST</code> yourself.</p>
     </li>
     <li><strong>Open the dashboard:</strong>
 <pre><code>dejima                              # interactive TUI</code></pre>
@@ -202,6 +204,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
         <li>Downloads <code>dejima.exe</code> from the latest GitHub Release, verifies SHA256, extracts to <code>%LOCALAPPDATA%\dejima</code>, and adds it to your User PATH.</li>
         <li>Prompts for your server's tailnet IP, probes it on port <code>7273</code> via <code>Test-NetConnection</code>, and persists <code>DEJIMA_HOST</code> to your User environment.</li>
       </ul>
+      <p class="small">Prefer a package manager? <code>npm install -g dejima</code> installs the client CLI on Windows on its own; then set <code>DEJIMA_HOST</code> to your server yourself.</p>
     </li>
     <li><strong>Close + reopen PowerShell</strong> so the new <code>PATH</code> and <code>DEJIMA_HOST</code> take effect.</li>
     <li><strong>Open the dashboard:</strong>
