@@ -153,10 +153,19 @@ teardown_dejima(){
 # loop turns a non-virgin start into a failed run).
 assert_virgin(){
   step "Assert virgin environment (no Dejima history)"
-  if have dejima && dejima --version >/dev/null 2>&1; then
-    fail "a 'dejima' binary is still on PATH ($(command -v dejima)) — teardown incomplete"
+  # Check the USER PREFIX only, not `command -v` across all of PATH: the channels
+  # install to $BIN_DIR ($PREFIX/bin, PATH-prepended), so that's the binary under
+  # test. A pre-existing /usr/local/bin/dejima (another account's system install on
+  # shared /usr/local) is irrelevant to a user-prefix gate — failing on it would
+  # mean the gate could NEVER pass on any box that has a system dejima.
+  if [ -e "$BIN_DIR/dejima" ]; then
+    fail "a 'dejima' binary is still at $BIN_DIR/dejima — teardown incomplete"
   else
-    pass "no dejima binary on PATH"
+    pass "no dejima binary at $BIN_DIR (user prefix)"
+  fi
+  # A system dejima elsewhere on PATH is noted, not failed — it's not ours to remove.
+  if have dejima && [ "$(command -v dejima)" != "$BIN_DIR/dejima" ]; then
+    pass "(note) a system dejima exists at $(command -v dejima) — outside the gate's prefix, left untouched"
   fi
   if [ -e "$DEJIMA_HOME" ]; then fail "$DEJIMA_HOME still exists — teardown incomplete"; else pass "$DEJIMA_HOME absent"; fi
   if [ -e "$DEJIMA_SRC" ]; then fail "$DEJIMA_SRC still exists — teardown incomplete"; else pass "$DEJIMA_SRC absent"; fi

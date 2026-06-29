@@ -87,7 +87,11 @@ if [ -z "$ver" ]; then
 else
   # Build a SHA256SUMS from the formula's own checksums so the generator renders
   # the identical file; a mismatch means the formula was hand-edited out of band.
-  mapfile -t shas < <(grep -oE 'sha256 "[0-9a-f]{64}"' "$ROOT/homebrew/dejima.rb" | grep -oE '[0-9a-f]{64}')
+  # Read-loop (not `mapfile`): macOS ships bash 3.2, where `mapfile` is absent —
+  # it would print "mapfile: command not found" and leave `shas` unset, tripping
+  # `set -u` ("shas: unbound variable") at the count check below.
+  shas=()
+  while IFS= read -r _sha; do shas+=("$_sha"); done < <(grep -oE 'sha256 "[0-9a-f]{64}"' "$ROOT/homebrew/dejima.rb" | grep -oE '[0-9a-f]{64}')
   if [ "${#shas[@]}" -ne 4 ]; then
     bad "expected 4 sha256 lines in the formula, found ${#shas[@]}"
   else
