@@ -76,6 +76,17 @@ The things only you can do (on Minion / as owner), in priority order:
    drift-check that opens **draft** PRs for a3 to verify. Tooling: `tools/drift-checker/`;
    design: [`drift-checker-design.md`](drift-checker-design.md). Dry run already validated it
    (caught a real E2B drift + a Rivet rename, both since fixed).
+8. **Full clean-Mac gate (brew + npm channels) — later, and ⚠️ ONLY on a throwaway box.**
+   The **curl** channel is already verified GREEN (21/21 — the v0.7.0 install verdict). To add
+   brew/npm coverage, run `scripts/clean-mac/proof-loop.sh` on a **disposable macOS VM or spare
+   machine that has NO Dejima daemon installed and is NOT a production host.**
+   **🚫 NEVER run it on Minion (or any host running a live operator daemon).** The gate's
+   teardown does `dejima uninstall --purge-all` and binds the operator daemon ports
+   (`:7273`/`:7274`); run co-resident with a live daemon it will take that daemon **offline**
+   (this happened on 2026-06-29 — recovered, no data lost). **Blocked** until the harness ships
+   the co-residency guard (the gate must hard-refuse when a live daemon / system LaunchDaemon is
+   detected) + port/`DEJIMA_HOME` isolation + teardown-on-failure. Until that guard lands, the
+   rule is simply: **do not run this on Minion, full stop.**
 
 *(✅ Done this session — the test-harness operator setup: a dedicated macOS `dejimaqa` user,
 a caged self-hosted runner, its own colima Docker, the bot GitHub account +
