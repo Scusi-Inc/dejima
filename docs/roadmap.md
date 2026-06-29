@@ -65,14 +65,19 @@ The things only you can do (on Minion / as owner), in priority order:
 4. **Clear the standing Minion backlog** (onboarding wizard, terminal auto-reconnect, Keychain
    secrets, idle auto-hibernate, viewer-token scope) — see the Release-testing checklist below +
    the Operator verification queue. **Phase-B automates most of these once it's been run.**
-5. **SDK publish:** claim the `dejima` name on **PyPI** + **npm**, add repo secrets
-   `PYPI_API_TOKEN` / `NPM_TOKEN`, then push a `v*` tag (or `workflow_dispatch`).
-6. **Housekeeping:** remove the stray `.agents/d7` worktree (see Housekeeping below).
+5. ✅ **SDK publish — DONE (2026-06-29).** v0.7.0 + v0.7.1 published to **npm** + **PyPI** +
+   the Homebrew tap; the `dejima` name is claimed, `PYPI_API_TOKEN`/`NPM_TOKEN` are live, and
+   the tag→publish pipeline ran green.
+6. **Housekeeping:** prune stray `.agents/*` / `.claude/worktrees/*` worktrees (see Housekeeping
+   below) — confirm each is finished before removing (some may be active agents).
 7. **Stand up the competitive drift-checker watchtower** (when you want it live — it's
-   built, but agents can't self-spawn). Create the island + agent and grant scoped access:
-   `dejima home create --island watchtower` · `dejima agent add watchtower --type claude-code`
-   · grant a per-island GitHub identity (site repo only), an LLM provider key, and an egress
-   allow-list (the cited competitor domains + github.com). It then self-schedules a monthly
+   built, but agents can't self-spawn). A watchtower is a **Home Island** (headless), so create
+   it with `dejima home create --name watchtower --repo <drift-checker config repo> --agent
+   headless --cmd "<self-rearming drift loop>"` (NOT `--island` / `--agent claude-code` — home
+   islands are headless). **Wrinkle:** the drift-checker is authored as a Claude Code *SKILL*, so
+   it must be driven by that headless `--cmd` loop (or an openclaw brain), not run as the SKILL
+   as-is. Then grant a per-island GitHub identity (site repo only), an LLM provider key, and an
+   egress allow-list (the cited competitor domains + github.com). It then self-schedules a monthly
    drift-check that opens **draft** PRs for a3 to verify. Tooling: `tools/drift-checker/`;
    design: [`drift-checker-design.md`](drift-checker-design.md). Dry run already validated it
    (caught a real E2B drift + a Rivet rename, both since fixed).
