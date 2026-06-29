@@ -250,6 +250,23 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   natively **federate hosts** (a "fleet of hosts" alongside the "fleet of agents on one
   host"), or stay single-host and leave cross-host orchestration to a control plane above?
   Relates to inter-island exchange (cross-host would extend it). Park for a design talk.
+- **Resume the agent session on wake (don't cold-start)** — today hibernate stops the
+  container, killing the tmux server + agent process; only the workspace volume persists, so
+  wake recreates the container and `start.sh` launches a *fresh* agent — work resumes but the
+  agent's conversation/context is lost. Fix = a **per-adapter resume-on-wake seam**: on wake,
+  restart terminal agents with their resume flag (Claude Code `--continue`/`--resume`, Codex
+  equivalent) so the agent reattaches its prior context (a new tmux is fine). Pragmatic over
+  `docker pause` (doesn't free RAM) / CRIU (fragile). Matters for interactive/terminal agents;
+  headless/stateless ones (e.g. the watchtower) cold-start fine. Pairs with the scheduled-wake
+  primitive above.
+- **Per-user daemons on one host (shared-fate consideration)** — one host runs **one** system
+  daemon (`1 dejima = 1 server`), so separate OS accounts on the same machine still *share* it:
+  the operator's `update`/`restart`/crash blips every user on that host (felt during the
+  2026-06-29 incident). For a team this is fine — teammates **join the fleet** with island-scoped
+  tokens. The thesis line is **one operator per host**; for true independence the honest answer is
+  a **separate host/VM**, not a second daemon (which collides on `:7273`/`:7274`). Per-user-port
+  daemons are buildable but arguably off-thesis (containment favors separate hosts for separate
+  operators) — park unless demand is real. Relates to the multi-host question above.
 
 ---
 
