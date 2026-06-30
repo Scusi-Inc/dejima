@@ -15,11 +15,24 @@ import (
 // exit/parent cases also resolve on the next sweep).
 const DefaultSpawnReapInterval = time.Minute
 
+// DefaultEphemeralTTL is a leak backstop: the maximum lifetime applied to an
+// ephemeral sub-agent when its grant sets no TTL (--ttl unset). Without it, a
+// granted sub-agent whose parent stays alive and whose session never reports
+// "exited" (e.g. a lingering tmux shell, or an agent spawned over the API that
+// never started a real process — the d7 case in a3 #62) would live forever,
+// silently holding a max_concurrent slot. An ephemeral is by definition
+// short-lived; an operator who wants longer sets an explicit grant --ttl. This
+// is a ceiling, not a typical lifetime — the parent-removed and exited triggers
+// reap most sub-agents far sooner.
+const DefaultEphemeralTTL = time.Hour
+
 // shouldReap decides whether an ephemeral sub-agent is due for cleanup, and why.
 // Pure (no I/O) so the policy is unit-tested directly. Triggers: parent gone
 // (its spawner left the roster), TTL elapsed since creation, or the agent exited
 // (its session died — state "exited"/"stopped"). Non-ephemeral agents are never
-// reaped by this path.
+// reaped by this path. The ttl passed in is the grant's TTL or, when the grant
+// sets none, DefaultEphemeralTTL (resolved by spawnTTL) — so a granted ephemeral
+// always has a finite lifetime and can't leak (a3 #62: the no-TTL d7 case).
 func shouldReap(a project.AgentSpec, parentPresent bool, ttl time.Duration, state string, now time.Time) (bool, string) {
 	if !a.Ephemeral {
 		return false, ""
@@ -168,7 +181,12 @@ func (s *Server) spawnTTL(island string) time.Duration {
 		return 0
 	}
 	if g, ok := st.Get(island); ok {
-		return g.TTL
+		if g.TTL > 0 {
+			return g.TTL
+		}
+		// Granted but no explicit --ttl: fall back to the leak backstop so an
+		// ephemeral can't live forever (see DefaultEphemeralTTL).
+		return DefaultEphemeralTTL
 	}
 	return 0
 }
