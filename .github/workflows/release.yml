@@ -105,30 +105,69 @@ jobs:
           # can leave HEAD on a differently-named local branch.
           git push origin HEAD:main
 
-  # Publish the `dejima` npm package (the CLI wrapper in npm/). Runs after the
-  # release so the binary + SHA256SUMS the wrapper downloads already exist.
-  # No-ops cleanly unless NPM_TOKEN is set; skips pre-release tags.
+  # Publish the `dejima` npm package + its per-platform binary packages
+  # (@dejima/cli-<platform>-<arch>). Runs after the release so the archives +
+  # SHA256SUMS the platform packages embed already exist.
+  #
+  # NO postinstall: the binary ships INSIDE the platform packages as
+  # optionalDependencies, so `npm i dejima` works under npm 11's default
+  # script-blocking (the old `node ./install.js` download was silently blocked).
+  #
+  # Gating — this job always BUILDS + dry-run-validates the packages, but only
+  # PUBLISHES when BOTH are true:
+  #   - secrets.NPM_TOKEN is set (publish auth), and
+  #   - vars.NPM_PLATFORM_PUBLISH == 'enabled' (operator opt-in, flipped once the
+  #     @dejima npm scope exists + the token can publish to it).
+  # Until then the publish is held; the build still proves the packaging is sound.
+  # Skips pre-release tags.
   publish-npm-cli:
     needs: release
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
       - uses: actions/setup-node@v6
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
-      - name: Stamp version + publish
-        working-directory: npm
+
+      # Rebuild the same release archives the GitHub Release carries, so the
+      # platform packages embed byte-identical, checksum-verified binaries.
+      - name: Build release archives
+        run: make release-binaries VERSION=${GITHUB_REF_NAME}
+
+      - name: Build platform packages + stamp main package
+        run: node npm/scripts/build-platform-packages.mjs "${GITHUB_REF_NAME}" dist
+
+      - name: Publish (or validate, when held)
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISH_ENABLED: ${{ vars.NPM_PLATFORM_PUBLISH }}
         run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "::notice::NPM_TOKEN not set — skipping npm CLI publish for ${GITHUB_REF_NAME}"
-            exit 0
+          set -euo pipefail
+          # Publish only with auth AND the operator opt-in; otherwise dry-run.
+          if [ -n "${NPM_TOKEN:-}" ] && [ "${PUBLISH_ENABLED:-}" = "enabled" ]; then
+            DRY=""
+            echo "::notice::Publishing dejima + platform packages for ${GITHUB_REF_NAME}"
+          else
+            DRY="--dry-run"
+            if [ -z "${NPM_TOKEN:-}" ]; then
+              echo "::notice::NPM_TOKEN not set — validating npm packages (dry-run) for ${GITHUB_REF_NAME}, not publishing"
+            else
+              echo "::notice::vars.NPM_PLATFORM_PUBLISH != 'enabled' — publish HELD; validating (dry-run). Set it once the @dejima scope exists."
+            fi
           fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          npm version "$VERSION" --no-git-tag-version --allow-same-version
-          # --ignore-scripts: don't run the postinstall download on the publisher.
-          npm publish --ignore-scripts --access public
+          # Platform packages FIRST so the main package's optionalDependencies
+          # resolve on the registry; then the main `dejima` package. Paths are
+          # `./`-prefixed so npm treats them as directories, never as the name of
+          # a registry package (a bare `npm` would fetch the npm package itself).
+          for d in ./npm/platforms/*/; do
+            echo "→ $d"
+            npm publish $DRY --access public "$d"
+          done
+          echo "→ ./npm (main dejima package)"
+          npm publish $DRY --access public ./npm

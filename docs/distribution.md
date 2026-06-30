@@ -34,9 +34,13 @@ every `v*` tag.
   source of truth; `homebrew/dejima.rb` is its output for the latest release. The
   `homebrew-tap` job in `release.yml` regenerates and pushes the formula to the
   tap on each tag.
-- **npm CLI package** — `npm/` (postinstall download + checksum + bin shim). The
-  `publish-npm-cli` job in `release.yml` stamps the version and publishes on each
-  tag. The TS SDK was renamed to `@dejima/sdk` to free the bare `dejima` name.
+- **npm CLI package** — `npm/`: a `bin/dejima.js` launcher whose binary ships in
+  per-platform `@dejima/cli-*` packages as optionalDependencies (NO postinstall —
+  npm 11 blocks lifecycle scripts). The `publish-npm-cli` job in `release.yml`
+  builds the platform packages (checksum-verified) and publishes them + the main
+  package, gated on `NPM_TOKEN` + `vars.NPM_PLATFORM_PUBLISH` (see
+  `docs/npm-publishing-setup.md`). The TS SDK was renamed to `@dejima/sdk` to free
+  the bare `dejima` name.
 
 ## 🧑 Your one-time manual steps
 
@@ -84,13 +88,16 @@ Then `brew install aoos/dejima/dejima` works after the next tag (or immediately
 if you seeded the formula). `brew install --HEAD aoos/dejima/dejima` builds from
 source and needs neither.
 
-### 3. Add the npm token
+### 3. Add the npm token + enable the CLI publish
 
-Create an npm automation token (npmjs.com → Access Tokens) for the account that
-will own `dejima` + `@dejima/sdk`, and add it as the **`NPM_TOKEN`** Actions
-secret on `aoos/dejima`. The `@dejima` scope must exist on that account/org
-(create the org once on npm). The next tag then publishes both `dejima` (CLI) and
-`@dejima/sdk`.
+Create an npm token (npmjs.com → Access Tokens) for the account that owns
+`dejima`, `@dejima/sdk`, and the new `@dejima/cli-*` CLI binary packages, and add
+it as the **`NPM_TOKEN`** Actions secret on `aoos/dejima`. The **`@dejima` scope
+must exist** on that account/org (create the org once on npm). The CLI publish is
+additionally gated on a repo **variable** `NPM_PLATFORM_PUBLISH=enabled` — until
+that's set, the release builds + dry-run-validates the npm packages but holds the
+publish. Full walkthrough: **`docs/npm-publishing-setup.md`**. (`@dejima/sdk`
+publishes via the SDK workflow on `NPM_TOKEN` alone.)
 
 ### 4. License — ✅ done (Apache-2.0)
 

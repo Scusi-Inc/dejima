@@ -76,8 +76,24 @@ want install-client.sh 'checksum mismatch' "keeps the checksum-mismatch guard" "
 step "release asset names agree across all channels"
 want Makefile         'dejima_$${ver}_$${os}_$${arch}.tar.gz'                     "Makefile produces the unix tarball name" "Makefile tarball name drifted"
 want install-client.sh 'asset="dejima_${ver}_${os}_${arch}.tar.gz"'              "install-client.sh asks for it"           "install-client.sh asset name drifted"
-want npm/install.js   'const asset = `dejima_${tag}_${plat}_${arch}.${ext}`;'    "npm builds the same name"                "npm asset name drifted"
+want npm/scripts/build-platform-packages.mjs 'dejima_${tag}_${t.rel}.${t.ext}' "npm builds the same name"            "npm asset name drifted"
 want homebrew/dejima.rb 'dejima_v#{version}_darwin_arm64.tar.gz'                 "brew formula URL matches"                "brew formula asset URL drifted"
+
+# 5b. npm channel ships NO lifecycle scripts — the npm-11 footgun. The binary
+# rides in per-platform optionalDependencies (esbuild/swc pattern), resolved at
+# runtime by the launcher, so `npm i dejima` works under npm 11's blocked scripts.
+step "npm channel has no install scripts (npm 11 safe)"
+if node -e 'const p=require("./npm/package.json"); const s=p.scripts||{}; if(s.postinstall||s.preinstall||s.install){console.error("lifecycle script present:",Object.keys(s));process.exit(1)}' 2>/dev/null; then
+  ok "npm/package.json declares no preinstall/install/postinstall script"
+else
+  bad "npm/package.json still has a lifecycle script (npm 11 blocks it → CLI non-functional)"
+fi
+if [ -e "$ROOT/npm/install.js" ]; then bad "npm/install.js still present (the blocked postinstall downloader)"; else ok "no npm/install.js postinstall downloader"; fi
+for t in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+  want npm/package.json "\"@dejima/cli-$t\"" "optionalDependency for $t" "missing platform optionalDependency: $t"
+done
+want   npm/bin/dejima.js '@dejima/cli-${process.platform}-${process.arch}' "launcher resolves the platform package" "launcher doesn't resolve the platform package"
+absent npm/bin/dejima.js "'..', 'binary'"  "launcher has no leftover download-dir path" "launcher still references the old ../binary download path"
 
 # 6. Committed Homebrew formula == its generator's output (single source of truth).
 step "committed Homebrew formula matches its generator"
