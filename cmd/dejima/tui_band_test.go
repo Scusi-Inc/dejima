@@ -122,6 +122,52 @@ func TestBandToggleKey(t *testing.T) {
 	}
 }
 
+// TestBandSlashToggles: `/` opens the band, and `/` again closes it — the same
+// key both ways, matching the "[/] collapse" hint. (Regression: `/` used to open
+// but not close, leaving the operator stuck in the band.)
+func TestBandSlashToggles(t *testing.T) {
+	m := bandModel()
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = out.(tuiModel)
+	if !m.bandExpanded || !m.bandFocused {
+		t.Fatalf("/ should expand+focus the band, got expanded=%v focused=%v", m.bandExpanded, m.bandFocused)
+	}
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = out.(tuiModel)
+	if m.bandExpanded || m.bandFocused {
+		t.Errorf("/ again should collapse+blur the band, got expanded=%v focused=%v", m.bandExpanded, m.bandFocused)
+	}
+}
+
+// TestBandDeleteKeys: d, X, Del, and Backspace on a terminal row all raise the
+// remove-terminal confirm; on the "+ new terminal" row none of them do.
+func TestBandDeleteKeys(t *testing.T) {
+	keys := []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune("d")},
+		{Type: tea.KeyRunes, Runes: []rune("X")},
+		{Type: tea.KeyDelete},
+		{Type: tea.KeyBackspace},
+	}
+	for _, k := range keys {
+		m := bandModel()
+		m.bandFocused, m.bandExpanded = true, true
+		m.bandSel = 0 // first terminal (t1)
+		out, _ := m.bandKey(k)
+		c := out.(tuiModel).confirm
+		if c == nil || c.verb != "remove-terminal" || c.agent != "t1" {
+			t.Errorf("key %v on a terminal should confirm remove-terminal for t1, got %+v", k, c)
+		}
+
+		m = bandModel()
+		m.bandFocused, m.bandExpanded = true, true
+		m.bandSel = len(m.terminals) // the "+ new terminal" row
+		out, _ = m.bandKey(k)
+		if out.(tuiModel).confirm != nil {
+			t.Errorf("key %v on the + new row should not confirm a delete", k)
+		}
+	}
+}
+
 // TestBandAttach: without a new-window backend, ⏎ on a terminal row sets
 // connectTerminal (the quit-to-attach fallback main() acts on) and quits; ⏎ on
 // the "+ new" row issues a create. canOpenNewWindow is forced false so the
