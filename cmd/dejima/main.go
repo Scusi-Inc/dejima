@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -1237,19 +1238,27 @@ func newInitCmd() *cobra.Command {
 
 func newConnectCmd() *cobra.Command {
 	var label, agentID string
+	var shell bool
 	cmd := &cobra.Command{
 		Use:   "connect <name>",
-		Short: "Attach to an island's session.",
-		Long: "Open an interactive PTY into the island via the Dejima API. With no agent, " +
-			"you get a contained shell at /workspace (the same place agents run); target an " +
-			"agent with --agent <id> or the `<name>/<agent>` shorthand. Multiple clients can " +
-			"attach simultaneously (shared tmux). Disconnect with the normal tmux detach key " +
-			"(Ctrl-b then d).",
+		Short: "Attach to an island's agent (or shell).",
+		Long: "Open an interactive PTY into the island via the Dejima API. By default this " +
+			"attaches the island's AGENT — the thing you usually want: one agent attaches it, " +
+			"several let you pick. Target a specific one with --agent <id|label> or the " +
+			"`<name>/<agent>` shorthand. For the contained /workspace shell instead (the same " +
+			"place agents run), use --shell or `<name>/shell` (or `dejima shell <name>`). " +
+			"Multiple clients can attach simultaneously (shared tmux). Disconnect with the " +
+			"normal tmux detach key (Ctrl-b then d).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, agent := splitIslandAgent(args[0])
 			if agentID != "" {
 				agent = agentID // explicit flag wins over the shorthand
+			}
+			// `<name>/shell` is the reserved selector for the workspace shell (so is
+			// --shell). Treat either as "no agent → shell".
+			if strings.EqualFold(agent, "shell") {
+				shell, agent = true, ""
 			}
 			if label == "" {
 				label = defaultLabel()
@@ -1258,10 +1267,21 @@ func newConnectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// A label is accepted anywhere an agent id is (id still wins). An empty
-			// agent passes through as "" → a bare shell at /workspace.
-			if agent, err = resolveAgentRef(cmd.Context(), c, name, agent); err != nil {
-				return err
+			// Resolve the attach target. --shell forces the workspace shell. A named
+			// agent (id or label; id wins) resolves directly. A bare `connect <name>`
+			// now defaults to the island's agent — pick it (1 → attach, N → choose,
+			// 0 → fall back to the workspace shell).
+			switch {
+			case shell:
+				agent = ""
+			case agent != "":
+				if agent, err = resolveAgentRef(cmd.Context(), c, name, agent); err != nil {
+					return err
+				}
+			default:
+				if agent, err = pickIslandAgent(cmd.Context(), c, name); err != nil {
+					return err
+				}
 			}
 			info, err := c.GetIsland(cmd.Context(), name)
 			if err != nil {
@@ -1276,8 +1296,8 @@ func newConnectCmd() *cobra.Command {
 			if info.Repo != "" {
 				waitForWorkspaceReady(cmd.Context(), c, name)
 			}
-			// No agent named → a contained shell at /workspace (matches the TUI's
-			// Enter-on-island and SSH). An explicit agent attaches that agent.
+			// No agent (explicit --shell, or an island with no agents) → a contained
+			// shell at /workspace. Otherwise attach the resolved agent.
 			if agent == "" {
 				return runInShellSession(cmd.Context(), c, name, label, false) // bare CLI — no dashboard to summon back to
 			}
@@ -1285,7 +1305,8 @@ func newConnectCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&label, "as", "", "client label shown in presence (default: $HOSTNAME or 'cli')")
-	cmd.Flags().StringVar(&agentID, "agent", "", "agent id to attach to (default: a shell at /workspace)")
+	cmd.Flags().StringVar(&agentID, "agent", "", "agent id or label to attach to (default: the island's agent)")
+	cmd.Flags().BoolVar(&shell, "shell", false, "attach the contained /workspace shell instead of an agent")
 	return cmd
 }
 
@@ -1352,6 +1373,72 @@ func resolveAgentRef(ctx context.Context, c *api.Client, island, ref string) (st
 		return "", err
 	}
 	return project.ResolveAgentRef(agents, ref)
+}
+
+// pickIslandAgent chooses which agent a bare `dejima connect <island>` attaches:
+// the island's agent is the obvious default (the recurring "why isn't connect the
+// Claude session?" surprise). Only ATTACHABLE agents count. Returns:
+//   - "" with no error when the island has no attachable agent → the caller opens
+//     the workspace shell (the old default, now the fallback rather than the norm),
+//   - the single attachable agent's id when there's exactly one,
+//   - an interactive pick when there are several (numbered prompt on a TTY; off a
+//     TTY, an error listing them so the operator re-runs with `<island>/<agent>`).
+func pickIslandAgent(ctx context.Context, c *api.Client, island string) (string, error) {
+	agents, err := c.ListAgents(ctx, island)
+	if err != nil {
+		return "", err
+	}
+	return selectAgentFromList(island, agents, os.Stdin, term.IsTerminal(int(os.Stdin.Fd())))
+}
+
+// selectAgentFromList applies the default-to-agent policy to an island's agent
+// list: filter to ATTACHABLE agents, then 0 → "" (caller opens the workspace
+// shell), 1 → that agent, several → an interactive choice. Split from
+// pickIslandAgent (which does the I/O) so the policy is unit-testable: `in` is the
+// choice source and `interactive` says whether we may prompt.
+func selectAgentFromList(island string, agents []api.AgentInfo, in io.Reader, interactive bool) (string, error) {
+	attachable := make([]api.AgentInfo, 0, len(agents))
+	for _, a := range agents {
+		if a.Attachable {
+			attachable = append(attachable, a)
+		}
+	}
+	switch len(attachable) {
+	case 0:
+		fmt.Fprintf(os.Stderr, "[dejima] no agent on %q — opening a /workspace shell (use `dejima shell %s` to skip this)\n", island, island)
+		return "", nil
+	case 1:
+		a := attachable[0]
+		fmt.Fprintf(os.Stderr, "[dejima] attaching agent %s\n", agentDisplay(a.Label, a.ID))
+		return a.ID, nil
+	default:
+		return chooseAgent(island, attachable, in, interactive)
+	}
+}
+
+// chooseAgent lists the candidates and, when interactive, reads a numbered choice
+// from `in` (bare Enter takes the first). Off a TTY it can't prompt, so it errors
+// with the list and the explicit shorthand to use. Runs in cooked mode, before any
+// raw-mode PTY.
+func chooseAgent(island string, agents []api.AgentInfo, in io.Reader, interactive bool) (string, error) {
+	fmt.Fprintf(os.Stderr, "Island %q has %d agents:\n", island, len(agents))
+	for i, a := range agents {
+		fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, agentDisplay(a.Label, a.ID))
+	}
+	if !interactive {
+		return "", fmt.Errorf("island %q has multiple agents — pick one with `%s/<agent>` (or `%s/shell` for a workspace shell)", island, island, island)
+	}
+	fmt.Fprint(os.Stderr, "Attach which? [1] ")
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line == "" {
+		line = "1" // bare Enter takes the first
+	}
+	n, err := strconv.Atoi(line)
+	if err != nil || n < 1 || n > len(agents) {
+		return "", fmt.Errorf("not a valid choice: %q (expected 1-%d)", line, len(agents))
+	}
+	return agents[n-1].ID, nil
 }
 
 // defaultLabel produces a client label for presence: $HOSTNAME or "cli".
