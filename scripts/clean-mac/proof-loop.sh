@@ -55,6 +55,7 @@ for ((i=1; i<=$#; i++)); do
 done
 
 refuse_as_aoos
+refuse_if_live_daemon
 require_macos_or_note
 
 # ---------------------------------------------------------------------------

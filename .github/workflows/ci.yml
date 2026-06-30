@@ -66,4 +66,7 @@ jobs:
             scripts/tier3/system.sh \
             scripts/tier3/tui-claude.sh \
             scripts/tier3/onboard-selftest.sh \
-            scripts/tier4/agent-smoke.sh
+            scripts/tier4/agent-smoke.sh \
+            scripts/clean-mac/lib.sh \
+            scripts/clean-mac/proof-loop.sh \
+            scripts/clean-mac/teardown.sh
