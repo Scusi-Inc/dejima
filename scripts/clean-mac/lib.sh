@@ -86,6 +86,44 @@ refuse_as_aoos(){
   fi
 }
 
+# refuse_if_live_daemon: the gate's teardown runs `dejima uninstall --purge-all`
+# and the install channels bind the operator daemon ports (:7273/:7274). Run
+# co-resident with a LIVE daemon it takes that daemon OFFLINE — it happened on
+# Minion (2026-06-29: the operator daemon went down, recovered, no data lost).
+# refuse_as_aoos guards the *user*, but a system LaunchDaemon (installed with
+# `dejima service install --system`) runs regardless of which user invokes the
+# gate, so the user check alone isn't enough. Hard-stop on ANY sign of a live or
+# system daemon — a loaded LaunchDaemon, a bound daemon port, or a dejimad owned
+# by another user. Override only on a genuinely isolated throwaway box with
+# CLEANMAC_ALLOW_LIVE_DAEMON=1.
+refuse_if_live_daemon(){
+  [ "${CLEANMAC_ALLOW_LIVE_DAEMON:-}" = "1" ] && return 0
+  local found=""
+  # 1. A loaded system LaunchDaemon (the operator's boot-persistent daemon).
+  if have launchctl; then
+    if launchctl print "system/${DEJIMA_LAUNCHD_LABEL:-dev.dejima.dejimad}" >/dev/null 2>&1; then
+      found="a loaded system LaunchDaemon (dev.dejima.dejimad)"
+    fi
+  fi
+  # 2. The operator daemon ports are bound (API + TCP listener).
+  if have lsof; then
+    for port in 7273 7274; do
+      if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+        found="${found:+$found; }a process listening on :$port"
+      fi
+    done
+  fi
+  # 3. A dejimad owned by ANOTHER user — i.e. a host daemon, not the throwaway one
+  #    teardown would manage. (Our own stray foreground dejimad is fine; teardown
+  #    reaps it.)
+  if pgrep -x dejimad >/dev/null 2>&1 && ! pgrep -u "$(id -u)" -x dejimad >/dev/null 2>&1; then
+    found="${found:+$found; }a dejimad owned by another user"
+  fi
+  if [ -n "$found" ]; then
+    die "clean-mac harness REFUSES to run — detected: ${found}. Teardown purges islands and binds :7273/:7274, which would take a LIVE daemon offline. Run ONLY on a throwaway box with NO Dejima daemon. If this box is genuinely isolated and you know what you're doing: CLEANMAC_ALLOW_LIVE_DAEMON=1."
+  fi
+}
+
 require_macos_or_note(){
   if [ "$(uname -s)" != "Darwin" ]; then
     printf '\033[33mNOTE: not macOS (uname=%s) — the live launch gate is the clean-Mac run. Channels that need brew/colima will skip.\033[0m\n' "$(uname -s)" >&2
