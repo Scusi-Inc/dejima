@@ -236,6 +236,7 @@ func newRootCmd() *cobra.Command {
 		newWebhookCmd(),
 		newAuthCmd(),
 		newTokenCmd(),
+		newJoinCmd(),
 		newProviderCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),
@@ -974,10 +975,27 @@ func clientForHost(host string) (*api.Client, error) {
 	if i := strings.IndexFunc(host, func(r rune) bool { return r < 0x20 || r == 0x7f }); i >= 0 {
 		return nil, fmt.Errorf("invalid host %q: contains a control character at position %d", host, i)
 	}
-	if token := strings.TrimSpace(os.Getenv("DEJIMA_TOKEN")); token != "" {
+	if token := tokenForHost(host); token != "" {
 		return api.NewTCPClientWithToken(host, token)
 	}
 	return api.NewTCPClient(host)
+}
+
+// tokenForHost resolves the bearer token for a remote connection target.
+// Precedence: an explicit DEJIMA_TOKEN env always wins (the in-island autonomy
+// path — the daemon injects it per-container — and scripted/CI use); otherwise
+// the token saved with a matching connection profile (what a team invite
+// persists, so a teammate doesn't re-export it each session). Empty → an
+// unauthenticated TCP client (the tailnet-pinned listener case).
+func tokenForHost(host string) string {
+	if token := strings.TrimSpace(os.Getenv("DEJIMA_TOKEN")); token != "" {
+		return token
+	}
+	cfg, err := clientcfg.Load()
+	if err != nil {
+		return ""
+	}
+	return cfg.TokenForHost(host)
 }
 
 // versionSkew compares the daemon's reported API version against this client's

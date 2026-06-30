@@ -6,17 +6,27 @@ package clientcfg
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/aoos/dejima/internal/invite"
 	"github.com/aoos/dejima/internal/paths"
 )
 
 // Profile is a saved connection target. Host is "" for the local Unix socket,
-// or "host:port" for a remote daemon reached over TCP.
+// or "host:port" for a remote daemon reached over TCP. Token is the bearer
+// secret for that target — a team invite persists it here so the teammate
+// doesn't re-export DEJIMA_TOKEN every session; Role/Islands are the invite's
+// echo, kept for display only (the daemon enforces the real scope). The file is
+// written 0600 (see Save), matching the per-island token files' posture.
 type Profile struct {
-	Name string `json:"name"`
-	Host string `json:"host,omitempty"`
+	Name    string   `json:"name"`
+	Host    string   `json:"host,omitempty"`
+	Token   string   `json:"token,omitempty"`
+	Role    string   `json:"role,omitempty"`
+	Islands []string `json:"islands,omitempty"`
 }
 
 // Config holds client-side preferences.
@@ -156,6 +166,84 @@ func RemoveProfile(name string) error {
 		cfg.ActiveProfile = ""
 	}
 	return Save(cfg)
+}
+
+// TokenForHost returns the bearer token saved for a connection host, preferring
+// the active profile when it matches (so two profiles on the same host don't
+// race). It is the no-env-token default behind the connection path: an explicit
+// DEJIMA_TOKEN still wins upstream. Empty when no saved profile carries a token
+// for that host (e.g. the local socket, or a host added without one).
+func (c Config) TokenForHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if c.ActiveProfile != "" {
+		for _, p := range c.Profiles {
+			if p.Name == c.ActiveProfile && p.Host == host && p.Token != "" {
+				return p.Token
+			}
+		}
+	}
+	for _, p := range c.Profiles {
+		if p.Host == host && p.Token != "" {
+			return p.Token
+		}
+	}
+	return ""
+}
+
+// SaveInvite persists a decoded team invite as a connection profile and makes it
+// active, so the teammate is connected on the next command with no env vars. The
+// profile name defaults to the invite's Name, else the host's first DNS label; a
+// name clash updates that profile in place (re-joining rotates the saved token
+// rather than erroring). Returns the resolved profile name. The bearer secret
+// lands in client.json, which Save writes 0600.
+func SaveInvite(p invite.Payload) (string, error) {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		name = hostLabel(p.Host)
+	}
+	if name == "" {
+		return "", fmt.Errorf("invite has no name and no usable host to derive one")
+	}
+	if name == "local" {
+		return "", fmt.Errorf("%q is reserved for the local socket", name)
+	}
+	cfg, err := Load()
+	if err != nil {
+		return "", err
+	}
+	prof := Profile{Name: name, Host: strings.TrimSpace(p.Host), Token: p.Token, Role: p.Role, Islands: p.Islands}
+	updated := false
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name == name {
+			cfg.Profiles[i] = prof
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		cfg.Profiles = append(cfg.Profiles, prof)
+	}
+	cfg.ActiveProfile = name
+	return name, Save(cfg)
+}
+
+// hostLabel derives a friendly profile name from a host:port — the first DNS
+// label (or the bare host/IP when there's no dot/port).
+func hostLabel(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		return host[:i]
+	}
+	return host
 }
 
 func configPath() (string, error) {
