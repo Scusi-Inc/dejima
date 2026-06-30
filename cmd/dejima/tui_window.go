@@ -111,6 +111,36 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 	}
 }
 
+// openHostTermWindow attaches to a host terminal (`dejima term attach <id>`) in a
+// separate window/tab, so the dashboard stays up — the same "don't hijack the
+// current view" behavior island shells and agent sessions already get. The tab is
+// titled "host/<label>" (falling back to the id), and the child inherits the TUI's
+// current DEJIMA_HOST so it hits the same daemon. The caller falls back to the
+// in-place quit-to-attach path when canOpenNewWindow() is false.
+func (m tuiModel) openHostTermWindow(id, label string) error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "host/" + id
+	if label != "" {
+		title = "host/" + label
+	}
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s term attach %s",
+		shquote(m.activeHost), shquote(title), shquote(exe), shquote(id))
+	switch {
+	case os.Getenv("TMUX") != "":
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		// verb "term attach" is two trusted words; id is the terminal handle.
+		return openWindowsTerminal(exe, "term attach", id, "", title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run the TUI inside tmux, or `dejima term attach %s` in another terminal", id)
+	}
+}
+
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the

@@ -709,7 +709,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = msg.err.Error()
 			return m, nil
 		}
-		m.connectTerminal = msg.id // attach to the freshly created terminal
+		if canOpenNewWindow() {
+			// Open the new host shell in its own window/tab and keep the dashboard
+			// up; refresh the band so the new terminal shows in the list.
+			if err := m.openHostTermWindow(msg.id, ""); err != nil {
+				m.lastError = err.Error()
+			}
+			return m, m.fetchTerminalsCmd()
+		}
+		m.connectTerminal = msg.id // no new-window backend: attach to the freshly created terminal in place
 		return m, tea.Quit
 
 	case terminalRemovedMsg:
@@ -3026,7 +3034,16 @@ func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.bandSel >= n { // the "+ new terminal" row
 			return m, m.createTerminalCmd("")
 		}
-		m.connectTerminal = m.terminals[m.bandSel].ID // attach (resumes live tmux)
+		t := m.terminals[m.bandSel]
+		if canOpenNewWindow() {
+			// Open the host shell in its own window/tab so it doesn't hijack the
+			// dashboard — matching how island shells and agent sessions attach.
+			if err := m.openHostTermWindow(t.ID, t.Label); err != nil {
+				m.lastError = err.Error()
+			}
+			return m, nil
+		}
+		m.connectTerminal = t.ID // no new-window backend: attach in place (resumes live tmux)
 		return m, tea.Quit
 	case "d", "X":
 		if m.bandSel < n {
