@@ -6,14 +6,18 @@
   "bin": {
     "dejima": "bin/dejima.js"
   },
-  "scripts": {
-    "postinstall": "node ./install.js"
-  },
   "files": [
     "bin/dejima.js",
-    "install.js",
     "README.md"
   ],
+  "optionalDependencies": {
+    "@dejima/cli-darwin-arm64": "0.5.0",
+    "@dejima/cli-darwin-x64": "0.5.0",
+    "@dejima/cli-linux-arm64": "0.5.0",
+    "@dejima/cli-linux-x64": "0.5.0",
+    "@dejima/cli-win32-arm64": "0.5.0",
+    "@dejima/cli-win32-x64": "0.5.0"
+  },
   "engines": {
     "node": ">=16"
   },

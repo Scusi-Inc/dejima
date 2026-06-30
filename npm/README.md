@@ -8,10 +8,11 @@ npm install -g dejima
 dejima --version
 ```
 
-On install, this package downloads the prebuilt `dejima` binary matching its
-version from the [GitHub Release](https://github.com/aoos/dejima/releases),
-checksum-verifies it, and puts a `dejima` command on your PATH. No Go toolchain
-required.
+The prebuilt `dejima` binary for your platform ships inside a per-platform
+package (`@dejima/cli-<platform>-<arch>`) that npm installs automatically as an
+optional dependency — only the one matching your OS/CPU. There's **no install
+script** (so it works under npm 11's default script-blocking), and no Go
+toolchain required; the `dejima` command lands on your PATH.
 
 ## What this installs (and what it doesn't)
 
@@ -46,13 +47,13 @@ See <https://dejima.tech/> for the full picture.
 
 ## Environment knobs
 
-- `DEJIMA_SKIP_DOWNLOAD=1` — skip the postinstall download (offline / sandboxed
-  CI). Provide your own binary at runtime with `DEJIMA_BINARY=/path/to/dejima`.
-- `DEJIMA_BINARY=/path/to/dejima` — run a specific binary instead of the
-  downloaded one.
+- `DEJIMA_BINARY=/path/to/dejima` — run a specific binary instead of the bundled
+  platform one (offline installs, `npm i --no-optional`, or a binary you built).
 
 ## Notes
 
-- Requires Node 16+ and a `tar` on PATH (bundled on macOS, Linux, and Windows 10+).
-- macOS binaries are currently unsigned; the installer strips the Gatekeeper
-  quarantine attribute on download. Notarization is on the roadmap.
+- Requires Node 16+.
+- macOS binaries are currently unsigned. When downloaded via npm, Gatekeeper may
+  quarantine them; if macOS blocks the binary, clear it with
+  `xattr -d com.apple.quarantine "$(npm root -g)/dejima/node_modules/@dejima/cli-darwin-arm64/bin/dejima"`
+  (adjust the arch). Notarization is on the roadmap.
