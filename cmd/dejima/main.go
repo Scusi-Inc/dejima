@@ -2172,18 +2172,34 @@ func newAgentLsCmd() *cobra.Command {
 }
 
 func newAgentAddCmd() *cobra.Command {
-	var typ, label, provider, model string
+	var typ, label, provider, model, spawnedBy string
+	var ephemeral bool
 	cmd := &cobra.Command{
 		Use:   "add <island>",
 		Short: "Add an agent to an island.",
-		Args:  cobra.ExactArgs(1),
+		Long: "Add an agent to an island.\n\n" +
+			"With --ephemeral the agent is a SPAWNED sub-agent: auto-reaped on exit / TTL /\n" +
+			"parent removal and counted against the island's spawn budget. An in-island agent\n" +
+			"(token caller) MUST pass --ephemeral and needs an operator spawn grant\n" +
+			"(`dejima spawn grant`); --spawned-by defaults to $DEJIMA_AGENT_ID so lineage is\n" +
+			"recorded automatically.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
 			if err != nil {
 				return err
 			}
+			// Lineage: an in-island agent spawning a sub-agent is the parent, so
+			// default --spawned-by to its own id (the daemon injects it as
+			// DEJIMA_AGENT_ID) — the agent needn't know or pass it. An operator add
+			// (no such env) leaves it empty.
+			sb := strings.TrimSpace(spawnedBy)
+			if sb == "" {
+				sb = strings.TrimSpace(os.Getenv("DEJIMA_AGENT_ID"))
+			}
 			a, err := c.AddAgent(cmd.Context(), args[0], api.AgentSpecRequest{
 				Type: typ, Label: label, Provider: provider, Model: model,
+				Ephemeral: ephemeral, SpawnedBy: sb,
 			})
 			if err != nil {
 				return err
@@ -2198,8 +2214,21 @@ func newAgentAddCmd() *cobra.Command {
 			case a.Label != want:
 				fmt.Printf("note: label %q was taken; named it %q\n", want, a.Label)
 			}
-			fmt.Printf("added agent %s [%s] to %s — attach with `dejima connect %s/%s`\n",
-				agentDisplay(a.Label, a.ID), a.Type, args[0], args[0], a.ID)
+			kind := "agent"
+			if a.Ephemeral {
+				kind = "ephemeral sub-agent"
+			}
+			fmt.Printf("added %s %s [%s] to %s — attach with `dejima connect %s/%s`\n",
+				kind, agentDisplay(a.Label, a.ID), a.Type, args[0], args[0], a.ID)
+			if a.Ephemeral {
+				fmt.Printf("note: auto-reaped on exit/TTL/parent-removal%s\n",
+					func() string {
+						if a.SpawnedBy != "" {
+							return " (spawned by " + a.SpawnedBy + ")"
+						}
+						return ""
+					}())
+			}
 			if a.AuthState == "missing-provider-auth" {
 				fmt.Printf("note: %s has no model key yet — set one with `dejima provider set %s`\n",
 					a.ID, a.Provider)
@@ -2211,6 +2240,8 @@ func newAgentAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&label, "label", "", "optional label for the agent")
 	cmd.Flags().StringVar(&provider, "provider", "", "LLM provider for key-requiring agent types")
 	cmd.Flags().StringVar(&model, "model", "", "model string, e.g. anthropic/claude-sonnet-4-6")
+	cmd.Flags().BoolVar(&ephemeral, "ephemeral", false, "spawn an auto-reaped ephemeral sub-agent (in-island agents must set this; needs an operator spawn grant)")
+	cmd.Flags().StringVar(&spawnedBy, "spawned-by", "", "spawning agent id for lineage (default: $DEJIMA_AGENT_ID)")
 	return cmd
 }
 

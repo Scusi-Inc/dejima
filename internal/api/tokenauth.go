@@ -79,16 +79,21 @@ var tokenRouteAccess = map[string]tokenAccess{
 	// within budget) is allowed; a token can never do a general/persistent agent
 	// add or grant itself spawn rights. Operator callers (no token island) are
 	// unaffected. See addAgent's spawn gate + internal/spawn.
-	"POST /v1/islands/{name}/agents":      accessOwnIsland,
-	"GET /v1/islands/{name}/events":       accessOwnIsland,
-	"GET /v1/islands/{name}/logs":         accessOwnIsland,
-	"GET /v1/islands/{name}/port/scopes":  accessOwnIsland, // list own grants only
-	"POST /v1/islands/{name}/port/intake": accessOwnIsland,
-	"POST /v1/islands/{name}/port/export": accessOwnIsland,
-	"POST /v1/islands/{name}/port/write":  accessOwnIsland,
-	"POST /v1/islands/{name}/exec":        accessOwnIsland,
-	"POST /v1/islands/{name}/mailbox":     accessOwnIsland, // intra-island agent messaging (Lane 5 P1)
-	"GET /v1/islands/{name}/mailbox":      accessOwnIsland,
+	"POST /v1/islands/{name}/agents": accessOwnIsland,
+	// Agent self-reap (#64): reachable for the token's OWN island, but removeAgent
+	// gates it hard — a token may DELETE only an EPHEMERAL spawned sub-agent (never
+	// the primary, a non-ephemeral peer, or another island). Lets a contained agent
+	// tear down what it spawned without the operator becoming the GC.
+	"DELETE /v1/islands/{name}/agents/{id}": accessOwnIsland,
+	"GET /v1/islands/{name}/events":         accessOwnIsland,
+	"GET /v1/islands/{name}/logs":           accessOwnIsland,
+	"GET /v1/islands/{name}/port/scopes":    accessOwnIsland, // list own grants only
+	"POST /v1/islands/{name}/port/intake":   accessOwnIsland,
+	"POST /v1/islands/{name}/port/export":   accessOwnIsland,
+	"POST /v1/islands/{name}/port/write":    accessOwnIsland,
+	"POST /v1/islands/{name}/exec":          accessOwnIsland,
+	"POST /v1/islands/{name}/mailbox":       accessOwnIsland, // intra-island agent messaging (Lane 5 P1)
+	"GET /v1/islands/{name}/mailbox":        accessOwnIsland,
 	// Own-island agent roster (intra-island coordination P1): lets a contained
 	// agent discover its co-resident peers (id↔label↔state) to address messages.
 	// accessOwnIsland enforces {name}==token's island, so it can never enumerate
