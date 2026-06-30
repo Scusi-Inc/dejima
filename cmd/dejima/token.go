@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/clientcfg"
+	"github.com/aoos/dejima/internal/invite"
 )
 
 // newTokenCmd is the team-auth token surface: issue, list, and revoke the
@@ -29,7 +31,7 @@ func newTokenCmd() *cobra.Command {
 			"up from DEJIMA_TOKEN. The secret is shown once at creation and never stored\n" +
 			"in the clear — only its hash is kept, so a lost secret means minting anew.",
 	}
-	cmd.AddCommand(newTokenCreateCmd(), newTokenLsCmd(), newTokenRevokeCmd())
+	cmd.AddCommand(newTokenCreateCmd(), newTokenInviteCmd(), newTokenLsCmd(), newTokenRevokeCmd())
 	return cmd
 }
 
@@ -74,6 +76,108 @@ func newTokenCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&role, "role", "", "owner, operator, or viewer (required)")
 	cmd.Flags().StringVar(&label, "label", "", "human label for the token (e.g. scusi-prod, phone)")
 	cmd.Flags().StringArrayVar(&islands, "island", nil, "limit the token to this island (repeatable); default: all islands")
+	return cmd
+}
+
+// newTokenInviteCmd mints a token and emits a single paste-safe invite blob
+// (host + secret + role/scope) for a teammate to `dejima join`. It's the
+// CLI twin of the TUI Team view's "invite" action — both call invite.Encode at
+// mint time (the secret is only returned once).
+func newTokenInviteCmd() *cobra.Command {
+	var role, label, host, name string
+	var islands []string
+	cmd := &cobra.Command{
+		Use:   "invite",
+		Short: "Mint a token and print a paste-safe invite blob for a teammate to `dejima join`.",
+		Long: "Issue a team invite: mints a bearer token (owner/operator/viewer + optional island\n" +
+			"scope) and bundles it with the daemon host into ONE paste-safe line. The teammate\n" +
+			"runs `dejima join <blob>` to connect — no env vars.\n\n" +
+			"The blob CONTAINS the bearer secret (encoded, not encrypted) — treat it like a\n" +
+			"password, send it over a trusted channel, and `dejima token revoke` to kill a leak.\n\n" +
+			"--host is the daemon address the teammate will dial (e.g. a tailnet name or LAN\n" +
+			"ip:port); the daemon can't know its own external address, so you supply it.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			role = strings.TrimSpace(role)
+			if role == "" {
+				return fmt.Errorf("--role is required (owner, operator, or viewer)")
+			}
+			host = strings.TrimSpace(host)
+			if host == "" {
+				return fmt.Errorf("--host is required (the daemon host:port the teammate will dial)")
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			resp, err := c.CreateToken(cmd.Context(), api.CreateTokenRequest{Label: label, Role: role, Islands: islands})
+			if err != nil {
+				return err
+			}
+			blob, err := invite.Encode(invite.Payload{
+				Host:    host,
+				Token:   resp.Secret,
+				Role:    resp.Token.Role,
+				Islands: resp.Token.Islands,
+				Name:    strings.TrimSpace(name),
+				Label:   resp.Token.Label,
+			})
+			if err != nil {
+				// The token was minted but the invite couldn't be built — tell the
+				// operator so they can revoke the now-orphaned token.
+				return fmt.Errorf("token %s minted but encoding the invite failed: %w (revoke it with `dejima token revoke %s`)", resp.Token.ID, err, resp.Token.ID)
+			}
+			scope := "all islands"
+			if len(resp.Token.Islands) > 0 {
+				scope = strings.Join(resp.Token.Islands, ", ")
+			}
+			fmt.Printf("invite for token %s (role: %s; scope: %s)\n\n", resp.Token.ID, resp.Token.Role, scope)
+			fmt.Println("  send this to your teammate (it carries the secret — treat like a password):")
+			fmt.Printf("    %s\n\n", blob)
+			fmt.Println("  they run:")
+			fmt.Println("    dejima join <blob>")
+			fmt.Printf("\n  revoke anytime: dejima token revoke %s\n", resp.Token.ID)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&role, "role", "", "owner, operator, or viewer (required)")
+	cmd.Flags().StringVar(&host, "host", "", "daemon host:port the teammate dials (required)")
+	cmd.Flags().StringVar(&label, "label", "", "human label for the token (e.g. amanda, phone)")
+	cmd.Flags().StringVar(&name, "name", "", "suggested profile name for the teammate (default: host's first label)")
+	cmd.Flags().StringArrayVar(&islands, "island", nil, "limit the invite to this island (repeatable); default: all islands")
+	return cmd
+}
+
+// newJoinCmd is the teammate side: decode an invite blob and persist it as the
+// active connection profile (host + token), so subsequent commands Just Work
+// with no env vars. Twin of the TUI Team view's paste-to-join.
+func newJoinCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "join <invite>",
+		Short: "Connect using a team invite blob (saves the host + token as the active profile).",
+		Long: "Accept a `dejima token invite` blob: decodes it, saves a connection profile\n" +
+			"carrying the daemon host + bearer token, and makes it active. After joining,\n" +
+			"`dejima ls`, `dejima status`, etc. connect to that daemon with no env vars.\n\n" +
+			"The token is stored in ~/.dejima/client.json (0600). Revoke access from the\n" +
+			"issuing side with `dejima token revoke`.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := invite.Decode(args[0])
+			if err != nil {
+				return err
+			}
+			name, err := clientcfg.SaveInvite(p)
+			if err != nil {
+				return err
+			}
+			scope := "all islands"
+			if len(p.Islands) > 0 {
+				scope = strings.Join(p.Islands, ", ")
+			}
+			fmt.Printf("joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
+			fmt.Println("next: `dejima ls` to see islands, or `dejima` for the TUI.")
+			return nil
+		},
+	}
 	return cmd
 }
 
