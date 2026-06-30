@@ -1210,6 +1210,22 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
 		return
 	}
+	// Agent self-reap (#64): an in-island token caller may DELETE an agent ONLY
+	// when it's an EPHEMERAL spawned sub-agent — so a contained agent can tear
+	// down the sub-agents it spawned (explicit teardown alongside the auto-reaper)
+	// without the operator becoming the GC. accessOwnIsland already pins {name} to
+	// the token's island; this adds the ephemeral+lineage constraint. The primary,
+	// a non-ephemeral peer, and any other island stay denied for a token caller.
+	// Within one island all agents share the token = one trust domain (no
+	// per-agent boundary), so any agent in the island may reap that island's
+	// ephemeral sub-agents; cross-island is structurally impossible. Operator
+	// callers (no token island) are unaffected.
+	isTokenReap := TokenIslandFromContext(r.Context()) != ""
+	if isTokenReap && (!a.Ephemeral || a.SpawnedBy == "") {
+		writeError(w, http.StatusForbidden, errors.New(
+			"an island token may only remove ephemeral sub-agents (this agent is not an ephemeral spawned sub-agent)"))
+		return
+	}
 	// Any agent can be removed — an island with no agents is valid (you shell into
 	// it, or add agents later); the container's tail -f keepalive outlives them.
 	// The one exception: a headless FIRST agent IS the container's PID 1
@@ -1241,6 +1257,15 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 			s.removeAgentSession(ctx, p, &agentCopy)
 		}()
+	}
+	if isTokenReap {
+		// Ledger the agent-initiated teardown (a privileged crossing), matching the
+		// auto-reaper's spawn.reap shape so audit sees both paths uniformly.
+		s.ledgerAppend(ledger.Entry{
+			Type: "spawn.reap", Island: name,
+			Detail:   "self-reaped sub-agent " + id + " (spawned by " + agentCopy.SpawnedBy + ")",
+			Decision: "allowed",
+		})
 	}
 	s.emit(events.Event{
 		Type:    events.TypeIslandAgentRemoved,

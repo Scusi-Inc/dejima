@@ -88,6 +88,28 @@ after a week and the watchtower would go quiet with nobody noticing. So v1 is
 Plan: ship v1 on the agent's own self-re-arming schedule (resident, no host
 dependency); when the daemon scheduled-wake lands, switch to hibernate-between-runs.
 
+### Confirmed in the first live run (2026-06-30)
+
+The watchtower validated this and flagged one residual risk worth recording:
+
+- It evaluated a durable, restart-surviving backstop via the **Remote scheduler**
+  and correctly rejected it: that scheduler's only target is a generic cloud
+  environment that lacks this island's `/workspace` state, `DEJIMA_TOKEN`, and the
+  island mailbox, so it would be a *broken* backstop (it couldn't fetch sources,
+  open a PR, or message a3). The in-session `CronCreate` re-arm is the right
+  mechanism: it runs **inside** this island, whose tmux session persists across
+  container restarts.
+- **Residual risk:** a *simultaneous* hard loss of the Claude process **and** the
+  persisted session — the re-arm loop dies with no one watching, and the watchtower
+  goes quiet silently. Bounded and rare (the session survives ordinary restarts).
+- **Detection:** the heartbeat in `state.json`, plus a3's expectation of a monthly
+  report — if a3 stops getting one, that's the signal. (Wiring the heartbeat to
+  Dejima's zero-heartbeat signal would automate it; tracked in the planning pass.)
+- **Recovery:** re-run the watchtower once and the loop re-arms itself.
+- **Durable fix:** the daemon-level scheduled-wake primitive ([`scheduled-wake-spec.md`](scheduled-wake-spec.md))
+  removes the risk entirely — the always-on daemon owns the schedule, so neither
+  the agent process nor its session needs to survive between runs.
+
 ## Guardrails
 
 - DRAFT PRs only. Never merges, never edits live pages directly. Human + a3 in the loop.
