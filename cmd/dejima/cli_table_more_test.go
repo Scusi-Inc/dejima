@@ -202,7 +202,8 @@ func TestCLIAgentConfigAndRm(t *testing.T) {
 	if _, err := runCLI(t, "agent", "add", "proj", "--type", "openclaw", "--provider", "anthropic"); err != nil {
 		t.Fatalf("agent add openclaw: %v", err)
 	}
-	out, err := runCLI(t, "agent", "ls", "proj")
+	// --ids so the listing carries the ID column the parser reads.
+	out, err := runCLI(t, "agent", "ls", "proj", "--ids")
 	if err != nil {
 		t.Fatalf("agent ls: %v", err)
 	}
@@ -241,12 +242,12 @@ func TestCLIAgentRename(t *testing.T) {
 	if _, err := runCLI(t, "agent", "add", "proj", "--type", "claude-code"); err != nil {
 		t.Fatalf("agent add: %v", err)
 	}
-	out, err := runCLI(t, "agent", "ls", "proj")
+	out, err := runCLI(t, "agent", "ls", "proj", "--ids")
 	if err != nil {
 		t.Fatalf("agent ls: %v", err)
 	}
-	// The added agent is the one without the "build" label. Listing is name-first
-	// (NAME ID TYPE …): name in column 0, id in column 1, type in column 2.
+	// The added agent is the one without the "build" label. With --ids the listing
+	// is NAME ID TYPE …: name in column 0, id in column 1, type in column 2.
 	id := ""
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
@@ -278,8 +279,9 @@ func TestCLIAgentAddressByName(t *testing.T) {
 	}
 
 	// Now address it BY LABEL (case-insensitively) in a subsequent rename. The
-	// resolver must turn "FrontEnd" → p1 before the relabel runs.
-	out, err := runCLI(t, "agent", "rename", "proj", "FrontEnd", "frontend-ui")
+	// resolver must turn "FrontEnd" → p1 before the relabel runs. --ids so the
+	// confirmation surfaces the resolved id we assert on.
+	out, err := runCLI(t, "agent", "rename", "proj", "FrontEnd", "frontend-ui", "--ids")
 	if err != nil {
 		t.Fatalf("rename by label: %v", err)
 	}
@@ -294,8 +296,8 @@ func TestCLIAgentAddressByName(t *testing.T) {
 		t.Errorf("unexpected error for unknown ref: %v", err)
 	}
 
-	// The id still works unchanged (back-compat).
-	if out, err := runCLI(t, "agent", "rename", "proj", "p1", "frontend"); err != nil {
+	// The id still works unchanged (back-compat); --ids to assert on it.
+	if out, err := runCLI(t, "agent", "rename", "proj", "p1", "frontend", "--ids"); err != nil {
 		t.Fatalf("rename by id: %v", err)
 	} else if !strings.Contains(out, "p1") {
 		t.Errorf("id should still resolve: %q", out)
