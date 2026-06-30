@@ -224,9 +224,11 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
 <pre><code>dejima init --repo git@github.com:you/foo.git    # or --local-copy for unpushed work
 dejima ls                                         # all islands, last-used first
 dejima agent add foo --type codex                 # a 2nd agent in foo's island
-dejima connect foo                                # attach (Ctrl-b d detaches)
+dejima connect foo                                # attach to the island shell
+dejima connect foo/a1                             # attach to a specific agent (e.g. a1)
 DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # …from your laptop
 </code></pre>
+<p class="platform-note"><strong>Detach, don't <code>exit</code>.</strong> To leave a session, press <kbd>Ctrl-b</kbd> then <kbd>d</kbd> — it detaches and leaves the agent running. Typing <code>exit</code> can drop you into a reconnect loop. To reach a specific agent rather than a plain <code>/workspace</code> shell, attach by <code>island/agent</code> (e.g. <code>dejima connect foo/a1</code>).</p>
 
 <h2 id="cli">CLI reference</h2>
 <table>
