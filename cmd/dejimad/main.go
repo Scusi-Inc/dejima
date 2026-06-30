@@ -54,6 +54,7 @@ func main() {
 		autonomyDial  string
 		egressAddr    string
 		egressDial    string
+		noEgress      bool
 		sshAddr       string
 		hostTerminals bool
 		requireToken  bool
@@ -72,8 +73,9 @@ func main() {
 	flag.StringVar(&tcpAddr, "tcp", os.Getenv("DEJIMAD_TCP"), "TCP listen addr (e.g. \":7273\"); empty disables. Accepts only Tailscale IPs.")
 	flag.StringVar(&tokenAddr, "token-tcp", os.Getenv("DEJIMAD_TOKEN_TCP"), "host-internal TCP addr for the token-authenticated in-island autonomy path (e.g. \"127.0.0.1:7274\"); empty disables. Never bind a wildcard/LAN address.")
 	flag.StringVar(&autonomyDial, "autonomy-dial", os.Getenv("DEJIMAD_AUTONOMY_DIAL"), "host:port an in-island brain dials to reach this daemon over --token-tcp (default \"host.docker.internal:<token-tcp port>\")")
-	flag.StringVar(&egressAddr, "egress-proxy", os.Getenv("DEJIMAD_EGRESS_PROXY"), "host-internal TCP addr for the island egress proxy (e.g. \"127.0.0.1:7280\"); empty disables. When set, islands route outbound HTTP(S) through it so destinations are observable (Phase 1: observe-only, nothing blocked). Off by default.")
+	flag.StringVar(&egressAddr, "egress-proxy", os.Getenv("DEJIMAD_EGRESS_PROXY"), "host-internal TCP addr for the island egress proxy (default \""+defaultEgressProxy+"\"). Islands route outbound HTTP(S) through it so destinations are observable and `dejima egress allow/deny` works with no daemon restart (Phase 1: observe-only, allow-all until a policy is set). On by default; disable with --no-egress-proxy.")
 	flag.StringVar(&egressDial, "egress-dial", os.Getenv("DEJIMAD_EGRESS_DIAL"), "host:port islands dial to reach the egress proxy (default \"host.docker.internal:<egress-proxy port>\")")
+	flag.BoolVar(&noEgress, "no-egress-proxy", os.Getenv("DEJIMAD_NO_EGRESS_PROXY") == "1", "disable the always-on island egress proxy. Outbound is then unobserved and `dejima egress allow/deny` is unavailable until re-enabled (which does require a restart). Off by default.")
 	flag.StringVar(&sshAddr, "ssh", os.Getenv("DEJIMAD_SSH"), "SSH-façade listen addr (e.g. \"100.x.y.z:2222\" on the tailnet, or \":2222\"); empty disables. Auth is per-island public key; ssh <island>@<addr>.")
 	flag.BoolVar(&hostTerminals, "host-terminals", os.Getenv("DEJIMAD_HOST_TERMINALS") != "0", "operator host terminals — UNCONTAINED shells on the daemon host (operator-only, never reachable by an island). On by default; disable with --host-terminals=false or DEJIMAD_HOST_TERMINALS=0.")
 	flag.BoolVar(&requireToken, "require-token", os.Getenv("DEJIMAD_REQUIRE_TOKEN") == "1", "require an Authorization: Bearer <token> on the operator API (reject anonymous callers). Off by default — the unix socket and tailnet listener are otherwise trusted. Turn on when the daemon is reached by callers that should hold only an attenuated team-auth token.")
@@ -86,6 +88,26 @@ func main() {
 	flag.Parse()
 	_ = foreground
 
+	// Egress proxy is ON by default so `dejima egress allow/deny` works without a
+	// daemon restart (which would bounce every island). --no-egress-proxy (or
+	// DEJIMAD_NO_EGRESS_PROXY=1) opts out; an explicit --egress-proxy <addr> picks
+	// the bind. egressExplicit records operator intent: an explicitly-requested
+	// proxy that fails to bind is fatal (the operator asked for it), but the
+	// default-on proxy degrades gracefully (warn + run without it) so a busy port
+	// can never block daemon startup.
+	egressExplicit := os.Getenv("DEJIMAD_EGRESS_PROXY") != ""
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "egress-proxy" {
+			egressExplicit = true
+		}
+	})
+	switch {
+	case noEgress:
+		egressAddr = ""
+	case egressAddr == "":
+		egressAddr = defaultEgressProxy
+	}
+
 	if showVersion {
 		fmt.Println(version.Version)
 		return
@@ -97,7 +119,7 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(log, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressDial, sshAddr, hostTerminals, requireToken,
+	if err := run(log, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressDial, egressExplicit, sshAddr, hostTerminals, requireToken,
 		auditConfig{enabled: audit, reads: auditReads, hmacKeyFile: auditHMACKeyFile}, idleHibernate, wakeNotify, wakeFlush); err != nil {
 		log.Error("dejimad fatal", "err", err)
 		os.Exit(1)
@@ -116,7 +138,12 @@ type auditConfig struct {
 // socket is no longer mounted into containers — this is the only in-island path.
 const defaultTokenAddr = "127.0.0.1:7274"
 
-func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressDial, sshAddr string, hostTerminals, requireToken bool, audit auditConfig, idleHibernate time.Duration, wakeNotify bool, wakeFlush time.Duration) error {
+// defaultEgressProxy is the host-internal bind for the island egress proxy when
+// the operator doesn't set --egress-proxy. It's on by default so egress policy
+// (allow/deny) can be applied without a daemon restart that bounces islands.
+const defaultEgressProxy = "127.0.0.1:7280"
+
+func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressDial string, egressExplicit bool, sshAddr string, hostTerminals, requireToken bool, audit auditConfig, idleHibernate time.Duration, wakeNotify bool, wakeFlush time.Duration) error {
 	socketPath, err := paths.SocketPath()
 	if err != nil {
 		return err
@@ -229,33 +256,51 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	var egressSrv *http.Server
 	var egressLn net.Listener
 	if egressAddr != "" {
-		if err := assertHostInternalBind(log, egressAddr); err != nil {
-			return err
-		}
-		eDial := egressDial
-		if eDial == "" {
-			_, port, splitErr := net.SplitHostPort(egressAddr)
-			if splitErr != nil {
-				return fmt.Errorf("parse egress-proxy addr %q: %w", egressAddr, splitErr)
+		// A bind problem is fatal only when the operator explicitly asked for the
+		// proxy; the default-on proxy degrades gracefully (warn + run without it)
+		// so a busy port or a non-host-internal default can never block startup.
+		// EnableEgress (which injects HTTP(S)_PROXY into new islands) is called
+		// ONLY after the listener is up — so a failed bind injects no proxy env and
+		// islands keep normal outbound, never routing into a dead proxy.
+		fatal := func(err error) error {
+			if egressExplicit {
+				return err
 			}
-			eDial = "host.docker.internal:" + port
+			log.Warn("island egress proxy off — `dejima egress allow/deny` unavailable until resolved (set --egress-proxy to a free host-internal addr, or --no-egress-proxy to silence)", "addr", egressAddr, "err", err)
+			return nil
 		}
-		if egressLn, err = net.Listen("tcp", egressAddr); err != nil {
-			return fmt.Errorf("egress-proxy listen %s: %w", egressAddr, err)
+		if err := assertHostInternalBind(log, egressAddr); err != nil {
+			if ferr := fatal(err); ferr != nil {
+				return ferr
+			}
+		} else if egressLn, err = net.Listen("tcp", egressAddr); err != nil {
+			if ferr := fatal(fmt.Errorf("egress-proxy listen %s: %w", egressAddr, err)); ferr != nil {
+				return ferr
+			}
+			egressLn = nil
+		} else {
+			defer egressLn.Close()
+			eDial := egressDial
+			if eDial == "" {
+				_, port, splitErr := net.SplitHostPort(egressAddr)
+				if splitErr != nil {
+					return fmt.Errorf("parse egress-proxy addr %q: %w", egressAddr, splitErr)
+				}
+				eDial = "host.docker.internal:" + port
+			}
+			elog := egress.NewLog(256)
+			var policyPath string
+			if root, perr := paths.Root(); perr == nil {
+				policyPath = filepath.Join(root, "egress-policy.json")
+			}
+			epolicy := egress.OpenPolicy(policyPath) // persisted per-island allow/deny; default observe (allow-all)
+			egressSrv = &http.Server{
+				Handler:           egress.NewProxy(elog, epolicy),
+				ReadHeaderTimeout: 10 * time.Second,
+			}
+			server.EnableEgress(eDial, elog, epolicy)
+			log.Info("island egress proxy enabled (default-on; observe-first; per-island policy)", "listener", egressAddr, "container_dials", eDial)
 		}
-		defer egressLn.Close()
-		elog := egress.NewLog(256)
-		var policyPath string
-		if root, perr := paths.Root(); perr == nil {
-			policyPath = filepath.Join(root, "egress-policy.json")
-		}
-		epolicy := egress.OpenPolicy(policyPath) // persisted per-island allow/deny; default observe (allow-all)
-		egressSrv = &http.Server{
-			Handler:           egress.NewProxy(elog, epolicy),
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		server.EnableEgress(eDial, elog, epolicy)
-		log.Info("island egress proxy enabled (observe-first; per-island policy)", "listener", egressAddr, "container_dials", eDial)
 	}
 
 	// Optional SSH-façade: the daemon is the single SSH endpoint for every island
