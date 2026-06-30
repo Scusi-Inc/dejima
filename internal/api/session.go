@@ -534,6 +534,18 @@ func (s *Server) serveTmuxWS(
 				}
 			}
 			if rerr != nil {
+				// The bridged terminal ended: a Ctrl-b d detach, an intentional
+				// `exit`, or a tmux that exited instantly (e.g. a failed
+				// "open terminal"). Send an explicit, application-level end signal
+				// so the client stops cleanly instead of misreading the websocket
+				// close as a transport drop and reconnecting forever (respawning a
+				// shell the operator can't escape). Best-effort: on a real transport
+				// drop ctx is already cancelled, so this no-ops and the client sees
+				// an abnormal close and correctly reconnects — the tmux session
+				// persists across that. Only a genuine PTY EOF reaches here with a
+				// live ctx, so this cleanly discriminates "terminal gone" (stop)
+				// from "link blipped" (reconnect).
+				_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "exit"})
 				cancel()
 				return
 			}

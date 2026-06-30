@@ -1510,6 +1510,33 @@ const (
 	sessExitSummon                     // the summon chord was pressed — break out to the dashboard
 )
 
+// Reconnect-loop backstop: a healthy session stays attached for a while, so a
+// transport blip (daemon restart, laptop sleep) reconnects and resumes. But a
+// connection that attaches and drops again almost immediately, over and over, is
+// not a recoverable blip — it's an unrecoverable server-side failure (a tmux that
+// can't open, a session that exits on attach). Spinning on it forever traps the
+// operator, so after maxImmediateReconnects such instant drops we stop loudly.
+const (
+	minHealthyUptime       = 2 * time.Second
+	maxImmediateReconnects = 4
+)
+
+// errSessionAborted is returned by reconnectSession when the user presses Ctrl-C
+// during the reconnect wait — in raw mode there's no SIGINT, so we watch the
+// keystroke stream for ETX and treat it as "stop trying".
+var errSessionAborted = errors.New("session aborted")
+
+// nextImmediateFailures folds the just-ended connection's uptime into the running
+// count of consecutive instant drops: a connection that stayed up at least
+// minHealthyUptime resets it (a real session happened), a near-instant drop
+// increments it. Pulled out so the give-up policy is unit-testable.
+func nextImmediateFailures(prev int, uptime time.Duration) int {
+	if uptime >= minHealthyUptime {
+		return 0
+	}
+	return prev + 1
+}
+
 // summonChord is the byte that breaks out of an attached session back into the
 // dashboard (with the host-terminal band open). Ctrl-\ (0x1c): tmux's prefix is
 // Ctrl-b and shells/vim don't bind it, so it's a safe in-session escape. Only
@@ -1616,7 +1643,9 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 		}
 	}()
 
+	immediate := 0
 	for {
+		attached := time.Now()
 		switch runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone, summonable, paste) {
 		case sessReconnect:
 			// fall through to the reconnect path below
@@ -1625,16 +1654,33 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 		default:
 			return nil
 		}
-		if term.IsTerminal(stdinFd) {
-			fmt.Fprint(os.Stderr, "\r\n[dejima] connection lost — reconnecting…\r\n")
+		// Give up if the session keeps dropping the instant it attaches — an
+		// unrecoverable open failure must fail once, loudly, not loop forever.
+		immediate = nextImmediateFailures(immediate, time.Since(attached))
+		if immediate >= maxImmediateReconnects {
+			if term.IsTerminal(stdinFd) {
+				fmt.Fprintf(os.Stderr, "\r\n[dejima] the session keeps closing the moment it opens "+
+					"(%d times) — giving up. The terminal couldn't start; check `dejima doctor` or the daemon logs.\r\n", immediate)
+			}
+			return fmt.Errorf("session repeatedly failed to stay open")
 		}
-		next, rerr := reconnectSession(ctx, dial, stdinDone)
+		if term.IsTerminal(stdinFd) {
+			fmt.Fprint(os.Stderr, "\r\n[dejima] connection lost — reconnecting… (Ctrl-C to give up)\r\n")
+		}
+		next, rerr := reconnectSession(ctx, dial, stdinDone, stdinCh)
 		if rerr != nil {
-			// The only error reconnectSession returns is a positive session-gone
-			// signal — exit cleanly with a clear note, not a scary code-1.
+			// A positive session-gone signal — exit cleanly with a clear note,
+			// not a scary code-1.
 			if errors.Is(rerr, api.ErrSessionGone) {
 				if term.IsTerminal(stdinFd) {
 					fmt.Fprint(os.Stderr, "\r\n[dejima] this session is gone — the island was removed. Closing.\r\n")
+				}
+				return nil
+			}
+			// Ctrl-C during the reconnect wait — the user chose to stop. Clean exit.
+			if errors.Is(rerr, errSessionAborted) {
+				if term.IsTerminal(stdinFd) {
+					fmt.Fprint(os.Stderr, "\r\n[dejima] gave up reconnecting.\r\n")
 				}
 				return nil
 			}
@@ -1657,8 +1703,11 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 // on a timer. Returns: the new connection on success; (nil, nil) if the caller
 // cancels or the local terminal closes; (nil, err wrapping api.ErrSessionGone)
 // only when the daemon positively reports the session/island is gone (404/410) —
-// the one case that will never recover.
-func reconnectSession(ctx context.Context, dial func(context.Context) (*websocket.Conn, error), stdinDone <-chan struct{}) (*websocket.Conn, error) {
+// the one case that will never recover; or (nil, errSessionAborted) if the user
+// presses Ctrl-C in the reconnect wait. stdinCh is the live keystroke stream:
+// while disconnected there's no session to forward to, so we only watch it for
+// Ctrl-C (raw mode delivers no SIGINT) and discard the rest.
+func reconnectSession(ctx context.Context, dial func(context.Context) (*websocket.Conn, error), stdinDone <-chan struct{}, stdinCh <-chan []byte) (*websocket.Conn, error) {
 	backoff := 250 * time.Millisecond
 	for {
 		select {
@@ -1666,6 +1715,11 @@ func reconnectSession(ctx context.Context, dial func(context.Context) (*websocke
 			return nil, nil
 		case <-stdinDone:
 			return nil, nil
+		case b := <-stdinCh:
+			if bytes.IndexByte(b, 0x03) >= 0 { // Ctrl-C (ETX) — give up
+				return nil, errSessionAborted
+			}
+			continue // typed while disconnected; nowhere to send — drop and retry now
 		case <-time.After(backoff):
 		}
 		conn, err := dial(ctx)
@@ -1735,6 +1789,14 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 			case "error":
 				fmt.Fprintln(os.Stderr, "server error:", env.B64)
 				readReason <- sessExitClean // a real server error — don't loop on it
+				return
+			case "exit":
+				// The server signalled the bridged terminal ended (detach,
+				// intentional `exit`, or an instant open-failure). End cleanly —
+				// never reconnect — so an exited shell or a failed host terminal
+				// doesn't trap the operator in a respawn loop. Any preceding "data"
+				// (e.g. tmux's "open terminal failed …") has already been printed.
+				readReason <- sessExitClean
 				return
 			}
 		}
