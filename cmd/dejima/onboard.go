@@ -22,6 +22,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/aoos/dejima/internal/clientcfg"
+	"github.com/aoos/dejima/internal/invite"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/vmmem"
 )
@@ -110,7 +112,8 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 	// matches the user's actual situation instead of asking everyone the same
 	// generic thing. A cheap probe (no docker/tailscale shell-outs) keeps the
 	// no-args path snappy.
-	switch detectFirstRunContext(ctx) {
+	kind := detectFirstRunContext(ctx)
+	switch kind {
 	case firstRunConfigured:
 		// Already talking to a daemon — nothing to set up. Drop straight into the
 		// dashboard and stop nagging.
@@ -128,75 +131,145 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 		}
 		fmt.Println("Opening the dashboard. Re-run `dejima onboard` anytime.")
 		return true, nil
-
-	case firstRunFreshHost:
-		fmt.Println()
-		fmt.Println(bold("First time — set this Mac up as an agent server?"))
-		fmt.Println()
-		fmt.Println("  I can provision this Mac into a secure, always-on Dejima host: never-sleep")
-		fmt.Println("  power settings, Homebrew/Tailscale/Docker, and the daemon — one walkthrough.")
-		fmt.Println()
-		fmt.Println("    y) Yes, provision this host (dejima onboard --provision-host)")
-		fmt.Println("    g) Just the generic setup walkthrough")
-		fmt.Println("    n) Not now — ask me again next time")
-		fmt.Println("    N) Never ask again")
-		fmt.Println()
-		switch readSingleKey("Choice [y/g/n/N]: ") {
-		case "y", "Y", "yes":
-			if err := runProvisionHost(ctx, false, false); err != nil {
-				return false, err
-			}
-			markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up; else the prompt returns next run
-			return true, nil
-		case "g", "G":
-			if err := runOnboarding(ctx); err != nil {
-				return false, err
-			}
-			markSetupDoneIfHealthy(ctx)
-			return true, nil
-		case "N", "never":
-			fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
-			_ = writeDismissalMarker()
-			return true, nil
-		default:
-			fmt.Println("OK — opening the dashboard. Run `dejima onboard --provision-host` anytime.")
-			return true, nil
-		}
 	}
 
-	// Generic context (a non-host machine, or we couldn't tell): the original
-	// server-or-client walkthrough.
+	// No daemon reachable and no host target (firstRunFreshHost or
+	// firstRunGeneric). The ONE question that routes everything: set up a server
+	// here, or join one that already exists? Offering "join" closes the gap that
+	// stranded teammates (#68) — the prompt used to offer only "set up", which on
+	// a shared host spawns a daemon that COLLIDES with the operator's already
+	// running on :7273/:7274. Route first; then ask only what the chosen branch
+	// needs (join → paste an invite; set up → proceed).
 	fmt.Println()
-	fmt.Println(bold("First time on this machine?"))
+	fmt.Println(bold("First time — set up Dejima on this machine, or join one that already exists?"))
 	fmt.Println()
-	fmt.Println("  I can walk you through setting up Dejima — Docker check, daemon")
-	fmt.Println("  install, notification webhook, etc.")
-	fmt.Println()
-	fmt.Println("    y) Yes, walk me through it")
+	fmt.Println("    s) Set up Dejima on this machine (run a daemon here)")
+	fmt.Println("    j) Join an existing server — paste an invite from your team")
 	fmt.Println("    n) Not now — ask me again next time")
-	fmt.Println("    N) Never ask again (re-run anytime with `dejima onboard`)")
+	fmt.Println("    N) Never ask again")
 	fmt.Println()
+	switch readSingleKey("Choice [s/j/n/N]: ") {
+	case "j", "J", "join":
+		return firstRunJoin(ctx)
+	case "N", "never":
+		fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
+		_ = writeDismissalMarker()
+		return true, nil
+	case "n", "no", "later", "":
+		fmt.Println("OK — opening the dashboard. Run `dejima onboard` anytime.")
+		return true, nil
+	case "s", "S", "set", "setup", "y", "Y", "yes":
+		// fall through to the set-up branch below
+	default:
+		// An unrecognized key is non-committal: open the dashboard rather than
+		// guess a destructive default (installing a daemon on a shared host is the
+		// exact #68 hazard). The prompt returns next run.
+		fmt.Println("Didn't catch that — opening the dashboard. Re-run `dejima onboard` anytime.")
+		return true, nil
+	}
 
-	switch readSingleKey("Choice [y/n/N]: ") {
+	// Set-up branch, dispatched to the context-specific flow: a fresh Mac gets the
+	// richer host-provisioning sub-choice; anything else gets the generic
+	// walkthrough.
+	if kind == firstRunFreshHost {
+		return firstRunSetUpHost(ctx)
+	}
+	if err := runOnboarding(ctx); err != nil {
+		return false, err
+	}
+	markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up
+	return true, nil
+}
+
+// firstRunSetUpHost is the "set up here" branch on a fresh Mac: offer full host
+// provisioning (power settings + Homebrew/Tailscale/Docker + daemon) or just the
+// generic walkthrough. Reached only after the router's "set up" choice, so it no
+// longer re-asks the set-up-vs-join question.
+func firstRunSetUpHost(ctx context.Context) (bool, error) {
+	fmt.Println()
+	fmt.Println("  Provision this Mac into a secure, always-on Dejima host? That sets never-sleep")
+	fmt.Println("  power settings, Homebrew/Tailscale/Docker, and the daemon — one walkthrough.")
+	fmt.Println()
+	fmt.Println("    y) Yes, provision this host (dejima onboard --provision-host)")
+	fmt.Println("    g) Just the generic setup walkthrough")
+	fmt.Println("    n) Not now")
+	fmt.Println()
+	switch readSingleKey("Choice [y/g/n]: ") {
 	case "y", "Y", "yes":
+		if err := runProvisionHost(ctx, false, false); err != nil {
+			return false, err
+		}
+		markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up; else the prompt returns next run
+		return true, nil
+	case "g", "G":
 		if err := runOnboarding(ctx); err != nil {
 			return false, err
 		}
-		markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up
-		return true, nil
-	case "N", "never":
-		fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
-		if err := writeDismissalMarker(); err != nil {
-			return false, err
-		}
-		return true, nil
-	case "n", "no", "later", "":
-		fmt.Println("OK — opening the dashboard. Run `dejima onboard` anytime to walk through setup.")
+		markSetupDoneIfHealthy(ctx)
 		return true, nil
 	default:
-		fmt.Println("Didn't catch that — treating as 'not now'.")
+		fmt.Println("OK — opening the dashboard. Run `dejima onboard --provision-host` anytime.")
 		return true, nil
 	}
+}
+
+// joinFromInvite decodes a pasted invite blob and persists it as the active
+// connection profile (host + token). It's the pure core of the join flow — no
+// stdin, no network — shared with the CLI `dejima join` and the TUI switcher,
+// and the seam first-run-join tests drive. Returns the decoded payload and the
+// saved profile name.
+func joinFromInvite(blob string) (invite.Payload, string, error) {
+	p, err := invite.Decode(blob)
+	if err != nil {
+		return invite.Payload{}, "", err
+	}
+	name, err := clientcfg.SaveInvite(p)
+	if err != nil {
+		return p, "", err
+	}
+	return p, name, nil
+}
+
+// firstRunJoin is the teammate "Join a server" branch of the router: paste a
+// `dejima-invite:` blob, persist it as the active connection profile (host +
+// token), and connect — the no-CLI, no-env path a teammate needs to join an
+// existing daemon (#68). It mirrors `dejima join <blob>` and the TUI switcher's
+// join step, all three sharing invite.Decode + clientcfg.SaveInvite.
+func firstRunJoin(ctx context.Context) (bool, error) {
+	fmt.Println()
+	fmt.Println(bold("Join an existing Dejima server"))
+	fmt.Println()
+	fmt.Println("  Paste the invite a teammate sent you (it starts with `dejima-invite:`).")
+	fmt.Println("  It carries the daemon host + your access token — no env vars to set.")
+	fmt.Println()
+	blob := readSingleKey("Invite: ")
+	if strings.TrimSpace(blob) == "" {
+		fmt.Println("No invite entered — opening the dashboard. Run `dejima join <invite>` (or re-run `dejima onboard`) anytime.")
+		return true, nil
+	}
+	p, name, err := joinFromInvite(blob)
+	if err != nil {
+		// Decode/save errors are user-facing strings (a1's contract) — show
+		// verbatim, then fall through to the dashboard rather than blocking.
+		fmt.Println(err)
+		fmt.Println("Opening the dashboard. Try `dejima join <invite>` once you have a valid invite.")
+		return true, nil
+	}
+	scope := "all islands"
+	if len(p.Islands) > 0 {
+		scope = strings.Join(p.Islands, ", ")
+	}
+	fmt.Printf("Joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
+	// Confirm the connection now (bounded) so the teammate gets immediate
+	// feedback, but never block the dashboard on it: the profile is saved either
+	// way, and a transient failure shouldn't strand them.
+	if err := verifyDejimaHost(ctx); err != nil {
+		fmt.Printf("note: couldn't reach %s yet (%v) — the profile is saved; the dashboard will retry.\n", p.Host, err)
+	} else {
+		fmt.Println("Connection verified. Opening the dashboard.")
+	}
+	_ = writeDismissalMarker() // configured now — don't nag on the next run
+	return true, nil
 }
 
 // firstRunContext is the situation the no-args first-run prompt adapts to.
