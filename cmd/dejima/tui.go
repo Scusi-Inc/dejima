@@ -843,8 +843,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.team.minting = false
 			if msg.err != nil {
 				m.team.actionErr = msg.err.Error()
+				// An encode failure still mints the token — reload so the orphaned
+				// token shows in the list (and can be revoked) right away.
+				if msg.resp != nil {
+					m.team.loading = true
+					return m, m.loadTokensCmd()
+				}
 			} else {
 				m.team.minted = msg.resp
+				m.team.mintedBlob = msg.blob
 			}
 		}
 		return m, nil
@@ -3026,8 +3033,11 @@ func (m tuiModel) renderBand(width int) (string, int) {
 	}
 
 	var b strings.Builder
+	// Header carries the action hints inline (rather than a separate footer line)
+	// so the pinned band stays compact: ⏎ attach · d delete · / close.
 	b.WriteString(styleHeader.Render("▾ Host terminals") + " " +
-		styleMuted.Render("· not contained") + "   " + styleMuted.Render("[/] collapse") + "\n")
+		styleMuted.Render("· not contained") + "   " +
+		styleMuted.Render("⏎ open · d delete · [/] collapse") + "\n")
 	for i, t := range m.terminals {
 		line := "  " + terminalRowText(t)
 		if i == m.bandSel {
@@ -3045,9 +3055,10 @@ func (m tuiModel) renderBand(width int) (string, int) {
 }
 
 // bandKey drives the focused host-terminal band: navigate the terminals + the
-// "+ new terminal" row, attach (⏎), create, close (d/X), relabel (e), and
-// collapse-on-blur (esc / backtick). Reuses the same commands as the old inline
-// Host rows, so terminal behavior is unchanged — only its home moved.
+// "+ new terminal" row, attach (⏎), create, delete (d/del), and collapse
+// (/ · esc · backtick). `/` toggles the band both ways — the same key that
+// opened it closes it, matching the "[/] collapse" hint. Reuses the same
+// commands as the old inline Host rows, so terminal behavior is unchanged.
 func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	n := len(m.terminals)
 	collapse := func() (tea.Model, tea.Cmd) {
@@ -3055,7 +3066,7 @@ func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "`", "left", "q":
+	case "esc", "/", "`", "left", "q":
 		return collapse()
 	case "j", "down":
 		if m.bandSel < m.bandRowCount()-1 {
@@ -3088,7 +3099,10 @@ func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.connectTerminal = t.ID // no new-window backend: attach in place (resumes live tmux)
 		return m, tea.Quit
-	case "d", "X":
+	case "d", "X", "delete", "backspace":
+		// Delete the selected terminal (kills its host tmux session) after a
+		// confirm. Not on the "+ new terminal" row. d / Del / X / Backspace all
+		// work — whichever the operator reaches for.
 		if m.bandSel < n {
 			m.confirm = &confirmPrompt{verb: "remove-terminal", agent: m.terminals[m.bandSel].ID}
 		}
