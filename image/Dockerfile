@@ -41,6 +41,40 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# In-island `dejima` CLI: a scoped client so an agent INSIDE an arbitrary island
+# can drive its own island over the autonomy path — spawn/reap ephemeral
+# sub-agents (`dejima agent add --ephemeral`, `dejima agent rm`), check status,
+# read its mailbox — using the DEJIMA_HOST + DEJIMA_TOKEN already injected into
+# the container env, with no curl-by-hand. The token is island-scoped, so the
+# binary can only ever act on its own island (#61/#65 item 4).
+#
+# Fetched from the published GitHub release (HTTPS + SHA256-verified), matching
+# the gh/node install pattern above. Pinned via --build-arg DEJIMA_VERSION=<tag>
+# to match a specific daemon; "latest" (default) tracks the newest release.
+# Like the daemon's own version, an island image is not auto-refreshed — rebuild
+# the image (`dejima image build`) to update the in-island CLI.
+ARG DEJIMA_VERSION=latest
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64|arm64) ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
+    ver="${DEJIMA_VERSION}"; \
+    if [ "$ver" = "latest" ]; then \
+        ver="$(curl -fsSL https://api.github.com/repos/aoos/dejima/releases/latest | jq -r .tag_name)"; \
+    fi; \
+    if [ -z "$ver" ] || [ "$ver" = "null" ]; then echo "could not resolve dejima release version" >&2; exit 1; fi; \
+    tmp="$(mktemp -d)"; \
+    base="https://github.com/aoos/dejima/releases/download/${ver}"; \
+    asset="dejima_${ver}_linux_${arch}.tar.gz"; \
+    curl -fsSL "${base}/${asset}" -o "${tmp}/${asset}"; \
+    curl -fsSL "${base}/SHA256SUMS" -o "${tmp}/SHA256SUMS"; \
+    want="$(awk -v a="$asset" '$2==a || $2=="*"a || $2=="./"a {print $1}' "${tmp}/SHA256SUMS")"; \
+    if [ -z "$want" ]; then echo "no checksum for ${asset} in SHA256SUMS" >&2; exit 1; fi; \
+    echo "${want}  ${tmp}/${asset}" | sha256sum -c -; \
+    tar -xzf "${tmp}/${asset}" -C "${tmp}"; \
+    install -m 0755 "${tmp}/dejima" /usr/local/bin/dejima; \
+    rm -rf "${tmp}"; \
+    dejima --help >/dev/null
+
 # Non-root user. Ubuntu 24.04 ships with a default `ubuntu` user at UID 1000;
 # delete it so we can keep the canonical UID for our `dejima` user.
 RUN userdel -r ubuntu 2>/dev/null || true \
