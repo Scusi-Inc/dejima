@@ -29,7 +29,7 @@
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Are Daytona and Dejima the same kind of tool?","acceptedAnswer":{"@type":"Answer","text":"No. Daytona spins up fast, ephemeral sandboxes to execute AI-generated code, driven by an SDK. Dejima runs a persistent fleet of coding agents you attach to and watch, on hardware you own, with a dashboard and audit. One is a code-execution API; the other is where you run your agents."}},
 {"@type":"Question","name":"Can I attach to a running agent in Daytona?","acceptedAnswer":{"@type":"Answer","text":"Not the way you can in Dejima. Daytona sandboxes are ephemeral and SDK-driven, meant to run code and disappear. Dejima sessions are persistent and multi-attach, so you connect to a live agent like Claude Code, watch it work, detach, and reconnect from another device."}},
-{"@type":"Question","name":"Is Daytona free to self-host?","acceptedAnswer":{"@type":"Answer","text":"Partly. Daytona runs sandboxes on customer-managed compute in your own cloud (BYOC), but the control plane is Daytona's managed service, so you don't run the whole stack yourself. Dejima is self-hosted end to end and open source: the control plane and the agents both run on your own box."}}
+{"@type":"Question","name":"Is Daytona free to self-host?","acceptedAnswer":{"@type":"Answer","text":"You can self-host its AGPL-3.0 stack (dashboard, runner, SDKs), but that code is frozen: as of June 2026 Daytona moved core development to a private codebase, so the self-hostable version gets no further updates. The live product is a managed control plane with sandbox compute on your own cloud (BYOC). Dejima is self-hosted end to end, open source, and actively developed: the control plane and the agents both run on your own box."}}
 ]}
 ]}
 </script>
@@ -65,7 +65,7 @@
 
   <h2>What Daytona is</h2>
   <p>Daytona is infrastructure for running AI-generated code. A sandbox boots in under 100 milliseconds, with its own kernel, filesystem, and network, and you create and destroy them programmatically from a Python or TypeScript SDK. It's the execution layer you'd reach for when an agent your product runs needs to actually run the code it just wrote.</p>
-  <p>Daytona runs the control plane as a managed service, while the sandboxes themselves execute on customer-managed compute in your own cloud (a bring-your-own-cloud data plane), billed by usage after a free credit. So your code can run on infrastructure you control, but you still depend on Daytona's managed control plane rather than running the whole stack yourself. Its open-source and self-host posture shifted during 2026 and reads differently in different places, so treat the exact status as evolving. Daytona raised a $24M Series A in February 2026.</p>
+  <p>Daytona runs the control plane as a managed service, while the sandboxes themselves execute on customer-managed compute in your own cloud (a bring-your-own-cloud data plane), billed by usage after a free credit. So your code can run on infrastructure you control, but you still depend on Daytona's managed control plane rather than running the whole stack yourself. Its dashboard, runner, and SDKs are public under AGPL-3.0 and you can self-host them, but that stack is frozen: as of June 2026 core development moved to a private codebase, with no further updates, fixes, or releases. Daytona raised a $24M Series A in February 2026.</p>
 
   <h2>What Dejima is</h2>
   <p>Dejima isn't a sandbox API. It's a self-hosted runtime where you run a fleet of coding agents on your own hardware and operate them from one place. <a href="../index.html">See the overview.</a></p>
@@ -85,7 +85,7 @@
     <tr><td>One dashboard for the whole fleet</td><td><strong>✓</strong></td><td>✗</td></tr>
   </table>
   </div>
-  <p class="small">Daytona runs a managed control plane with a bring-your-own-cloud data plane (sandboxes on your own compute), usage-billed. Its open-source / self-host status shifted during 2026 and we're re-verifying it.</p>
+  <p class="small">Daytona's AGPL-3.0 stack (dashboard, runner, SDKs) is public and self-hostable but frozen: core development moved to a private codebase in June 2026, with no further updates. The live product is a managed control plane with a bring-your-own-cloud data plane (sandboxes on your own compute), usage-billed.</p>
 
   <h2>When Daytona is the better choice</h2>
   <p>Pick Daytona if code execution is the product. You're building an agent or an app that generates code and has to run it, you want sandboxes that appear and vanish in milliseconds, and you'd rather call an SDK than operate a box. Throughput and isolation of untrusted code are the whole game, and Daytona is built for it. Dejima isn't a code-execution API and won't pretend to be one.</p>
@@ -105,11 +105,11 @@
     </div>
     <div class="faq-item">
       <h3>Is Daytona free to self-host?</h3>
-      <p>Partly. Daytona runs sandboxes on customer-managed compute in your own cloud (BYOC), but the control plane is Daytona's managed service, so you don't run the whole stack yourself. Dejima is self-hosted end to end and open source: the control plane and the agents both run on your own box.</p>
+      <p>You can self-host its AGPL-3.0 stack (dashboard, runner, SDKs), but that code is frozen: as of June 2026 Daytona moved core development to a private codebase, so the self-hostable version gets no further updates. The live product is a managed control plane with sandbox compute on your own cloud (BYOC). Dejima is self-hosted end to end, open source, and actively developed; the control plane and the agents both run on your own box.</p>
     </div>
   </div>
 
-  <p class="small"><strong>Sources, last verified June 2026:</strong> <a href="https://www.daytona.io/" target="_blank" rel="noopener">daytona.io</a> · <a href="https://www.daytona.io/dotfiles/updates/daytona-is-going-closed-source" target="_blank" rel="noopener">"going closed source" (2026-06)</a> · <a href="https://github.com/daytonaio/daytona" target="_blank" rel="noopener">daytonaio/daytona</a>. Competitor details change; <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">tell us</a> if something here is out of date.</p>
+  <p class="small"><strong>Sources, last verified June 2026:</strong> <a href="https://www.daytona.io/" target="_blank" rel="noopener">daytona.io</a> · <a href="https://github.com/daytonaio/daytona" target="_blank" rel="noopener">daytonaio/daytona</a> (AGPL-3.0 + the June 2026 "no longer maintained" notice). Competitor details change; <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">tell us</a> if something here is out of date.</p>
 
   <section class="post-more">
     <p><a href="../quickstart.html">Install Dejima and run your first island →</a></p>

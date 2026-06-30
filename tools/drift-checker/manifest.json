@@ -30,7 +30,7 @@
       ],
       "claims": [
         { "id": "daytona-byoc", "verified": "2026-06-30", "text": "Daytona runs a managed control plane; sandbox compute executes on customer-managed compute in the customer's own cloud (a BYOC data plane). Usage-billed." },
-        { "id": "daytona-oss-status", "verified": "2026-06-30", "text": "Daytona's open-source / self-host posture shifted during 2026 (a 'going closed source' notice in June vs current 'open-source transparency' homepage messaging); exact OSS / self-host status is under re-verification by a3." }
+        { "id": "daytona-oss-status", "verified": "2026-06-30", "text": "Daytona's AGPL-3.0 stack (dashboard/runner/SDKs) is public and self-hostable but FROZEN — core dev moved to a private codebase June 2026 (no further updates/fixes/releases, per the daytonaio/daytona README). The live product is a managed control plane + BYOC compute. (Resolved by a3 2026-06-30.)" }
       ]
     },
     {
