@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -120,9 +122,16 @@ func TestBandToggleKey(t *testing.T) {
 	}
 }
 
-// TestBandAttach: ⏎ on a terminal row sets connectTerminal (the quit-to-attach
-// signal main() acts on) and quits; ⏎ on the "+ new" row issues a create.
+// TestBandAttach: without a new-window backend, ⏎ on a terminal row sets
+// connectTerminal (the quit-to-attach fallback main() acts on) and quits; ⏎ on
+// the "+ new" row issues a create. canOpenNewWindow is forced false so the
+// fallback path is exercised deterministically on every GOOS (otherwise macOS/
+// Windows CI would try to exec a real terminal).
 func TestBandAttach(t *testing.T) {
+	orig := canOpenNewWindow
+	canOpenNewWindow = func() bool { return false }
+	defer func() { canOpenNewWindow = orig }()
+
 	m := bandModel()
 	m.bandFocused, m.bandExpanded = true, true
 	m.bandSel = 1 // second terminal (t2)
@@ -144,5 +153,32 @@ func TestBandAttach(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("the + new row should issue a create command")
+	}
+}
+
+// TestBandAttachNewWindow: with a new-window backend available, ⏎ on a terminal
+// row opens the host shell in its own window/tab instead of hijacking the
+// dashboard — so it neither sets connectTerminal nor quits. (Driven on linux
+// without TMUX so openHostTermWindow takes its no-backend branch and returns an
+// error rather than exec-ing a real terminal; the contract under test is the
+// bandKey decision, not the spawn itself.)
+func TestBandAttachNewWindow(t *testing.T) {
+	if os.Getenv("TMUX") != "" || goruntime.GOOS != "linux" {
+		t.Skip("needs the no-exec branch of openHostTermWindow (linux, no TMUX)")
+	}
+	orig := canOpenNewWindow
+	canOpenNewWindow = func() bool { return true }
+	defer func() { canOpenNewWindow = orig }()
+
+	m := bandModel()
+	m.bandFocused, m.bandExpanded = true, true
+	m.bandSel = 0
+	out, cmd := m.bandKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(tuiModel)
+	if m.connectTerminal != "" {
+		t.Errorf("new-window attach must not set connectTerminal, got %q", m.connectTerminal)
+	}
+	if cmd != nil {
+		t.Error("new-window attach should keep the dashboard up (no quit command)")
 	}
 }
