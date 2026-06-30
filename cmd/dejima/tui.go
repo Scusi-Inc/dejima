@@ -1725,6 +1725,10 @@ type treeRow struct {
 	kind    rowKind
 	island  string
 	agentID string
+	// depth nests agent-spawned sub-agents under their spawner: 0 = a top-level
+	// agent, 1+ = a sub-agent indented beneath its parent. Only meaningful for
+	// rowAgent.
+	depth int
 }
 
 // hostTerminalsEnabled reports whether the daemon offers host terminals (so the
@@ -1774,8 +1778,9 @@ func (m tuiModel) visibleRows() []treeRow {
 	for _, isl := range m.orderedIslands() {
 		rows = append(rows, treeRow{kind: rowIsland, island: isl.Name})
 		if m.islandExpanded(isl) {
-			for _, a := range isl.Agents {
-				rows = append(rows, treeRow{kind: rowAgent, island: isl.Name, agentID: a.ID})
+			ordered, depth := orderedAgents(isl.Agents)
+			for i, a := range ordered {
+				rows = append(rows, treeRow{kind: rowAgent, island: isl.Name, agentID: a.ID, depth: depth[i]})
 			}
 			rows = append(rows, treeRow{kind: rowAddAgent, island: isl.Name})
 		}
@@ -1785,6 +1790,49 @@ func (m tuiModel) visibleRows() []treeRow {
 	// tail of this list; they now have their own pinned band above it. See
 	// renderBand / bandKey.
 	return rows
+}
+
+// orderedAgents reorders an island's agents so each agent-spawned sub-agent sits
+// immediately after its spawner, and returns a parallel depth slice (0 =
+// top-level, 1+ = nested under a spawner via AgentInfo.SpawnedBy). Order within
+// each group is preserved. An agent whose SpawnedBy isn't present in the island
+// (or empty) is top-level; any agent a cycle would otherwise hide is swept in at
+// the end, so the list never silently drops a row.
+func orderedAgents(agents []api.AgentInfo) (ordered []api.AgentInfo, depth []int) {
+	present := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		present[a.ID] = true
+	}
+	children := map[string][]api.AgentInfo{}
+	for _, a := range agents {
+		parent := a.SpawnedBy
+		if parent == "" || !present[parent] {
+			parent = "" // top-level (orphaned lineage shows at the root, not hidden)
+		}
+		children[parent] = append(children[parent], a)
+	}
+	seen := make(map[string]bool, len(agents))
+	var walk func(parentID string, d int)
+	walk = func(parentID string, d int) {
+		for _, a := range children[parentID] {
+			if seen[a.ID] {
+				continue // cycle guard
+			}
+			seen[a.ID] = true
+			ordered = append(ordered, a)
+			depth = append(depth, d)
+			walk(a.ID, d+1)
+		}
+	}
+	walk("", 0)
+	// Sweep any agent a cycle left unvisited so nothing disappears from the list.
+	for _, a := range agents {
+		if !seen[a.ID] {
+			ordered = append(ordered, a)
+			depth = append(depth, 0)
+		}
+	}
+	return ordered, depth
 }
 
 // orderedIslands returns the islands in display order: m.islands as-is, or —
@@ -2327,7 +2375,10 @@ var (
 	styleErrored   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
 	styleWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
 	styleNeedsYou  = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Bold(true) // the one call-to-action state — bold so it pops out of a quiet fleet
-	styleFooter    = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
+	// styleSubAgent renders agent-spawned sub-agent rows: dimmer than styleMuted
+	// and italic, so a transient sub-agent reads as subordinate to its spawner.
+	styleSubAgent = lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7a90")).Italic(true)
+	styleFooter   = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
 	// styleBroadcast is the attention bar for the header's top line: amber
 	// background, near-black bold text. Amber, not red — an update is attention,
 	// not danger; red stays reserved for PANIC/errors so the two never blur.
@@ -2829,7 +2880,15 @@ func (m tuiModel) renderList(width int) (string, int) {
 		case rowAgent:
 			isl := byName[row.island]
 			a := agentByID(isl, row.agentID)
-			line = "   " + styleMuted.Render("├ ") + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
+			if row.depth > 0 {
+				// An agent-spawned sub-agent: indent under its spawner and render it
+				// dim/italic with an ephemeral marker, so it reads as subordinate and
+				// transient rather than a peer of the island's own agents.
+				indent := "   " + strings.Repeat("  ", row.depth)
+				line = indent + styleMuted.Render("└ ") + subAgentRowText(a)
+			} else {
+				line = "   " + styleMuted.Render("├ ") + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
+			}
 		default: // rowIsland
 			isl, ok := byName[row.island]
 			if !ok {
@@ -3156,6 +3215,30 @@ func agentRowText(a api.AgentInfo, ambiguous bool) string {
 		pad = 2
 	}
 	return left + strings.Repeat(" ", pad) + statusStyle.Render(status)
+}
+
+// subAgentRowText renders an agent-spawned sub-agent's list line: dim/italic
+// (styleSubAgent) with a plain kind glyph and an "ephemeral" marker, so it reads
+// as a transient child rather than a peer agent. Deliberately simpler than
+// agentRowText — no status column — since sub-agents are secondary detail; the
+// state word still rides along when known.
+func subAgentRowText(a api.AgentInfo) string {
+	glyph := glyphAgent
+	if !a.Attachable {
+		glyph = glyphHeadless
+	}
+	meta := a.Type
+	if a.State != "stopped" && a.State != "exited" && !a.CreatedAt.IsZero() {
+		meta += "  up " + timeAgo(a.CreatedAt)
+	}
+	line := fmt.Sprintf("%s %s  %s", glyph, agentDisplayName(a), meta)
+	if a.Ephemeral {
+		line += "  · ephemeral"
+	}
+	if status, _ := agentStatus(a); status != "" {
+		line += "  " + status
+	}
+	return styleSubAgent.Render(line)
 }
 
 // agentStatusCol is the visible column the agent state word starts at, sized to
