@@ -97,6 +97,39 @@ func TestSpawnReaper_TTLAndParentGone(t *testing.T) {
 	}
 }
 
+// TestSpawnReaper_NoTTLBackstop covers a3 #62's d7 case: a grant with no --ttl
+// must NOT let ephemerals live forever. spawnTTL falls back to DefaultEphemeralTTL,
+// so an ephemeral older than that backstop is reaped even though the grant's TTL
+// is zero and its parent is still present.
+func TestSpawnReaper_NoTTLBackstop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := &fakeRuntime{status: runtime.StatusStopped} // isolate TTL trigger (state "")
+	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+
+	now := time.Now()
+	saveProjectWithAgents(t, "alpha", []project.AgentSpec{
+		{ID: "a1", Type: "claude-code"}, // root — keep
+		{ID: "old", Type: "claude-code", Ephemeral: true, SpawnedBy: "a1", CreatedAt: now.Add(-DefaultEphemeralTTL - time.Minute)}, // past backstop — reap
+		{ID: "new", Type: "claude-code", Ephemeral: true, SpawnedBy: "a1", CreatedAt: now},                                         // fresh — keep
+	})
+	// Grant with NO TTL (the d7 case).
+	if _, err := spawn.Update(func(st *spawn.Store) error {
+		return st.Set(spawn.Grant{Island: "alpha", MaxConcurrent: 5})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.scanSpawnReap(context.Background())
+
+	ids := agentIDs(t, "alpha")
+	if !ids["a1"] || !ids["new"] {
+		t.Errorf("kept the wrong agents: %v (want a1 + new present)", ids)
+	}
+	if ids["old"] {
+		t.Errorf("no-TTL ephemeral past the backstop was not reaped: %v", ids)
+	}
+}
+
 func TestSpawnReaper_RevokeReapsAll(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := &fakeRuntime{status: runtime.StatusStopped}
