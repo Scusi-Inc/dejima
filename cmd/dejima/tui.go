@@ -182,6 +182,7 @@ type tuiModel struct {
 	scope        *scopeView      // non-nil while the Port scope-picker is open (opened with `P`)
 	approvals    *approvalsView  // non-nil while the action-gate approvals overlay is open (opened with `V`)
 	identity     *identityView   // non-nil while the visual-identity editor is open (opened with `i`)
+	team         *teamView       // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
 	// gate is unused/disabled. See tui_approvals.go.
@@ -831,6 +832,35 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tokensLoadedMsg:
+		if m.team != nil {
+			m.team.applyLoaded(msg)
+		}
+		return m, nil
+
+	case tokenMintedMsg:
+		if m.team != nil {
+			m.team.minting = false
+			if msg.err != nil {
+				m.team.actionErr = msg.err.Error()
+			} else {
+				m.team.minted = msg.resp
+			}
+		}
+		return m, nil
+
+	case tokenRevokedMsg:
+		if m.team != nil {
+			if msg.err != nil {
+				m.team.actionErr = "revoke: " + msg.err.Error()
+				return m, nil
+			}
+			// Reload so the list reflects the revoke immediately.
+			m.team.loading = true
+			return m, m.loadTokensCmd()
+		}
+		return m, nil
+
 	case scopesLoadedMsg:
 		if m.scope != nil && m.scope.island == msg.island {
 			m.scope.applyLoaded(msg)
@@ -1132,6 +1162,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.identity != nil {
 		return m.identityKey(msg)
 	}
+	// The Team / invite overlay owns keys while open.
+	if m.team != nil {
+		return m.teamKey(msg)
+	}
 	// The host-terminal band owns keys while focused (expanded + driving). After
 	// the confirm guard, so a band-opened "close terminal" confirm takes keys.
 	if m.bandFocused {
@@ -1157,6 +1191,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// (G is jump-to-bottom.)
 		m.approvals = &approvalsView{}
 		return m, tea.Batch(m.fetchPendingActionsCmd(), m.fetchPolicyCmd())
+	case "I":
+		// Team / Invite — owner-only: mint a teammate's token (role + scope), show
+		// the copyable invite, list + revoke issued tokens. The list call gates the
+		// view to owners (a non-owner caller 403s → an explanatory panel).
+		return m.openTeamView()
 	case "!":
 		// Demo-only: stage/unstage the action-gate scene (pending actions + badge)
 		// so the hero fleet shot stays clean until you want the approval clip.
@@ -2388,6 +2427,10 @@ func (m tuiModel) View() string {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderIdentityView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.team != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderTeamView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 
 	footer := m.renderFooter()
 	// The pinned host-terminal band sits between the header and the island list;
@@ -3536,6 +3579,7 @@ func (m tuiModel) renderHelp() string {
 		{"T", "grants — what the highlighted island can reach (Port · MCP · links · caps)"},
 		{"P", "Port scopes — brokered host-file grants (add/revoke; deny-all by default)"},
 		{"V", "approvals — review/approve/deny pending cross-island actions (the action gate)"},
+		{"I", "team — invite a teammate (mint a role-scoped token), list/revoke tokens (owner-only)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
