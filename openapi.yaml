@@ -1829,7 +1829,9 @@ components:
         seq: { type: integer, format: int64 }
         island: { type: string }
         from: { type: string }
+        from_label: { type: string, description: Sender agent's human name (daemon-resolved at read time); empty for an unknown/cross-island handle or unlabeled agent }
         to: { type: string }
+        to_label: { type: string, description: Recipient agent's human name; empty for a broadcast or unlabeled agent }
         topic: { type: string }
         payload: { type: string }
         time: { type: string, format: date-time }
@@ -2056,6 +2058,7 @@ components:
         usage: { $ref: "#/components/schemas/AgentUsage" }
         ephemeral: { type: boolean, description: an agent-spawned sub-agent (auto-reaped; counts against the spawn budget) }
         spawned_by: { type: string, description: id of the agent that spawned this one (lineage; empty for operator-created) }
+        spawned_by_label: { type: string, description: human name of the spawning agent (so lineage renders as a name) }
     AgentUsage:
       type: object
       description: >-
@@ -2111,6 +2114,7 @@ components:
         type: { type: string, description: "e.g. island.created, agent.task-complete" }
         island: { type: string }
         agent: { type: string }
+        agent_label: { type: string, description: the agent's human name (daemon-resolved at emit time); empty for island-level events or unlabeled agents }
         timestamp: { type: string, format: date-time }
         payload: { type: object, additionalProperties: true }
     EgressEvent:
