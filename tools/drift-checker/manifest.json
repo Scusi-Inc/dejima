@@ -10,7 +10,8 @@
         "https://coder.com/pricing",
         "https://coder.com/docs/admin/security/audit-logs",
         "https://coder.com/",
-        "https://coder.com/solutions/agents"
+        "https://coder.com/solutions/agents",
+        "https://coder.com/blog/self-hosted-ai-model-agnostic-coder-agents"
       ],
       "claims": [
         { "id": "coder-audit-premium", "verified": "2026-06", "text": "Coder's audit logging is available only on the paid Premium tier." },
@@ -28,9 +29,8 @@
         "https://www.daytona.io/"
       ],
       "claims": [
-        { "id": "daytona-closed-source", "verified": "2026-06", "text": "Daytona moved its core closed-source in June 2026; the public repo is frozen and no longer maintained." },
-        { "id": "daytona-no-selfhost", "verified": "2026-06", "text": "Daytona no longer offers a supported self-host path." },
-        { "id": "daytona-managed-cloud", "verified": "2026-06", "text": "Daytona's product is a usage-billed managed cloud where code runs on their infrastructure." }
+        { "id": "daytona-byoc", "verified": "2026-06-30", "text": "Daytona runs a managed control plane; sandbox compute executes on customer-managed compute in the customer's own cloud (a BYOC data plane). Usage-billed." },
+        { "id": "daytona-oss-status", "verified": "2026-06-30", "text": "Daytona's open-source / self-host posture shifted during 2026 (a 'going closed source' notice in June vs current 'open-source transparency' homepage messaging); exact OSS / self-host status is under re-verification by a3." }
       ]
     },
     {
@@ -38,7 +38,8 @@
       "competitor": "E2B",
       "sources": [
         "https://e2b.dev/pricing",
-        "https://e2b.dev/enterprise"
+        "https://e2b.dev/enterprise",
+        "https://e2b.dev/docs"
       ],
       "claims": [
         { "id": "e2b-pro-price", "verified": "2026-06", "text": "E2B's Pro tier is about $150/month plus usage." },
