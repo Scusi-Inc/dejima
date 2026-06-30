@@ -88,10 +88,13 @@ The things only you can do (on Minion / as owner), in priority order:
    **🚫 NEVER run it on Minion (or any host running a live operator daemon).** The gate's
    teardown does `dejima uninstall --purge-all` and binds the operator daemon ports
    (`:7273`/`:7274`); run co-resident with a live daemon it will take that daemon **offline**
-   (this happened on 2026-06-29 — recovered, no data lost). **Blocked** until the harness ships
-   the co-residency guard (the gate must hard-refuse when a live daemon / system LaunchDaemon is
-   detected) + port/`DEJIMA_HOME` isolation + teardown-on-failure. Until that guard lands, the
-   rule is simply: **do not run this on Minion, full stop.**
+   (this happened on 2026-06-29 — recovered, no data lost). The **co-residency guard now ships**
+   (`refuse_if_live_daemon`, PR #238): the gate hard-refuses if it detects a loaded
+   `dev.dejima.dejimad` system LaunchDaemon, a process bound to `:7273`/`:7274`, or a `dejimad`
+   owned by another user — so an accidental run on Minion now aborts instead of taking the daemon
+   down. Further hardening still open: per-run port/`DEJIMA_HOME` isolation + teardown-on-failure.
+   The operating rule is unchanged regardless: **run only on a throwaway box** (the guard is a
+   backstop, not a licence to run it on a live host).
 
 *(✅ Done this session — the test-harness operator setup: a dedicated macOS `dejimaqa` user,
 a caged self-hosted runner, its own colima Docker, the bot GitHub account +
