@@ -32,17 +32,27 @@ type nudgeKey struct{ island, agent string }
 // flushed at a turn boundary. Concurrency-safe; pure (no I/O) so it unit-tests
 // without a Server.
 type wakeNotifier struct {
-	mu      sync.Mutex
-	pending map[nudgeKey]int
+	mu        sync.Mutex
+	pending   map[nudgeKey]int
+	firstSeen map[nudgeKey]time.Time // when each key's oldest undelivered nudge arrived
 }
 
-func newWakeNotifier() *wakeNotifier { return &wakeNotifier{pending: map[nudgeKey]int{}} }
+func newWakeNotifier() *wakeNotifier {
+	return &wakeNotifier{pending: map[nudgeKey]int{}, firstSeen: map[nudgeKey]time.Time{}}
+}
 
-// add records one more unseen message for (island, agent). De-dupe is implicit:
-// many arrivals accumulate into a single count, flushed as one nudge.
-func (n *wakeNotifier) add(island, agent string) {
+// add records one more unseen message for (island, agent) at time now. De-dupe is
+// implicit: many arrivals accumulate into a single count, flushed as one nudge.
+// firstSeen stamps the oldest pending arrival so flushNudges can tell a nudge
+// that's merely waiting for a turn boundary from one that's stuck (recipient
+// never reports a boundary — e.g. a stale shim).
+func (n *wakeNotifier) add(island, agent string, now time.Time) {
 	n.mu.Lock()
-	n.pending[nudgeKey{island, agent}]++
+	k := nudgeKey{island, agent}
+	n.pending[k]++
+	if _, ok := n.firstSeen[k]; !ok {
+		n.firstSeen[k] = now
+	}
 	n.mu.Unlock()
 }
 
@@ -64,7 +74,17 @@ func (n *wakeNotifier) take(k nudgeKey) int {
 	defer n.mu.Unlock()
 	c := n.pending[k]
 	delete(n.pending, k)
+	delete(n.firstSeen, k)
 	return c
+}
+
+// pendingSince returns when the oldest undelivered nudge for k arrived (and
+// whether one is pending).
+func (n *wakeNotifier) pendingSince(k nudgeKey) (time.Time, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	t, ok := n.firstSeen[k]
+	return t, ok
 }
 
 // onMailboxArrival is the store's arrival hook. It always emits the
@@ -85,19 +105,39 @@ func (s *Server) onMailboxArrival(m mailbox.Message) {
 	if !s.wakeEnabled || m.To == "" { // broadcasts have no single target to nudge
 		return
 	}
-	s.wakeNudges.add(m.Island, m.To)
+	s.wakeNudges.add(m.Island, m.To, time.Now())
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	s.wakeIslandFor(ctx, m.Island) // an idle agent in a hibernated island can't be nudged until it's up
 	s.flushNudges(ctx)
 }
 
+const (
+	// wakeStuckGrace is how long a nudge waits for an idle turn-boundary before we
+	// deliver it best-effort. Past this, an undelivered nudge usually means the
+	// recipient never reports a boundary — e.g. a stale in-island shim that can't
+	// POST agent-state (version skew) — so holding forever just loses mail.
+	wakeStuckGrace = 2 * time.Minute
+	// wakeHeartbeatStale: an agent-state older than this (or absent) means the
+	// agent isn't actively turning, so a best-effort nudge won't clobber live work.
+	wakeHeartbeatStale = 90 * time.Second
+)
+
 // flushNudges delivers each pending nudge whose recipient is at a turn boundary
-// (idle), leaving the rest queued for the ticker. Never injects mid-turn.
+// (idle), leaving the rest queued for the ticker. Never injects mid-turn — except
+// a nudge stuck past wakeStuckGrace to an agent with no fresh heartbeat is
+// delivered best-effort (+ warned), so a skewed/silent recipient still learns it
+// has mail instead of missing it forever.
 func (s *Server) flushNudges(ctx context.Context) {
+	now := time.Now()
 	for _, k := range s.wakeNudges.keys() {
 		if !s.idleFn(k.island, k.agent) {
-			continue // busy mid-turn — hold; the ticker retries at the next boundary
+			since, ok := s.wakeNudges.pendingSince(k)
+			if !ok || now.Sub(since) < wakeStuckGrace || s.agentHasFreshHeartbeat(k.island, k.agent, now) {
+				continue // genuinely busy, or not stuck yet — hold; the ticker retries
+			}
+			s.log.Warn("wake-on-message: no idle heartbeat — delivering best-effort (possible stale island shim; run `dejima upgrade`)",
+				"island", k.island, "agent", k.agent)
 		}
 		n := s.wakeNudges.take(k)
 		if n == 0 {
@@ -116,6 +156,15 @@ func (s *Server) flushNudges(ctx context.Context) {
 			s.log.Debug("wake inject", "island", k.island, "agent", k.agent, "err", err)
 		}
 	}
+}
+
+// agentHasFreshHeartbeat reports whether the agent posted state within
+// wakeHeartbeatStale of now — i.e. it's actively reporting, so a non-idle state is
+// real work to protect rather than a skewed/silent shim. Absent/zero/old state →
+// false (treat as not-actively-turning).
+func (s *Server) agentHasFreshHeartbeat(island, agent string, now time.Time) bool {
+	st := s.agentStateOf(island, agent)
+	return st != nil && !st.UpdatedAt.IsZero() && now.Sub(st.UpdatedAt) < wakeHeartbeatStale
 }
 
 // agentIdleAtBoundary reports whether an agent is at a turn boundary — safe to

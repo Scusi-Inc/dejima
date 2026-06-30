@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/mailbox"
@@ -27,9 +28,10 @@ func wakeServer(t *testing.T) (*Server, http.Handler, *fakeRuntime) {
 // (one nudge per quiet period, not one per message).
 func TestWakeNotifierBatching(t *testing.T) {
 	n := newWakeNotifier()
-	n.add("isl", "a1")
-	n.add("isl", "a1")
-	n.add("isl", "a2")
+	now := time.Now()
+	n.add("isl", "a1", now)
+	n.add("isl", "a1", now)
+	n.add("isl", "a2", now)
 	if len(n.keys()) != 2 {
 		t.Fatalf("keys = %d, want 2", len(n.keys()))
 	}
@@ -59,13 +61,13 @@ func TestWakeFlushTurnBoundary(t *testing.T) {
 	idle := false
 	srv.idleFn = func(string, string) bool { return idle }
 
-	srv.wakeNudges.add("isl", agent)
+	srv.wakeNudges.add("isl", agent, time.Now())
 	srv.flushNudges(context.Background())
 	if len(injected) != 0 {
 		t.Fatalf("busy agent was injected mid-turn: %v", injected)
 	}
 
-	srv.wakeNudges.add("isl", agent) // a second message arrives while busy → count 2
+	srv.wakeNudges.add("isl", agent, time.Now()) // a second message arrives while busy → count 2
 	idle = true
 	srv.flushNudges(context.Background())
 	if len(injected) != 1 || !strings.Contains(injected[0], "2 new") {
@@ -74,6 +76,46 @@ func TestWakeFlushTurnBoundary(t *testing.T) {
 	srv.flushNudges(context.Background()) // de-dupe: nothing pending now
 	if len(injected) != 1 {
 		t.Errorf("nudge re-sent with nothing pending: %v", injected)
+	}
+}
+
+// TestWakeFlushStuckNoHeartbeat: a nudge stuck past the grace window is held when
+// the agent has a fresh heartbeat (protect live work), but delivered best-effort
+// once that heartbeat goes stale/absent (e.g. a stale shim that can't POST
+// agent-state — version skew) so the recipient still learns it has mail.
+func TestWakeFlushStuckNoHeartbeat(t *testing.T) {
+	srv, h, _ := wakeServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"isl","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d", rr.Code)
+	}
+	agent := primaryAgentID(t, h, "isl")
+
+	var injected []string
+	srv.injectFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
+		injected = append(injected, text)
+		return nil
+	}
+	srv.idleFn = func(string, string) bool { return false } // never reports a turn boundary
+
+	// Stuck nudge, but the agent has a FRESH heartbeat (actively turning): hold —
+	// force-delivery would clobber live work.
+	srv.agentStateMu.Lock()
+	srv.agentStates[agentStateKey("isl", agent)] = AgentStateInfo{Latest: "thinking", UpdatedAt: time.Now()}
+	srv.agentStateMu.Unlock()
+	srv.wakeNudges.add("isl", agent, time.Now().Add(-2*wakeStuckGrace))
+	srv.flushNudges(context.Background())
+	if len(injected) != 0 {
+		t.Fatalf("stuck nudge force-delivered to an agent with a fresh heartbeat: %v", injected)
+	}
+
+	// Heartbeat goes stale (shim stopped POSTing — skew): now deliver best-effort.
+	srv.agentStateMu.Lock()
+	srv.agentStates[agentStateKey("isl", agent)] = AgentStateInfo{Latest: "thinking", UpdatedAt: time.Now().Add(-2 * wakeHeartbeatStale)}
+	srv.agentStateMu.Unlock()
+	srv.flushNudges(context.Background())
+	if len(injected) != 1 || !strings.Contains(injected[0], "new message") {
+		t.Fatalf("stuck nudge to a stale-heartbeat agent not delivered: %v", injected)
 	}
 }
 
