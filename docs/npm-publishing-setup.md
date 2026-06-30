@@ -26,22 +26,22 @@ platform packages to that exact version.
 
 ## One-time setup
 
-1. **Create the `@dejima` npm scope.** As the npm account that owns `dejima`,
-   create an organization named `dejima` (npmjs.com → *Add Organization* →
-   name `dejima`). Scoped packages publish public with `--access public` (the
-   workflow already passes it); a free org publishes public packages.
+1. **The `@dejima` scope already exists** — `@dejima/sdk` and the unscoped
+   `dejima` are published under the same account (npm org `dejima`, owned by the
+   `scusi-inc` account). So there's **no org to create**; the new
+   `@dejima/cli-*` packages publish into the existing scope.
 
-2. **Create a granular access token** with **read-write** on:
-   - the `@dejima` scope (all `@dejima/*` packages), and
-   - the existing unscoped `dejima` package.
+2. **Make sure `NPM_TOKEN` can publish the new packages.** `@dejima/cli-*` are
+   brand-new package names, so the token's grant must cover the **whole `@dejima`
+   scope** (not just the specific `@dejima/sdk` + `dejima` packages). Check the
+   token at npmjs.com → *Access Tokens*: if it's a Granular token scoped to
+   individual packages, regenerate it with **read-write on the `@dejima` scope**
+   (all packages) + the unscoped `dejima` package, and update the **`NPM_TOKEN`**
+   Actions secret (GitHub → repo *Settings* → *Secrets and variables* →
+   *Actions* → *Secrets*). A classic automation token already covers everything.
+   (The current token expires 2026-09-20 — rotate before then regardless.)
 
-   npmjs.com → *Access Tokens* → *Generate New Token* → *Granular Access Token*.
-
-3. **Point the repo's `NPM_TOKEN` secret at it.** If `NPM_TOKEN` is already set
-   for the old flow, replace it with this token so it can publish the scope.
-   GitHub → repo *Settings* → *Secrets and variables* → *Actions* → *Secrets*.
-
-4. **Flip the publish gate on.** Add a repo **variable** (not a secret):
+3. **Flip the publish gate on.** Add a repo **variable** (not a secret):
    - `NPM_PLATFORM_PUBLISH` = `enabled`
 
    Settings → *Secrets and variables* → *Actions* → *Variables* → *New variable*.
