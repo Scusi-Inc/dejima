@@ -168,21 +168,22 @@ type tuiModel struct {
 	agentAdder   *agentAdder     // non-nil while the add-agent flow is active
 	expanded     map[string]bool // island name → agents-revealed (default: all expanded)
 
-	activeHost   string          // current target: "" = local socket, else host:port
-	activeLabel  string          // profile name for the active target, if known
-	activeSource string          // where the target came from: "env" | "profile" | "local"
-	detailScroll int             // scroll offset (lines) for the detail panel; reset on selection change
-	skew         string          // client/daemon version-skew warning, or ""
-	editor       string          // preferred Remote-SSH editor CLI ("" = auto-detect); from clientcfg
-	settings     *settingsModel  // non-nil while the settings overlay is open
-	resEditor    *resourceEditor // non-nil while the per-island resources overlay is open
-	modelEditor  *modelEditor    // non-nil while the per-agent model/provider/key overlay is open
-	audit        *auditView      // non-nil while the audit-ledger viewer is open (opened with `A`)
-	grants       *grantsView     // non-nil while the island-grants trust view is open (opened with `T`)
-	scope        *scopeView      // non-nil while the Port scope-picker is open (opened with `P`)
-	approvals    *approvalsView  // non-nil while the action-gate approvals overlay is open (opened with `V`)
-	identity     *identityView   // non-nil while the visual-identity editor is open (opened with `i`)
-	team         *teamView       // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
+	activeHost   string            // current target: "" = local socket, else host:port
+	activeLabel  string            // profile name for the active target, if known
+	activeSource string            // where the target came from: "env" | "profile" | "local"
+	detailScroll int               // scroll offset (lines) for the detail panel; reset on selection change
+	skew         string            // client/daemon version-skew warning, or ""
+	editor       string            // preferred Remote-SSH editor CLI ("" = auto-detect); from clientcfg
+	settings     *settingsModel    // non-nil while the settings overlay is open
+	resEditor    *resourceEditor   // non-nil while the per-island resources overlay is open
+	spawnGrant   *spawnGrantEditor // non-nil while the per-island sub-agent-budget overlay is open
+	modelEditor  *modelEditor      // non-nil while the per-agent model/provider/key overlay is open
+	audit        *auditView        // non-nil while the audit-ledger viewer is open (opened with `A`)
+	grants       *grantsView       // non-nil while the island-grants trust view is open (opened with `T`)
+	scope        *scopeView        // non-nil while the Port scope-picker is open (opened with `P`)
+	approvals    *approvalsView    // non-nil while the action-gate approvals overlay is open (opened with `V`)
+	identity     *identityView     // non-nil while the visual-identity editor is open (opened with `i`)
+	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
 	// gate is unused/disabled. See tui_approvals.go.
@@ -905,6 +906,33 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.fetchListCmd(), m.fetchDetailCmd(msg.island))
 
+	case spawnGrantLoadedMsg:
+		if m.spawnGrant != nil && m.spawnGrant.island == msg.island {
+			m.spawnGrant.applyLoaded(msg)
+		}
+		return m, nil
+
+	case spawnGrantMutatedMsg:
+		if m.spawnGrant != nil && m.spawnGrant.island == msg.island {
+			m.spawnGrant.busy = false
+			if msg.err != nil {
+				verb := "grant"
+				if msg.revoked {
+					verb = "revoke"
+				}
+				m.spawnGrant.actionErr = verb + ": " + msg.err.Error()
+				return m, nil
+			}
+			// Reload so the overlay reflects the new granted/used state immediately.
+			m.spawnGrant.loading = true
+			m.lastNotice = "sub-agent budget updated"
+			if msg.revoked {
+				m.lastNotice = "sub-agent budget revoked"
+			}
+			return m, m.loadSpawnGrantCmd(msg.island)
+		}
+		return m, nil
+
 	case modelEditorLoadedMsg:
 		if m.modelEditor != nil && m.modelEditor.agentID == msg.agentID {
 			if msg.err != nil {
@@ -1144,6 +1172,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The per-island resources overlay owns keys while open.
 	if m.resEditor != nil {
 		return m.resEditorKey(msg)
+	}
+	// The per-island sub-agent-budget overlay owns keys while open.
+	if m.spawnGrant != nil {
+		return m.spawnGrantKey(msg)
 	}
 	// The per-agent model/provider/key overlay owns keys while open.
 	if m.modelEditor != nil {
@@ -1941,6 +1973,9 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		items = append(items, actionMenuItem{label: "Grants… (what it can reach)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openGrantsView(islandName)
 		}})
+		items = append(items, actionMenuItem{label: "Sub-agent budget… (spawn grant)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openSpawnGrantEditor(islandName)
+		}})
 		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openScopeView(islandName)
 		}})
@@ -2457,6 +2492,11 @@ func (m tuiModel) View() string {
 	}
 	if m.resEditor != nil {
 		box := styleMenuBox.Render(m.renderResourceEditor())
+		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.spawnGrant != nil {
+		box := styleMenuBox.Render(m.renderSpawnGrantEditor())
 		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
