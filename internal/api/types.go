@@ -116,8 +116,10 @@ type AgentInfo struct {
 	Usage *AgentUsage `json:"usage,omitempty"`
 	// Ephemeral / SpawnedBy surface an agent-spawned sub-agent and its lineage
 	// (the spawning agent's id). Empty/false for operator-created agents.
-	Ephemeral bool   `json:"ephemeral,omitempty"`
-	SpawnedBy string `json:"spawned_by,omitempty"`
+	// SpawnedByLabel is the spawner's human name, so lineage renders as a name.
+	Ephemeral      bool   `json:"ephemeral,omitempty"`
+	SpawnedBy      string `json:"spawned_by,omitempty"`
+	SpawnedByLabel string `json:"spawned_by_label,omitempty"`
 }
 
 // RefID / RefLabel let an AgentInfo satisfy project.AgentRef, so the CLI can

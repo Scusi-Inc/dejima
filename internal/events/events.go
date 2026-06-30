@@ -85,7 +85,11 @@ type Event struct {
 	Island string `json:"island,omitempty"`
 	// Agent is the agent within the island this event concerns (empty for
 	// island-level events or agents that don't identify themselves).
-	Agent     string         `json:"agent,omitempty"`
-	Timestamp time.Time      `json:"timestamp"`
-	Payload   map[string]any `json:"payload,omitempty"`
+	Agent string `json:"agent,omitempty"`
+	// AgentLabel is the agent's human name, daemon-resolved at emit time so every
+	// subscriber sees a name, not a bare id. Empty when Agent is empty or the
+	// agent has no resolvable label.
+	AgentLabel string         `json:"agent_label,omitempty"`
+	Timestamp  time.Time      `json:"timestamp"`
+	Payload    map[string]any `json:"payload,omitempty"`
 }

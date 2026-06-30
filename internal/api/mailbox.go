@@ -113,6 +113,7 @@ func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg := s.mailbox.Send(name, req.From, req.To, req.Topic, req.Payload)
+	msg = enrichMessageNames(proj.Agents, []mailbox.Message{msg})[0]
 	resp := MailboxSendResponse{Message: msg, UnknownRecipient: unknownRecipient}
 	if unknownRecipient {
 		resp.Roster = make([]RosterAgent, 0, len(proj.Agents))
@@ -128,7 +129,8 @@ func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 // sendMailbox.
 func (s *Server) pollMailbox(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if _, err := project.Load(name); err != nil {
+	proj, err := project.Load(name)
+	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
@@ -138,7 +140,27 @@ func (s *Server) pollMailbox(w http.ResponseWriter, r *http.Request) {
 		since, _ = strconv.ParseInt(v, 10, 64)
 	}
 	writeJSON(w, http.StatusOK, MailboxPollResponse{
-		Messages: s.mailbox.Poll(name, agent, since),
+		Messages: enrichMessageNames(proj.Agents, s.mailbox.Poll(name, agent, since)),
 		Latest:   s.mailbox.Latest(name),
 	})
+}
+
+// enrichMessageNames fills FromLabel/ToLabel on each message from the island
+// roster (current names, resolved at read time so a rename reflects). A handle
+// not in the local roster (a broadcast's empty To, a cross-island sender) keeps
+// the existing value — cross-island provenance already carries Origin.FromLabel.
+func enrichMessageNames(agents []project.AgentSpec, msgs []mailbox.Message) []mailbox.Message {
+	labelOf := make(map[string]string, len(agents))
+	for _, a := range agents {
+		labelOf[a.ID] = a.Label
+	}
+	for i := range msgs {
+		if msgs[i].FromLabel == "" {
+			msgs[i].FromLabel = labelOf[msgs[i].From]
+		}
+		if msgs[i].To != "" && msgs[i].ToLabel == "" {
+			msgs[i].ToLabel = labelOf[msgs[i].To]
+		}
+	}
+	return msgs
 }

@@ -20,13 +20,20 @@ import (
 
 // Message is one intra-island message.
 type Message struct {
-	Seq     int64     `json:"seq"`
-	Island  string    `json:"island"`
-	From    string    `json:"from"`            // sender agent id (literal)
-	To      string    `json:"to,omitempty"`    // recipient agent id; empty = broadcast to the island
-	Topic   string    `json:"topic,omitempty"` // optional channel within the island
-	Payload string    `json:"payload"`
-	Time    time.Time `json:"time"`
+	Seq    int64  `json:"seq"`
+	Island string `json:"island"`
+	From   string `json:"from"` // sender agent id (literal)
+	// FromLabel / ToLabel are the human names for From / To, daemon-resolved from
+	// the island roster when a message is returned (read time, so a rename
+	// reflects). Empty for a broadcast (no To), an unknown/cross-island handle, or
+	// an unlabeled agent. Storage keeps only the ids; these are filled on the way
+	// out so consumers render names without a second roster fetch.
+	FromLabel string    `json:"from_label,omitempty"`
+	To        string    `json:"to,omitempty"` // recipient agent id; empty = broadcast to the island
+	ToLabel   string    `json:"to_label,omitempty"`
+	Topic     string    `json:"topic,omitempty"` // optional channel within the island
+	Payload   string    `json:"payload"`
+	Time      time.Time `json:"time"`
 	// Origin is daemon-stamped provenance, set ONLY for messages delivered from
 	// another island over a brokered link (Lane 5). nil for ordinary intra-island
 	// messages. Agents cannot set it — see DeliverExternal vs Send.

@@ -338,6 +338,12 @@ func (s *Server) emit(e events.Event) {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
 	}
+	// Carry the agent's human name on every event so subscribers (webhooks, the
+	// TUI, the SDK) render a name, not a bare id. Resolved once here — the single
+	// emit choke point — rather than at each of the ~10 emit call sites.
+	if e.Agent != "" && e.AgentLabel == "" && e.Island != "" {
+		e.AgentLabel = s.agentLabel(e.Island, e.Agent)
+	}
 	s.recordEvent(e)
 	s.maybeUpdateAgentState(e)
 	s.maybeUpdateAgentUsage(e)
@@ -2727,6 +2733,13 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 			CreatedAt:  a.CreatedAt,
 			Ephemeral:  a.Ephemeral,
 			SpawnedBy:  a.SpawnedBy,
+		}
+		// Resolve the spawner's name from the same roster so lineage renders as a
+		// name, not a bare id.
+		if a.SpawnedBy != "" {
+			if parent, ok := p.AgentByID(a.SpawnedBy); ok {
+				ai.SpawnedByLabel = parent.Label
+			}
 		}
 		if live && a.Tmux != "" {
 			ai.State = s.agentLiveness(ctx, p, a)
