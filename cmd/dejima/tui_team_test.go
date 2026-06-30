@@ -93,6 +93,50 @@ func TestTeamMintRequestScopedEmpty(t *testing.T) {
 	}
 }
 
+// TestTeamHostPrefill: opening the view prefills the host field with the current
+// connection target (what this client dialed = what a teammate would dial).
+func TestTeamHostPrefill(t *testing.T) {
+	m := initialTUIModel(nil)
+	m.activeHost = "minion.ts.net:7274"
+	out, _ := m.openTeamView()
+	if got := out.(tuiModel).team.host; got != "minion.ts.net:7274" {
+		t.Errorf("host should prefill from activeHost, got %q", got)
+	}
+}
+
+// TestTeamHostTyping: the Host field accepts typed input (focus order role,
+// scope, host, label, create).
+func TestTeamHostTyping(t *testing.T) {
+	m := teamModel()
+	m.team.focus = 2
+	if got := m.teamCurrent(); got.kind != tfHost {
+		t.Fatalf("focus 2 should be the host field, got kind %d", got.kind)
+	}
+	for _, r := range "h:1" {
+		out, _ := m.teamKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = out.(tuiModel)
+	}
+	if m.team.host != "h:1" {
+		t.Errorf("host = %q, want 'h:1'", m.team.host)
+	}
+}
+
+// TestTeamMintedBlobRender: when a blob was produced (host given), the minted
+// panel leads with the one-paste invite and the `dejima join` instruction, not
+// the env fallback.
+func TestTeamMintedBlobRender(t *testing.T) {
+	m := teamModel()
+	m.team.minted = &api.CreateTokenResponse{Secret: "sek_x", Token: api.TokenView{Role: "operator", Label: "amanda"}}
+	m.team.mintedBlob = "dejima-invite:abc123"
+	got := plain(m.renderTeamView())
+	if !strings.Contains(got, "dejima-invite:abc123") {
+		t.Errorf("minted panel should show the blob:\n%s", got)
+	}
+	if !strings.Contains(got, "dejima join") {
+		t.Errorf("minted panel should show the join instruction:\n%s", got)
+	}
+}
+
 // TestTeamRoleNeverOwner: the invite flow only ever offers operator/viewer —
 // minting an owner is a deliberate CLI act, never a casual TUI invite.
 func TestTeamRoleNeverOwner(t *testing.T) {
@@ -139,10 +183,10 @@ func TestTeamSpaceTogglesFocusedIsland(t *testing.T) {
 // TestTeamLabelTyping: while the Label field is focused, printable keys type into
 // it (they aren't consumed as navigation).
 func TestTeamLabelTyping(t *testing.T) {
-	m := teamModel() // all-islands: focus order is role, scope, label, create
-	m.team.focus = 2
+	m := teamModel() // all-islands: focus order is role, scope, host, label, create
+	m.team.focus = 3
 	if got := m.teamCurrent(); got.kind != tfLabel {
-		t.Fatalf("focus 2 should be the label field, got kind %d", got.kind)
+		t.Fatalf("focus 3 should be the label field, got kind %d", got.kind)
 	}
 	for _, r := range "ann" {
 		out, _ := m.teamKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
@@ -164,10 +208,10 @@ func TestTeamLabelTyping(t *testing.T) {
 func TestTeamRevokeFocused(t *testing.T) {
 	m := teamModel()
 	m.team.tokens = []api.TokenView{{ID: "tok_a", Role: "operator"}}
-	// focus order (all-islands): role, scope, label, create, token[0]
-	m.team.focus = 4
+	// focus order (all-islands): role, scope, host, label, create, token[0]
+	m.team.focus = 5
 	if got := m.teamCurrent(); got.kind != tfToken {
-		t.Fatalf("focus 4 should be the token row, got kind %d", got.kind)
+		t.Fatalf("focus 5 should be the token row, got kind %d", got.kind)
 	}
 	_, cmd := m.teamKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	if cmd == nil {
@@ -179,9 +223,9 @@ func TestTeamRevokeFocused(t *testing.T) {
 // the form busy; an invalid (empty custom scope) form sets an error instead.
 func TestTeamEnterMints(t *testing.T) {
 	m := teamModel()
-	m.team.focus = 3 // role, scope, label, create
+	m.team.focus = 4 // role, scope, host, label, create
 	if got := m.teamCurrent(); got.kind != tfCreate {
-		t.Fatalf("focus 3 should be the create button, got kind %d", got.kind)
+		t.Fatalf("focus 4 should be the create button, got kind %d", got.kind)
 	}
 	out, cmd := m.teamKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = out.(tuiModel)
