@@ -75,7 +75,35 @@ func HostPTY(ctx context.Context, cmd []string, rows, cols uint16) (*PTYSession,
 	if len(cmd) == 0 {
 		return nil, fmt.Errorf("host pty: empty command")
 	}
-	return startPTY(exec.CommandContext(ctx, cmd[0], cmd[1:]...), rows, cols)
+	c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+	// The daemon almost always runs under launchd/systemd with TERM unset (or
+	// empty). A PTY child like tmux then dies on attach with "open terminal
+	// failed: terminal does not support clear" — it can't resolve a terminfo
+	// entry for an empty TERM — which the client reads as a dropped connection
+	// and retries forever. Guarantee a sane, universally-available terminal type
+	// for the host PTY; an already-set non-empty TERM in the daemon env wins.
+	// (The in-container path doesn't need this — `docker exec -it` sets TERM.)
+	c.Env = ensureTERM(os.Environ())
+	return startPTY(c, rows, cols)
+}
+
+// ensureTERM returns env with exactly one TERM entry, guaranteed non-empty:
+// any existing TERM is preserved if set, otherwise xterm-256color is supplied.
+// Duplicates are collapsed so the child can't inherit a stray empty TERM=.
+func ensureTERM(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	term := ""
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "TERM=") {
+			term = strings.TrimPrefix(kv, "TERM=")
+			continue // re-added canonically below
+		}
+		out = append(out, kv)
+	}
+	if term == "" {
+		term = "xterm-256color"
+	}
+	return append(out, "TERM="+term)
 }
 
 // AttachToHostTmux attaches (creating if absent) to a tmux session on the daemon
