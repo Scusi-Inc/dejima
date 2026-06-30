@@ -63,13 +63,16 @@ func TestInstallChannels_AssetNamingMatchesReleaseBuild(t *testing.T) {
 		t.Error("install-client.sh asset name drifted from dejima_<ver>_<os>_<arch>.tar.gz")
 	}
 
-	// npm/install.js — builds both the tar.gz (unix) and zip (windows) names.
-	npm := readRepoFile(t, "npm/install.js")
-	if !strings.Contains(npm, "const asset = `dejima_${tag}_${plat}_${arch}.${ext}`;") {
-		t.Error("npm/install.js asset name drifted from dejima_<tag>_<plat>_<arch>.<ext>")
+	// npm's platform-package generator — extracts the binary from each release
+	// archive, so it must ask for the same `dejima_<vtag>_<os>_<arch>.<ext>` names.
+	// (The old install.js postinstall downloader was removed; the binary now ships
+	// inside @dejima/cli-* packages built by this generator.)
+	npm := readRepoFile(t, "npm/scripts/build-platform-packages.mjs")
+	if !strings.Contains(npm, "const asset = `dejima_${tag}_${t.rel}.${t.ext}`;") {
+		t.Error("build-platform-packages.mjs asset name drifted from dejima_<tag>_<rel>.<ext>")
 	}
 	if !strings.Contains(npm, "const tag = `v${version}`;") {
-		t.Error("npm/install.js no longer prefixes the tag with 'v' — asset name would mismatch the release")
+		t.Error("build-platform-packages.mjs no longer prefixes the tag with 'v' — asset name would mismatch the release")
 	}
 
 	// The Homebrew formula's URLs must point at the same tarball name.
