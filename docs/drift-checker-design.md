@@ -110,6 +110,33 @@ The watchtower validated this and flagged one residual risk worth recording:
   removes the risk entirely — the always-on daemon owns the schedule, so neither
   the agent process nor its session needs to survive between runs.
 
+### Sharpened after deploy (2026-06-30) — the real threat is idle-hibernate, not "rare loss"
+
+Inspecting the deployed watchtower (`dejima status watchtower`) showed the
+in-session-cron approach is more fragile than the note above implied. The risk is
+not a rare simultaneous loss; it is routine platform behavior:
+
+- **Idle-hibernate is the likely killer.** The watchtower is a regular `dejima init`
+  island, and Dejima auto-hibernates idle islands (`internal/api/idle.go`). A
+  hibernated (paused) container cannot fire an in-session `CronCreate`, and a
+  hibernated island wakes only on wake-on-message or a manual wake — there is no
+  scheduled wake yet. Sitting idle between monthly checks is its normal state, so it
+  is liable to hibernate and silently stop before its first real run. It only stayed
+  up during testing because an operator was attached.
+- **An island upgrade/rebuild resets the cron.** The deployed island had version
+  skew (built on v0.7.1, daemon at v0.8.0+); `dejima upgrade` recreates the
+  container and wipes the in-session schedule, needing re-activation. Skew also
+  silently degrades the very shims it relies on (heartbeat, wake-on-message,
+  idle-hibernate).
+- **No active staleness alert.** "a3 notices a missing monthly report" is not
+  monitoring — a silent death emits nothing. The heartbeat must drive a real alert.
+
+Conclusion: the daemon-level **scheduled-wake primitive is load-bearing, not
+optional** — it is the only mechanism that survives hibernate, upgrade, and
+process/session loss, and being daemon-owned it is also where staleness detection
+belongs. Until it exists, the watchtower should run **pinned always-on** (exempt
+from idle-hibernate) and be treated as best-effort.
+
 ## Guardrails
 
 - DRAFT PRs only. Never merges, never edits live pages directly. Human + a3 in the loop.
