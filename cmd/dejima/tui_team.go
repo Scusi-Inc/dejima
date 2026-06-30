@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/invite"
 )
 
 // teamView is the owner-only "Team" overlay (opened with `I`, for Invite). It is
@@ -36,11 +37,13 @@ type teamView struct {
 	roleSel  int  // 0 = operator, 1 = viewer (owner is never minted from here)
 	scopeAll bool // true = token spans all islands; false = the checked subset
 	scopeSel map[string]bool
+	host     string // daemon host:port the teammate dials (operator-supplied; the daemon can't self-detect it)
 	label    string
 
-	minting   bool
-	minted    *api.CreateTokenResponse // last mint; shown once until dismissed
-	actionErr string                   // mint / revoke error
+	minting    bool
+	minted     *api.CreateTokenResponse // last mint; shown once until dismissed
+	mintedBlob string                   // the paste-safe invite for the last mint ("" if no host given)
+	actionErr  string                   // mint / revoke error
 }
 
 // teamRoles are the roles the invite flow offers. Owner is deliberately absent:
@@ -52,6 +55,7 @@ const (
 	tfRole   = iota // role toggle
 	tfScope         // all-islands vs custom toggle
 	tfIsland        // one per island (only when !scopeAll); idx = island index
+	tfHost          // daemon host:port text field
 	tfLabel         // optional label text field
 	tfCreate        // the "create invite" button
 	tfToken         // one per issued token; idx = token index
@@ -66,8 +70,13 @@ type teamFocusItem struct {
 }
 
 // openTeamView opens the Team overlay and kicks off the owner-only token list.
+// The host field is prefilled with the current connection target when that's a
+// real host:port — that's the address this very client dialed, so it's the one a
+// teammate would dial too. When we're on the local socket (activeHost == "")
+// there's nothing to prefill: the operator must supply the daemon's reachable
+// address, which the daemon can't self-detect.
 func (m tuiModel) openTeamView() (tea.Model, tea.Cmd) {
-	m.team = &teamView{loading: true, scopeAll: true, scopeSel: map[string]bool{}}
+	m.team = &teamView{loading: true, scopeAll: true, scopeSel: map[string]bool{}, host: m.activeHost}
 	return m, m.loadTokensCmd()
 }
 
@@ -114,16 +123,40 @@ func isOwnerOnlyErr(err error) bool {
 
 type tokenMintedMsg struct {
 	resp *api.CreateTokenResponse
+	blob string // the paste-safe invite (empty when no host was given)
 	err  error
 }
 
-func (m tuiModel) mintTokenCmd(req api.CreateTokenRequest) tea.Cmd {
+// mintTokenCmd mints the token and, when a host was supplied, encodes the
+// paste-safe invite blob in the same step — the bearer secret is only returned
+// once, so the blob must be built here, not later. host empty → token only (the
+// minted panel falls back to the manual DEJIMA_HOST/TOKEN hand-off).
+func (m tuiModel) mintTokenCmd(req api.CreateTokenRequest, host string) tea.Cmd {
 	c := m.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		resp, err := c.CreateToken(ctx, req)
-		return tokenMintedMsg{resp: resp, err: err}
+		if err != nil {
+			return tokenMintedMsg{err: err}
+		}
+		var blob string
+		if strings.TrimSpace(host) != "" {
+			blob, err = invite.Encode(invite.Payload{
+				Host:    strings.TrimSpace(host),
+				Token:   resp.Secret,
+				Role:    resp.Token.Role,
+				Islands: resp.Token.Islands,
+				Label:   resp.Token.Label,
+				// Name omitted — SaveInvite derives a profile name from the host.
+			})
+			if err != nil {
+				// Token minted but the invite couldn't be built — surface it so the
+				// operator can revoke the now-orphaned token (id is in the list).
+				return tokenMintedMsg{resp: resp, err: fmt.Errorf("token %s minted, but encoding the invite failed: %w (revoke it below)", resp.Token.ID, err)}
+			}
+		}
+		return tokenMintedMsg{resp: resp, blob: blob}
 	}
 }
 
@@ -160,7 +193,7 @@ func (m tuiModel) teamFocusItems() []teamFocusItem {
 			items = append(items, teamFocusItem{kind: tfIsland, idx: i})
 		}
 	}
-	items = append(items, teamFocusItem{kind: tfLabel}, teamFocusItem{kind: tfCreate})
+	items = append(items, teamFocusItem{kind: tfHost}, teamFocusItem{kind: tfLabel}, teamFocusItem{kind: tfCreate})
 	for i := range v.tokens {
 		items = append(items, teamFocusItem{kind: tfToken, idx: i})
 	}
@@ -208,16 +241,21 @@ func (m tuiModel) teamKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	cur := items[v.focus]
 
-	// While the label field has focus, printable runes type into it; navigation is
-	// via tab / arrows so it doesn't eat the keystrokes.
-	if cur.kind == tfLabel {
+	// While a text field has focus, printable runes type into it; navigation is
+	// via tab / arrows so it doesn't eat the keystrokes. Host and label are the
+	// two text fields.
+	if cur.kind == tfLabel || cur.kind == tfHost {
+		field := &v.label
+		if cur.kind == tfHost {
+			field = &v.host
+		}
 		switch msg.Type {
 		case tea.KeyRunes, tea.KeySpace:
-			v.label += string(msg.Runes)
+			*field += string(msg.Runes)
 			return m, nil
 		case tea.KeyBackspace:
-			if v.label != "" {
-				v.label = v.label[:len(v.label)-1]
+			if *field != "" {
+				*field = (*field)[:len(*field)-1]
 			}
 			return m, nil
 		}
@@ -242,12 +280,12 @@ func (m tuiModel) teamKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "j":
-		if cur.kind != tfLabel && v.focus < len(items)-1 {
+		if cur.kind != tfLabel && cur.kind != tfHost && v.focus < len(items)-1 {
 			v.focus++
 		}
 		return m, nil
 	case "k":
-		if cur.kind != tfLabel && v.focus > 0 {
+		if cur.kind != tfLabel && cur.kind != tfHost && v.focus > 0 {
 			v.focus--
 		}
 		return m, nil
@@ -336,7 +374,7 @@ func (m tuiModel) teamMint() (tea.Model, tea.Cmd) {
 	}
 	m.team.minting = true
 	m.team.actionErr = ""
-	return m, m.mintTokenCmd(req)
+	return m, m.mintTokenCmd(req, m.team.host)
 }
 
 func (m tuiModel) teamRevokeFocused() (tea.Model, tea.Cmd) {
@@ -421,6 +459,21 @@ func (m tuiModel) renderTeamForm() string {
 	}
 	b.WriteString("\n")
 
+	// Host — the daemon address the teammate dials. Required for the one-paste
+	// invite blob (the daemon can't self-detect its reachable address); leave it
+	// blank and the mint still works, falling back to the manual hand-off.
+	hostVal := v.host
+	if cur.kind == tfHost {
+		hostVal += "▎" // cursor
+	}
+	if hostVal == "" {
+		hostVal = styleMuted.Render("(e.g. minion.ts.net:7274 — for the one-paste invite)")
+	} else {
+		hostVal = styleAccent.Render(hostVal)
+	}
+	b.WriteString(row(cur.kind == tfHost, styleHeader.Render("Host")+"   "+hostVal))
+	b.WriteString("\n")
+
 	// Label.
 	labelVal := v.label
 	if cur.kind == tfLabel {
@@ -494,25 +547,34 @@ func (m tuiModel) renderMintedInvite() string {
 	b.WriteString(fmt.Sprintf("  %s   role %s · scope %s\n\n",
 		styleAccent.Render(who), styleAccent.Render(t.Role), styleAccent.Render(scope)))
 
+	if v.mintedBlob != "" {
+		// The one-paste invite — carries the host + secret in a single line. The
+		// teammate accepts it in the TUI (Connection → join via invite) or with
+		// `dejima join <blob>`. It contains the secret, so it's a credential.
+		b.WriteString(styleWaiting.Render("  Send this invite — it's shown only once and carries the secret (treat like a password):"))
+		b.WriteString("\n\n")
+		b.WriteString("  " + styleTitle.Render(v.mintedBlob) + "\n\n")
+		b.WriteString(styleHeader.Render("  The teammate runs:"))
+		b.WriteString("\n")
+		b.WriteString("    " + styleAccent.Render("dejima join "+truncate(v.mintedBlob, 28)+"…") + "\n")
+		b.WriteString(styleMuted.Render("    …or, in the TUI: Connection (s) → [j] join via invite, then paste."))
+		b.WriteString("\n\n")
+		b.WriteString(styleMuted.Render("  Revoke anytime from the list below ([d] on the token)."))
+		b.WriteString("\n\n")
+		b.WriteString(styleMuted.Render("  [enter/esc] done"))
+		return b.String()
+	}
+
+	// No host was given, so there's no blob — fall back to the manual hand-off:
+	// the secret + the two env values the teammate sets to connect.
 	b.WriteString(styleWaiting.Render("  Copy this secret now — it is shown only once:"))
 	b.WriteString("\n\n")
 	b.WriteString("  " + styleTitle.Render(v.minted.Secret) + "\n\n")
-
-	// Hand-off. The one-paste invite blob (host + secret in a single string) is
-	// a1's format; until it lands, give the teammate the two values they set as
-	// env to connect: DEJIMA_HOST + DEJIMA_TOKEN.
-	host := m.activeHost
-	b.WriteString(styleHeader.Render("  The teammate connects with:"))
+	b.WriteString(styleMuted.Render("  No host was set, so there's no one-paste invite. The teammate connects with:"))
 	b.WriteString("\n")
-	if host != "" {
-		b.WriteString("    export DEJIMA_HOST=" + styleAccent.Render(host) + "\n")
-	} else {
-		b.WriteString("    export DEJIMA_HOST=" + styleMuted.Render("<this daemon's reachable host:port>") + "\n")
-	}
+	b.WriteString("    export DEJIMA_HOST=" + styleMuted.Render("<this daemon's reachable host:port>") + "\n")
 	b.WriteString("    export DEJIMA_TOKEN=" + styleAccent.Render("<the secret above>") + "\n\n")
-	b.WriteString(styleMuted.Render(
-		"  A one-paste invite (and the teammate-side \"Join a server\" prompt) lands\n" +
-			"  with the encoded-invite format. For now hand over the two values above."))
+	b.WriteString(styleMuted.Render("  Tip: set Host on the form to get a single paste-safe invite instead."))
 	b.WriteString("\n\n")
 	b.WriteString(styleMuted.Render("  [enter/esc] done"))
 	return b.String()

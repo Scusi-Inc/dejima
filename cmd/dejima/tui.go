@@ -843,8 +843,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.team.minting = false
 			if msg.err != nil {
 				m.team.actionErr = msg.err.Error()
+				// An encode failure still mints the token — reload so the orphaned
+				// token shows in the list (and can be revoked) right away.
+				if msg.resp != nil {
+					m.team.loading = true
+					return m, m.loadTokensCmd()
+				}
 			} else {
 				m.team.minted = msg.resp
+				m.team.mintedBlob = msg.blob
 			}
 		}
 		return m, nil

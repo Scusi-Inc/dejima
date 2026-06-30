@@ -201,6 +201,100 @@ func TestPrintableInput(t *testing.T) {
 	}
 }
 
+// goldenInvite is the frozen vector a1 published with the invite backend (PR
+// #219). Asserting against this exact string keeps the TUI join side in lockstep
+// with the issuer/encoder; if either drifts, this fails.
+const goldenInvite = "dejima-invite:eyJ2IjoxLCJob3N0IjoibWluaW9uLnRzLm5ldDo3Mjc0IiwidG9rZW4iOiJzZWtfYWJjMTIzIiwicm9sZSI6Im9wZXJhdG9yIiwiaXNsYW5kcyI6WyJ3ZWJhcHAiXSwibmFtZSI6Im1pbmlvbiIsImxhYmVsIjoiQW1hbmRhIn0"
+
+// TestSwitcherJoinKeyEntry: J (and i) from the list opens the join-via-invite
+// step; lowercase j stays list navigation.
+func TestSwitcherJoinKeyEntry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, key := range []string{"J", "i"} {
+		out, _ := (tuiModel{switcher: &switcherModel{}}).switcherKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		if got := out.(tuiModel).switcher.step; got != swJoin {
+			t.Errorf("key %q should open swJoin, got step %d", key, got)
+		}
+	}
+}
+
+// TestSwitcherJoinPaste: the join field takes a multi-rune paste (a bracketed
+// paste is one KeyRunes event) and backspace trims a rune.
+func TestSwitcherJoinPaste(t *testing.T) {
+	m := tuiModel{switcher: &switcherModel{step: swJoin}}
+	out, _ := m.switcherJoinKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(goldenInvite)})
+	m = out.(tuiModel)
+	if m.switcher.blob != goldenInvite {
+		t.Fatalf("paste should fill the blob, got %q", m.switcher.blob)
+	}
+	out, _ = m.switcherJoinKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	if m2 := out.(tuiModel); m2.switcher.blob != goldenInvite[:len(goldenInvite)-1] {
+		t.Errorf("backspace should drop one rune, got %q", m2.switcher.blob)
+	}
+}
+
+// TestSwitcherJoinDecodeError: a malformed paste keeps the user in the join step
+// with the decoder's verbatim error — never a silent failure or a half-join.
+func TestSwitcherJoinDecodeError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := tuiModel{switcher: &switcherModel{step: swJoin, blob: "not-an-invite"}}
+	out, _ := m.switcherJoinSubmit()
+	m = out.(tuiModel)
+	if m.switcher == nil {
+		t.Fatal("a decode error must not close the switcher")
+	}
+	if m.switcher.err == "" {
+		t.Error("a decode error should be surfaced in the overlay")
+	}
+}
+
+// TestSwitcherJoinGoldenBlob: pasting a1's frozen invite decodes, persists a
+// profile carrying the host + token, makes it active, and connects (switcher
+// closes). This is the teammate half of invite -> paste -> connect.
+func TestSwitcherJoinGoldenBlob(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("DEJIMA_TOKEN", "") // so the persisted profile token is what resolves
+	t.Setenv("DEJIMA_HOST", "")
+
+	m := tuiModel{switcher: &switcherModel{step: swJoin, blob: goldenInvite}}
+	out, cmd := m.switcherJoinSubmit()
+	m = out.(tuiModel)
+	if m.switcher != nil {
+		t.Fatalf("a successful join should close the switcher (err=%q)", func() string {
+			if m.switcher != nil {
+				return m.switcher.err
+			}
+			return ""
+		}())
+	}
+	if m.activeHost != "minion.ts.net:7274" {
+		t.Errorf("activeHost = %q, want minion.ts.net:7274", m.activeHost)
+	}
+	if cmd == nil {
+		t.Error("join should kick a fresh fetch")
+	}
+	// The profile + token must be persisted and active.
+	cfg, err := clientcfg.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ActiveProfile != "minion" {
+		t.Errorf("ActiveProfile = %q, want minion", cfg.ActiveProfile)
+	}
+	var found *clientcfg.Profile
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name == "minion" {
+			found = &cfg.Profiles[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("joined profile not saved")
+	}
+	if found.Host != "minion.ts.net:7274" || found.Token != "sek_abc123" || found.Role != "operator" {
+		t.Errorf("saved profile = %+v, want host=minion.ts.net:7274 token=sek_abc123 role=operator", *found)
+	}
+}
+
 // clientForHost is the choke point: a host carrying a control character must be
 // rejected with a clear error rather than producing an unparseable request URL.
 func TestClientForHostRejectsControlChars(t *testing.T) {
