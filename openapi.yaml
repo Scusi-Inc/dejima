@@ -1757,8 +1757,14 @@ components:
               description: only present on a token-authenticated (Home-Island spawn) create
     UpdateIslandRequest:
       type: object
+      description: >
+        Cosmetic, in-place-editable island fields. Each property is optional and
+        applied only when present, so updating one never clobbers the other.
       properties:
         title: { type: string }
+        no_hibernate:
+          type: boolean
+          description: Pin the island awake — exempt it from idle auto-hibernate.
     CloneIslandRequest:
       type: object
       required: [new_name]

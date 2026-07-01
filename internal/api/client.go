@@ -876,7 +876,17 @@ func (c *Client) ResetIsland(ctx context.Context, name string) (*IslandInfo, err
 // SetIslandTitle sets an island's cosmetic display title (empty clears it).
 func (c *Client) SetIslandTitle(ctx context.Context, name, title string) (*IslandInfo, error) {
 	var out IslandInfo
-	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+name, UpdateIslandRequest{Title: title}, &out); err != nil {
+	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+name, UpdateIslandRequest{Title: &title}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetIslandHibernation pins an island awake (noHibernate=true) or releases it
+// back to idle auto-hibernate (false). Leaves the title untouched.
+func (c *Client) SetIslandHibernation(ctx context.Context, name string, noHibernate bool) (*IslandInfo, error) {
+	var out IslandInfo
+	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+name, UpdateIslandRequest{NoHibernate: &noHibernate}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
