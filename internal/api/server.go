@@ -923,6 +923,9 @@ func (s *Server) listIslands(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]IslandInfo, 0, len(projects))
 	for _, p := range projects {
+		if !s.visibleTo(r.Context(), p) {
+			continue // private visibility (P2): a teammate sees only its own islands
+		}
 		out = append(out, s.toInfo(r.Context(), p))
 	}
 	writeJSON(w, http.StatusOK, out)
