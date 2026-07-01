@@ -126,13 +126,14 @@ type tuiModel struct {
 	selected int
 	grouped  bool // group the island list by repo (toggled with `p`)
 	// Multi-tenant ownership lens (P4, design/multi-tenant-ownership.md). callerOwner
-	// is the caller's own resolved owner id; it's populated from the daemon once the
-	// overview reports it (a1's P1/P2 — until then "", which disables filtering so
-	// nothing hides). ownerLens toggles the host-owner's view between just-mine and
-	// everyone's (`O`). A teammate's list is already owner-filtered server-side (P2),
-	// so the lens is a no-op for them; it's the host-owner's own-vs-all switch.
+	// / callerRole are the authenticated caller's own resolved owner id + role,
+	// populated each poll from OverviewResponse (empty on a daemon predating the
+	// model → filtering disabled, nothing hides). ownerLens toggles the host-owner's
+	// view between just-mine and everyone's (`O`); the toggle is owner-only, since a
+	// teammate's list is already owner-filtered server-side (P2).
 	callerOwner string
-	ownerLens   int // lensOwn (default) | lensAll
+	callerRole  string // "owner" | "operator" | "viewer" | "" (unknown)
+	ownerLens   int    // lensOwn (default) | lensAll
 	width       int
 	height      int
 	lastError   string
@@ -783,6 +784,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case overviewMsg:
 		m.overview = msg
 		if msg != nil {
+			// The caller's own identity (multi-tenant "who am I") drives the
+			// ownership lens: callerOwner is what the your-islands view filters to,
+			// callerRole gates the own/all toggle to the host owner.
+			m.callerOwner, m.callerRole = msg.Owner, msg.Role
 			m.skew = versionSkew(msg.DaemonVersion, msg.APIVersion)
 			// Resolve the SSH endpoint once per distinct addr (endpointFromAddr
 			// may exec `tailscale`), not every render, so the detail panel can
@@ -1433,15 +1438,22 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openAggregateView()
 	case "O":
 		// Ownership lens (multi-tenant): flip the host-owner's view between your
-		// islands (default) and every island on the daemon. A teammate's list is
-		// already owner-filtered server-side, so for them this is a no-op.
-		mm := m.toggleOwnerLens()
+		// islands (default) and every island on the daemon. Owner-only — a teammate's
+		// list is already owner-filtered server-side (P2), so there's nothing to
+		// toggle; say so rather than silently no-op. Also inert on a daemon that
+		// predates the ownership model (no caller identity reported).
 		switch {
-		case mm.callerOwner == "":
-			mm.lastNotice = "owner filtering activates once the daemon reports island ownership"
-		case mm.ownerLens == lensAll:
+		case m.callerOwner == "":
+			m.lastNotice = "owner filtering activates once the daemon reports island ownership"
+			return m, nil
+		case m.callerRole != "owner":
+			m.lastNotice = "you already see only your own islands"
+			return m, nil
+		}
+		mm := m.toggleOwnerLens()
+		if mm.ownerLens == lensAll {
 			mm.lastNotice = "showing ALL islands on this daemon"
-		default:
+		} else {
 			mm.lastNotice = "showing your islands only"
 		}
 		return mm, nil
