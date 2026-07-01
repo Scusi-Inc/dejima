@@ -659,6 +659,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/sessions/revoke", s.handleRevokeSessions)
 	mux.HandleFunc("GET /v1/clients", s.handleClientHistory)
 	mux.HandleFunc("GET /v1/overview", s.handleOverview)
+	mux.HandleFunc("GET /v1/aggregate", s.handleAggregate)
 	// Host terminals (operator-only, gated; never in tokenauth's allow-list).
 	mux.HandleFunc("GET /v1/terminals", s.handleListTerminals)
 	mux.HandleFunc("POST /v1/terminals", s.handleCreateTerminal)

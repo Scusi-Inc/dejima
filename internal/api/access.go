@@ -270,6 +270,44 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleAggregate returns the privacy-preserving host-wide rollup: counts +
+// total mem/cpu/disk across ALL islands, regardless of owner, so any
+// authenticated caller (teammate included) can see shared-host utilization
+// WITHOUT seeing what runs. Deliberately NOT owner-filtered (that's the point,
+// vs the owner-scoped overview) and carries NO names, repos, owners, or
+// per-island rows. Mem/cpu are summed the same way as OverviewResponse.
+func (s *Server) handleAggregate(w http.ResponseWriter, r *http.Request) {
+	projects, err := project.List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := AggregateResponse{TotalIslands: len(projects)}
+	allStats := s.statsAll(r.Context())
+	for _, p := range projects {
+		status, _ := s.rt.Status(r.Context(), p.ContainerName())
+		switch status {
+		case runtime.StatusRunning:
+			out.Running++
+			if stats, ok := allStats[p.ContainerName()]; ok {
+				out.MemoryUsageBytes += stats.MemoryUsageBytes
+				out.MemoryLimitBytes += stats.MemoryLimitBytes
+				out.CPUPercent += stats.CPUPercent
+			}
+		default:
+			if p.DesiredState == project.StateHibernated {
+				out.Hibernated++
+			}
+		}
+	}
+	for _, sz := range s.volumeSizes(r.Context()) {
+		if sz > 0 {
+			out.DiskTotalBytes += sz
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // handleIslandEvents returns the per-island recent event log (newest first).
 func (s *Server) handleIslandEvents(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
