@@ -2331,7 +2331,8 @@ components:
         id: { type: string }
         label: { type: string }
         role: { type: string, enum: [owner, operator, viewer] }
-        islands: { type: array, items: { type: string }, description: "scope; empty = all islands" }
+        owner: { type: string, description: "tenant this token acts as (multi-tenant ownership); empty = the host owner" }
+        islands: { type: array, items: { type: string }, description: "scope; empty = all the owner's islands" }
         created_at: { type: string, format: date-time }
     CreateTokenRequest:
       type: object
@@ -2339,7 +2340,8 @@ components:
       properties:
         label: { type: string }
         role: { type: string, enum: [owner, operator, viewer] }
-        islands: { type: array, items: { type: string }, description: "scope to these islands; empty = all" }
+        owner: { type: string, description: "tenant this token acts as; an operator/viewer token then sees + creates only that tenant's islands. Empty defaults to the host owner (full access). RoleOwner sees all regardless." }
+        islands: { type: array, items: { type: string }, description: "further narrow to these islands; empty = all the owner's islands" }
     CreateTokenResponse:
       type: object
       properties:
@@ -2611,6 +2613,8 @@ components:
         host_memory_bytes: { type: integer }
         vm_memory_bytes: { type: integer }
         vm_recommended_bytes: { type: integer }
+        owner: { type: string, description: "the authenticated caller's own tenant (multi-tenant who-am-i); empty when no identity" }
+        role: { type: string, description: "the authenticated caller's role (owner|operator|viewer); empty when no identity" }
     SessionEnvelope:
       type: object
       description: >
