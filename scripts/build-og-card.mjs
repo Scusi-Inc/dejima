@@ -108,6 +108,12 @@ const CARDS = [
     line2: 'for your whole team.',
     sub: 'Self-hosted, role-scoped, audited. No per-seat SaaS.',
   },
+  {
+    out: 'og-build-notifier',
+    line1: 'Build an agent',
+    line2: 'notifier in 40 lines.',
+    sub: 'Get a phone push when an agent finishes or needs you.',
+  },
 ]
 
 // Island / harbor motif, bottom-right: concentric arcs (water) + a dome
