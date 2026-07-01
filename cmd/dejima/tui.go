@@ -170,12 +170,12 @@ type tuiModel struct {
 	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
 	building     bool              // island image build in flight
 
-	help         bool            // help overlay visible
-	helpAdvanced bool            // advanced section of the help overlay expanded
-	creator      *creatorModel   // non-nil while the new-island flow is active
-	switcher     *switcherModel  // non-nil while the connection switcher is open
-	agentAdder   *agentAdder     // non-nil while the add-agent flow is active
-	expanded     map[string]bool // island name → agents-revealed (default: all expanded)
+	help       bool            // help overlay visible (all sections shown; no toggle)
+	helpScroll int             // scroll offset (lines) for the help overlay
+	creator    *creatorModel   // non-nil while the new-island flow is active
+	switcher   *switcherModel  // non-nil while the connection switcher is open
+	agentAdder *agentAdder     // non-nil while the add-agent flow is active
+	expanded   map[string]bool // island name → agents-revealed (default: all expanded)
 
 	activeHost   string            // current target: "" = local socket, else host:port
 	activeLabel  string            // profile name for the active target, if known
@@ -1207,8 +1207,18 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "?", "esc", "q":
 			m.help = false
-		case "a":
-			m.helpAdvanced = !m.helpAdvanced
+		case "j", "down":
+			m = m.scrollHelpLines(1)
+		case "k", "up":
+			m = m.scrollHelpLines(-1)
+		case "pgdown", "ctrl+d", " ":
+			m = m.scrollHelpLines(m.helpInnerHeight() - 1)
+		case "pgup", "ctrl+u":
+			m = m.scrollHelpLines(-(m.helpInnerHeight() - 1))
+		case "g", "home":
+			m.helpScroll = 0
+		case "G", "end":
+			m = m.scrollHelpLines(1 << 30)
 		}
 		return m, nil
 	}
@@ -1271,6 +1281,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.help = true
+		m.helpScroll = 0 // always open at the top (the title)
 		return m, nil
 	case "A":
 		// Audit-ledger viewer (chain-verification + recent governance activity).
@@ -2583,7 +2594,11 @@ func (m tuiModel) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.help {
-		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderHelp())
+		// The help lists every key across four sections — taller than the screen,
+		// so window it (scrollWindow adds a "↕ a–b of n" hint) and let PgUp/PgDn/jk
+		// scroll. Opening always resets to the top, so the title is visible.
+		content, _ := scrollWindow(m.renderHelp(), m.helpInnerHeight(), m.helpScroll)
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(content)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.menu != nil {
@@ -2977,6 +2992,30 @@ func (m tuiModel) bodyInnerHeight() int {
 		bodyHeight = 5
 	}
 	return bodyHeight - 2
+}
+
+// helpInnerHeight is the visible content height of the help overlay pane: the
+// full-width body (m.height - header - 2) minus the pane's top+bottom border.
+func (m tuiModel) helpInnerHeight() int {
+	h := m.height - lipgloss.Height(m.renderHeader()) - 4
+	if h < 3 {
+		h = 3
+	}
+	return h
+}
+
+// scrollHelpLines moves the help overlay by delta lines, clamped to content
+// (0..maxOff), so PgUp/PgDn/jk can never scroll past either end.
+func (m tuiModel) scrollHelpLines(delta int) tuiModel {
+	_, maxOff := scrollWindow(m.renderHelp(), m.helpInnerHeight(), 0)
+	m.helpScroll += delta
+	if m.helpScroll > maxOff {
+		m.helpScroll = maxOff
+	}
+	if m.helpScroll < 0 {
+		m.helpScroll = 0
+	}
+	return m
 }
 
 // scrollDetail moves the detail panel by `pages` (±1), clamped to content.
@@ -3774,39 +3813,73 @@ func (m tuiModel) renderFooterLeft() string {
 	return strings.Join(parts, styleMuted.Render(" · "))
 }
 
-// renderHelp draws the help overlay: a Basic Usage section always, and an
-// expandable Advanced section toggled with `a`.
+// renderHelp draws the help overlay: every key, grouped into flat, always-visible
+// sections (Island / Team / Server / TUI) — nothing hidden behind a toggle, so a
+// control like [I] invite is discoverable straight from `?`.
 func (m tuiModel) renderHelp() string {
 	var b strings.Builder
 	b.WriteString(styleTitle.Render("Dejima — how to use it"))
 	b.WriteString("\n\n")
 
-	b.WriteString(styleHeader.Render("Basic usage"))
-	b.WriteString("\n")
-	basic := [][2]string{
-		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
-		{"/", "host terminals — open the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
-		{"⏎ / o", "island → opens all its agents (each in a new tab); agent → its session; headless agent → its logs"},
-		{">", "open a shell at /workspace inside the highlighted island (contained)"},
-		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh setup, purge…)"},
-		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
-		{"E", "expand / collapse all islands at once (flips on the current state)"},
-		{"p", "group the island list by repo — multi-agent projects read as one"},
-		{"+", "add an agent — Claude Code, Codex, a terminal, or a headless command"},
-		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
-		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
-		{"a", "attach here instead — replaces the dashboard with the agent"},
-		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
-		{"PgUp/PgDn", "scroll the detail panel (events, agents) — Ctrl-u/Ctrl-d also work"},
-		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
-		{"Ctrl-\\", "from inside a session: summon this dashboard (with the terminal band) — session stays alive"},
-		{"q", "quit the dashboard"},
-	}
-	for _, kv := range basic {
-		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-9s", kv[0])), styleMuted.Render(kv[1])))
+	sec := func(title string, rows [][2]string) {
+		b.WriteString(styleHeader.Render(title))
+		b.WriteString("\n")
+		for _, kv := range rows {
+			b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-9s", kv[0])), styleMuted.Render(kv[1])))
+		}
+		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
+	sec("Island controls", [][2]string{
+		{"n", "new island — pick a repo (or paste a URL), choose an agent, launch"},
+		{"⏎ / o", "island → opens all its agents (each in a tab); agent → its session; headless → its logs"},
+		{">", "open a shell at /workspace inside the highlighted island (contained)"},
+		{"space ←/→", "expand an island to its agents, the + add-agent row, and headless logs"},
+		{"E", "expand / collapse all islands at once"},
+		{"+", "add an agent — Claude Code, Codex, a terminal, or a headless command"},
+		{"X", "remove the highlighted agent (the island can run with zero agents)"},
+		{"e", "rename — island display title, or relabel an agent (cosmetic; the slug/id stay)"},
+		{"v", "set an agent's LLM provider / model / key (key-requiring types)"},
+		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
+		{"a", "attach here — replaces the dashboard with the agent"},
+		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh, purge…)"},
+		{"c", "open the island in your editor over SSH, straight at /workspace"},
+		{"h", "hibernate — stop the container, keep all data"},
+		{"w", "wake a hibernated island"},
+		{"r", "reset agent state (workspace preserved) — confirms first"},
+		{"u", "upgrade — recreate on the current island image, all state kept — confirms first"},
+		{"d", "purge — destroy the island and its volumes — confirms first"},
+	})
+
+	sec("Team controls", [][2]string{
+		{"I", "invite a teammate — mint a role/owner-scoped token + copyable invite; list/revoke (owner-only)"},
+		{"O", "owner lens — your islands (default) vs all islands on the daemon"},
+		{"%", "host utilization — shared totals across all islands (no names)"},
+		{"T", "grants — what the highlighted island can reach (Port · MCP · links · caps)"},
+		{"P", "Port scopes — brokered host-file grants (add/revoke; deny-all by default)"},
+		{"V", "approvals — review/approve/deny pending cross-island actions (the action gate)"},
+		{"A", "audit ledger — chain-verification + recent governance activity"},
+	})
+
+	sec("Server controls (the daemon / host)", [][2]string{
+		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
+		{"b", "build the island image on the daemon host — confirms first"},
+		{"S", "set up SSH fleet-wide — authorize this machine + write ~/.ssh/config for every island"},
+		{"s", "settings — editor · group-by-repo · connection target (which server)"},
+		{"U", "update Dejima itself — client and/or daemon (distinct from [u] upgrade-island)"},
+		{"R", "refresh now"},
+	})
+
+	sec("TUI controls", [][2]string{
+		{"↑/↓ j/k", "move between rows   ·   g/G jump to top/bottom"},
+		{"PgUp/PgDn", "scroll the detail panel (events, agents) — Ctrl-u/Ctrl-d also work"},
+		{"p", "group the island list by repo — multi-agent projects read as one"},
+		{"#", "reveal / hide agent ids (names only by default)"},
+		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
+		{"Ctrl-\\", "from inside a session: summon this dashboard — the session stays alive"},
+		{"?", "this help   ·   q quit the dashboard"},
+	})
+
 	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."))
 	b.WriteString("\n\n")
 	b.WriteString(styleHeader.Render("Glyphs"))
@@ -3824,38 +3897,6 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString(styleMuted.Render("islands are uniform by default; give one its own color + glyph via the actions menu (m → Color & glyph)"))
 	b.WriteString("\n\n")
 
-	if !m.helpAdvanced {
-		b.WriteString(styleAccent.Render("[a]") + styleMuted.Render(" show advanced commands ▾    ") + styleAccent.Render("[?/esc]") + styleMuted.Render(" close"))
-		return b.String()
-	}
-
-	b.WriteString(styleHeader.Render("Manage (single-key, on the highlighted island)"))
-	b.WriteString("\n")
-	manage := [][2]string{
-		{"h", "hibernate — stop the container, keep all data"},
-		{"w", "wake a hibernated island"},
-		{"r", "reset agent state (workspace preserved) — confirms first"},
-		{"u", "upgrade — recreate on the current island image, all state kept — confirms first"},
-		{"b", "build the island image on the daemon host — confirms first"},
-		{"d", "purge — destroy the island and its volumes — confirms first"},
-		{"c", "open the island in your editor over SSH, straight at /workspace"},
-		{"s", "settings — editor · group-by-repo · connection target (server)"},
-		{"p", "toggle group-by-repo (also in settings)"},
-		{"A", "audit ledger — chain-verification + recent governance activity"},
-		{"T", "grants — what the highlighted island can reach (Port · MCP · links · caps)"},
-		{"P", "Port scopes — brokered host-file grants (add/revoke; deny-all by default)"},
-		{"V", "approvals — review/approve/deny pending cross-island actions (the action gate)"},
-		{"I", "team — invite a teammate (mint a role-scoped token), list/revoke tokens (owner-only)"},
-		{"#", "reveal / hide agent ids (names only by default)"},
-		{"O", "owner lens — your islands (default) vs all islands on the daemon"},
-		{"%", "host utilization — shared totals across all islands (no names)"},
-		{"R", "refresh now"},
-	}
-	for _, kv := range manage {
-		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-9s", kv[0])), styleMuted.Render(kv[1])))
-	}
-
-	b.WriteString("\n")
 	b.WriteString(styleHeader.Render("From the shell (scriptable; the TUI is just a front-end)"))
 	b.WriteString("\n")
 	shell := [][2]string{
@@ -3864,18 +3905,18 @@ func (m tuiModel) renderHelp() string {
 		{"dejima ls / status <name>", "list islands / detail view"},
 		{"dejima exec <name> -- <cmd>", "run a one-shot command inside an island"},
 		{"dejima cp <src> <dst>", "copy files in or out"},
-		{"dejima logs <name>", "tail an island's container logs"},
+		{"dejima token invite --role operator --owner <who> --host <addr>", "onboard a scoped teammate (CLI twin of [I])"},
 		{"dejima hibernate|wake|reset|purge", "lifecycle from the CLI"},
 		{"dejima image build / upgrade <name>", "rebuild the island image / roll an island onto it"},
 		{"dejima auth push / status", "send this machine's Claude login to the daemon host"},
 		{"DEJIMA_HOST=host:7273 dejima …", "drive a remote daemon over your tailnet"},
 	}
 	for _, kv := range shell {
-		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-32s", kv[0])), styleMuted.Render(kv[1])))
+		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-58s", kv[0])), styleMuted.Render(kv[1])))
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleAccent.Render("[a]") + styleMuted.Render(" hide advanced ▴    ") + styleAccent.Render("[?/esc]") + styleMuted.Render(" close"))
+	b.WriteString(styleAccent.Render("[?/esc]") + styleMuted.Render(" close"))
 	return b.String()
 }
 
