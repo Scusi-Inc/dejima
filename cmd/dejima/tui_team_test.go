@@ -20,6 +20,20 @@ func teamModel() tuiModel {
 	return m
 }
 
+// focusTeamKind sets the invite form's focus to the first item of the given kind
+// — robust to field-order changes (e.g. inserting the Owner field) so tests
+// don't hardcode positions.
+func focusTeamKind(m tuiModel, kind int) tuiModel {
+	m.team.focus = -1
+	for i, it := range m.teamFocusItems() {
+		if it.kind == kind {
+			m.team.focus = i
+			break
+		}
+	}
+	return m
+}
+
 // TestTeamOwnerOnlyGate: a 403 from the (owner-only) token list flips the view
 // into its explanatory gate rather than surfacing a raw error or empty form.
 func TestTeamOwnerOnlyGate(t *testing.T) {
@@ -108,9 +122,9 @@ func TestTeamHostPrefill(t *testing.T) {
 // scope, host, label, create).
 func TestTeamHostTyping(t *testing.T) {
 	m := teamModel()
-	m.team.focus = 2
+	m = focusTeamKind(m, tfHost)
 	if got := m.teamCurrent(); got.kind != tfHost {
-		t.Fatalf("focus 2 should be the host field, got kind %d", got.kind)
+		t.Fatalf("expected the host field, got kind %d", got.kind)
 	}
 	for _, r := range "h:1" {
 		out, _ := m.teamKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
@@ -164,9 +178,9 @@ func TestTeamScopeTogglesIslands(t *testing.T) {
 func TestTeamSpaceTogglesFocusedIsland(t *testing.T) {
 	m := teamModel()
 	m.team.scopeAll = false
-	m.team.focus = 2 // role(0), scope(1), first island(2)
+	m = focusTeamKind(m, tfIsland)
 	if got := m.teamCurrent(); got.kind != tfIsland {
-		t.Fatalf("focus 2 should be an island, got kind %d", got.kind)
+		t.Fatalf("expected an island, got kind %d", got.kind)
 	}
 	first := m.islandNames()[0]
 	out, _ := m.teamKey(tea.KeyMsg{Type: tea.KeySpace})
@@ -183,10 +197,10 @@ func TestTeamSpaceTogglesFocusedIsland(t *testing.T) {
 // TestTeamLabelTyping: while the Label field is focused, printable keys type into
 // it (they aren't consumed as navigation).
 func TestTeamLabelTyping(t *testing.T) {
-	m := teamModel() // all-islands: focus order is role, scope, host, label, create
-	m.team.focus = 3
+	m := teamModel()
+	m = focusTeamKind(m, tfLabel)
 	if got := m.teamCurrent(); got.kind != tfLabel {
-		t.Fatalf("focus 3 should be the label field, got kind %d", got.kind)
+		t.Fatalf("expected the label field, got kind %d", got.kind)
 	}
 	for _, r := range "ann" {
 		out, _ := m.teamKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
@@ -208,10 +222,9 @@ func TestTeamLabelTyping(t *testing.T) {
 func TestTeamRevokeFocused(t *testing.T) {
 	m := teamModel()
 	m.team.tokens = []api.TokenView{{ID: "tok_a", Role: "operator"}}
-	// focus order (all-islands): role, scope, host, label, create, token[0]
-	m.team.focus = 5
+	m = focusTeamKind(m, tfToken)
 	if got := m.teamCurrent(); got.kind != tfToken {
-		t.Fatalf("focus 5 should be the token row, got kind %d", got.kind)
+		t.Fatalf("expected the token row, got kind %d", got.kind)
 	}
 	_, cmd := m.teamKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	if cmd == nil {
@@ -223,9 +236,9 @@ func TestTeamRevokeFocused(t *testing.T) {
 // the form busy; an invalid (empty custom scope) form sets an error instead.
 func TestTeamEnterMints(t *testing.T) {
 	m := teamModel()
-	m.team.focus = 4 // role, scope, host, label, create
+	m = focusTeamKind(m, tfCreate)
 	if got := m.teamCurrent(); got.kind != tfCreate {
-		t.Fatalf("focus 4 should be the create button, got kind %d", got.kind)
+		t.Fatalf("expected the create button, got kind %d", got.kind)
 	}
 	out, cmd := m.teamKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = out.(tuiModel)
@@ -284,5 +297,32 @@ func TestTeamRenderForm(t *testing.T) {
 		if !strings.Contains(minted, want) {
 			t.Errorf("minted panel missing %q:\n%s", want, minted)
 		}
+	}
+}
+
+// TestTeamOwnerFieldMints: the invite form's Owner field types input and scopes
+// the minted token's tenant (the multi-tenant TUI-native onboarding path).
+func TestTeamOwnerFieldMints(t *testing.T) {
+	m := teamModel()
+	m = focusTeamKind(m, tfOwner)
+	if got := m.teamCurrent(); got.kind != tfOwner {
+		t.Fatalf("expected the owner field, got kind %d", got.kind)
+	}
+	for _, r := range "amanda" {
+		out, _ := m.teamKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = out.(tuiModel)
+	}
+	if m.team.owner != "amanda" {
+		t.Errorf("owner = %q, want amanda", m.team.owner)
+	}
+	req, verr := m.teamMintRequest()
+	if verr != "" {
+		t.Fatalf("mint request error: %s", verr)
+	}
+	if req.Owner != "amanda" {
+		t.Errorf("mint request Owner = %q, want amanda", req.Owner)
+	}
+	if !strings.Contains(plain(m.renderTeamView()), "Owner") {
+		t.Error("invite form should render an Owner field")
 	}
 }

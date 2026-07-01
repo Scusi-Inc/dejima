@@ -37,6 +37,7 @@ type teamView struct {
 	roleSel  int  // 0 = operator, 1 = viewer (owner is never minted from here)
 	scopeAll bool // true = token spans all islands; false = the checked subset
 	scopeSel map[string]bool
+	owner    string // tenant the teammate acts as (multi-tenant scoping); "" = full access (host owner)
 	host     string // daemon host:port the teammate dials (operator-supplied; the daemon can't self-detect it)
 	label    string
 
@@ -53,6 +54,7 @@ var teamRoles = []string{"operator", "viewer"}
 
 const (
 	tfRole   = iota // role toggle
+	tfOwner         // tenant text field (multi-tenant scoping; blank = full access)
 	tfScope         // all-islands vs custom toggle
 	tfIsland        // one per island (only when !scopeAll); idx = island index
 	tfHost          // daemon host:port text field
@@ -187,7 +189,7 @@ func (m tuiModel) islandNames() []string {
 // index into this slice, so the form stays a single top-to-bottom flow.
 func (m tuiModel) teamFocusItems() []teamFocusItem {
 	v := m.team
-	items := []teamFocusItem{{kind: tfRole}, {kind: tfScope}}
+	items := []teamFocusItem{{kind: tfRole}, {kind: tfOwner}, {kind: tfScope}}
 	if !v.scopeAll {
 		for i := range m.islandNames() {
 			items = append(items, teamFocusItem{kind: tfIsland, idx: i})
@@ -198,6 +200,12 @@ func (m tuiModel) teamFocusItems() []teamFocusItem {
 		items = append(items, teamFocusItem{kind: tfToken, idx: i})
 	}
 	return items
+}
+
+// isTextField reports whether a focus kind is a free-text input (owner / host /
+// label) — printable runes type into it, and j/k don't navigate away.
+func isTextField(kind int) bool {
+	return kind == tfOwner || kind == tfHost || kind == tfLabel
 }
 
 func (m tuiModel) teamCurrent() teamFocusItem {
@@ -244,10 +252,13 @@ func (m tuiModel) teamKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// While a text field has focus, printable runes type into it; navigation is
 	// via tab / arrows so it doesn't eat the keystrokes. Host and label are the
 	// two text fields.
-	if cur.kind == tfLabel || cur.kind == tfHost {
+	if isTextField(cur.kind) {
 		field := &v.label
-		if cur.kind == tfHost {
+		switch cur.kind {
+		case tfHost:
 			field = &v.host
+		case tfOwner:
+			field = &v.owner
 		}
 		switch msg.Type {
 		case tea.KeyRunes, tea.KeySpace:
@@ -280,12 +291,12 @@ func (m tuiModel) teamKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "j":
-		if cur.kind != tfLabel && cur.kind != tfHost && v.focus < len(items)-1 {
+		if !isTextField(cur.kind) && v.focus < len(items)-1 {
 			v.focus++
 		}
 		return m, nil
 	case "k":
-		if cur.kind != tfLabel && cur.kind != tfHost && v.focus > 0 {
+		if !isTextField(cur.kind) && v.focus > 0 {
 			v.focus--
 		}
 		return m, nil
@@ -348,6 +359,7 @@ func (m tuiModel) teamMintRequest() (api.CreateTokenRequest, string) {
 	v := m.team
 	req := api.CreateTokenRequest{
 		Role:  teamRoles[v.roleSel],
+		Owner: strings.TrimSpace(v.owner),
 		Label: strings.TrimSpace(v.label),
 	}
 	if !v.scopeAll {
@@ -437,6 +449,20 @@ func (m tuiModel) renderTeamForm() string {
 	b.WriteString(row(cur.kind == tfRole, styleHeader.Render("Role")+"   "+styleAccent.Render(roleVal)))
 	roleHelp := "operator: full island lifecycle · viewer: read-only"
 	b.WriteString("    " + styleMuted.Render(roleHelp) + "\n\n")
+
+	// Owner (tenant). Blank = full access to the host owner's fleet (back-compat);
+	// a teammate id scopes them to only the islands that owner creates/owns.
+	ownerVal := v.owner
+	if cur.kind == tfOwner {
+		ownerVal += "▎" // cursor
+	}
+	if ownerVal == "" {
+		ownerVal = styleMuted.Render("(blank = full access; a teammate id scopes them, e.g. amanda)")
+	} else {
+		ownerVal = styleAccent.Render(ownerVal)
+	}
+	b.WriteString(row(cur.kind == tfOwner, styleHeader.Render("Owner")+"  "+ownerVal))
+	b.WriteString("\n")
 
 	// Scope.
 	scopeVal := "‹ all islands ›"

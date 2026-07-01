@@ -38,3 +38,27 @@ func TestHelpSectionsAndKeys(t *testing.T) {
 		t.Errorf("help still references the removed advanced toggle")
 	}
 }
+
+// TestHelpMoreDropdown: the reference (glyph legend + shell CLI) is collapsed
+// behind [a] by default so the default help stays short and shows only keys;
+// expanding reveals it. Key sections are visible in both states.
+func TestHelpMoreDropdown(t *testing.T) {
+	collapsed := plain((tuiModel{width: 100}).renderHelp())
+	if !strings.Contains(collapsed, "Island controls") {
+		t.Error("collapsed help must still show the key sections")
+	}
+	if strings.Contains(collapsed, "dejima init --repo") {
+		t.Error("collapsed help must hide the shell reference")
+	}
+	if !strings.Contains(collapsed, "more") {
+		t.Error("collapsed help should offer the [a] more affordance")
+	}
+
+	expanded := plain((tuiModel{width: 100, helpMore: true}).renderHelp())
+	if !strings.Contains(expanded, "dejima init --repo") {
+		t.Error("expanded help should reveal the shell reference")
+	}
+	if !strings.Contains(expanded, "Island controls") {
+		t.Error("expanded help should still show the key sections")
+	}
+}
