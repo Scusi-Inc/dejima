@@ -31,16 +31,22 @@ ${rendered}
 ${end}"
 
 mkdir -p "$(dirname "$target")"
-if [ ! -f "$target" ]; then
-    printf '%s\n' "$block" >"$target"
-elif grep -qF "$begin" "$target"; then
-    # Replace the existing block in place (BEGIN..END inclusive), keep the rest.
-    awk -v b="$begin" -v e="$end" -v blk="$block" '
-        $0 == b { print blk; skip = 1; next }
+tmp="${target}.dejima.tmp"
+
+# Drop any existing managed block first (keep everything else), then (re)append the
+# fresh one at the end. This is portable across GNU + BSD awk — the awk vars are
+# single-line marker strings only; the multi-line block is never passed through
+# awk -v (BSD awk rejects a newline in a -v value).
+if [ -f "$target" ] && grep -qF "$begin" "$target"; then
+    awk -v b="$begin" -v e="$end" '
+        $0 == b { skip = 1; next }
         $0 == e { skip = 0; next }
         !skip   { print }
-    ' "$target" >"${target}.dejima.tmp" && mv "${target}.dejima.tmp" "$target"
+    ' "$target" >"$tmp" && mv "$tmp" "$target"
+fi
+
+if [ -s "$target" ]; then
+    printf '\n%s\n' "$block" >>"$target" # append after the operator's/agent's own content
 else
-    # Append after the existing content, separated by a blank line.
-    printf '\n%s\n' "$block" >>"$target"
+    printf '%s\n' "$block" >"$target" # fresh (or block-only) file
 fi
