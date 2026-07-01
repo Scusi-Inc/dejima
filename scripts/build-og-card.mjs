@@ -110,9 +110,9 @@ const CARDS = [
   },
   {
     out: 'og-build-notifier',
-    line1: 'Build an agent',
-    line2: 'notifier in 40 lines.',
-    sub: 'Get a phone push when an agent finishes or needs you.',
+    line1: 'Get a phone push when',
+    line2: 'your agent finishes.',
+    sub: 'One command. Or a tiny server if you want it formatted.',
   },
 ]
 

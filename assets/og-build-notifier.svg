@@ -21,10 +21,10 @@
       <text x="44" y="15" font-size="30" font-weight="bold" fill="#eef3ff" letter-spacing="0.5">Dejima</text>
     </g>
     <!-- headline -->
-    <text x="78" y="296" font-size="58" font-weight="bold" fill="#eef3ff">Build an agent</text>
-    <text x="78" y="370" font-size="58" font-weight="bold" fill="#9ec1ff">notifier in 40 lines.</text>
+    <text x="78" y="296" font-size="58" font-weight="bold" fill="#eef3ff">Get a phone push when</text>
+    <text x="78" y="370" font-size="58" font-weight="bold" fill="#9ec1ff">your agent finishes.</text>
     <!-- sub -->
-    <text x="80" y="446" font-size="27" fill="#94a3b8">Get a phone push when an agent finishes or needs you.</text>
+    <text x="80" y="446" font-size="27" fill="#94a3b8">One command. Or a tiny server if you want it formatted.</text>
     <!-- footer line -->
     <text x="80" y="566" font-size="23" font-weight="bold" fill="#94a3b8" letter-spacing="0.5">free  ·  open source  ·  self-hosted</text>
     <text x="1120" y="566" font-size="23" font-weight="bold" fill="#9ec1ff" text-anchor="end">dejima.tech</text>
