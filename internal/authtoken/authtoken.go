@@ -76,10 +76,16 @@ func ValidRole(r Role) bool {
 // never persisted — only Hash (its SHA-256) — so the store can list and revoke
 // tokens without ever holding a replayable credential.
 type Token struct {
-	ID        string    `json:"id"`                // short public handle; revoke by this
-	Label     string    `json:"label,omitempty"`   // human note ("scusi-prod", "phone")
-	Role      Role      `json:"role"`              // owner | operator | viewer
-	Islands   []string  `json:"islands,omitempty"` // scope; empty = every island
+	ID    string `json:"id"`              // short public handle; revoke by this
+	Label string `json:"label,omitempty"` // human note ("scusi-prod", "phone")
+	Role  Role   `json:"role"`            // owner | operator | viewer
+	// Owner is the tenant this token acts as (multi-tenant ownership). An
+	// operator/viewer token scoped to owner "amanda" may only see/act on islands
+	// amanda owns; a RoleOwner token is the host admin and sees all regardless.
+	// Set at mint (defaults to the host owner); server-authoritative, never
+	// client-supplied on a request.
+	Owner     string    `json:"owner,omitempty"`
+	Islands   []string  `json:"islands,omitempty"` // static scope; empty = every island (still bounded by Owner)
 	Hash      string    `json:"hash"`              // sha-256 hex of the secret
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -95,12 +101,20 @@ type Identity struct {
 	// "local" for the trusted caller) — what an audit record names.
 	Subject string
 	Role    Role
+	// Owner is the tenant this identity acts as (multi-tenant ownership). A
+	// non-owner may only touch islands whose owner matches; the host owner
+	// (RoleOwner) bypasses via OwnsAll.
+	Owner string
 	// Islands is the token's island scope; empty means unrestricted (all islands).
 	Islands []string
 }
 
 // Scoped reports whether this identity is limited to a subset of islands.
 func (i Identity) Scoped() bool { return len(i.Islands) > 0 }
+
+// OwnsAll reports the host-admin bypass: a RoleOwner identity (the local socket
+// or an owner token) sees and manages every island regardless of its owner.
+func (i Identity) OwnsAll() bool { return i.Role == RoleOwner }
 
 // MayTouch reports whether this identity's island scope permits acting on the
 // named island. An unscoped identity (the common case) may touch any island.
@@ -174,7 +188,7 @@ func (s *store) save() error {
 // exactly once, plus persisted metadata (role, scope, the secret's hash). The
 // raw secret is never stored. islands scopes the token to those island names
 // (empty = unrestricted). Returns the secret and the stored Token.
-func Create(label string, role Role, islands []string) (secret string, tok Token, err error) {
+func Create(label string, role Role, islands []string, owner string) (secret string, tok Token, err error) {
 	if !ValidRole(role) {
 		return "", Token{}, fmt.Errorf("invalid role %q (want owner, operator, or viewer)", role)
 	}
@@ -197,6 +211,7 @@ func Create(label string, role Role, islands []string) (secret string, tok Token
 		ID:        s.uniqueID(),
 		Label:     strings.TrimSpace(label),
 		Role:      role,
+		Owner:     strings.TrimSpace(owner),
 		Islands:   scope,
 		Hash:      hashSecret(secret),
 		CreatedAt: time.Now().UTC(),
@@ -284,6 +299,7 @@ func Resolve(secret string) (Identity, bool) {
 		TokenID: match.ID,
 		Subject: subjectOf(*match),
 		Role:    match.Role,
+		Owner:   match.Owner,
 		Islands: append([]string(nil), match.Islands...),
 	}, true
 }

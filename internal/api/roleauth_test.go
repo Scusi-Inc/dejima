@@ -82,11 +82,55 @@ func TestAuthorizeRoleMatrix(t *testing.T) {
 		{"scoped encoded-slash denied (mutate)", scoped, "POST /v1/islands/{name}/wake", "/v1/islands/alpha%2F..%2Fbeta/wake", true},
 		{"scoped encoded-slash denied (read)", scoped, "GET /v1/islands/{name}/logs", "/v1/islands/alpha%2F..%2Fbeta/logs", true},
 	}
+	noOwner := func(string) (string, bool) { return "", false } // owner gate no-op here
 	for _, c := range cases {
-		err := authorizeRole(c.id, c.pattern, c.path)
+		err := authorizeRole(c.id, c.pattern, c.path, noOwner)
 		if (err != nil) != c.wantErr {
 			t.Errorf("%s: authorizeRole(role=%s scope=%v, %q, %q) err=%v wantErr=%v",
 				c.name, c.id.Role, c.id.Islands, c.pattern, c.path, err, c.wantErr)
+		}
+	}
+}
+
+// TestAuthorizeRoleOwnerScope covers the multi-tenant owner gate: a non-owner may
+// only touch islands it owns; the host owner sees all; create is allowed for an
+// owner-scoped (no static --island) operator.
+func TestAuthorizeRoleOwnerScope(t *testing.T) {
+	// ownerOf: alpha→amanda, beta→bob; anything else unknown.
+	ownerOf := func(name string) (string, bool) {
+		switch name {
+		case "alpha":
+			return "amanda", true
+		case "beta":
+			return "bob", true
+		}
+		return "", false
+	}
+	amanda := authtoken.Identity{Subject: "amanda", Role: authtoken.RoleOperator, Owner: "amanda"}
+	host := authtoken.Identity{Subject: "local", Role: authtoken.RoleOwner, Owner: "aoos"}
+
+	cases := []struct {
+		name    string
+		id      authtoken.Identity
+		pattern string
+		path    string
+		wantErr bool
+	}{
+		{"owner touches own island", amanda, "POST /v1/islands/{name}/wake", "/v1/islands/alpha/wake", false},
+		{"owner denied other's island", amanda, "POST /v1/islands/{name}/wake", "/v1/islands/beta/wake", true},
+		{"owner reads own island", amanda, "GET /v1/islands/{name}", "/v1/islands/alpha", false},
+		{"owner denied reading other's island", amanda, "GET /v1/islands/{name}", "/v1/islands/beta", true},
+		{"owner-scoped operator CAN create", amanda, "POST /v1/islands", "/v1/islands", false},
+		{"unknown island passes gate (handler 404s)", amanda, "GET /v1/islands/{name}", "/v1/islands/ghost", false},
+		// The host owner (RoleOwner) sees/does all regardless of owner.
+		{"host owner touches amanda's", host, "POST /v1/islands/{name}/wake", "/v1/islands/alpha/wake", false},
+		{"host owner touches bob's", host, "DELETE /v1/islands/{name}", "/v1/islands/beta", false},
+	}
+	for _, c := range cases {
+		err := authorizeRole(c.id, c.pattern, c.path, ownerOf)
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: authorizeRole owner=%q %q %q err=%v wantErr=%v",
+				c.name, c.id.Owner, c.pattern, c.path, err, c.wantErr)
 		}
 	}
 }
@@ -134,11 +178,11 @@ func substituteWildcards(path string) string {
 func TestRoleAuthMiddleware(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	viewerSecret, _, err := authtoken.Create("v", authtoken.RoleViewer, nil)
+	viewerSecret, _, err := authtoken.Create("v", authtoken.RoleViewer, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	opScopedSecret, _, err := authtoken.Create("o", authtoken.RoleOperator, []string{"alpha"})
+	opScopedSecret, _, err := authtoken.Create("o", authtoken.RoleOperator, []string{"alpha"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -250,6 +250,12 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	out.HostMemoryBytes = vmmem.HostMemoryBytes()
 	out.VMRecommendedBytes = vmmem.RecommendedBytes(out.HostMemoryBytes)
+	// Stamp the caller's own identity (multi-tenant "who am I") so a client can
+	// drive its own-vs-all view without a second request.
+	if id, ok := IdentityFromContext(r.Context()); ok {
+		out.Owner = id.Owner
+		out.Role = string(id.Role)
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

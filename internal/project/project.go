@@ -583,17 +583,34 @@ func Load(name string) (*Project, error) {
 		return nil, fmt.Errorf("unmarshal project %q: %w", name, err)
 	}
 	p.EnsureAgents()
-	// Backfill default labels for agents created before default-labeling existed,
-	// so every surface has a non-blank name to show instead of the bare id. This is
-	// the single load-time choke point every Project flows through; it's idempotent
-	// (a no-op once labels are settled) so steady-state Loads do no extra writes —
-	// we persist only on an actual change, the one time an island is migrated.
-	if p.BackfillAgentLabels() {
+	// This is the single load-time choke point every Project flows through, so
+	// one-time migrations live here — idempotent, persisted only on an actual
+	// change, so steady-state Loads do no extra writes.
+	changed := p.BackfillAgentLabels() // agents predating default-labeling get a name
+	// Multi-tenant ownership migration: an island with no owner predates ownership
+	// (or an older daemon) — attribute it to the host owner so it stays managed by
+	// the operator and private from teammates.
+	if strings.TrimSpace(p.Owner) == "" {
+		p.Owner = HostOwner()
+		changed = true
+	}
+	if changed {
 		if err := p.Save(); err != nil {
-			return nil, fmt.Errorf("backfill agent labels for %q: %w", name, err)
+			return nil, fmt.Errorf("migrate project %q on load: %w", name, err)
 		}
 	}
 	return &p, nil
+}
+
+// HostOwner is the tenant id attributed to the host operator: the owner of
+// islands created via the trusted local socket or a RoleOwner token, and the
+// backfill value for islands that predate ownership. Configurable via
+// DEJIMA_HOST_OWNER; defaults to "aoos".
+func HostOwner() string {
+	if v := strings.TrimSpace(os.Getenv("DEJIMA_HOST_OWNER")); v != "" {
+		return v
+	}
+	return "aoos"
 }
 
 // Delete removes the project's on-host config directory.
