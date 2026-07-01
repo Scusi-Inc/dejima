@@ -2040,9 +2040,13 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 			// (P2b): upload it and inject the in-island path. Byte-exact otherwise.
 			if intercept {
 				inject := func(islandPath string) {
-					// Inject the in-island path as if typed (no Enter) so the agent
-					// reads it and the user can add context before submitting.
-					_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode([]byte(islandPath))})
+					// Inject the in-island path as a BRACKETED PASTE (no Enter) so the
+					// agent treats it as a paste, not typed input. Claude Code (and
+					// other adapters) only run their file-path→image auto-attach on a
+					// paste event: streamed as raw keystrokes the path renders as a
+					// literal link; wrapped in \e[200~…\e[201~ it becomes an image
+					// artifact. The user can still add context before submitting.
+					_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode([]byte(bracketedPaste(islandPath)))})
 				}
 				before = paste.process(before,
 					func(localPath string) { // drag-drop
@@ -2079,6 +2083,15 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 			}
 		}
 	}
+}
+
+// bracketedPaste wraps s in the terminal bracketed-paste markers (DEC 2004,
+// bpStart/bpEnd) so the receiving application treats it as pasted content rather
+// than typed keystrokes. The image-paste bridge uses this so an injected file
+// path triggers the agent's paste-time image auto-attach (→ image artifact)
+// instead of landing as a literal path/link.
+func bracketedPaste(s string) string {
+	return bpStart + s + bpEnd
 }
 
 func writeEnvelope(ctx context.Context, conn *websocket.Conn, env api.SessionEnvelope) error {
