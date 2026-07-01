@@ -36,7 +36,7 @@ func newTokenCmd() *cobra.Command {
 }
 
 func newTokenCreateCmd() *cobra.Command {
-	var role, label string
+	var role, label, owner string
 	var islands []string
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -53,6 +53,7 @@ func newTokenCreateCmd() *cobra.Command {
 			resp, err := c.CreateToken(cmd.Context(), api.CreateTokenRequest{
 				Label:   label,
 				Role:    role,
+				Owner:   owner,
 				Islands: islands,
 			})
 			if err != nil {
@@ -62,7 +63,11 @@ func newTokenCreateCmd() *cobra.Command {
 			if len(resp.Token.Islands) > 0 {
 				scope = strings.Join(resp.Token.Islands, ", ")
 			}
-			fmt.Printf("created token %s (role: %s; scope: %s)\n", resp.Token.ID, resp.Token.Role, scope)
+			tenant := resp.Token.Owner
+			if tenant == "" {
+				tenant = "host owner"
+			}
+			fmt.Printf("created token %s (role: %s; owner: %s; scope: %s)\n", resp.Token.ID, resp.Token.Role, tenant, scope)
 			fmt.Println()
 			fmt.Println("  bearer secret (shown once — store it now):")
 			fmt.Printf("    %s\n", resp.Secret)
@@ -75,7 +80,8 @@ func newTokenCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&role, "role", "", "owner, operator, or viewer (required)")
 	cmd.Flags().StringVar(&label, "label", "", "human label for the token (e.g. scusi-prod, phone)")
-	cmd.Flags().StringArrayVar(&islands, "island", nil, "limit the token to this island (repeatable); default: all islands")
+	cmd.Flags().StringVar(&owner, "owner", "", "tenant this token acts as — an operator/viewer token then sees + creates only that tenant's islands (default: the host owner, i.e. full access)")
+	cmd.Flags().StringArrayVar(&islands, "island", nil, "limit the token to this island (repeatable); default: all the owner's islands")
 	return cmd
 }
 
@@ -84,7 +90,7 @@ func newTokenCreateCmd() *cobra.Command {
 // CLI twin of the TUI Team view's "invite" action — both call invite.Encode at
 // mint time (the secret is only returned once).
 func newTokenInviteCmd() *cobra.Command {
-	var role, label, host, name string
+	var role, label, host, name, owner string
 	var islands []string
 	cmd := &cobra.Command{
 		Use:   "invite",
@@ -109,7 +115,7 @@ func newTokenInviteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := c.CreateToken(cmd.Context(), api.CreateTokenRequest{Label: label, Role: role, Islands: islands})
+			resp, err := c.CreateToken(cmd.Context(), api.CreateTokenRequest{Label: label, Role: role, Owner: owner, Islands: islands})
 			if err != nil {
 				return err
 			}
@@ -141,6 +147,7 @@ func newTokenInviteCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&role, "role", "", "owner, operator, or viewer (required)")
 	cmd.Flags().StringVar(&host, "host", "", "daemon host:port the teammate dials (required)")
+	cmd.Flags().StringVar(&owner, "owner", "", "tenant the teammate acts as — they see + create only this tenant's islands (default: the host owner, i.e. full access)")
 	cmd.Flags().StringVar(&label, "label", "", "human label for the token (e.g. amanda, phone)")
 	cmd.Flags().StringVar(&name, "name", "", "suggested profile name for the teammate (default: host's first label)")
 	cmd.Flags().StringArrayVar(&islands, "island", nil, "limit the invite to this island (repeatable); default: all islands")
