@@ -203,6 +203,17 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// Private visibility (P2): a teammate's overview reflects only its OWN islands;
+	// the host owner sees the whole fleet. Substrate/host facts below stay
+	// host-wide (they're not per-owner); the privacy-preserving cross-tenant
+	// rollup is the separate /v1/aggregate (P3).
+	visible := projects[:0]
+	for _, p := range projects {
+		if s.visibleTo(r.Context(), p) {
+			visible = append(visible, p)
+		}
+	}
+	projects = visible
 	out := OverviewResponse{
 		TotalIslands:         len(projects),
 		DaemonStartedAt:      s.startedAt,
