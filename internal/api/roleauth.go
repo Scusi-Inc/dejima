@@ -225,6 +225,18 @@ func (s *Server) ownerOf(island string) (string, bool) {
 	return p.Owner, true
 }
 
+// visibleTo reports whether an island belongs in the request caller's own-fleet
+// view (private visibility, P2). The host owner — RoleOwner, or a no-identity
+// caller on the trusted surface — sees all; a teammate sees only islands its
+// tenant owns. Used to filter listIslands + the overview aggregate.
+func (s *Server) visibleTo(ctx context.Context, p *project.Project) bool {
+	id, ok := IdentityFromContext(ctx)
+	if !ok || id.OwnsAll() {
+		return true
+	}
+	return p.Owner == id.Owner
+}
+
 // RequireToken makes the operator surface reject anonymous (no-token) requests
 // with 401, turning bearer tokens into a hard boundary rather than opt-in
 // attenuation. Off by default: the trusted listeners (unix socket, tailnet) keep
