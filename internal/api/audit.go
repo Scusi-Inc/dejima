@@ -247,6 +247,8 @@ var auditableLifecycle = map[events.Type]bool{
 	events.TypePanicCleared:       true,
 	events.TypeDaemonStarted:      true,
 	events.TypeContainerCrashed:   true,
+	events.TypeAgentSilent:        true, // operator alert: a running agent went silent
+	events.TypeAgentRecovered:     true, // its heartbeat came back
 }
 
 // auditLifecycle appends a governance-relevant lifecycle event to the ledger.
