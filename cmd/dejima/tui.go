@@ -123,11 +123,19 @@ type tuiModel struct {
 	claudeSeeded bool            // daemon can seed new islands with Claude creds
 	agentKeyGap  map[string]bool // agent type → requires an LLM provider key, none configured for it
 
-	selected  int
-	grouped   bool // group the island list by repo (toggled with `p`)
-	width     int
-	height    int
-	lastError string
+	selected int
+	grouped  bool // group the island list by repo (toggled with `p`)
+	// Multi-tenant ownership lens (P4, design/multi-tenant-ownership.md). callerOwner
+	// is the caller's own resolved owner id; it's populated from the daemon once the
+	// overview reports it (a1's P1/P2 — until then "", which disables filtering so
+	// nothing hides). ownerLens toggles the host-owner's view between just-mine and
+	// everyone's (`O`). A teammate's list is already owner-filtered server-side (P2),
+	// so the lens is a no-op for them; it's the host-owner's own-vs-all switch.
+	callerOwner string
+	ownerLens   int // lensOwn (default) | lensAll
+	width       int
+	height      int
+	lastError   string
 	// daemonHelp, when non-nil, is an actionable diagnosis of a *local*
 	// daemon-unreachable failure (why dejimad isn't up + how to fix it). Computed
 	// once when the connection error arrives — service.Detect() shells out, so it
@@ -391,6 +399,34 @@ func (m tuiModel) toggleGrouped() tuiModel {
 				break
 			}
 		}
+	}
+	return m
+}
+
+// toggleOwnerLens flips the ownership view between just-yours and all islands,
+// re-anchoring the cursor on the island it was on (rows change) and clamping into
+// the new, possibly-shorter list.
+func (m tuiModel) toggleOwnerLens() tuiModel {
+	anchor := m.selectedName()
+	if m.ownerLens == lensAll {
+		m.ownerLens = lensOwn
+	} else {
+		m.ownerLens = lensAll
+	}
+	m.selected = 0
+	if anchor != "" {
+		for i, row := range m.visibleRows() {
+			if row.kind == rowIsland && row.island == anchor {
+				m.selected = i
+				break
+			}
+		}
+	}
+	if n := len(m.visibleRows()); m.selected >= n {
+		m.selected = n - 1
+	}
+	if m.selected < 0 {
+		m.selected = 0
 	}
 	return m
 }
@@ -1380,6 +1416,20 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Toggle grouping the island list by repo (sibling/project view). Also
 		// reachable from Settings; kept as a power-user accelerator.
 		return m.toggleGrouped(), nil
+	case "O":
+		// Ownership lens (multi-tenant): flip the host-owner's view between your
+		// islands (default) and every island on the daemon. A teammate's list is
+		// already owner-filtered server-side, so for them this is a no-op.
+		mm := m.toggleOwnerLens()
+		switch {
+		case mm.callerOwner == "":
+			mm.lastNotice = "owner filtering activates once the daemon reports island ownership"
+		case mm.ownerLens == lensAll:
+			mm.lastNotice = "showing ALL islands on this daemon"
+		default:
+			mm.lastNotice = "showing your islands only"
+		}
+		return mm, nil
 	case "a":
 		// Explicit "attach in this terminal" — replaces the dashboard. Useful
 		// when the user actually wants the old behavior even though a
@@ -1878,17 +1928,42 @@ func orderedAgents(agents []api.AgentInfo) (ordered []api.AgentInfo, depth []int
 	return ordered, depth
 }
 
-// orderedIslands returns the islands in display order: m.islands as-is, or —
-// when grouped — reordered so islands sharing a repo are contiguous (first-seen
-// repo order, original order within each repo). Drives both the row list and the
-// rendered group headers, so navigation indices and headers stay consistent.
-func (m tuiModel) orderedIslands() []api.IslandInfo {
-	if !m.grouped {
+const (
+	lensOwn = iota // just the caller's own islands (the default)
+	lensAll        // every island the caller can see (the host-owner's all-view)
+)
+
+// ownedIslands applies the ownership lens: in lensOwn, only the caller's own
+// islands; in lensAll (or before the daemon reports the caller's owner id — see
+// callerOwner), the full list unchanged. Fail-open on an empty callerOwner so the
+// lens never hides everything on a daemon that predates the ownership model — it
+// only ever narrows once we actually know who "you" are.
+func (m tuiModel) ownedIslands() []api.IslandInfo {
+	if m.ownerLens == lensAll || m.callerOwner == "" {
 		return m.islands
+	}
+	out := make([]api.IslandInfo, 0, len(m.islands))
+	for _, isl := range m.islands {
+		if isl.Owner == m.callerOwner {
+			out = append(out, isl)
+		}
+	}
+	return out
+}
+
+// orderedIslands returns the islands in display order: the ownership-lensed set
+// as-is, or — when grouped — reordered so islands sharing a repo are contiguous
+// (first-seen repo order, original order within each repo). Drives both the row
+// list and the rendered group headers, so navigation indices and headers stay
+// consistent.
+func (m tuiModel) orderedIslands() []api.IslandInfo {
+	islands := m.ownedIslands()
+	if !m.grouped {
+		return islands
 	}
 	idx := map[string]int{}
 	var groups [][]api.IslandInfo
-	for _, isl := range m.islands {
+	for _, isl := range islands {
 		i, ok := idx[isl.Repo]
 		if !ok {
 			i = len(groups)
@@ -1897,7 +1972,7 @@ func (m tuiModel) orderedIslands() []api.IslandInfo {
 		}
 		groups[i] = append(groups[i], isl)
 	}
-	out := make([]api.IslandInfo, 0, len(m.islands))
+	out := make([]api.IslandInfo, 0, len(islands))
 	for _, g := range groups {
 		out = append(out, g...)
 	}
@@ -2961,6 +3036,12 @@ func (m tuiModel) renderList(width int) (string, int) {
 				caret, glyphFor(isl), idStyle.Render(idGlyph),
 				idStyle.Render(fmt.Sprintf("%-14s", label)),
 				shortStatus(isl, m.dirtyOps[isl.Name]))
+			// In the all-islands lens, tag each row with its owner so the host owner
+			// can tell whose island is whose. Omitted in the your-islands lens (they're
+			// all yours) and when the daemon reports no owner.
+			if m.ownerLens == lensAll && isl.Owner != "" {
+				line += "  " + styleMuted.Render("@"+isl.Owner)
+			}
 		}
 		if i == m.selected {
 			selLine = strings.Count(b.String(), "\n") // line index this row will occupy
@@ -3728,6 +3809,7 @@ func (m tuiModel) renderHelp() string {
 		{"V", "approvals — review/approve/deny pending cross-island actions (the action gate)"},
 		{"I", "team — invite a teammate (mint a role-scoped token), list/revoke tokens (owner-only)"},
 		{"#", "reveal / hide agent ids (names only by default)"},
+		{"O", "owner lens — your islands (default) vs all islands on the daemon"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
