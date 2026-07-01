@@ -224,6 +224,23 @@ type OverviewResponse struct {
 	VMRecommendedBytes uint64 `json:"vm_recommended_bytes,omitempty"`
 }
 
+// AggregateResponse is the privacy-preserving host-wide rollup returned by GET
+// /v1/aggregate (multi-tenant design, capRead + any authenticated caller). It
+// carries counts + totals across ALL islands and NEVER any names, repos, owners,
+// or per-island rows — so a teammate can see shared-host utilization without
+// seeing what's running. Field tags are the locked contract between the client
+// (this type, a2) and the server handler (a1's P3). Memory fields are uint64 to
+// match OverviewResponse; disk is int64 to match disk.total_bytes.
+type AggregateResponse struct {
+	TotalIslands     int     `json:"total_islands"`
+	Running          int     `json:"running"`
+	Hibernated       int     `json:"hibernated"`
+	MemoryUsageBytes uint64  `json:"memory_usage_bytes"`
+	MemoryLimitBytes uint64  `json:"memory_limit_bytes"`
+	CPUPercent       float64 `json:"cpu_percent"`
+	DiskTotalBytes   int64   `json:"disk_total_bytes"`
+}
+
 // AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the
 // default) reports the plan without changing anything.
 type AdminUpdateRequest struct {
