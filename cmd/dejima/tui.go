@@ -302,7 +302,7 @@ var editorChoices = []editorChoice{
 }
 
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 5 // editor · group-by-repo · connection target · check-for-updates · update
+const settingsTopLen = 6 // editor · group-by-repo · connection target · team · check-for-updates · update
 
 func (m tuiModel) openSettings() tuiModel {
 	m.settings = &settingsModel{page: settingsTop}
@@ -354,10 +354,13 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 2: // Connection target → reuse the existing switcher overlay
 				m.settings = nil
 				return m.openSwitcher()
-			case 3: // Check for updates (re-poll GitHub) — stays open; line refreshes
+			case 3: // Team & invites → the owner-only Team overlay (same as `I`)
+				m.settings = nil
+				return m.openTeamView()
+			case 4: // Check for updates (re-poll GitHub) — stays open; line refreshes
 				m.lastNotice = "checking for updates…"
 				return m, tea.Batch(fetchLatestReleaseCmd(), m.fetchOverviewCmd())
-			case 4: // Update — same flow as 'U' (confirm, then client/daemon apply)
+			case 5: // Update — same flow as 'U' (confirm, then client/daemon apply)
 				m.settings = nil
 				m.updateError = ""
 				switch {
@@ -2832,17 +2835,24 @@ func (m tuiModel) renderHeader() string {
 	}
 	logo := strings.Join(logoLines, "\n")
 
-	// server: <label>  [·  ssh <addr>]  ·  [s] switch  ·  [?] all keys
-	// The ssh hint appears only when the daemon has the SSH-façade listener on
-	// (--ssh); `dejima ssh config <island> --install` resolves the full address.
+	// server: <label>  ·  [s] switch  [·  ssh <addr>]
+	// [s] opens settings, where "connection target" changes which server the
+	// dashboard attaches to. The ssh hint appears only when the daemon has the
+	// SSH-façade listener on (--ssh); `dejima ssh config <island> --install`
+	// resolves the full address.
 	serverLine := styleMuted.Render("server: ") + styleAccent.Render(label)
 	if m.activeSource == "env" {
 		serverLine += styleMuted.Render(" via $DEJIMA_HOST")
 	}
+	serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("[s]") + styleMuted.Render(" switch")
+	// Team controls are owner-only; surface the hint unless we know the caller is
+	// a teammate (fail-open before the daemon reports identity, matching the lens).
+	if m.callerRole == "" || m.callerRole == "owner" {
+		serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("[I]") + styleMuted.Render(" team")
+	}
 	if m.overview != nil && m.overview.SSHAddr != "" {
 		serverLine += styleMuted.Render("  ·  ssh ") + styleAccent.Render(m.overview.SSHAddr)
 	}
-	serverLine += styleMuted.Render("  ·  [s] settings  ·  [?] all keys")
 
 	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
 
@@ -2859,8 +2869,8 @@ func (m tuiModel) renderHeader() string {
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
 		styleMuted.Render("Each island is a repo in its own container — host one or more agents, or just shell in."),
-		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open its agents  ·  ") + styleAccent.Render(">") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("n") + styleMuted.Render(" launch a new one"),
 		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
+		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open agent(s)  ·  ") + styleAccent.Render(">") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("s") + styleMuted.Render(" settings  ·  ") + styleAccent.Render("?") + styleMuted.Render(" help"),
 		serverLine,
 	}, "\n")
 	info = lipgloss.NewStyle().MaxWidth(infoW).Render(info)
@@ -3701,20 +3711,16 @@ func (m tuiModel) renderFooter() string {
 	// (global commands, then island lifecycle), right-aligned to a shared edge.
 	// The strip used to share line one with the global commands, which collided
 	// on narrow terminals — giving it its own row keeps both readable.
-	expandAll := "[E] expand all"
-	if m.allIslandsExpanded() {
-		expandAll = "[E] collapse all"
-	}
-	// Row 1: globals. Row 2: navigation + the ⏎ action menu, which now holds the
-	// per-row lifecycle/setup actions (hibernate, reset, purge, rename, ssh setup,
-	// …) instead of crowding the bar. Those keys still work directly; they're
-	// listed in the ⏎ menu and in [?] help.
+	// Row 1: the primary "open something" actions. Row 2: settings + the ⏎ action
+	// menu (which holds the per-row lifecycle/setup actions — hibernate, reset,
+	// purge, rename, ssh setup, …) + globals. Those keys still work directly;
+	// they're listed in the ⏎ menu and in [?] help.
 	term := ""
 	if m.hostTerminalsEnabled() {
-		term = "[/] terminals   "
+		term = "   [/] host terminal"
 	}
-	keys1 := "[n] new   " + term + "[s] settings   [?] help   [q] quit"
-	keys2 := "[⏎] open   [m] actions   [space] expand   " + expandAll
+	keys1 := "[⏎] open agent(s)   [>] island shell" + term
+	keys2 := "[s] settings   [m] actions   [space] expand   [?] help   [q] quit"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -4065,8 +4071,9 @@ func (m tuiModel) renderSettings() string {
 	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
 	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))
 	row(2, "", "Connection target         "+styleMuted.Render(target)+styleMuted.Render("  →"))
-	row(3, "", "Check for updates")
-	row(4, "", updateRow)
+	row(3, "", "Team & invites            "+styleMuted.Render("invite a teammate, revoke access")+styleMuted.Render("  →"))
+	row(4, "", "Check for updates")
+	row(5, "", updateRow)
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()
