@@ -1524,6 +1524,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OverviewResponse" }
+  /v1/aggregate:
+    get:
+      tags: [daemon]
+      summary: Privacy-preserving host-wide rollup (counts + total mem/cpu/disk, NO names)
+      description: Cross-tenant utilization visible to any authenticated caller — counts + totals across ALL islands, never names/repos/owners/per-island rows. Complements the owner-scoped /v1/overview.
+      operationId: aggregate
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AggregateResponse" }
   /v1/healthz:
     get:
       tags: [daemon]
@@ -2681,6 +2693,17 @@ components:
         vm_recommended_bytes: { type: integer }
         owner: { type: string, description: "the authenticated caller's own tenant (multi-tenant who-am-i); empty when no identity" }
         role: { type: string, description: "the authenticated caller's role (owner|operator|viewer); empty when no identity" }
+    AggregateResponse:
+      type: object
+      description: "Host-wide rollup across ALL islands (counts + totals only, NO names/repos/owners). Any authenticated caller."
+      properties:
+        total_islands: { type: integer }
+        running: { type: integer }
+        hibernated: { type: integer }
+        memory_usage_bytes: { type: integer }
+        memory_limit_bytes: { type: integer }
+        cpu_percent: { type: number }
+        disk_total_bytes: { type: integer }
     SessionEnvelope:
       type: object
       description: >
