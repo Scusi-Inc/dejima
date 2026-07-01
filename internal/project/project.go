@@ -113,6 +113,11 @@ type Project struct {
 	LastUsedAt   time.Time   `toml:"last_used_at"`
 	DesiredState State       `toml:"state"`
 	Agents       []AgentSpec `toml:"agents,omitempty"`
+	// NoHibernate pins the island awake: when true it is exempt from idle
+	// auto-hibernate (it can still be hibernated manually). For a persistent
+	// ambient agent — a watchtower / monitor that must keep running between bursts
+	// of work — so an idle window doesn't shut it off. Default false.
+	NoHibernate bool `toml:"no_hibernate,omitempty"`
 	// Role is the island's purpose: "" (a work island) or "home" (a Home Island
 	// hosting an assistant brain). Empty for islands created before roles existed.
 	Role string `toml:"role,omitempty"`

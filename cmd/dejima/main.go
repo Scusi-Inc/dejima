@@ -211,6 +211,8 @@ func newRootCmd() *cobra.Command {
 		newStatusCmd(),
 		newHibernateCmd(),
 		newWakeCmd(),
+		newPinCmd(),
+		newUnpinCmd(),
 		newResetCmd(),
 		newPurgeCmd(),
 		newPanicCmd(),
@@ -814,6 +816,52 @@ func newHibernateCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("hibernated %s (container: %s)\n", info.Name, info.Container)
+			return nil
+		},
+	}
+}
+
+// --- pin / unpin (idle-hibernate exemption) -------------------------------
+
+func newPinCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pin <name>",
+		Short: "Pin an island awake (exempt it from idle auto-hibernate).",
+		Long: "Pin an island so the daemon's idle auto-hibernate never stops it — for a " +
+			"persistent ambient agent (a watchtower / monitor) that must keep running between " +
+			"bursts of work. It can still be hibernated manually with `dejima hibernate`. " +
+			"Release the pin with `dejima unpin <name>`. Takes effect immediately; no restart.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			info, err := c.SetIslandHibernation(cmd.Context(), args[0], true)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("pinned %s awake — exempt from idle auto-hibernate\n", info.Name)
+			return nil
+		},
+	}
+}
+
+func newUnpinCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unpin <name>",
+		Short: "Release an island's pin (re-enable idle auto-hibernate).",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			info, err := c.SetIslandHibernation(cmd.Context(), args[0], false)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("unpinned %s — idle auto-hibernate re-enabled\n", info.Name)
 			return nil
 		},
 	}
