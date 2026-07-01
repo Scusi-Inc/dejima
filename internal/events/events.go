@@ -36,6 +36,13 @@ const (
 	// / cache_read_input_tokens / output_tokens / model / source. Ingested into the
 	// per-agent usage snapshot surfaced on AgentInfo.Usage.
 	TypeAgentUsage Type = "agent.usage"
+	// Heartbeat monitor ("monitor the monitor"): an operator alert when a running
+	// island's agent goes SILENT (no fresh agent-state heartbeat past the grace —
+	// a stalled/crashed agent, or a skewed shim that can't POST). Edge-triggered:
+	// TypeAgentSilent on going silent, TypeAgentRecovered when the heartbeat
+	// returns. Pairs with the never_heard_from zero-heartbeat flag.
+	TypeAgentSilent    Type = "agent.silent"
+	TypeAgentRecovered Type = "agent.recovered"
 
 	// Inter-island action delegation (Lane 5, Phase 3): a cross-island action
 	// needs operator approval. Fires so an operator can approve/deny from a phone
@@ -59,6 +66,7 @@ var catalog = []Type{
 	TypeContainerCrashed, TypeDaemonStarted, TypePanicEngaged, TypePanicCleared,
 	TypeClientAttached, TypeClientDetached, TypeLastClientDetached,
 	TypeAgentWaitingForInput, TypeAgentTaskComplete, TypeAgentError, TypeAgentUsage,
+	TypeAgentSilent, TypeAgentRecovered,
 	TypeLinkActionPending,
 }
 
