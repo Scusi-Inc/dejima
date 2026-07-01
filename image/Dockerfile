@@ -97,6 +97,15 @@ COPY image/tmux.conf /etc/tmux.conf
 # Agent shims directory (per-agent, opt-in).
 COPY image/agents/ /opt/dejima/agents/
 
+# Island primer: a per-agent "you're in a Dejima island" context file. Each
+# adapter shim installs it into that adapter's GLOBAL instructions layer
+# (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md) as an idempotent, non-clobbering
+# managed block — so every agent understands containment (filesystem model, file
+# transfer, the daemon path, mailbox) regardless of the repo. See write-primer.sh.
+COPY image/write-primer.sh /opt/dejima/write-primer.sh
+COPY image/island-primer.md /opt/dejima/island-primer.md
+RUN chmod +x /opt/dejima/write-primer.sh
+
 # The npm global prefix lives OUTSIDE /home/dejima so it is NOT captured by the
 # per-island home volume. That keeps bundled-agent binaries image-managed
 # (refreshed on `dejima upgrade`) while the home volume persists only auth/state

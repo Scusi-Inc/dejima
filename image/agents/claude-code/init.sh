@@ -116,3 +116,11 @@ else
 }
 EOF
 fi
+
+# --- island primer ---------------------------------------------------------
+# Install the "you're in a Dejima island" primer into Claude Code's GLOBAL
+# memory (~/.claude/CLAUDE.md) — additive to any repo CLAUDE.md, idempotent,
+# non-clobbering. Best-effort: a primer failure must never crash the container.
+if [[ -x /opt/dejima/write-primer.sh ]]; then
+    /opt/dejima/write-primer.sh "$HOME_CLAUDE/CLAUDE.md" || true
+fi

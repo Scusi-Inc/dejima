@@ -45,3 +45,11 @@ if [[ ! -f "$CONFIG" ]]; then
 elif ! grep -qE '^[[:space:]]*notify[[:space:]]*=' "$CONFIG"; then
     printf '\n%s\n' "$NOTIFY_LINE" >> "$CONFIG"
 fi
+
+# --- island primer ---------------------------------------------------------
+# Install the "you're in a Dejima island" primer into Codex's GLOBAL AGENTS.md
+# (~/.codex/AGENTS.md) — additive to any repo AGENTS.md, idempotent,
+# non-clobbering. Best-effort: a primer failure must never crash the container.
+if [[ -x /opt/dejima/write-primer.sh ]]; then
+    /opt/dejima/write-primer.sh "$HOME_CODEX/AGENTS.md" || true
+fi
