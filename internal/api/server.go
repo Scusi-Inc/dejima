@@ -1495,7 +1495,15 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	defer lock.Unlock()
 
 	if project.Exists(name) {
-		writeError(w, http.StatusConflict, fmt.Errorf("island %q already exists; use --name to disambiguate", name))
+		// Names are globally unique (they key the container/volume/network). To a
+		// non-owner, a taken name must not reveal WHOSE island it is (or even that
+		// it's someone else's) — return a generic "unavailable". The host owner,
+		// who can see the fleet anyway, gets the actionable message.
+		if id, ok := IdentityFromContext(r.Context()); ok && !id.OwnsAll() {
+			writeError(w, http.StatusConflict, fmt.Errorf("island name %q is unavailable; choose another (or pass --name)", name))
+		} else {
+			writeError(w, http.StatusConflict, fmt.Errorf("island %q already exists; use --name to disambiguate", name))
+		}
 		return
 	}
 
@@ -1583,14 +1591,21 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Attach ownership metadata (informational; no auth model). Set after a
-	// successful provision so it doesn't complicate provision's signature.
-	if owner := strings.TrimSpace(req.Owner); owner != "" || len(req.Tags) > 0 {
-		p.Owner = owner
+	// Stamp ownership from the AUTHENTICATED caller (server-authoritative — never
+	// req.Owner, which a teammate could forge). The island belongs to the caller's
+	// tenant; the host owner (local socket / RoleOwner) attributes to HostOwner.
+	// This is what makes create work for an owner-scoped teammate AND keeps the new
+	// island private to them.
+	owner := project.HostOwner()
+	if id, ok := IdentityFromContext(r.Context()); ok && strings.TrimSpace(id.Owner) != "" {
+		owner = strings.TrimSpace(id.Owner)
+	}
+	p.Owner = owner
+	if len(req.Tags) > 0 {
 		p.Tags = sanitizeTags(req.Tags)
-		if err := p.Save(); err != nil {
-			s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
-		}
+	}
+	if err := p.Save(); err != nil {
+		s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
 	}
 
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: p.Name})

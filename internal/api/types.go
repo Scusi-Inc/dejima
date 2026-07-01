@@ -222,6 +222,12 @@ type OverviewResponse struct {
 	HostMemoryBytes    uint64 `json:"host_memory_bytes,omitempty"`
 	VMMemoryBytes      uint64 `json:"vm_memory_bytes,omitempty"`
 	VMRecommendedBytes uint64 `json:"vm_recommended_bytes,omitempty"`
+	// Owner / Role identify the AUTHENTICATED caller (multi-tenant "who am I"), so
+	// a client can drive the own-vs-all lens: the host owner (role "owner") sees
+	// all islands and can filter to Owner; a teammate is already server-filtered.
+	// Empty on callers without a resolved identity.
+	Owner string `json:"owner,omitempty"`
+	Role  string `json:"role,omitempty"`
 }
 
 // AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the

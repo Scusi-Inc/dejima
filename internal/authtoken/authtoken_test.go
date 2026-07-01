@@ -11,9 +11,12 @@ import (
 func TestCreateResolveRevoke(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	secret, tok, err := Create("scusi-prod", RoleOperator, []string{"alpha", "beta"})
+	secret, tok, err := Create("scusi-prod", RoleOperator, []string{"alpha", "beta"}, "amanda")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
+	}
+	if tok.Owner != "amanda" {
+		t.Fatalf("owner should be persisted on the token, got %q", tok.Owner)
 	}
 	if secret == "" || len(secret) != 64 {
 		t.Fatalf("secret should be 64 hex chars, got %d", len(secret))
@@ -31,6 +34,9 @@ func TestCreateResolveRevoke(t *testing.T) {
 	}
 	if id.Role != RoleOperator || id.TokenID != tok.ID {
 		t.Fatalf("resolved identity mismatch: %+v", id)
+	}
+	if id.Owner != "amanda" || id.OwnsAll() {
+		t.Fatalf("resolved identity owner/ownsall wrong: owner=%q ownsAll=%v", id.Owner, id.OwnsAll())
 	}
 	if !id.Scoped() || id.MayTouch("gamma") {
 		t.Fatalf("scope not enforced: scoped=%v mayTouchGamma=%v", id.Scoped(), id.MayTouch("gamma"))
@@ -65,7 +71,7 @@ func TestCreateResolveRevoke(t *testing.T) {
 
 func TestSecretNotStoredInClear(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	secret, _, err := Create("phone", RoleViewer, nil)
+	secret, _, err := Create("phone", RoleViewer, nil, "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -92,7 +98,7 @@ func TestSecretNotStoredInClear(t *testing.T) {
 
 func TestUnscopedTokenTouchesAnyIsland(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	secret, _, err := Create("", RoleOwner, nil)
+	secret, _, err := Create("", RoleOwner, nil, "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -114,22 +120,22 @@ func TestUnscopedTokenTouchesAnyIsland(t *testing.T) {
 
 func TestCreateRejectsBadRoleAndScope(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if _, _, err := Create("x", Role("admin"), nil); err == nil {
+	if _, _, err := Create("x", Role("admin"), nil, ""); err == nil {
 		t.Error("Create accepted an invalid role")
 	}
 	// A scope entry with a path separator must be rejected (it could otherwise
 	// smuggle traversal into an authorization comparison).
-	if _, _, err := Create("x", RoleViewer, []string{"../etc"}); err == nil {
+	if _, _, err := Create("x", RoleViewer, []string{"../etc"}, ""); err == nil {
 		t.Error("Create accepted an invalid island in scope")
 	}
 }
 
 func TestListNewestFirstAndScopeDedup(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if _, _, err := Create("a", RoleViewer, []string{"x", "x", " y "}); err != nil {
+	if _, _, err := Create("a", RoleViewer, []string{"x", "x", " y "}, ""); err != nil {
 		t.Fatalf("create a: %v", err)
 	}
-	if _, _, err := Create("b", RoleOwner, nil); err != nil {
+	if _, _, err := Create("b", RoleOwner, nil, ""); err != nil {
 		t.Fatalf("create b: %v", err)
 	}
 	toks, err := List()

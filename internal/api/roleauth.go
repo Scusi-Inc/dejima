@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aoos/dejima/internal/authtoken"
+	"github.com/aoos/dejima/internal/project"
 )
 
 // This file is the team-auth boundary for the *operator* API surface — the unix
@@ -208,7 +209,20 @@ func IdentityFromContext(ctx context.Context) (authtoken.Identity, bool) {
 // caller the unix socket / tailnet pinning already vouches for, running with
 // full authority. Distinct from a minted owner token only by Subject + empty id.
 func trustedOwner() authtoken.Identity {
-	return authtoken.Identity{Subject: "local", Role: authtoken.RoleOwner}
+	// The trusted local caller acts AS the host owner tenant, so islands it creates
+	// are attributed to HostOwner (and it sees all via OwnsAll regardless).
+	return authtoken.Identity{Subject: "local", Role: authtoken.RoleOwner, Owner: project.HostOwner()}
+}
+
+// ownerOf resolves an island's owner tenant for the authorization layer. The
+// bool is false when the island can't be loaded (unknown/malformed) — the owner
+// gate then defers to the handler (which 404s), rather than leaking existence.
+func (s *Server) ownerOf(island string) (string, bool) {
+	p, err := project.Load(island)
+	if err != nil {
+		return "", false
+	}
+	return p.Owner, true
 }
 
 // RequireToken makes the operator surface reject anonymous (no-token) requests
@@ -256,7 +270,7 @@ func (s *Server) roleAuth(mux *http.ServeMux, next http.Handler) http.Handler {
 		// *escaped* path so an encoded slash in {name} can't be parsed as a
 		// different island than the router binds (see islandFromPath).
 		if _, pattern := mux.Handler(r); pattern != "" {
-			if err := authorizeRole(id, pattern, r.URL.EscapedPath()); err != nil {
+			if err := authorizeRole(id, pattern, r.URL.EscapedPath(), s.ownerOf); err != nil {
 				s.log.Warn("role request denied",
 					"subject", id.Subject, "role", id.Role,
 					"method", r.Method, "path", r.URL.Path, "reason", err)
@@ -277,35 +291,48 @@ func (s *Server) roleAuth(mux *http.ServeMux, next http.Handler) http.Handler {
 // authorizeRole decides whether identity id may take the request matched to
 // pattern (escapedPath is r.URL.EscapedPath()). Default-deny via the capOwner
 // zero value for unlisted routes.
-func authorizeRole(id authtoken.Identity, pattern, escapedPath string) error {
+// authorizeRole decides whether an identity may take a request. Two orthogonal
+// dimensions compose: (1) the role capability + optional static --island scope
+// (unchanged), and (2) multi-tenant OWNER scope — a non-owner may only touch
+// islands it owns. ownerOf resolves an island's owner ("" + false when unknown);
+// it's injected so the policy stays a pure, testable function.
+func authorizeRole(id authtoken.Identity, pattern, escapedPath string, ownerOf func(string) (string, bool)) error {
 	need := roleRouteCap[pattern]
 	if !roleAllows(id.Role, need) {
 		return fmt.Errorf("role %q may not access this route (requires %s)", id.Role, need)
 	}
-	if !id.Scoped() {
-		return nil
+	islandScoped := strings.Contains(pattern, "/{name}")
+
+	// (1) Static island scope. A token with an explicit --island list may act only
+	// on those islands ({name} routes) and never mutate/administer globally. A
+	// token WITHOUT a static list (the owner-scoped teammate case) is unrestricted
+	// here — its access is bounded by (2) instead, which is what lets it CREATE.
+	if id.Scoped() {
+		if islandScoped {
+			name, ok := islandFromPath(escapedPath)
+			if !ok {
+				return errors.New("invalid or unparseable target island for a scoped token")
+			}
+			if !id.MayTouch(name) {
+				return fmt.Errorf("token is scoped to islands %v; %q is out of scope", id.Islands, name)
+			}
+		} else if need != capRead {
+			return errors.New("token is island-scoped and cannot perform global operations")
+		}
 	}
-	// Island-scoped tokens may act only on islands in their scope. Decide on the
-	// route *pattern*, not the capability: a pattern pinned to an island ({name})
-	// must resolve to an in-scope island, and a malformed/encoded-slash segment
-	// that islandFromPath can't parse is denied outright — fail-closed at the auth
-	// layer rather than relying on the handler to re-validate (this covers the
-	// read routes too, which the capability check below would otherwise wave
-	// through). A pattern with no {name} (create, overview, list, daemon admin) is
-	// a global route: permitted only when it is read-only, so a scoped token can
-	// observe the fleet but never mutate or administer it globally.
-	if strings.Contains(pattern, "/{name}") {
+
+	// (2) Owner scope. The host owner (RoleOwner) sees/does all. A non-owner may
+	// only touch an island it owns; create + other global routes are not gated
+	// here (create is allowed and the new island is stamped to the caller — see
+	// createIsland — and other globals are role/scope-bounded above).
+	if !id.OwnsAll() && islandScoped {
 		name, ok := islandFromPath(escapedPath)
 		if !ok {
-			return errors.New("invalid or unparseable target island for a scoped token")
+			return errors.New("invalid or unparseable target island")
 		}
-		if !id.MayTouch(name) {
-			return fmt.Errorf("token is scoped to islands %v; %q is out of scope", id.Islands, name)
+		if owner, known := ownerOf(name); known && owner != id.Owner {
+			return fmt.Errorf("island %q is not yours", name)
 		}
-		return nil
-	}
-	if need != capRead {
-		return errors.New("token is island-scoped and cannot perform global operations")
 	}
 	return nil
 }
