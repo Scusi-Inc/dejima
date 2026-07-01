@@ -170,7 +170,8 @@ type tuiModel struct {
 	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
 	building     bool              // island image build in flight
 
-	help       bool            // help overlay visible (all sections shown; no toggle)
+	help       bool            // help overlay visible (all key sections always shown)
+	helpMore   bool            // help: the collapsible reference (glyphs + CLI) is expanded
 	helpScroll int             // scroll offset (lines) for the help overlay
 	creator    *creatorModel   // non-nil while the new-island flow is active
 	switcher   *switcherModel  // non-nil while the connection switcher is open
@@ -1207,6 +1208,9 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "?", "esc", "q":
 			m.help = false
+		case "a":
+			m.helpMore = !m.helpMore // expand / collapse the reference dropdown
+			m = m.scrollHelpLines(0) // re-clamp scroll to the new content height
 		case "j", "down":
 			m = m.scrollHelpLines(1)
 		case "k", "up":
@@ -3880,6 +3884,19 @@ func (m tuiModel) renderHelp() string {
 		{"?", "this help   ·   q quit the dashboard"},
 	})
 
+	// Everything above is keybindings — always visible. The rest is REFERENCE
+	// (glyph legend + the scriptable CLI), collapsed by default into an [a] More
+	// dropdown so the default `?` stays short and never hides a key.
+	if !m.helpMore {
+		b.WriteString("\n")
+		b.WriteString(styleAccent.Render("[a]") + styleMuted.Render(" ▸ more — glyph legend & shell commands     ") +
+			styleAccent.Render("[?/esc]") + styleMuted.Render(" close"))
+		return b.String()
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styleAccent.Render("[a]") + styleMuted.Render(" ▾ less"))
+	b.WriteString("\n\n")
 	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."))
 	b.WriteString("\n\n")
 	b.WriteString(styleHeader.Render("Glyphs"))
