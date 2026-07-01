@@ -78,8 +78,8 @@ func TestTerminalsLeftIslandList(t *testing.T) {
 // are on, the help headlines `/` (not `t`), and the disabled-note fits the
 // footer status strip (truncate width) so it never shows an ellipsis.
 func TestBandFooterAndHelpUseSlash(t *testing.T) {
-	if got := plain(bandModel().renderFooter()); !strings.Contains(got, "[/] terminals") {
-		t.Errorf("footer should advertise [/] terminals when enabled:\n%s", got)
+	if got := plain(bandModel().renderFooter()); !strings.Contains(got, "[/] host terminal") {
+		t.Errorf("footer should advertise [/] host terminal when enabled:\n%s", got)
 	}
 	help := plain((tuiModel{width: 100}).renderHelp())
 	if !strings.Contains(help, "host terminals") {
