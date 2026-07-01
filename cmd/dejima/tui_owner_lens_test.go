@@ -79,10 +79,10 @@ func TestToggleOwnerLensReanchors(t *testing.T) {
 	}
 }
 
-// TestOwnerKeyTogglesLens: `O` flips the lens and leaves a notice.
+// TestOwnerKeyTogglesLens: for the host owner, `O` flips the lens and notices.
 func TestOwnerKeyTogglesLens(t *testing.T) {
 	m := ownerLensModel()
-	m.callerOwner = "amanda"
+	m.callerOwner, m.callerRole = "amanda", "owner"
 	out, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("O")})
 	m = out.(tuiModel)
 	if m.ownerLens != lensAll {
@@ -90,6 +90,41 @@ func TestOwnerKeyTogglesLens(t *testing.T) {
 	}
 	if !strings.Contains(m.lastNotice, "ALL islands") {
 		t.Errorf("O should note the all-islands view, got %q", m.lastNotice)
+	}
+}
+
+// TestOwnerKeyGatedForNonOwner: a teammate (non-owner) can't toggle — their list
+// is already server-filtered — and an ownership-unaware daemon is inert.
+func TestOwnerKeyGatedForNonOwner(t *testing.T) {
+	// Teammate: known owner, operator role → no toggle, explanatory notice.
+	m := ownerLensModel()
+	m.callerOwner, m.callerRole = "amanda", "operator"
+	out, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("O")})
+	m = out.(tuiModel)
+	if m.ownerLens != lensOwn {
+		t.Errorf("a non-owner must not flip the lens, got %d", m.ownerLens)
+	}
+	if !strings.Contains(m.lastNotice, "your own islands") {
+		t.Errorf("a non-owner should get an explanatory notice, got %q", m.lastNotice)
+	}
+
+	// Ownership-unaware daemon: no caller identity → inert with a hint.
+	m = ownerLensModel() // callerOwner == "", callerRole == ""
+	out, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("O")})
+	if out.(tuiModel).ownerLens != lensOwn {
+		t.Error("O must be inert when the daemon reports no ownership")
+	}
+}
+
+// TestOverviewPopulatesCallerIdentity: each overview poll refreshes the caller's
+// own owner id + role from the daemon (drives the lens + its gate).
+func TestOverviewPopulatesCallerIdentity(t *testing.T) {
+	m := initialTUIModel(nil)
+	m.width, m.height = 100, 40
+	out, _ := m.Update(overviewMsg(&api.OverviewResponse{Owner: "aoos", Role: "owner"}))
+	m = out.(tuiModel)
+	if m.callerOwner != "aoos" || m.callerRole != "owner" {
+		t.Errorf("overview should populate caller identity, got owner=%q role=%q", m.callerOwner, m.callerRole)
 	}
 }
 
