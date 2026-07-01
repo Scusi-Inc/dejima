@@ -197,6 +197,8 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&demoMode, "demo", false, "drive the dashboard from a synthetic fleet (for screen recordings; no daemon)")
+	cmd.PersistentFlags().BoolVar(&showIDs, "ids", os.Getenv("DEJIMA_SHOW_IDS") == "1",
+		"reveal agent ids alongside names (default: names only; or set DEJIMA_SHOW_IDS=1)")
 	registerProfileFlags(cmd)
 	cmd.AddCommand(
 		newInitCmd(),
@@ -2277,9 +2279,14 @@ func newAgentLsCmd() *cobra.Command {
 				return err
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			// Name-first: the agent's label leads (with its id alongside to
-			// disambiguate), matching the rest of the CLI and the TUI.
-			fmt.Fprintln(tw, "NAME\tID\tTYPE\tSTATE\tBRANCH\tWORKTREE")
+			// Name-first, names-only by default: the agent's label leads; the bare
+			// id column appears only under --ids/DEJIMA_SHOW_IDS. Matches the rest of
+			// the CLI and the TUI.
+			if showIDs {
+				fmt.Fprintln(tw, "NAME\tID\tTYPE\tSTATE\tBRANCH\tWORKTREE")
+			} else {
+				fmt.Fprintln(tw, "NAME\tTYPE\tSTATE\tBRANCH\tWORKTREE")
+			}
 			for _, a := range agents {
 				state := a.State
 				if a.Error != "" {
@@ -2289,8 +2296,13 @@ func newAgentLsCmd() *cobra.Command {
 				if name == "" {
 					name = a.ID
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-					name, a.ID, a.Type, state, a.Branch, a.Worktree)
+				if showIDs {
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+						name, a.ID, a.Type, state, a.Branch, a.Worktree)
+				} else {
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+						name, a.Type, state, a.Branch, a.Worktree)
+				}
 			}
 			if err := tw.Flush(); err != nil {
 				return err
@@ -2298,7 +2310,7 @@ func newAgentLsCmd() *cobra.Command {
 			// Print any orchestration errors in full below the table.
 			for _, a := range agents {
 				if a.Error != "" {
-					fmt.Printf("\n  %s: %s\n", a.ID, a.Error)
+					fmt.Printf("\n  %s: %s\n", agentDisplay(a.Label, a.ID), a.Error)
 				}
 			}
 			return nil
@@ -2406,7 +2418,11 @@ func newAgentRenameCmd() *cobra.Command {
 			if want != "" && a.Label != want {
 				fmt.Printf("note: label %q was taken; named it %q\n", want, a.Label)
 			}
-			fmt.Printf("renamed agent %s to %q in %s\n", a.ID, a.Label, args[0])
+			if showIDs {
+				fmt.Printf("renamed agent %s to %q in %s\n", a.ID, a.Label, args[0])
+			} else {
+				fmt.Printf("renamed agent to %q in %s\n", a.Label, args[0])
+			}
 			return nil
 		},
 	}
@@ -2640,15 +2656,24 @@ func parseTags(pairs []string) (map[string]string, error) {
 // convention the mailbox poll display shipped (#190: "backend (a1)"); reuse it
 // everywhere an agent is listed so the whole CLI reads consistently. The id
 // stays the addressing handle — this is presentation only.
+// showIDs reveals bare agent ids in human-facing output. Off by default — agents
+// are referred to by NAME; the stable id is an internal handle. Flipped on by the
+// persistent --ids flag or DEJIMA_SHOW_IDS=1 for when you need the id (scripting,
+// disambiguation, bug reports).
+var showIDs bool
+
+// agentDisplay renders an agent for humans: its name only, by default. The id is
+// appended ("name (id)") only when --ids/DEJIMA_SHOW_IDS reveals it. A nameless
+// agent falls back to the id so nothing ever renders blank.
 func agentDisplay(label, id string) string {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return id
 	}
-	if id == "" {
-		return label
+	if showIDs && id != "" {
+		return label + " (" + id + ")"
 	}
-	return label + " (" + id + ")"
+	return label
 }
 
 func formatTags(tags map[string]string) string {
