@@ -28,8 +28,9 @@ type apiClient interface {
 const pasteIntakeDir = "/home/dejima/intake/paste"
 
 // newPasteCmd is the host→island image-paste bridge: capture an image off the
-// HOST clipboard, stage it into the target island's intake dir, then inject a
-// `Read <path>` line into the agent's prompt so it picks the image up.
+// HOST clipboard, stage it into the target island's intake dir, then inject the
+// staged path as a bracketed paste into the agent's prompt so it attaches the
+// image (an image artifact/pill, not a literal path/link).
 //
 // Capture is host-platform-specific (macOS clipboard today) and degrades
 // gracefully where unsupported — the bridge is a convenience, never required.
@@ -40,8 +41,8 @@ func newPasteCmd() *cobra.Command {
 		Use:   "paste <island>[/<agent>]",
 		Short: "Paste the host clipboard image into an island and point the agent at it.",
 		Long: "Capture an image from the HOST system clipboard, write it into the island's " +
-			"intake dir, and inject a `Read <path>` line into the target agent's prompt so it " +
-			"reads the image.\n\n" +
+			"intake dir, and inject the staged path into the target agent's prompt as a " +
+			"bracketed paste so it attaches the image (an image artifact, not a link).\n\n" +
 			"Clipboard-image capture is host-platform-specific (macOS today). Where it isn't " +
 			"supported, save the image to a file and use `dejima cp ./img.png <island>:" +
 			pasteIntakeDir + "/img.png` instead.\n\n" +
@@ -79,27 +80,31 @@ func newPasteCmd() *cobra.Command {
 
 			if noInject || tmux == "" {
 				if tmux == "" && !noInject {
-					fmt.Printf("agent %q has no interactive session; not injecting. Tell it: Read %s\n", resolvedAgent, dest)
+					fmt.Printf("agent %q has no interactive session; not injecting. Point it at: %s\n", resolvedAgent, dest)
 				}
 				return nil
 			}
 
-			// Inject via the same `tmux send-keys` the wake path uses, run through
-			// the existing exec channel — no new endpoint, no grant routes touched.
-			line := "Read " + dest
-			res, err := c.ExecInIsland(cmd.Context(), island, []string{"tmux", "send-keys", "-t", tmux, line, "Enter"})
+			// Inject the staged path as a BRACKETED PASTE (send-keys -l, no Enter),
+			// run through the existing exec channel — no new endpoint, no grant
+			// routes touched. The bracketed-paste framing (\e[200~…\e[201~) is what
+			// makes an adapter like Claude Code auto-attach the file as an image
+			// artifact instead of rendering the path as a literal link. No Enter:
+			// the image pill lands in the prompt for the agent's next turn rather
+			// than submitting a bare image on its own.
+			res, err := c.ExecInIsland(cmd.Context(), island, []string{"tmux", "send-keys", "-t", tmux, "-l", bracketedPaste(dest)})
 			if err != nil {
-				return fmt.Errorf("inject `Read` into agent %q: %w", resolvedAgent, err)
+				return fmt.Errorf("inject paste into agent %q: %w", resolvedAgent, err)
 			}
 			if res != nil && res.ExitCode != 0 {
 				return fmt.Errorf("inject into agent %q: tmux send-keys exit %d", resolvedAgent, res.ExitCode)
 			}
-			fmt.Printf("injected into %s/%s: %s\n", island, resolvedAgent, line)
+			fmt.Printf("injected image → %s/%s (%s)\n", island, resolvedAgent, dest)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&agentID, "agent", "", "target agent id (default: the island's first interactive agent)")
-	cmd.Flags().BoolVar(&noInject, "no-inject", false, "stage the image but don't inject a `Read` line")
+	cmd.Flags().BoolVar(&noInject, "no-inject", false, "stage the image but don't inject it into the agent's prompt")
 	return cmd
 }
 
