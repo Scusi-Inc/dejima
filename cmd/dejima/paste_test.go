@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -98,3 +99,20 @@ func TestPasteCaptureHint(t *testing.T) {
 
 // Compile-time assertion that the real client satisfies the narrowed interface.
 var _ apiClient = (*api.Client)(nil)
+
+func TestBracketedPaste(t *testing.T) {
+	const path = "/home/dejima/intake/paste/clip-20260701-180600.png"
+	got := bracketedPaste(path)
+	want := "\x1b[200~" + path + "\x1b[201~"
+	if got != want {
+		t.Fatalf("bracketedPaste(%q) = %q, want %q", path, got, want)
+	}
+	// The framing — not the raw path — is what makes an adapter treat the inject
+	// as a paste (→ image attach) rather than typed text (→ literal link).
+	if !strings.HasPrefix(got, bpStart) || !strings.HasSuffix(got, bpEnd) {
+		t.Fatalf("bracketedPaste output missing DEC 2004 markers: %q", got)
+	}
+	if !strings.Contains(got, path) {
+		t.Fatalf("bracketedPaste dropped the payload path: %q", got)
+	}
+}
