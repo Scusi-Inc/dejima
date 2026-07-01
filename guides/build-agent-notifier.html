@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Build an agent notifier in 40 lines (Dejima webhooks) — Dejima</title>
-<meta name="description" content="Stop watching the dashboard. Subscribe to Dejima's webhook events and forward the ones you care about — agent finished, agent needs input — to a phone push. A working notifier in about 30 lines, no SDK required.">
+<meta name="description" content="Stop watching the dashboard. Subscribe to Dejima's webhook events and forward the ones you care about (agent finished, agent needs input) to a phone push. A working notifier in about 30 lines, no SDK required.">
 <link rel="canonical" href="https://dejima.tech/guides/build-agent-notifier.html">
 <meta property="og:title" content="Build an agent notifier in 40 lines">
 <meta property="og:description" content="Forward Dejima's agent webhook events to a phone push. A working notifier in ~30 lines, no SDK required.">
@@ -63,9 +63,9 @@
   "payload": { ... }, "timestamp": "2026-07-01T18:22:04Z" }</code></pre>
   <p>The events worth a notification are the per-agent ones:</p>
   <ul>
-    <li><code>agent.waiting-for-input</code> — the agent is stuck and needs you.</li>
-    <li><code>agent.task-complete</code> — it finished what you asked.</li>
-    <li><code>agent.error</code> — it hit an error.</li>
+    <li><code>agent.waiting-for-input</code> fires when the agent is stuck and needs you.</li>
+    <li><code>agent.task-complete</code> fires when it finishes what you asked.</li>
+    <li><code>agent.error</code> fires when it hits an error.</li>
   </ul>
   <p>There's more (island lifecycle, client attach/detach, <code>agent.usage</code> for token counts), but those three are the ones you'll want on your phone.</p>
 
