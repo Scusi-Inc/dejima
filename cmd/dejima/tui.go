@@ -1235,6 +1235,17 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the copyable invite, list + revoke issued tokens. The list call gates the
 		// view to owners (a non-owner caller 403s → an explanatory panel).
 		return m.openTeamView()
+	case "#":
+		// Toggle bare agent ids on/off live (names-only by default). The same
+		// reveal the --ids flag / DEJIMA_SHOW_IDS set at launch; every agent render
+		// resolves through agentDisplay, so flipping showIDs re-labels on next draw.
+		showIDs = !showIDs
+		if showIDs {
+			m.lastNotice = "showing agent ids (name (id)) — press # to hide"
+		} else {
+			m.lastNotice = "names only — press # to reveal ids"
+		}
+		return m, nil
 	case "!":
 		// Demo-only: stage/unstage the action-gate scene (pending actions + badge)
 		// so the hero fleet shot stays clean until you want the approval clip.
@@ -3053,15 +3064,14 @@ func agentGlyph(a api.AgentInfo) string {
 	return style.Render(g)
 }
 
-// agentDisplayName is the human-facing name for an agent: its user-given label
-// if set, else its id (p1/p2/…). The id is also the addressing handle (it still
-// leads the detail view), so an unlabeled agent shows that handle rather than a
-// generic type name. See [agentRowText] / renderAgentDetail.
+// agentDisplayName is the human-facing name for an agent: its label by default,
+// the id appended ("label (id)") only when --ids/DEJIMA_SHOW_IDS is on, and the
+// bare id when there's no label. Delegates to the shared agentDisplay helper so
+// the TUI honors the same names-only-unless-asked reveal toggle as the CLI (the
+// `#` key flips it live; see handleKey). Every agent surface in the TUI resolves
+// through here, so this is the single place that governs id visibility.
 func agentDisplayName(a api.AgentInfo) string {
-	if a.Label != "" {
-		return a.Label
-	}
-	return a.ID
+	return agentDisplay(a.Label, a.ID)
 }
 
 // agentDisplayIn resolves an agent id to its display name (label, else id)
@@ -3717,6 +3727,7 @@ func (m tuiModel) renderHelp() string {
 		{"P", "Port scopes — brokered host-file grants (add/revoke; deny-all by default)"},
 		{"V", "approvals — review/approve/deny pending cross-island actions (the action gate)"},
 		{"I", "team — invite a teammate (mint a role-scoped token), list/revoke tokens (owner-only)"},
+		{"#", "reveal / hide agent ids (names only by default)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
