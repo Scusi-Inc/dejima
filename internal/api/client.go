@@ -1038,6 +1038,20 @@ func (c *Client) Overview(ctx context.Context) (*OverviewResponse, error) {
 	return &out, nil
 }
 
+// Aggregate returns the privacy-preserving, host-wide utilization rollup: counts
+// and totals across ALL islands, with no names/repos/owners/per-island rows —
+// so a teammate can see shared-host load without seeing what's running (the
+// multi-tenant design's aggregate; readable by any authenticated caller). The
+// GET /v1/aggregate handler is a1's P3; this client type is the shared contract
+// (field tags locked with a1).
+func (c *Client) Aggregate(ctx context.Context) (*AggregateResponse, error) {
+	var out AggregateResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/aggregate", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // AuthorizeAccountKey enrolls a public key fleet-wide via the daemon (which
 // performs the write). Lets any operator device self-enroll without copying its
 // key to the daemon host. Returns the key's fingerprint.

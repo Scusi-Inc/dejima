@@ -192,6 +192,7 @@ type tuiModel struct {
 	approvals    *approvalsView    // non-nil while the action-gate approvals overlay is open (opened with `V`)
 	identity     *identityView     // non-nil while the visual-identity editor is open (opened with `i`)
 	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
+	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
 	// gate is unused/disabled. See tui_approvals.go.
@@ -875,6 +876,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case aggregateLoadedMsg:
+		if m.aggregate != nil {
+			m.aggregate.applyLoaded(msg)
+		}
+		return m, nil
+
 	case tokenMintedMsg:
 		if m.team != nil {
 			m.team.minting = false
@@ -1241,6 +1248,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.team != nil {
 		return m.teamKey(msg)
 	}
+	// The host-utilization panel owns keys while open.
+	if m.aggregate != nil {
+		return m.aggregateKey(msg)
+	}
 	// The host-terminal band owns keys while focused (expanded + driving). After
 	// the confirm guard, so a band-opened "close terminal" confirm takes keys.
 	if m.bandFocused {
@@ -1416,6 +1427,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Toggle grouping the island list by repo (sibling/project view). Also
 		// reachable from Settings; kept as a power-user accelerator.
 		return m.toggleGrouped(), nil
+	case "%":
+		// Host-utilization panel — the privacy-preserving aggregate (counts +
+		// total mem/cpu/disk, no names). Multi-tenant P4; readable by any caller.
+		return m.openAggregateView()
 	case "O":
 		// Ownership lens (multi-tenant): flip the host-owner's view between your
 		// islands (default) and every island on the daemon. A teammate's list is
@@ -2615,6 +2630,11 @@ func (m tuiModel) View() string {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderTeamView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.aggregate != nil {
+		box := styleMenuBox.Render(m.renderAggregateView())
+		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 
 	footer := m.renderFooter()
 	// The pinned host-terminal band sits between the header and the island list;
@@ -3810,6 +3830,7 @@ func (m tuiModel) renderHelp() string {
 		{"I", "team — invite a teammate (mint a role-scoped token), list/revoke tokens (owner-only)"},
 		{"#", "reveal / hide agent ids (names only by default)"},
 		{"O", "owner lens — your islands (default) vs all islands on the daemon"},
+		{"%", "host utilization — shared totals across all islands (no names)"},
 		{"R", "refresh now"},
 	}
 	for _, kv := range manage {
