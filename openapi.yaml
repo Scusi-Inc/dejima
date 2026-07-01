@@ -185,6 +185,52 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/IslandInfo" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/schedules:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: List the island's durable scheduled wakes
+      operationId: listSchedules
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ScheduleInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [islands]
+      summary: Add a durable scheduled wake (one-shot --at or recurring --every)
+      operationId: createSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateScheduleRequest" }
+      responses:
+        "201":
+          description: Created — the new schedule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduleInfo" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/schedules/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [islands]
+      summary: Cancel a scheduled wake
+      operationId: deleteSchedule
+      responses:
+        "204": { description: No Content — the schedule was removed }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/hibernate:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
@@ -1765,6 +1811,26 @@ components:
         no_hibernate:
           type: boolean
           description: Pin the island awake — exempt it from idle auto-hibernate.
+    CreateScheduleRequest:
+      type: object
+      description: >
+        A durable scheduled wake. Exactly one of `every` (recurring) or `at`
+        (one-shot) is required.
+      properties:
+        every: { type: string, description: "Recurring cadence as a Go duration, e.g. 720h" }
+        at: { type: string, format: date-time, description: "One-shot wake time (RFC3339)" }
+        task: { type: string, description: "Prompt injected into the agent on wake" }
+        agent: { type: string, description: "Agent id/label to run the task; empty = primary" }
+    ScheduleInfo:
+      type: object
+      properties:
+        id: { type: string }
+        every: { type: string }
+        task: { type: string }
+        agent: { type: string }
+        next_due: { type: string, format: date-time }
+        last_run: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
     CloneIslandRequest:
       type: object
       required: [new_name]

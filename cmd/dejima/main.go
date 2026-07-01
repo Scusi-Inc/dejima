@@ -215,6 +215,7 @@ func newRootCmd() *cobra.Command {
 		newWakeCmd(),
 		newPinCmd(),
 		newUnpinCmd(),
+		newScheduleCmd(),
 		newResetCmd(),
 		newPurgeCmd(),
 		newPanicCmd(),
@@ -872,14 +873,33 @@ func newUnpinCmd() *cobra.Command {
 // --- wake -----------------------------------------------------------------
 
 func newWakeCmd() *cobra.Command {
-	return &cobra.Command{
+	var at, every, task, agent string
+	cmd := &cobra.Command{
 		Use:   "wake <name>",
-		Short: "Start a hibernated island.",
-		Args:  cobra.ExactArgs(1),
+		Short: "Start a hibernated island, now or on a schedule.",
+		Long: "With no flags, wakes the island immediately. With --at or --every it instead " +
+			"registers a durable SCHEDULED wake the daemon fires later (surviving daemon " +
+			"restart and `dejima upgrade`) — for an ambient agent that should hibernate " +
+			"between runs. --task injects a prompt into the agent on wake so it runs its work; " +
+			"--agent picks which agent (default: the primary). Inspect with `dejima schedule " +
+			"list <name>`.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
 			if err != nil {
 				return err
+			}
+			// Scheduling mode: --at (one-shot) or --every (recurring).
+			if at != "" || every != "" {
+				sc, err := c.CreateSchedule(cmd.Context(), args[0], api.CreateScheduleRequest{
+					Every: every, At: at, Task: task, Agent: agent,
+				})
+				if err != nil {
+					return err
+				}
+				fmt.Printf("scheduled wake %s on %s — next due %s\n",
+					sc.ID, args[0], sc.NextDue.Local().Format(time.RFC3339))
+				return nil
 			}
 			info, err := c.WakeIsland(cmd.Context(), args[0])
 			if err != nil {
@@ -889,6 +909,70 @@ func newWakeCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&at, "at", "", "schedule a one-shot wake at an RFC3339 time (e.g. 2026-07-01T09:00:00Z)")
+	cmd.Flags().StringVar(&every, "every", "", "schedule a recurring wake every Go duration (e.g. 720h)")
+	cmd.Flags().StringVar(&task, "task", "", "prompt to inject into the agent on a scheduled wake (so it runs its work)")
+	cmd.Flags().StringVar(&agent, "agent", "", "agent id/label to run --task (default: the island's primary)")
+	return cmd
+}
+
+// --- schedule (list / rm) -------------------------------------------------
+
+func newScheduleCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "schedule",
+		Short: "Inspect or cancel an island's scheduled wakes.",
+	}
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "list <name>",
+			Short: "List an island's scheduled wakes.",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				c, err := client()
+				if err != nil {
+					return err
+				}
+				schedules, err := c.ListSchedules(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				if len(schedules) == 0 {
+					fmt.Printf("no scheduled wakes on %s\n", args[0])
+					return nil
+				}
+				for _, s := range schedules {
+					cadence := "at " + s.NextDue.Local().Format(time.RFC3339)
+					if s.Every != "" {
+						cadence = "every " + s.Every
+					}
+					line := fmt.Sprintf("%s\t%s\tnext %s", s.ID, cadence, s.NextDue.Local().Format(time.RFC3339))
+					if s.Task != "" {
+						line += fmt.Sprintf("\ttask=%q", s.Task)
+					}
+					fmt.Println(line)
+				}
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "rm <name> <schedule-id>",
+			Short: "Cancel a scheduled wake.",
+			Args:  cobra.ExactArgs(2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				c, err := client()
+				if err != nil {
+					return err
+				}
+				if err := c.DeleteSchedule(cmd.Context(), args[0], args[1]); err != nil {
+					return err
+				}
+				fmt.Printf("removed schedule %s from %s\n", args[1], args[0])
+				return nil
+			},
+		},
+	)
+	return cmd
 }
 
 // --- reset ----------------------------------------------------------------

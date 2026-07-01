@@ -408,6 +408,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	server.EmitDaemonStarted(listenModes)
 	go server.RunWatchdog(ctx, 0)
 	go server.RunIdleHibernator(ctx, idleHibernate) // no-op when idleHibernate == 0
+	go server.RunScheduler(ctx)                     // fire durable per-island scheduled wakes
 	go server.RunSpawnReaper(ctx)                   // reap exited/aged/orphaned ephemeral sub-agents
 	server.SetWakeNotify(wakeNotify)
 	go server.RunWakeNotifier(ctx, wakeFlush) // wake-on-message (Lane 5 P3.5); no-op when disabled
