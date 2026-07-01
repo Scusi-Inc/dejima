@@ -33,3 +33,7 @@ large uncommitted changes.
 **You may not be alone.** An island can hold several agents, each in its own git
 worktree, sharing the repo + credentials. Run `dejima msg poll` to see who else
 is here.
+
+**Learn more.** To see what you can do here, run `dejima --help` (and
+`dejima <cmd> --help` for a specific command). Full docs:
+https://dejima.tech/island.html
