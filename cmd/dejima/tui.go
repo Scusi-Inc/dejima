@@ -14,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/api"
@@ -3821,11 +3822,24 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString(styleTitle.Render("Dejima — how to use it"))
 	b.WriteString("\n\n")
 
+	// The overlay renders into a bordered, single-padded pane spanning the width,
+	// so the usable content is m.width - 4 (2 border + 2 padding). Truncate every
+	// row to that so a narrow terminal clips with an … instead of wrapping — a wrap
+	// would desync the scroll window's line accounting. Floor keeps it sane before
+	// the first resize.
+	contentW := m.width - 4
+	if contentW < 24 {
+		contentW = 24
+	}
+
 	sec := func(title string, rows [][2]string) {
-		b.WriteString(styleHeader.Render(title))
+		b.WriteString(styleHeader.Render(truncateDisplay(title, contentW)))
 		b.WriteString("\n")
 		for _, kv := range rows {
-			b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-9s", kv[0])), styleMuted.Render(kv[1])))
+			key := runewidth.FillRight(kv[0], 9)          // display-width padding (bytes ≠ cols for ⏎/↑↓)
+			prefixW := 2 + runewidth.StringWidth(key) + 2 // "  " + key + "  "
+			desc := truncateDisplay(kv[1], contentW-prefixW)
+			b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(key), styleMuted.Render(desc)))
 		}
 		b.WriteString("\n")
 	}
@@ -3880,24 +3894,43 @@ func (m tuiModel) renderHelp() string {
 		{"?", "this help   ·   q quit the dashboard"},
 	})
 
-	b.WriteString(styleMuted.Render("An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."))
+	para := "An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."
+	paraLines := strings.Split(para, "\n")
+	for i, l := range paraLines {
+		paraLines[i] = truncateDisplay(l, contentW)
+	}
+	b.WriteString(styleMuted.Render(strings.Join(paraLines, "\n")))
 	b.WriteString("\n\n")
-	b.WriteString(styleHeader.Render("Glyphs"))
+	b.WriteString(styleHeader.Render(truncateDisplay("Glyphs", contentW)))
 	b.WriteString("\n  ")
-	b.WriteString(styleMuted.Render(fmt.Sprintf(
+	// These two lines mix styled spans, so we can't safely cut them mid-ANSI.
+	// Fall back to a truncated, unstyled version when they'd overflow the pane
+	// (losing color on a very narrow terminal beats a wrap that desyncs scroll).
+	glyphLine := styleMuted.Render(fmt.Sprintf(
 		"%s island   %s AI agent   %s shell   %s headless   ", "●", glyphAgent, glyphTerminal, glyphHeadless)) +
-		styleAccent.Render("◉") + styleMuted.Render(" attached (someone's driving)"))
+		styleAccent.Render("◉") + styleMuted.Render(" attached (someone's driving)")
+	glyphPlain := fmt.Sprintf("%s island   %s AI agent   %s shell   %s headless   ◉ attached (someone's driving)",
+		"●", glyphAgent, glyphTerminal, glyphHeadless)
+	if runewidth.StringWidth(glyphPlain) > contentW-2 {
+		glyphLine = styleMuted.Render(truncateDisplay(glyphPlain, contentW-2))
+	}
+	b.WriteString(glyphLine)
 	b.WriteString("\n  ")
-	b.WriteString(styleMuted.Render("color = state: ") +
+	stateLine := styleMuted.Render("color = state: ") +
 		styleRunning.Render("working") + styleMuted.Render(" · ") +
 		styleHibernate.Render("idle/stopped") + styleMuted.Render(" · ") +
 		styleNeedsYou.Render("needs you") + styleMuted.Render(" · ") +
-		styleErrored.Render("error"))
+		styleErrored.Render("error")
+	statePlain := "color = state: working · idle/stopped · needs you · error"
+	if runewidth.StringWidth(statePlain) > contentW-2 {
+		stateLine = styleMuted.Render(truncateDisplay(statePlain, contentW-2))
+	}
+	b.WriteString(stateLine)
 	b.WriteString("\n  ")
-	b.WriteString(styleMuted.Render("islands are uniform by default; give one its own color + glyph via the actions menu (m → Color & glyph)"))
+	b.WriteString(styleMuted.Render(truncateDisplay("islands are uniform by default; give one its own color + glyph via the actions menu (m → Color & glyph)", contentW-2)))
 	b.WriteString("\n\n")
 
-	b.WriteString(styleHeader.Render("From the shell (scriptable; the TUI is just a front-end)"))
+	b.WriteString(styleHeader.Render(truncateDisplay("From the shell (scriptable; the TUI is just a front-end)", contentW)))
 	b.WriteString("\n")
 	shell := [][2]string{
 		{"dejima init --repo <url|path>", "provision an island (--local-copy to seed unpushed work)"},
@@ -3911,8 +3944,17 @@ func (m tuiModel) renderHelp() string {
 		{"dejima auth push / status", "send this machine's Claude login to the daemon host"},
 		{"DEJIMA_HOST=host:7273 dejima …", "drive a remote daemon over your tailnet"},
 	}
+	// Command column is normally 58 cols, but clamp it on a narrow terminal so the
+	// padded column + prefix can never exceed the pane (which would wrap).
+	colW := 58
+	if colW > contentW-4 {
+		colW = contentW - 4
+	}
 	for _, kv := range shell {
-		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(fmt.Sprintf("%-58s", kv[0])), styleMuted.Render(kv[1])))
+		cmd := runewidth.FillRight(truncateDisplay(kv[0], colW), colW)
+		prefixW := 2 + runewidth.StringWidth(cmd) + 2
+		desc := truncateDisplay(kv[1], contentW-prefixW)
+		b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(cmd), styleMuted.Render(desc)))
 	}
 
 	b.WriteString("\n")
@@ -4274,6 +4316,33 @@ func truncate(s string, n int) string {
 		return s[:n]
 	}
 	return s[:n-1] + "…"
+}
+
+// truncateDisplay shortens s to fit w terminal columns measured by display width
+// (not bytes), appending … when it clips. Rune- and wide-char-aware, so it never
+// splits a multibyte glyph (·, —, ⏎) mid-sequence. Operate on UNSTYLED text —
+// truncate before applying lipgloss styles. Introducing no wraps keeps the help
+// overlay's line count stable, so the scroll window stays in sync.
+func truncateDisplay(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if runewidth.StringWidth(s) <= w {
+		return s
+	}
+	target := w - 1 // reserve a column for the ellipsis
+	var b strings.Builder
+	width := 0
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if width+rw > target {
+			break
+		}
+		b.WriteRune(r)
+		width += rw
+	}
+	b.WriteRune('…')
+	return b.String()
 }
 
 func timeAgo(t time.Time) string {
