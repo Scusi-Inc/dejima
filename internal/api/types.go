@@ -22,19 +22,22 @@ type IslandInfo struct {
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
-	Role       string            `json:"role,omitempty"`
-	Owner      string            `json:"owner,omitempty"`
-	Tags       map[string]string `json:"tags,omitempty"`
-	State      string            `json:"state"`     // desired state from config
-	Container  string            `json:"container"` // observed status from runtime
-	CreatedAt  time.Time         `json:"created_at"`
-	LastUsedAt time.Time         `json:"last_used_at"`
-	Attached   []PresenceEntry   `json:"attached,omitempty"`
-	Stats      *IslandStats      `json:"stats,omitempty"`
-	AgentState *AgentStateInfo   `json:"agent_state,omitempty"`
-	Git        *GitInfo          `json:"git,omitempty"`
-	Health     *IslandHealth     `json:"health,omitempty"`
-	Disk       *IslandDisk       `json:"disk,omitempty"`
+	Role      string            `json:"role,omitempty"`
+	Owner     string            `json:"owner,omitempty"`
+	Tags      map[string]string `json:"tags,omitempty"`
+	State     string            `json:"state"`     // desired state from config
+	Container string            `json:"container"` // observed status from runtime
+	// NoHibernate is true when the island is pinned awake (exempt from idle
+	// auto-hibernate). Set via PATCH /v1/islands/{name} (dejima pin/unpin).
+	NoHibernate bool            `json:"no_hibernate,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	LastUsedAt  time.Time       `json:"last_used_at"`
+	Attached    []PresenceEntry `json:"attached,omitempty"`
+	Stats       *IslandStats    `json:"stats,omitempty"`
+	AgentState  *AgentStateInfo `json:"agent_state,omitempty"`
+	Git         *GitInfo        `json:"git,omitempty"`
+	Health      *IslandHealth   `json:"health,omitempty"`
+	Disk        *IslandDisk     `json:"disk,omitempty"`
 	// Resources are the island's configured caps + OOM priority (nil OOMPriority
 	// means the smart default applies). Present on both the list and detail
 	// endpoints — cheap (read from island config) and needed alongside Stats so a
@@ -319,8 +322,13 @@ type CreateIslandResponse struct {
 
 // UpdateIslandRequest is the body of PATCH /v1/islands/{name}. Only cosmetic,
 // in-place-editable fields live here (Name and infra identity are immutable).
+// Fields are pointers so a request applies ONLY what it sends — a no_hibernate
+// update doesn't clobber the title, and vice-versa.
 type UpdateIslandRequest struct {
-	Title string `json:"title"`
+	Title *string `json:"title,omitempty"`
+	// NoHibernate pins the island awake (exempt from idle auto-hibernate). nil
+	// leaves the current setting unchanged.
+	NoHibernate *bool `json:"no_hibernate,omitempty"`
 }
 
 // AgentSpecRequest describes one agent to create — either as an element of

@@ -1300,7 +1300,14 @@ func (s *Server) updateIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
-	p.Title = strings.TrimSpace(req.Title) // empty clears it
+	// Apply only the fields the request actually sent (pointers) so updating one
+	// can't clobber the other.
+	if req.Title != nil {
+		p.Title = strings.TrimSpace(*req.Title) // empty clears it
+	}
+	if req.NoHibernate != nil {
+		p.NoHibernate = *req.NoHibernate
+	}
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -2639,18 +2646,19 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		agentType, cmd = pa.Type, pa.Cmd
 	}
 	info := IslandInfo{
-		Name:       p.Name,
-		Title:      p.Title,
-		Repo:       p.RepoURL,
-		Agent:      agentType,
-		Image:      p.Image,
-		Cmd:        cmd,
-		Role:       p.Role,
-		Owner:      p.Owner,
-		Tags:       p.Tags,
-		State:      string(p.DesiredState),
-		CreatedAt:  p.CreatedAt,
-		LastUsedAt: p.LastUsedAt,
+		Name:        p.Name,
+		Title:       p.Title,
+		Repo:        p.RepoURL,
+		Agent:       agentType,
+		Image:       p.Image,
+		Cmd:         cmd,
+		Role:        p.Role,
+		Owner:       p.Owner,
+		Tags:        p.Tags,
+		State:       string(p.DesiredState),
+		NoHibernate: p.NoHibernate,
+		CreatedAt:   p.CreatedAt,
+		LastUsedAt:  p.LastUsedAt,
 	}
 	if status, err := s.rt.Status(ctx, p.ContainerName()); err == nil {
 		info.Container = string(status)
