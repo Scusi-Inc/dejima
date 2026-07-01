@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build an agent notifier in 40 lines (Dejima webhooks) — Dejima</title>
+<meta name="description" content="Stop watching the dashboard. Subscribe to Dejima's webhook events and forward the ones you care about — agent finished, agent needs input — to a phone push. A working notifier in about 30 lines, no SDK required.">
+<link rel="canonical" href="https://dejima.tech/guides/build-agent-notifier.html">
+<meta property="og:title" content="Build an agent notifier in 40 lines">
+<meta property="og:description" content="Forward Dejima's agent webhook events to a phone push. A working notifier in ~30 lines, no SDK required.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dejima.tech/guides/build-agent-notifier.html">
+<meta property="og:image" content="https://dejima.tech/assets/og-build-notifier.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dejima.tech/assets/og-build-notifier.png">
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="../assets/favicon-256.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
+{"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
+{"@type":"ListItem","position":3,"name":"Build an agent notifier","item":"https://dejima.tech/guides/build-agent-notifier.html"}]},
+{"@type":"TechArticle","headline":"Build an agent notifier in 40 lines","description":"Subscribe to Dejima's webhook events and forward the ones you care about, like agent-finished and agent-needs-input, to a phone push. A working notifier in about 30 lines, no SDK required.","image":"https://dejima.tech/assets/og-build-notifier.png","datePublished":"2026-07-01","dateModified":"2026-07-01","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/build-agent-notifier.html"},
+{"@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"How do I get notified when my AI agent needs input?","acceptedAnswer":{"@type":"Answer","text":"Dejima emits an agent.waiting-for-input webhook event. Subscribe a URL with dejima webhook subscribe --url, and forward that event to a push service like ntfy. A server of about 30 lines does it; no SDK is required."}},
+{"@type":"Question","name":"What events can I subscribe to?","acceptedAnswer":{"@type":"Answer","text":"Island lifecycle (created, running, hibernated, woken, purged), client attach and detach, and per-agent events: waiting-for-input, task-complete, error, and usage. You subscribe once and filter for the ones you want."}},
+{"@type":"Question","name":"Do I need the SDK to build on Dejima?","acceptedAnswer":{"@type":"Answer","text":"No. Webhooks are plain JSON POSTs, so any HTTP server works. The Python and TypeScript SDKs help when you want to drive islands and attach to sessions programmatically, but a notifier only needs to receive events."}}
+]}
+]}
+</script>
+</head>
+<body>
+<main>
+
+<header>
+  <a class="brand" href="../index.html"><img src="../assets/logo-transparent.png" alt=""><span class="brand-name">Dejima</span></a>
+  <span class="pill">free · open source</span>
+</header>
+
+<nav class="topnav" aria-label="Site">
+  <a href="../index.html">Home</a>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="index.html" aria-current="page">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API</a>
+  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+</nav>
+
+<article class="post">
+  <p class="post-meta">Tutorial · 5 min read</p>
+  <h1 class="post-h">Build an agent notifier in 40 lines</h1>
+  <p class="lede">You don't want to sit and watch a dashboard to catch the moment an agent finishes or gets stuck. Let it tell you. Dejima emits a webhook for every agent event, so a tiny server can turn "task complete" into a push on your phone. Here's the whole thing.</p>
+
+  <h2>What Dejima sends you</h2>
+  <p>Subscribe a URL and Dejima POSTs it a small JSON object for every event. Each looks like this:</p>
+  <pre><code>{ "type": "agent.task-complete", "island": "web", "agent": "a1",
+  "payload": { ... }, "timestamp": "2026-07-01T18:22:04Z" }</code></pre>
+  <p>The events worth a notification are the per-agent ones:</p>
+  <ul>
+    <li><code>agent.waiting-for-input</code> — the agent is stuck and needs you.</li>
+    <li><code>agent.task-complete</code> — it finished what you asked.</li>
+    <li><code>agent.error</code> — it hit an error.</li>
+  </ul>
+  <p>There's more (island lifecycle, client attach/detach, <code>agent.usage</code> for token counts), but those three are the ones you'll want on your phone.</p>
+
+  <h2>The notifier</h2>
+  <p>A plain Node HTTP server, no framework and no SDK. It receives Dejima's events, keeps the three we care about, and forwards a one-line message to an <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> topic (free push to your phone). Save it as <code>notifier.mjs</code>:</p>
+  <pre><code>import http from 'node:http'
+
+const NTFY = 'https://ntfy.sh/your-private-topic'   // your ntfy topic
+const NOTIFY = new Set([
+  'agent.waiting-for-input', 'agent.task-complete', 'agent.error',
+])
+
+http.createServer((req, res) =&gt; {
+  if (req.method !== 'POST') { res.writeHead(405).end(); return }
+  let body = ''
+  req.on('data', c =&gt; (body += c))
+  req.on('end', async () =&gt; {
+    res.writeHead(204).end()                    // ack Dejima right away
+    let ev
+    try { ev = JSON.parse(body) } catch { return }
+    if (!NOTIFY.has(ev.type)) return            // only what we care about
+
+    const who = ev.agent ? `${ev.island}/${ev.agent}` : ev.island
+    const msg = {
+      'agent.waiting-for-input': `${who} needs you`,
+      'agent.task-complete':     `${who} finished`,
+      'agent.error':             `${who} hit an error`,
+    }[ev.type]
+
+    await fetch(NTFY, { method: 'POST', body: msg })   // ntfy shows the body as the push
+  })
+}).listen(8099, () =&gt; console.log('notifier listening on :8099'))</code></pre>
+  <p>That's it. Run it next to your Dejima daemon (or anywhere on your tailnet the daemon can reach):</p>
+  <pre><code>node notifier.mjs</code></pre>
+
+  <h2>Point Dejima at it</h2>
+  <p>Subscribe your server's URL. Use the address the daemon can reach it on (localhost if it's on the same box, or the tailnet name otherwise).</p>
+  <pre><code>dejima webhook subscribe --url http://localhost:8099</code></pre>
+  <p>Now install the ntfy app on your phone and subscribe to the same topic. The next time an agent finishes or asks a question, your phone buzzes. Trigger one to check: give an agent a quick task and wait for the <code>task-complete</code> push.</p>
+
+  <div class="callout">
+    <p><strong>Just want the raw event, no code?</strong> ntfy accepts a plain POST, so you can skip the server and point Dejima straight at your topic: <code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code>. You'll get the raw JSON as the notification. The 30-line server above just makes it readable and lets you filter.</p>
+  </div>
+
+  <h2>Where to take it</h2>
+  <p>The same shape works for anything. Swap the <code>fetch</code> for a Slack incoming webhook, or a Discord one. Filter by <code>ev.island</code> to route different projects to different channels. Watch <code>agent.usage</code> to track token spend. And when you want to go past receiving events to actually driving islands, the <a href="../build.html">Python and TypeScript SDKs</a> wrap the same API the CLI uses.</p>
+
+  <h2 id="faq">Common questions</h2>
+  <div class="faq">
+    <div class="faq-item">
+      <h3>How do I get notified when my AI agent needs input?</h3>
+      <p>Dejima emits an <code>agent.waiting-for-input</code> webhook event. Subscribe a URL with <code>dejima webhook subscribe --url</code>, and forward that event to a push service like ntfy. A server of about 30 lines does it; no SDK is required.</p>
+    </div>
+    <div class="faq-item">
+      <h3>What events can I subscribe to?</h3>
+      <p>Island lifecycle (created, running, hibernated, woken, purged), client attach and detach, and per-agent events: waiting-for-input, task-complete, error, and usage. You subscribe once and filter for the ones you want.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Do I need the SDK to build on Dejima?</h3>
+      <p>No. Webhooks are plain JSON POSTs, so any HTTP server works. The Python and TypeScript SDKs help when you want to drive islands and attach to sessions programmatically, but a notifier only needs to receive events.</p>
+    </div>
+  </div>
+
+  <section class="walkthrough">
+    <h2>Have an AI build it with you</h2>
+    <p>Paste this into your own AI and it'll walk you through wiring it up, adapted to your setup.</p>
+    <div class="fitcheck">
+      <div class="fit-actions">
+        <button type="button" class="copy-btn" data-copy>Copy prompt</button>
+        <a class="deeplink" data-claude href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+        <a class="deeplink" data-chatgpt href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+        <span class="fit-hint">Opens in your own AI. Nothing is sent to us.</span>
+      </div>
+      <textarea class="fit-prompt" data-prompt rows="11" spellcheck="false" aria-label="Prompt to paste into an AI">I want to build a notifier that pushes to my phone when a Dejima agent finishes or needs input, and I'd like you to walk me through it.
+
+First, FETCH and read these so your steps match Dejima's own docs:
+- This tutorial: https://dejima.tech/guides/build-agent-notifier.html
+- Build on Dejima: https://dejima.tech/build.html
+- API reference: https://dejima.tech/api.html
+
+Then walk me through it:
+- Ask where my Dejima daemon runs and where I'll run the notifier (same box or elsewhere on my tailnet), and which push target I want (ntfy, Slack, Discord).
+- Help me stand up the small webhook server for my choice, then run dejima webhook subscribe --url pointed at it.
+- Show me how to trigger a test event and confirm the push arrives.
+
+Goal: a running notifier that buzzes my phone on agent.task-complete / agent.waiting-for-input / agent.error, filtered how I want.</textarea>
+    </div>
+  </section>
+
+  <section class="post-more">
+    <p><a href="../build.html">See the full API surface and the SDKs →</a></p>
+    <p class="small">Related: <a href="audit-agent-actions.html">Audit what your agent did</a> · <a href="../api.html">API reference</a> · <a href="index.html">all guides</a></p>
+  </section>
+</article>
+
+<footer class="footer">
+  <span class="footer-brand">Dejima</span>
+  <a href="../quickstart.html">Quickstart</a>
+  <a href="index.html">Guides</a>
+  <a href="../teams.html">Teams</a>
+  <a href="../api.html">API reference</a>
+  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+</footer>
+
+</main>
+<script src="../walkthrough.js" defer></script>
+<script src="../version.js" defer></script>
+</body>
+</html>
