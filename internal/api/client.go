@@ -892,6 +892,29 @@ func (c *Client) SetIslandHibernation(ctx context.Context, name string, noHibern
 	return &out, nil
 }
 
+// CreateSchedule adds a durable scheduled wake to an island.
+func (c *Client) CreateSchedule(ctx context.Context, name string, req CreateScheduleRequest) (*ScheduleInfo, error) {
+	var out ScheduleInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/schedules", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListSchedules returns an island's scheduled wakes.
+func (c *Client) ListSchedules(ctx context.Context, name string) ([]ScheduleInfo, error) {
+	var out []ScheduleInfo
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+name+"/schedules", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeleteSchedule removes a scheduled wake by id.
+func (c *Client) DeleteSchedule(ctx context.Context, name, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/schedules/"+id, nil, nil)
+}
+
 // ExecInIsland runs a one-shot command inside an island and returns its output.
 func (c *Client) ExecInIsland(ctx context.Context, name string, cmd []string) (*ExecResponse, error) {
 	var out ExecResponse

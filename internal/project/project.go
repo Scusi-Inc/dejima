@@ -118,6 +118,10 @@ type Project struct {
 	// ambient agent — a watchtower / monitor that must keep running between bursts
 	// of work — so an idle window doesn't shut it off. Default false.
 	NoHibernate bool `toml:"no_hibernate,omitempty"`
+	// Schedules are durable per-island scheduled wakes (see schedule.go). The
+	// daemon's scheduler fires each when due, waking the island (and optionally
+	// running a task) — surviving restart and `dejima upgrade`.
+	Schedules []WakeSchedule `toml:"schedules,omitempty"`
 	// Role is the island's purpose: "" (a work island) or "home" (a Home Island
 	// hosting an assistant brain). Empty for islands created before roles existed.
 	Role string `toml:"role,omitempty"`

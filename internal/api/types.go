@@ -337,6 +337,28 @@ type UpdateIslandRequest struct {
 	NoHibernate *bool `json:"no_hibernate,omitempty"`
 }
 
+// CreateScheduleRequest is the body of POST /v1/islands/{name}/schedules. Exactly
+// one of Every (recurring Go duration, e.g. "720h") or At (one-shot RFC3339 time)
+// is required. Task is an optional prompt injected into Agent (id/label; ""=the
+// primary) once the island wakes.
+type CreateScheduleRequest struct {
+	Every string `json:"every,omitempty"`
+	At    string `json:"at,omitempty"`
+	Task  string `json:"task,omitempty"`
+	Agent string `json:"agent,omitempty"`
+}
+
+// ScheduleInfo is the public view of a wake schedule.
+type ScheduleInfo struct {
+	ID        string    `json:"id"`
+	Every     string    `json:"every,omitempty"`
+	Task      string    `json:"task,omitempty"`
+	Agent     string    `json:"agent,omitempty"`
+	NextDue   time.Time `json:"next_due"`
+	LastRun   time.Time `json:"last_run,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // AgentSpecRequest describes one agent to create — either as an element of
 // CreateIslandRequest.Agents or the body of POST /v1/islands/{name}/agents.
 type AgentSpecRequest struct {
