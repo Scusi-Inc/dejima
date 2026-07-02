@@ -232,6 +232,11 @@ func (m tuiModel) teamKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The one-time minted invite owns the pane until dismissed.
 	if v.minted != nil {
 		switch msg.String() {
+		case "c":
+			// Copy the ready-to-run onboarding block (install + join) — or the raw
+			// secret when there's no one-paste invite — to the operator's clipboard.
+			payload, notice := m.mintedCopyPayload()
+			return m, copyToClipboardCmd(payload, notice)
 		case "enter", "esc", "q":
 			v.minted = nil
 			v.loading = true
@@ -553,6 +558,29 @@ func (m tuiModel) renderTeamForm() string {
 	return b.String()
 }
 
+// Canonical client-install commands (source of truth: docs/distribution.md).
+// The curl line covers macOS + Linux; brew is the macOS alternative; the PS line
+// is the Windows client. Shown on the minted-invite panel and used by the copy.
+const (
+	installClientCmd  = "curl -fsSL https://dejima.tech/install-client.sh | bash"
+	installClientBrew = "brew install aoos/dejima/dejima"
+	installClientWin  = "irm https://dejima.tech/install-client.ps1 | iex"
+)
+
+// mintedCopyPayload is what the [c] hotkey puts on the clipboard. For a one-paste
+// invite it's the two-line "install then join" block a teammate pastes on their
+// OWN machine to go from a bare laptop to connected; otherwise it's the raw
+// secret (the no-host fallback). No trailing newline on the join line, so a paste
+// runs the install and leaves `dejima join …` at the prompt to confirm.
+func (m tuiModel) mintedCopyPayload() (payload, notice string) {
+	v := m.team
+	if v.mintedBlob != "" {
+		return installClientCmd + "\ndejima join " + v.mintedBlob,
+			"copied install + join command to clipboard"
+	}
+	return v.minted.Secret, "copied secret to clipboard"
+}
+
 // renderMintedInvite shows the one-time secret and the hand-off details. The
 // secret is shown ONCE — the daemon never returns it again.
 func (m tuiModel) renderMintedInvite() string {
@@ -577,17 +605,24 @@ func (m tuiModel) renderMintedInvite() string {
 		// The one-paste invite — carries the host + secret in a single line. The
 		// teammate accepts it in the TUI (Connection → join via invite) or with
 		// `dejima join <blob>`. It contains the secret, so it's a credential.
-		b.WriteString(styleWaiting.Render("  Send this invite — it's shown only once and carries the secret (treat like a password):"))
+		b.WriteString(styleWaiting.Render("  Send this invite — shown once, and it carries the secret (treat like a password):"))
 		b.WriteString("\n\n")
 		b.WriteString("  " + styleTitle.Render(v.mintedBlob) + "\n\n")
-		b.WriteString(styleHeader.Render("  The teammate runs:"))
-		b.WriteString("\n")
-		b.WriteString("    " + styleAccent.Render("dejima join "+truncate(v.mintedBlob, 28)+"…") + "\n")
-		b.WriteString(styleMuted.Render("    …or, in the TUI: Connection (s) → [j] join via invite, then paste."))
+		// Where + how to run it. The #1 onboarding confusion was teammates running
+		// `dejima join` over SSH ON THIS HOST (old shared binary → "unknown command
+		// join") instead of on their own laptop — and not realizing they must
+		// install first (join can't self-install; chicken/egg). So spell out the
+		// full 2-step quickstart, and say plainly it's the teammate's OWN machine.
+		b.WriteString(styleHeader.Render("  Your teammate runs this on THEIR OWN computer (their laptop) — not on this host:"))
+		b.WriteString("\n\n")
+		b.WriteString("    1. " + styleAccent.Render(installClientCmd) + "\n")
+		b.WriteString(styleMuted.Render("       macOS also: "+installClientBrew+"   ·   Windows: "+installClientWin) + "\n")
+		b.WriteString("    2. " + styleAccent.Render("dejima join "+truncate(v.mintedBlob, 24)+"…") + "\n\n")
+		b.WriteString(styleMuted.Render("    …or accept it in the TUI: Connection (s) → [j] join via invite, then paste."))
 		b.WriteString("\n\n")
 		b.WriteString(styleMuted.Render("  Revoke anytime from the list below ([d] on the token)."))
 		b.WriteString("\n\n")
-		b.WriteString(styleMuted.Render("  [enter/esc] done"))
+		b.WriteString(styleMuted.Render("  [c] copy install+join   [enter/esc] done"))
 		return b.String()
 	}
 
@@ -602,7 +637,7 @@ func (m tuiModel) renderMintedInvite() string {
 	b.WriteString("    export DEJIMA_TOKEN=" + styleAccent.Render("<the secret above>") + "\n\n")
 	b.WriteString(styleMuted.Render("  Tip: set Host on the form to get a single paste-safe invite instead."))
 	b.WriteString("\n\n")
-	b.WriteString(styleMuted.Render("  [enter/esc] done"))
+	b.WriteString(styleMuted.Render("  [c] copy secret   [enter/esc] done"))
 	return b.String()
 }
 

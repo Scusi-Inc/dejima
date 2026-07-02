@@ -910,6 +910,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case clipboardCopiedMsg:
+		// The OSC-52 escape was already written; surface the ✓ confirmation.
+		m.lastNotice = msg.notice
+		return m, nil
+
 	case tokenRevokedMsg:
 		if m.team != nil {
 			if msg.err != nil {
