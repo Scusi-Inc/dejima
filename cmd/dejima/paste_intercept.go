@@ -160,6 +160,17 @@ func (s *pasteScanner) holdback(data []byte) int {
 	return keep
 }
 
+// cleanClientPath strips surrounding whitespace, a matching pair of quotes, and a
+// file:// scheme from a client-supplied path (a dragged path, or one typed/pasted
+// into the attach minibuffer). It does not expand ~ (see expandClientPath) or
+// check existence — callers os.Stat the result.
+func cleanClientPath(s string) string {
+	p := strings.TrimSpace(s)
+	p = strings.TrimSpace(strings.Trim(p, `"'`))
+	p = strings.TrimPrefix(p, "file://")
+	return p
+}
+
 // droppedLocalFile reports whether content is a single existing client-local
 // regular file path (after stripping surrounding quotes and a file:// scheme),
 // returning the cleaned path. Multi-path / non-existent / directory → not a drop.
@@ -168,8 +179,7 @@ func droppedLocalFile(content []byte) (string, bool) {
 	if p == "" || strings.ContainsAny(p, "\n\r") {
 		return "", false
 	}
-	p = strings.TrimSpace(strings.Trim(p, `"'`))
-	p = strings.TrimPrefix(p, "file://")
+	p = cleanClientPath(p)
 	if p == "" {
 		return "", false
 	}

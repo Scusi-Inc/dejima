@@ -226,6 +226,7 @@ func newRootCmd() *cobra.Command {
 		newExecCmd(),
 		newCpCmd(),
 		newPasteCmd(),
+		newAttachCmd(),
 		newPortCmd(),
 		newCapCmd(),
 		newLinkCmd(),
@@ -1660,16 +1661,7 @@ type sessionPaste struct {
 func islandPaste(ctx context.Context, c *api.Client, island string) *sessionPaste {
 	return &sessionPaste{
 		drop: func(localPath string) (string, error) {
-			f, err := os.Open(localPath)
-			if err != nil {
-				return "", err
-			}
-			defer f.Close()
-			dest := fmt.Sprintf("%s/drop-%d-%s", pasteIntakeDir, time.Now().UnixNano(), filepath.Base(localPath))
-			if err := c.WriteFile(ctx, island, dest, f); err != nil {
-				return "", err
-			}
-			return dest, nil
+			return stageLocalFile(ctx, c, island, localPath)
 		},
 		clip: func() (string, bool, error) {
 			img, err := pasteimg.Capture()
@@ -1819,6 +1811,11 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 			"Session keeps running; this client auto-reconnects if the link drops."
 		if summonable {
 			hint += " Summon the dashboard: Ctrl-\\."
+		}
+		if paste != nil {
+			if lbl := attachKeyLabel(); lbl != "" {
+				hint += " Attach a file: " + lbl + "."
+			}
 		}
 		fmt.Fprintln(os.Stderr, hint)
 		oldState, rerr := term.MakeRaw(stdinFd)
@@ -2023,6 +2020,55 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 		}
 	}()
 
+	// inject writes an in-island path into the agent's input as a BRACKETED PASTE
+	// (no Enter) so the agent treats it as a paste, not typed input: an adapter's
+	// paste-time file handling (Claude Code → image artifact, else a path it can
+	// Read) fires only on a paste event, not on streamed keystrokes. Shared by the
+	// attach-file minibuffer and the drag-drop/clipboard bridge below.
+	inject := func(islandPath string) {
+		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode([]byte(bracketedPaste(islandPath)))})
+	}
+
+	// Attach-file minibuffer (island session on a TTY): the attach chord (Ctrl-O)
+	// opens a local path prompt; the typed/pasted path is uploaded and its in-island
+	// path injected. Terminal drag-drop is flaky over tmux+SSH, so typing a path is
+	// the robust route.
+	var attachKey []byte
+	if intercept {
+		attachKey = configuredAttachKey()
+	}
+	var attaching *attachState
+	finishAttach := func(p string) {
+		p = expandClientPath(p)
+		if p == "" {
+			fmt.Fprint(os.Stderr, "\r\n[dejima] attach cancelled (no path)\r\n")
+			return
+		}
+		if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
+			fmt.Fprintf(os.Stderr, "\r\n[dejima] attach failed: %s is not a readable file\r\n", p)
+			return
+		}
+		islandPath, err := bridge.drop(p)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\r\n[dejima] attach failed: %v\r\n", err)
+			return
+		}
+		inject(islandPath)
+		fmt.Fprintf(os.Stderr, "\r\n📎 attached: %s → %s\r\n", filepath.Base(p), islandPath)
+	}
+	// stepAttach feeds a chunk into the open minibuffer, resolving it on Enter/Esc.
+	stepAttach := func(b []byte) {
+		done, cancelled, p := attaching.feed(b)
+		switch {
+		case cancelled:
+			attaching = nil
+			fmt.Fprint(os.Stderr, "\r\n[dejima] attach cancelled\r\n")
+		case done:
+			attaching = nil
+			finishAttach(p)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -2032,22 +2078,35 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 		case r := <-readReason:
 			return r
 		case b := <-stdinCh:
+			// While the attach minibuffer is open it owns the keystroke stream:
+			// collect a path (not forwarded to the agent) until Enter or Esc.
+			if attaching != nil {
+				stepAttach(b)
+				continue
+			}
 			// The summon chord (Ctrl-\) breaks out to the dashboard: forward any
 			// keystrokes before it, then end the session with sessExitSummon. The
 			// deferred NormalClosure detaches cleanly — the tmux session lives on.
 			before, summon := splitOnSummon(b, summonable)
+			// Attach chord (Ctrl-O): open the local-path prompt. Forward bytes before
+			// it; seed the buffer with anything typed/pasted after it in the same chunk.
+			if len(attachKey) > 0 {
+				pre, after, hit := splitOnAttach(before, attachKey)
+				if hit {
+					if len(pre) > 0 {
+						_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(pre)})
+					}
+					fmt.Fprint(os.Stderr, "\r\n[dejima] attach a file — type or paste a path · Enter to send · Esc to cancel\r\n> ")
+					attaching = &attachState{w: os.Stderr}
+					if len(after) > 0 {
+						stepAttach(after)
+					}
+					continue
+				}
+			}
 			// Intercept a dropped local file (P2a) or a Ctrl-V/Alt-V clipboard image
 			// (P2b): upload it and inject the in-island path. Byte-exact otherwise.
 			if intercept {
-				inject := func(islandPath string) {
-					// Inject the in-island path as a BRACKETED PASTE (no Enter) so the
-					// agent treats it as a paste, not typed input. Claude Code (and
-					// other adapters) only run their file-path→image auto-attach on a
-					// paste event: streamed as raw keystrokes the path renders as a
-					// literal link; wrapped in \e[200~…\e[201~ it becomes an image
-					// artifact. The user can still add context before submitting.
-					_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode([]byte(bracketedPaste(islandPath)))})
-				}
 				before = paste.process(before,
 					func(localPath string) { // drag-drop
 						islandPath, err := bridge.drop(localPath)
