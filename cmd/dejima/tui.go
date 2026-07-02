@@ -3957,6 +3957,7 @@ func (m tuiModel) renderHelp() string {
 		{"dejima ls / status <name>", "list islands / detail view"},
 		{"dejima exec <name> -- <cmd>", "run a one-shot command inside an island"},
 		{"dejima cp <src> <dst>", "copy files in or out"},
+		{"dejima attach <name>[/<agent>] <path>", "attach a local file to an agent (in-session: " + attachKeyLabel() + ")"},
 		{"dejima token invite --role operator --owner <who> --host <addr>", "onboard a scoped teammate (CLI twin of [I])"},
 		{"dejima hibernate|wake|reset|purge", "lifecycle from the CLI"},
 		{"dejima image build / upgrade <name>", "rebuild the island image / roll an island onto it"},
