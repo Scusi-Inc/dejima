@@ -219,6 +219,18 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **colima memory sizing in onboarding** — `dejima onboard --provision-host` installs
+  Homebrew/Docker/colima but doesn't *size* the VM, so a fresh install gets colima's
+  default: island-heavy hosts OOM (see [OOM incident #23]), big hosts under-use their RAM.
+  Add a step that detects host RAM (`sysctl hw.memsize`) and sets `colima start --memory <N>`
+  with a sane default (≈half RAM, leaving macOS headroom), promptable/overridable; surface
+  the current size in `dejima doctor` and offer a resize path so it's adjustable later
+  (a resize needs a colima stop/start → bounces islands, so warn). Extra credit: **multi-VM
+  awareness** — a *second* per-user colima on the same host (e.g. a teammate's per-account
+  fleet) must split RAM, not each grab half; the common single-VM case is the immediate win.
+  Motivated 2026-07-02 standing up a teammate's per-account fleet on a shared 24GB mini
+  (had to hand-run `colima start --memory 8` and manually keep the primary VM smaller to
+  leave room). Small, self-contained backend/CLI task. (hours)
 - **Ambient / monitoring agents** — scheduled, long-running monitor/assistant agents (repo
   watch, email/feedback triage, competition + news/industry digests), run under the owner's
   real identity (not the `dejimaqa` test account), with **brokered + audited** access to
