@@ -206,7 +206,9 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .scenario { border: 1px solid var(--border); border-radius: 10px;
   padding: 1.3rem 1.4rem; background: var(--code-bg);
   scroll-margin-top: 1.5rem; min-width: 0; }
-.scenario.primary { border-color: var(--accent); }
+/* Neither scenario is outlined by default (the "most common" tag already marks
+   the recommended one). Only the one you jump to gets the accent outline. */
+.scenario:target { border-color: var(--accent); }
 .scenario-head { display: flex; align-items: baseline; gap: 0.6rem;
   flex-wrap: wrap; margin-bottom: 0.15rem; }
 .scenario-head h3 { margin: 0; font-size: 1.15rem; color: var(--hover); }
