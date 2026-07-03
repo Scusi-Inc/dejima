@@ -460,11 +460,12 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		humanBytes(vm), humanBytes(host))
 	recGB := vmmem.RecommendedGB(host)
 
-	// colima can resize from the CLI, so do it inline — suggest the ~⅔ default but
-	// let the user confirm or override the number. Docker Desktop has no CLI resize
-	// (its memory is a GUI slider), so that path keeps the doctor/checklist hint.
+	// colima can resize from the CLI, so do it inline — suggest the vmmem default
+	// (¾ of host RAM, leaving the host ≥4GiB) but let the user confirm or override
+	// the number. Docker Desktop has no CLI resize (its memory is a GUI slider), so
+	// that path keeps the doctor/checklist hint.
 	if vmmem.ColimaAvailable() {
-		fmt.Printf("    Recommended: ~%dGB (≈⅔ of host). colima can apply this directly.\n", recGB)
+		fmt.Printf("    Recommended: ~%dGB (~¾ of RAM, leaving ≥4GB for the host). colima can apply this directly.\n", recGB)
 		gb := pc.promptMemoryGB(recGB)
 
 		// A resize starts colima with the new size; on an already-running VM that
