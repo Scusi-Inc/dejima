@@ -243,6 +243,20 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .hc h4 { margin: 0 0 0.15rem; font-size: 1rem; color: var(--hover); }
 .hc .hc-sub { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.6rem; }
 
+/* Collapsible "Before you start" disclosures ------------------------- */
+.disclose { border: 1px solid var(--border); border-radius: 8px; margin: 0.6rem 0;
+  background: var(--code-bg); }
+.disclose > summary { cursor: pointer; padding: 0.8rem 2.4rem 0.8rem 1.1rem;
+  font-weight: 600; color: var(--hover); list-style: none; position: relative; }
+.disclose > summary::-webkit-details-marker { display: none; }
+.disclose > summary::after { content: "+"; position: absolute; right: 1.1rem;
+  color: var(--muted); font-weight: 400; font-size: 1.1rem; line-height: 1.2; }
+.disclose[open] > summary::after { content: "\2212"; }
+.disclose[open] > summary { border-bottom: 1px solid var(--border); }
+.disclose-body { padding: 0.2rem 1.1rem 1rem; }
+.disclose-body > *:first-child { margin-top: 0.7rem; }
+.disclose-body pre { margin: 0.6rem 0 0; }
+
 /* Long-form guides & posts ------------------------------------------ */
 .post-meta { color: var(--muted); font-size: 0.8rem; margin: 1.4rem 0 0.3rem;
   text-transform: uppercase; letter-spacing: 0.06em; }
