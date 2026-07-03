@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -270,6 +271,26 @@ func pmsetValues() map[string]string {
 // Phase 2 — tooling: Homebrew, Tailscale, Docker (gh is optional)
 // ---------------------------------------------------------------------------
 
+// tailscaleUpHeadlessHint is the browser-free way onto the tailnet, for a
+// headless Mac mini (the provisioning target). An auth key from the admin
+// console replaces the interactive login `tailscale up` would otherwise need.
+const tailscaleUpHeadlessHint = "Headless / no browser here? Generate an auth key " +
+	"(Tailscale admin console → Settings → Keys → Generate auth key), then run: " +
+	"sudo tailscale up --ssh --accept-dns=true --auth-key=tskey-auth-xxxxx"
+
+// recordTailnetAddrs stashes this host's tailnet FQDN and IPv4 (once Tailscale is
+// up) into the resumable provisioning state, so the verify/handoff phase can
+// print a reachable DEJIMA_HOST — the IP especially, which a just-shared teammate
+// can dial before their MagicDNS is set up.
+func recordTailnetAddrs(pc *provCtx) {
+	if fqdn := tailnetFQDN(); fqdn != "" {
+		pc.state.Answers["tailnet_fqdn"] = fqdn
+	}
+	if ip, ok := tailscaleIPv4(); ok {
+		pc.state.Answers["tailnet_ip"] = ip
+	}
+}
+
 func provPhaseTooling(pc *provCtx) error {
 	// Homebrew first — everything else installs through it.
 	if _, err := exec.LookPath("brew"); err != nil && !brewOnDisk() {
@@ -327,22 +348,33 @@ func provPhaseTooling(pc *provCtx) error {
 		fmt.Println("  ✓ Tailscale present")
 	}
 	// Bring the tailnet up with the SSH server on (idempotent; opens a browser the
-	// first time). Off-box account login is inherently interactive, so skip under --yes.
+	// first time). Off-box account login is inherently interactive; on a headless
+	// Mac mini (the common case) there's no browser, so the auth-key route is the
+	// real path — surface it whenever Tailscale isn't already up.
 	if _, err := exec.LookPath("tailscale"); err == nil {
 		if st := tailscaleStatus(); st.BackendState == "Running" {
 			fmt.Println("  ✓ Tailscale is up")
-			if fqdn := tailnetFQDN(); fqdn != "" {
-				pc.state.Answers["tailnet_fqdn"] = fqdn
-			}
+			recordTailnetAddrs(pc)
 		} else if pc.yes {
-			pc.addManual("Bring Tailscale up: tailscale up --ssh --accept-dns=true")
-		} else if pc.confirm("  Bring Tailscale up now (opens a browser to log in)?", true) {
-			if err := execInteractive("tailscale", "up", "--ssh", "--accept-dns=true"); err != nil {
-				fmt.Printf("  ✗ `tailscale up` failed: %v\n", err)
-				pc.addManual("Bring Tailscale up: tailscale up --ssh --accept-dns=true")
-			} else if fqdn := tailnetFQDN(); fqdn != "" {
-				pc.state.Answers["tailnet_fqdn"] = fqdn
-				fmt.Printf("  ✓ on the tailnet as %s\n", fqdn)
+			// Non-interactive run: can't do a browser login. The auth-key route is
+			// the headless path, so lead with it.
+			pc.addManual(tailscaleUpHeadlessHint)
+			pc.addManual("…or interactively: sudo tailscale up --ssh --accept-dns=true")
+		} else {
+			fmt.Println("  Tailscale isn't up yet (needed for remote + team access).")
+			fmt.Println("  " + tailscaleUpHeadlessHint)
+			if pc.confirm("  Bring Tailscale up now (opens a browser to log in)?", true) {
+				if err := execInteractive("tailscale", "up", "--ssh", "--accept-dns=true"); err != nil {
+					fmt.Printf("  ✗ `tailscale up` failed: %v\n", err)
+					pc.addManual("Bring Tailscale up: sudo tailscale up --ssh --accept-dns=true (or the auth-key route above)")
+				} else {
+					recordTailnetAddrs(pc)
+					if fqdn := pc.state.Answers["tailnet_fqdn"]; fqdn != "" {
+						fmt.Printf("  ✓ on the tailnet as %s\n", fqdn)
+					}
+				}
+			} else {
+				pc.addManual("Bring Tailscale up: sudo tailscale up --ssh --accept-dns=true (or the auth-key route)")
 			}
 		}
 	}
@@ -426,18 +458,91 @@ func provPhaseVMRightsize(pc *provCtx) error {
 	}
 	fmt.Printf("  ⚠ Docker VM has only %s of %s host RAM — islands share this pool and will OOM.\n",
 		humanBytes(vm), humanBytes(host))
-	fmt.Printf("    Recommended: ~%dGB. `dejima doctor --fix` scripts the colima resize.\n", vmmem.RecommendedGB(host))
+	recGB := vmmem.RecommendedGB(host)
+
+	// colima can resize from the CLI, so do it inline — suggest the ~⅔ default but
+	// let the user confirm or override the number. Docker Desktop has no CLI resize
+	// (its memory is a GUI slider), so that path keeps the doctor/checklist hint.
+	if vmmem.ColimaAvailable() {
+		fmt.Printf("    Recommended: ~%dGB (≈⅔ of host). colima can apply this directly.\n", recGB)
+		gb := pc.promptMemoryGB(recGB)
+
+		// A resize starts colima with the new size; on an already-running VM that
+		// restarts it, bouncing every island. Warn + default-NO before that, but
+		// still proceed under --yes (the scriptable path) with a clear log line.
+		if colimaRunning() {
+			fmt.Println("  ⚠ colima is already running — applying a new memory size RESTARTS the VM")
+			fmt.Println("    and BOUNCES all islands (every running container restarts).")
+			if pc.yes {
+				fmt.Println("  --yes: proceeding with the resize (this bounces running islands).")
+			} else if !pc.confirm(fmt.Sprintf("  Resize to %dGB now and bounce running islands?", gb), false) {
+				pc.addManual(fmt.Sprintf("Resize the Docker VM to %dGB when islands are idle: colima start --memory %d", gb, gb))
+				return nil
+			}
+		}
+
+		// Omit --cpu/--disk so colima keeps its saved values for those.
+		if err := execInteractive("colima", "start", "--memory", strconv.Itoa(gb)); err != nil {
+			fmt.Printf("  ✗ colima start --memory %d: %v\n", gb, err)
+			pc.addManual(fmt.Sprintf("Right-size the Docker VM: colima start --memory %d", gb))
+			return nil
+		}
+		fmt.Printf("  ✓ ran: colima start --memory %d\n", gb)
+		return nil
+	}
+
+	// Docker Desktop — no CLI resize; point at doctor --fix / the GUI slider.
+	fmt.Printf("    Recommended: ~%dGB. `dejima doctor --fix` scripts the colima resize.\n", recGB)
 	if pc.confirm("  Run `dejima doctor --fix` now?", true) {
 		if self, err := os.Executable(); err == nil {
 			if err := execInteractive(self, "doctor", "--fix"); err != nil {
 				fmt.Printf("  ✗ doctor --fix: %v\n", err)
-				pc.addManual(fmt.Sprintf("Right-size the Docker VM (Docker Desktop → Settings → Resources, or colima start --memory %d)", vmmem.RecommendedGB(host)))
+				pc.addManual(fmt.Sprintf("Right-size the Docker VM (Docker Desktop → Settings → Resources, or colima start --memory %d)", recGB))
 			}
 		}
 	} else {
-		pc.addManual(fmt.Sprintf("Right-size the Docker VM to ~%dGB (Docker Desktop → Settings → Resources)", vmmem.RecommendedGB(host)))
+		pc.addManual(fmt.Sprintf("Right-size the Docker VM to ~%dGB (Docker Desktop → Settings → Resources)", recGB))
 	}
 	return nil
+}
+
+// promptMemoryGB asks the user to confirm the recommended VM memory size (in GB)
+// or override it with a custom figure. An empty answer takes the default; a
+// positive integer takes that value; garbage re-prompts once then falls back to
+// the default. Under --yes it returns the default without prompting.
+func (pc *provCtx) promptMemoryGB(def int) int {
+	if pc.yes {
+		return def
+	}
+	prompt := fmt.Sprintf("  Docker VM memory in GB [%d]: ", def)
+	if gb, ok := parseMemoryGB(readSingleKey(prompt), def); ok {
+		return gb
+	}
+	fmt.Println("  (not a positive whole number — press Enter for the default, or type a GB value)")
+	gb, _ := parseMemoryGB(readSingleKey(prompt), def)
+	return gb
+}
+
+// parseMemoryGB interprets one answer to the memory-size prompt. Empty means
+// "take the default"; a positive integer means that many GB; anything else is
+// garbage — it returns the default with ok=false so the caller can re-prompt.
+func parseMemoryGB(answer string, def int) (gb int, ok bool) {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return def, true
+	}
+	n, err := strconv.Atoi(answer)
+	if err != nil || n <= 0 {
+		return def, false
+	}
+	return n, true
+}
+
+// colimaRunning reports whether the colima VM is currently up. `colima status`
+// exits 0 only when the VM is running, so the exit code is the signal (matching
+// how dockerReachable shells out on `docker version`).
+func colimaRunning() bool {
+	return exec.Command("colima", "status").Run() == nil
 }
 
 // ---------------------------------------------------------------------------
@@ -545,23 +650,50 @@ func provPhaseVerify(pc *provCtx) error {
 	if fqdn == "" {
 		fqdn = pc.state.Answers["tailnet_fqdn"]
 	}
+	ip := pc.state.Answers["tailnet_ip"]
+	if ip == "" {
+		if v, ok := tailscaleIPv4(); ok {
+			ip = v
+		}
+	}
 	user := currentUnixUser()
+
+	// A teammate dials the tailnet IP (MagicDNS may not resolve for them yet), so
+	// prefer it as the reachable address; fall back to the FQDN.
+	remote := fqdn
+	if ip != "" {
+		remote = ip
+	}
 
 	fmt.Println()
 	fmt.Println(bold("  This host is ready. From your other devices:"))
 	fmt.Println()
-	if fqdn != "" {
-		fmt.Printf("    This host's Tailscale name: %s\n\n", fqdn)
+	if remote != "" {
+		// VERIFY, don't just claim: does the daemon's tailnet TCP listener actually
+		// answer? Closes the loop so the host comes up demonstrably reachable.
+		if tcpReachable(net.JoinHostPort(remote, "7273")) {
+			fmt.Printf("    ✓ Reachable on the tailnet at %s:7273\n", remote)
+		} else {
+			fmt.Printf("    ⚠ %s:7273 isn't answering yet — confirm the service is running\n", remote)
+			fmt.Println("      (`dejima service install --system --tcp :7273 …`) and Tailscale is up.")
+		}
+		if fqdn != "" {
+			fmt.Printf("    This host's Tailscale name: %s\n", fqdn)
+		}
+		fmt.Println()
 		fmt.Println("    On a laptop (same Tailscale account):")
 		fmt.Println("      go install github.com/aoos/dejima/cmd/dejima@latest")
-		fmt.Printf("      export DEJIMA_HOST=%s:7273\n", fqdn)
+		fmt.Printf("      export DEJIMA_HOST=%s:7273\n", remote)
 		fmt.Println("      dejima ls")
-		if user != "" {
+		if user != "" && fqdn != "" {
 			fmt.Printf("    Or open a shell on the host:  ssh %s@%s\n", user, fqdn)
 		}
+		fmt.Println()
+		fmt.Println("    To add a teammate: run `dejima`, press [I] to mint an invite, and share THIS")
+		fmt.Println("    node to their Tailscale (admin console → Machines → Share) — just this machine.")
 	} else {
-		fmt.Println("    (Bring Tailscale up — `tailscale up --ssh` — to get this host's name for")
-		fmt.Println("     remote access, then: export DEJIMA_HOST=<host>:7273 && dejima ls)")
+		fmt.Println("    (Bring Tailscale up — `tailscale up --ssh`, or the auth-key route for a")
+		fmt.Println("     headless host — then: export DEJIMA_HOST=<host>:7273 && dejima ls)")
 	}
 	maybeWriteCheatsheet(pc, fqdn, user)
 	return nil

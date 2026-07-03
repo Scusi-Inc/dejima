@@ -167,3 +167,101 @@ func TestArrivalEmitsEvent(t *testing.T) {
 		t.Error("mailbox.arrival event not recorded")
 	}
 }
+
+// injectedAgents records the agent ids nudged by a flush.
+func recordInjectedAgents(srv *Server) *[]string {
+	got := &[]string{}
+	srv.injectFn = func(_ context.Context, _ *project.Project, a *project.AgentSpec, _ string) error {
+		*got = append(*got, a.ID)
+		return nil
+	}
+	return got
+}
+
+// TestBroadcastNudgesAllExceptSender: a broadcast (To=="") nudges every agent in
+// the island except the sender — mirroring mailbox.Poll's broadcast visibility.
+// Before this, a broadcast nudged nobody (early return on empty To).
+func TestBroadcastNudgesAllExceptSender(t *testing.T) {
+	srv, h, _ := wakeServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"isl","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d", rr.Code)
+	}
+	for i := 0; i < 2; i++ {
+		if rr := do(t, h, http.MethodPost, "/v1/islands/isl/agents", `{"type":"claude-code"}`); rr.Code != http.StatusCreated {
+			t.Fatalf("add agent %d: %d", i, rr.Code)
+		}
+	}
+	p, err := project.Load("isl")
+	if err != nil || len(p.Agents) != 3 {
+		t.Fatalf("load isl: %v (agents=%d, want 3)", err, len(p.Agents))
+	}
+	sender := p.Agents[1].ID
+
+	got := recordInjectedAgents(srv)
+	srv.idleFn = func(string, string) bool { return true } // all at a turn boundary → inject now
+	srv.onMailboxArrival(mailbox.Message{Island: "isl", To: "", From: sender})
+
+	want := map[string]bool{p.Agents[0].ID: true, p.Agents[2].ID: true}
+	if len(*got) != len(want) {
+		t.Fatalf("broadcast nudged %v, want the 2 non-sender agents", *got)
+	}
+	for _, id := range *got {
+		if id == sender {
+			t.Errorf("broadcast nudged the sender %q", sender)
+		}
+		if !want[id] {
+			t.Errorf("unexpected nudge target %q", id)
+		}
+	}
+}
+
+// TestDirectedNudgesOnlyRecipient: a message addressed To one agent nudges only
+// that agent, never the others in the island.
+func TestDirectedNudgesOnlyRecipient(t *testing.T) {
+	srv, h, _ := wakeServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"isl","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d", rr.Code)
+	}
+	if rr := do(t, h, http.MethodPost, "/v1/islands/isl/agents", `{"type":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("add agent: %d", rr.Code)
+	}
+	p, err := project.Load("isl")
+	if err != nil || len(p.Agents) != 2 {
+		t.Fatalf("load isl: %v (agents=%d, want 2)", err, len(p.Agents))
+	}
+	recipient := p.Agents[1].ID
+
+	got := recordInjectedAgents(srv)
+	srv.idleFn = func(string, string) bool { return true }
+	srv.onMailboxArrival(mailbox.Message{Island: "isl", To: recipient, From: p.Agents[0].ID})
+
+	if len(*got) != 1 || (*got)[0] != recipient {
+		t.Fatalf("directed message nudged %v, want only %q", *got, recipient)
+	}
+}
+
+// TestNudgeUsesAbsoluteDejimaPath: the injected poll command references the CLI by
+// absolute path so a broken PATH / stale shim shadowing `dejima` can't swallow it.
+func TestNudgeUsesAbsoluteDejimaPath(t *testing.T) {
+	srv, h, _ := wakeServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"isl","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d", rr.Code)
+	}
+	agent := primaryAgentID(t, h, "isl")
+
+	var text string
+	srv.injectFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, s string) error {
+		text = s
+		return nil
+	}
+	srv.idleFn = func(string, string) bool { return true }
+	srv.wakeNudges.add("isl", agent, time.Now())
+	srv.flushNudges(context.Background())
+
+	if !strings.Contains(text, islandDejimaBin+" msg poll") {
+		t.Fatalf("nudge %q does not reference %q by absolute path", text, islandDejimaBin)
+	}
+}
