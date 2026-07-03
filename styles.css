@@ -202,6 +202,10 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 /* Quickstart scenarios: two dead-simple copy-paste paths ------------- */
 .scenario-jump { display: flex; gap: 0.7rem; flex-wrap: wrap; margin: 0.2rem 0 1.5rem; }
 .scenario-jump .btn-ghost { padding: 0.45rem 1rem; font-size: 0.9rem; }
+/* "Need help?" is a fallback, not a primary path — dim it: the section-border
+   navy outline + muted text, brightening only on hover. */
+.jump-help { color: var(--muted); border-color: var(--border); }
+.jump-help:hover { background: transparent; color: var(--accent); border-color: var(--accent); }
 .scenarios { display: grid; gap: 1.1rem; margin: 1.2rem 0 2.2rem; }
 .scenario { border: 1px solid var(--border); border-radius: 10px;
   padding: 1.3rem 1.4rem; background: var(--code-bg);
