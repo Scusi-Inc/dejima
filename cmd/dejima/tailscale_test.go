@@ -45,6 +45,45 @@ func TestHostOnly(t *testing.T) {
 	}
 }
 
+func TestParseTailscaleIPv4(t *testing.T) {
+	if ip, ok := parseTailscaleIPv4("100.77.85.107\n"); !ok || ip != "100.77.85.107" {
+		t.Errorf("single v4 = (%q,%v), want (100.77.85.107,true)", ip, ok)
+	}
+	// v4 + v6 lines (what `tailscale ip` prints without -4): take the v4.
+	if ip, ok := parseTailscaleIPv4("100.77.85.107\nfd7a:115c:a1e0::1\n"); !ok || ip != "100.77.85.107" {
+		t.Errorf("mixed = (%q,%v), want the v4", ip, ok)
+	}
+	// A non-Tailscale v4 (shouldn't happen from `tailscale ip`, but be strict).
+	if _, ok := parseTailscaleIPv4("192.168.1.5\n"); ok {
+		t.Error("a non-Tailscale address must not be accepted")
+	}
+	if _, ok := parseTailscaleIPv4(""); ok {
+		t.Error("empty output → no IP")
+	}
+}
+
+// TestOpenTeamViewPrefill: on the local socket the host prefills from the
+// captured tailnet IP (with the default TCP port); connected remotely, the
+// active host wins and no lookup happens.
+func TestOpenTeamViewPrefill(t *testing.T) {
+	orig := tailscaleIPLookup
+	t.Cleanup(func() { tailscaleIPLookup = orig })
+
+	// Local socket → prefill "<tailnet-ip>:7273".
+	tailscaleIPLookup = func() (string, bool) { return "100.77.85.107", true }
+	m2, _ := tuiModel{activeHost: ""}.openTeamView()
+	if got := m2.(tuiModel).team.host; got != "100.77.85.107:7273" {
+		t.Errorf("local-socket prefill = %q, want 100.77.85.107:7273", got)
+	}
+
+	// Remote → activeHost wins; the lookup must not even run.
+	tailscaleIPLookup = func() (string, bool) { t.Fatal("must not look up tailnet IP when already remote"); return "", false }
+	m3, _ := tuiModel{activeHost: "minion.ts.net:7274"}.openTeamView()
+	if got := m3.(tuiModel).team.host; got != "minion.ts.net:7274" {
+		t.Errorf("remote prefill = %q, want the active host", got)
+	}
+}
+
 // TestRenderMintedInvitePanelTailscale: the prereq line appears only when the
 // daemon host is a Tailscale address (a3 #214.1: "only show it when the host is
 // actually a 100.64/10 addr").
