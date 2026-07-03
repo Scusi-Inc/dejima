@@ -608,6 +608,15 @@ func (m tuiModel) renderMintedInvite() string {
 		b.WriteString(styleWaiting.Render("  Send this invite — shown once, and it carries the secret (treat like a password):"))
 		b.WriteString("\n\n")
 		b.WriteString("  " + styleTitle.Render(v.mintedBlob) + "\n\n")
+		if isTailscaleHost(v.host) {
+			// This daemon is Tailscale-pinned, so the invite is useless until the
+			// teammate is on the tailnet — a cryptic timeout otherwise. Say so here,
+			// where the operator (who owns the tailnet) can act on it.
+			b.WriteString(styleWaiting.Render("  ⚠ This server is on Tailscale — your teammate must be on your tailnet first:"))
+			b.WriteString("\n")
+			b.WriteString(styleMuted.Render("    share this machine (Tailscale admin console → Machines → Share), then they run `tailscale up`."))
+			b.WriteString("\n\n")
+		}
 		// Where + how to run it. The #1 onboarding confusion was teammates running
 		// `dejima join` over SSH ON THIS HOST (old shared binary → "unknown command
 		// join") instead of on their own laptop — and not realizing they must

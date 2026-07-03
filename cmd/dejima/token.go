@@ -181,6 +181,18 @@ func newJoinCmd() *cobra.Command {
 				scope = strings.Join(p.Islands, ", ")
 			}
 			fmt.Printf("joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
+			// Preflight the connection so a Tailscale-pinned daemon doesn't leave the
+			// teammate to hit an opaque "context deadline exceeded" on the next
+			// command. The profile is saved regardless, so a retry after they get on
+			// the tailnet Just Works.
+			if err := verifyDejimaHost(cmd.Context()); err != nil {
+				if isTailscaleHost(p.Host) {
+					printTailscaleJoinHelp(p.Host)
+					return nil
+				}
+				fmt.Printf("note: couldn't reach %s yet (%v) — the profile is saved; retry with `dejima ls` or `dejima`.\n", p.Host, err)
+				return nil
+			}
 			fmt.Println("next: `dejima ls` to see islands, or `dejima` for the TUI.")
 			return nil
 		},

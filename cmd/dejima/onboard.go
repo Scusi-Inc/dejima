@@ -275,7 +275,13 @@ func firstRunJoin(ctx context.Context) (bool, error) {
 	// feedback, but never block the dashboard on it: the profile is saved either
 	// way, and a transient failure shouldn't strand them.
 	if err := verifyDejimaHost(ctx); err != nil {
-		fmt.Printf("note: couldn't reach %s yet (%v) — the profile is saved; the dashboard will retry.\n", p.Host, err)
+		if isTailscaleHost(p.Host) {
+			// A Tailscale-pinned daemon is unreachable until the teammate is on the
+			// tailnet — guide them there instead of the opaque timeout error.
+			printTailscaleJoinHelp(p.Host)
+		} else {
+			fmt.Printf("note: couldn't reach %s yet (%v) — the profile is saved; the dashboard will retry.\n", p.Host, err)
+		}
 	} else {
 		fmt.Println("Connection verified. Opening the dashboard.")
 	}
