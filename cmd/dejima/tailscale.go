@@ -1,10 +1,53 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"os/exec"
 	"strings"
+	"time"
 )
+
+// defaultDaemonTCPPort is the port the daemon's Tailscale-pinned TCP listener
+// uses by default (`dejima service install --tcp :7273`). Used to build a
+// reachable invite host from a bare tailnet IP.
+const defaultDaemonTCPPort = "7273"
+
+// tailscaleIPLookup is indirected so tests can stub the tailnet-IP capture
+// without a real `tailscale` binary.
+var tailscaleIPLookup = tailscaleIPv4
+
+// tailscaleIPv4 returns this machine's Tailscale IPv4 address via `tailscale ip
+// -4`, if Tailscale is installed and up. It's used to prefill the invite host
+// when the operator mints FROM the host itself (local socket): the daemon can't
+// self-detect its reachable address, but the host's own tailnet IP is exactly
+// the address a teammate dials. Bounded so a hung binary can't stall the UI.
+func tailscaleIPv4() (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tailscale", "ip", "-4").Output()
+	if err != nil {
+		return "", false
+	}
+	return parseTailscaleIPv4(string(out))
+}
+
+// parseTailscaleIPv4 picks the first Tailscale IPv4 address out of `tailscale ip`
+// output (which may list several addresses, one per line). Split out from the
+// exec so the parsing is unit-testable.
+func parseTailscaleIPv4(out string) (string, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		ip := strings.TrimSpace(line)
+		if ip == "" {
+			continue
+		}
+		if p := net.ParseIP(ip); p != nil && p.To4() != nil && isTailscaleHost(ip) {
+			return ip, true
+		}
+	}
+	return "", false
+}
 
 // hostOnly strips the port (and any IPv6 brackets) from a host[:port], returning
 // just the address/name for classification.
