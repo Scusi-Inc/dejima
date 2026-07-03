@@ -23,7 +23,7 @@
 {"@type":"BreadcrumbList","itemListElement":[
 {"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
 {"@type":"ListItem","position":2,"name":"Quickstart","item":"https://dejima.tech/quickstart.html"}]},
-{"@type":"WebPage","name":"Quickstart — install Dejima in minutes","url":"https://dejima.tech/quickstart.html","description":"Install Dejima on a Mac mini, Linux server, or cloud VM in minutes: the one-line server bootstrap, or the npm / brew client CLI.","isPartOf":{"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"}}
+{"@type":"WebPage","name":"Quickstart — install Dejima in minutes","url":"https://dejima.tech/quickstart.html","description":"Install Dejima in minutes, two ways: run it on one machine (a single install is server and client), or run it as a server on an always-on box and connect from your laptop.","isPartOf":{"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"}}
 ]}
 </script>
 </head>
@@ -51,8 +51,101 @@
   <p class="lede">One line on the server, one word to run. The installer handles Tailscale, Docker, and the background service for you — there's no infrastructure to build.</p>
 </section>
 
-<h2 id="install">Install</h2>
-<p>Pick where you're installing it. The steps rewrite themselves for your choice. A <strong>server</strong> (it hosts the islands) uses the one-line bootstrap below, which also sets up Docker, Tailscale, and the background service. A <strong>client</strong> is just the CLI that drives a remote server — install it with <code>npm install -g dejima</code>, <code>brew install aoos/dejima/dejima</code>, or the guided installer below.</p>
+<h2 id="start">Get started</h2>
+<p>Two ways to run it. Most people want the first one.</p>
+
+<div class="scenarios">
+
+  <!-- Scenario 1: one machine -->
+  <div class="scenario primary">
+    <div class="scenario-head">
+      <h3>Run it on one machine</h3>
+      <span class="scenario-tag">most common</span>
+    </div>
+    <p class="scenario-sub">Your Mac or laptop. A single install is the whole thing: the server and the client on the same box, with nothing separate to connect.</p>
+
+    <div class="step">
+      <p class="step-label"><span class="step-n">1</span>Install it</p>
+      <div class="cmd">
+        <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
+        <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      </div>
+      <p class="small">macOS or Linux. Sets up Docker, Tailscale, the island image, and the background daemon. Idempotent, so it's safe to re-run.</p>
+    </div>
+
+    <div class="step">
+      <p class="step-label"><span class="step-n">2</span>Run it</p>
+      <div class="cmd">
+        <pre><code>dejima</code></pre>
+        <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      </div>
+      <p class="small">The dashboard opens and walks you to your first sandboxed agent. That's the whole setup.</p>
+    </div>
+  </div>
+
+  <!-- Scenario 2: server + laptop -->
+  <div class="scenario">
+    <div class="scenario-head">
+      <h3>Run it as a server, use it from your laptop</h3>
+      <span class="scenario-tag">headless</span>
+    </div>
+    <p class="scenario-sub">The daemon runs on an always-on box, a Mac mini in the closet or a Linux server, and you drive it from your laptop. Set up each side once.</p>
+
+    <div class="hc-cols">
+      <div class="hc">
+        <h4>On the server</h4>
+        <p class="hc-sub">The always-on box that hosts the islands. macOS or Linux.</p>
+        <div class="step">
+          <p class="step-label"><span class="step-n">1</span>Install</p>
+          <div class="cmd">
+            <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
+            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          </div>
+        </div>
+        <div class="step">
+          <p class="step-label"><span class="step-n">2</span>Provision the host</p>
+          <div class="cmd">
+            <pre><code>dejima onboard --provision-host</code></pre>
+            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          </div>
+          <p class="small">macOS: turns a fresh Mac mini into a server in one command (never-sleep power, Tailscale, Docker, the daemon). On Linux the installer already registered the service, so just run <code>dejima</code> to confirm it's up. Either way, note the <code>DEJIMA_HOST</code> it prints (e.g. <code>100.84.12.7:7273</code>).</p>
+        </div>
+      </div>
+
+      <div class="hc">
+        <h4>On your laptop</h4>
+        <p class="hc-sub">The client CLI that drives the server. macOS, Linux, or Windows.</p>
+        <div class="step">
+          <p class="step-label"><span class="step-n">1</span>Install the client</p>
+          <p class="os">macOS / Linux</p>
+          <div class="cmd">
+            <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
+            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          </div>
+          <p class="os">Windows (PowerShell)</p>
+          <div class="cmd">
+            <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
+            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          </div>
+        </div>
+        <div class="step">
+          <p class="step-label"><span class="step-n">2</span>Connect</p>
+          <div class="cmd">
+            <pre><code>dejima</code></pre>
+            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          </div>
+          <p class="small">The installer captured your server's address, so this just connects. Joining a teammate's server instead? They send you an invite (they run <code>dejima token invite --role operator --host &lt;addr&gt;</code>) and you run <code>dejima join &lt;invite&gt;</code>.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<p class="small">Prefer the platform-by-platform breakdown, with every prompt the installer shows? It's below.</p>
+
+<h2 id="install">Full install details, platform by platform</h2>
+<p>The two paths above are the short version. This section is the same install, broken out for each platform, so you can see exactly what the installer does. Pick the side you're setting up: on one machine it's the <strong>server</strong> (that install includes the client). A separate <strong>client</strong> is just the CLI that drives a remote server, from <code>install-client.sh</code> or <code>brew install aoos/dejima/dejima</code>.</p>
 
 <div class="picker" role="group" aria-label="Install configuration">
   <div class="pick-row">
@@ -170,7 +263,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
         <li>Downloads the latest <code>dejima</code> CLI from GitHub Releases, verifies SHA256, installs to <code>/usr/local/bin/dejima</code>.</li>
         <li>Prompts for your server's tailnet IP (the one the server installer printed — e.g. <code>100.84.12.7</code>), probes it on port <code>7273</code>, and persists <code>DEJIMA_HOST</code> to <code>~/.zshenv</code>.</li>
       </ul>
-      <p class="small">Already on the tailnet and just want the CLI? <code>brew install aoos/dejima/dejima</code> or <code>npm install -g dejima</code> installs the client binary on its own; then point it at your server by setting <code>DEJIMA_HOST</code> yourself.</p>
+      <p class="small">Already on the tailnet and just want the CLI? <code>brew install aoos/dejima/dejima</code> installs the client binary on its own; then point it at your server by setting <code>DEJIMA_HOST</code> yourself, or with <code>dejima profile add mini &lt;host&gt;:7273 &amp;&amp; dejima profile switch mini</code>.</p>
     </li>
     <li><strong>Open the dashboard:</strong>
 <pre><code>dejima                              # interactive TUI</code></pre>
@@ -191,7 +284,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
         <li>Downloads the latest <code>dejima</code> CLI from GitHub Releases, verifies SHA256, installs to <code>/usr/local/bin/dejima</code>.</li>
         <li>Prompts for your server's tailnet IP, probes it on port <code>7273</code>, and persists <code>DEJIMA_HOST</code> to <code>~/.bashrc</code>.</li>
       </ul>
-      <p class="small">Already on the tailnet and just want the CLI? <code>npm install -g dejima</code> (or <code>brew install aoos/dejima/dejima</code> if you use Homebrew) installs the client binary on its own; then point it at your server by setting <code>DEJIMA_HOST</code> yourself.</p>
+      <p class="small">Already on the tailnet and just want the CLI? Grab the binary from the <a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener">latest GitHub Release</a> (or <code>brew install aoos/dejima/dejima</code> on Homebrew); then point it at your server by setting <code>DEJIMA_HOST</code> yourself, or with <code>dejima profile add mini &lt;host&gt;:7273 &amp;&amp; dejima profile switch mini</code>.</p>
     </li>
     <li><strong>Open the dashboard:</strong>
 <pre><code>dejima                              # interactive TUI</code></pre>
@@ -212,7 +305,7 @@ sudo usermod -aG docker $USER       # log out + back in for group to take effect
         <li>Downloads <code>dejima.exe</code> from the latest GitHub Release, verifies SHA256, extracts to <code>%LOCALAPPDATA%\dejima</code>, and adds it to your User PATH.</li>
         <li>Prompts for your server's tailnet IP, probes it on port <code>7273</code> via <code>Test-NetConnection</code>, and persists <code>DEJIMA_HOST</code> to your User environment.</li>
       </ul>
-      <p class="small">Prefer a package manager? <code>npm install -g dejima</code> installs the client CLI on Windows on its own; then set <code>DEJIMA_HOST</code> to your server yourself.</p>
+      <p class="small">Just want the CLI without the guided steps? Download <code>dejima.exe</code> from the <a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener">latest GitHub Release</a>, add it to your PATH, then set <code>DEJIMA_HOST</code> to your server yourself.</p>
     </li>
     <li><strong>Close + reopen PowerShell</strong> so the new <code>PATH</code> and <code>DEJIMA_HOST</code> take effect.</li>
     <li><strong>Open the dashboard:</strong>
@@ -347,6 +440,31 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
 })();
 </script>
 
+<script>
+// Copy buttons on the Get-started command boxes: copy the sibling <code>.
+(function () {
+  document.querySelectorAll('.cmd-copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var code = btn.closest('.cmd').querySelector('code');
+      if (!code) return;
+      var text = code.textContent;
+      function done() {
+        var was = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(function () { btn.textContent = was; }, 1400);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, done);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta); done();
+      }
+    });
+  });
+})();
+</script>
 <script src="version.js" defer></script>
 </body>
 </html>
