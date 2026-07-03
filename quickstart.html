@@ -57,6 +57,7 @@
 <div class="scenario-jump">
   <a class="btn-ghost" href="#run-local">Run it locally →</a>
   <a class="btn-ghost" href="#run-server">Set up a server →</a>
+  <a class="btn-ghost jump-help" href="#help">Need help? →</a>
 </div>
 
 <div class="scenarios">
@@ -209,6 +210,28 @@ sudo usermod -aG docker $USER       # log out and back in for the group to take 
   <p><strong>Setting up a specific platform?</strong> The setup guides walk through each one end to end: <a href="guides/mac-mini-agent-server.html">Mac mini</a>, <a href="guides/linux-server-agent-server.html">Linux server</a>, <a href="guides/cloud-vm-agent-server.html">cloud VM</a>, and <a href="guides/local-agents.html">your local machine</a>.</p>
 </div>
 
+<section class="walkthrough">
+  <h2 id="help">Stuck? Have an AI help</h2>
+  <p>Installation question or an error you can't place? Paste this into your own AI, fill in your specifics, and it'll help using Dejima's own docs.</p>
+  <div class="fitcheck">
+    <div class="fit-actions">
+      <button type="button" class="copy-btn" data-copy>Copy prompt</button>
+      <a class="deeplink" data-claude href="https://claude.ai/new" target="_blank" rel="noopener">Open in Claude →</a>
+      <a class="deeplink" data-chatgpt href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
+      <span class="fit-hint">Opens in your own AI. Nothing is sent to us.</span>
+    </div>
+    <textarea class="fit-prompt" data-prompt rows="9" spellcheck="false" aria-label="Prompt to paste into an AI">I'm setting up Dejima (self-hosted infrastructure for running AI coding agents in isolated containers on hardware I own) and have a question or hit an error. Please help.
+
+First, FETCH and read these so your answers match the official docs:
+- Install / quickstart: https://dejima.tech/quickstart.html
+- Connect a computer or teammate: https://dejima.tech/connect/
+- Per-platform setup guides: https://dejima.tech/guides/
+
+My setup: [one machine, or a server plus a laptop] on [macOS / Linux / Windows].
+My question or the error I'm seeing: [describe it].</textarea>
+  </div>
+</section>
+
 <h2 id="run">Run it yourself</h2>
 <p>In the dashboard, everything is a keypress; outside it, everything is a one-shot command.</p>
 <pre><code>dejima                              # the dashboard
@@ -305,6 +328,7 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
   });
 })();
 </script>
+<script src="walkthrough.js" defer></script>
 <script src="version.js" defer></script>
 </body>
 </html>
