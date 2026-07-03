@@ -255,7 +255,7 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .disclose[open] > summary { border-bottom: 1px solid var(--border); }
 .disclose-body { padding: 0.2rem 1.1rem 1rem; }
 .disclose-body > *:first-child { margin-top: 0.7rem; }
-.disclose-body pre { margin: 0.6rem 0 0; }
+.disclose-body > pre { margin: 0.6rem 0 0; }
 
 /* Long-form guides & posts ------------------------------------------ */
 .post-meta { color: var(--muted); font-size: 0.8rem; margin: 1.4rem 0 0.3rem;
