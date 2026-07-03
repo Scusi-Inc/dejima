@@ -133,16 +133,20 @@
             <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
             <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
           </div>
-          <p class="os"><strong>Prefer a package manager?</strong></p>
-          <div class="cmd">
-            <pre><code>brew install aoos/dejima/dejima</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
-          </div>
-          <div class="cmd">
-            <pre><code>npm i -g dejima</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
-          </div>
-          <p class="small">Homebrew (macOS) or npm (any platform, handy on Windows or if you already use Node). These install just the CLI, so you point it at your server in step&nbsp;2.</p>
+          <details class="disclose">
+            <summary>Prefer a package manager like <em>brew</em> or <em>npm</em>?</summary>
+            <div class="disclose-body">
+              <div class="cmd">
+                <pre><code>brew install aoos/dejima/dejima</code></pre>
+                <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              </div>
+              <div class="cmd">
+                <pre><code>npm i -g dejima</code></pre>
+                <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              </div>
+              <p class="small">Homebrew (macOS) or npm (any platform, handy on Windows or if you already use Node). These install just the CLI, so you point it at your server in step&nbsp;2.</p>
+            </div>
+          </details>
         </div>
         <div class="step">
           <p class="step-label"><span class="step-n">2</span>Connect</p>
