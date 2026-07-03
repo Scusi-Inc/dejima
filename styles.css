@@ -231,7 +231,9 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
   font-weight: 600; cursor: pointer; font-size: 0.78rem; transition: opacity 0.12s; }
 .cmd-copy:hover { opacity: 0.85; }
 /* host + client side by side inside scenario 2 */
-.hc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.4rem; }
+/* Stacked full-width: "First" (server) over "Then" (your computer), so long
+   install commands get the whole column and don't need a horizontal scrollbar. */
+.hc-cols { display: grid; grid-template-columns: 1fr; gap: 1rem; margin-top: 0.4rem; }
 .hc { border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.1rem;
   background: var(--bg); min-width: 0; }
 .hc-order { display: inline-block; font-size: 0.68rem; text-transform: uppercase;
