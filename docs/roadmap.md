@@ -219,6 +219,17 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **Native multi-agent tiled/split live view in the TUI** *(post-v1, consider)* — today,
+  seeing several agents' *live* terminals at once needs either a terminal with a "new-window
+  backend" (iTerm2 / Windows Terminal, which `openAgents` drives) or manually splitting your
+  own tmux and running `dejima connect <island> --agent <id>` in each pane. A raw `Ctrl-b`
+  split just opens a plain shell — tmux has no notion of Dejima agents. For a "run a fleet"
+  product the multi-agent view should be one keystroke: select N agents in the TUI → tiled /
+  split live panes in a single window, no manual connect-per-pane, no dependence on the
+  terminal's new-window support. Pairs with the QoL-positioning push (if we put "run many
+  agents" on the homepage, seeing the fleet at once shouldn't be manual). Options to weigh:
+  an embedded multiplexer in the TUI vs. driving tmux splits for the user vs. a richer
+  new-window fan-out. Motivated 2026-07-03. Owner: TUI. (days)
 - **colima memory sizing in onboarding** — `dejima onboard --provision-host` installs
   Homebrew/Docker/colima but doesn't *size* the VM, so a fresh install gets colima's
   default: island-heavy hosts OOM (see [OOM incident #23]), big hosts under-use their RAM.
