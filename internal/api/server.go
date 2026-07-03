@@ -2240,7 +2240,31 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	if code != 0 {
 		return fmt.Errorf("tmux new-session for %q: %s", a.ID, strings.TrimSpace(stderr))
 	}
+	// Stamp this agent's identity into the tmux SESSION environment so ANY shell
+	// later spawned in the pane — most importantly a human running `claude --resume`
+	// by hand — inherits the correct per-agent DEJIMA_AGENT_ID, not the container-
+	// wide PRIMARY id (server.go sets DEJIMA_AGENT_ID globally to the primary; the
+	// inline `DEJIMA_AGENT_ID=X exec …` in agentLaunchScript only scopes the launch
+	// process itself). Without this, a manual resume in a non-primary pane polls the
+	// primary's mailbox — the id clobber we hit live. `set-environment` is the
+	// version-portable equivalent of `new-session -e`; best-effort (a failure just
+	// leaves the inline-scoped launch as-is).
+	s.setSessionAgentEnv(ctx, p, a)
 	return nil
+}
+
+// setSessionAgentEnv records the per-agent DEJIMA_AGENT_ID / DEJIMA_TMUX in the
+// agent's tmux session environment so shells spawned in its pane resolve the
+// right agent. Best-effort and idempotent.
+func (s *Server) setSessionAgentEnv(ctx context.Context, p *project.Project, a *project.AgentSpec) {
+	for _, kv := range [][2]string{{"DEJIMA_AGENT_ID", a.ID}, {"DEJIMA_TMUX", a.Tmux}} {
+		_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
+			[]string{"tmux", "set-environment", "-t", a.Tmux, kv[0], kv[1]})
+		if err != nil || code != 0 {
+			s.log.Debug("set tmux session env", "island", p.Name, "agent", a.ID,
+				"key", kv[0], "code", code, "err", err, "stderr", strings.TrimSpace(stderr))
+		}
+	}
 }
 
 // runAgentShim runs a co-located agent's per-type init.sh inside the container —

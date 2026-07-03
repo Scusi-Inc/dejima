@@ -102,14 +102,39 @@ func (s *Server) onMailboxArrival(m mailbox.Message) {
 			"action":       m.Action != nil,
 		},
 	})
-	if !s.wakeEnabled || m.To == "" { // broadcasts have no single target to nudge
+	if !s.wakeEnabled {
 		return
 	}
-	s.wakeNudges.add(m.Island, m.To, time.Now())
+	now := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	s.wakeIslandFor(ctx, m.Island) // an idle agent in a hibernated island can't be nudged until it's up
+	if m.To != "" {
+		s.wakeNudges.add(m.Island, m.To, now)
+	} else {
+		// Broadcast (no single To): mirror mailbox.Poll, where a broadcast is
+		// visible to EVERY agent. A directed message nudges only its recipient;
+		// a broadcast must nudge each agent (minus the sender, who already knows),
+		// or a broadcast is silently unseen until each agent happens to poll.
+		s.addBroadcastNudges(m.Island, m.From, now)
+	}
 	s.flushNudges(ctx)
+}
+
+// addBroadcastNudges queues one nudge per agent in the island for a broadcast
+// message, skipping the sender. Mirrors mailbox.Poll's broadcast visibility (a
+// To=="" message reaches all agents). Best-effort: an island that can't be
+// loaded yields no nudges (the arrival event already fired for wrapper policy).
+func (s *Server) addBroadcastNudges(island, sender string, now time.Time) {
+	p, err := project.Load(island)
+	if err != nil {
+		return
+	}
+	for i := range p.Agents {
+		if id := p.Agents[i].ID; id != "" && id != sender {
+			s.wakeNudges.add(island, id, now)
+		}
+	}
 }
 
 const (
@@ -121,6 +146,12 @@ const (
 	// wakeHeartbeatStale: an agent-state older than this (or absent) means the
 	// agent isn't actively turning, so a best-effort nudge won't clobber live work.
 	wakeHeartbeatStale = 90 * time.Second
+	// islandDejimaBin is the canonical in-island CLI path (image/Dockerfile installs
+	// it here). The nudge references it by ABSOLUTE path so a broken PATH or a stale
+	// shim shadowing `dejima` doesn't swallow the poll command the agent runs. A
+	// genuinely absent binary — an island built from a pre-CLI image — is the
+	// version-skew remedy (`dejima doctor` / rebuild), surfaced elsewhere, not here.
+	islandDejimaBin = "/usr/local/bin/dejima"
 )
 
 // flushNudges delivers each pending nudge whose recipient is at a turn boundary
@@ -151,7 +182,7 @@ func (s *Server) flushNudges(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		text := fmt.Sprintf("📬 %d new message(s) — run: dejima msg poll", n)
+		text := fmt.Sprintf("📬 %d new message(s) — run: %s msg poll", n, islandDejimaBin)
 		if err := s.injectFn(ctx, p, a, text); err != nil {
 			s.log.Debug("wake inject", "island", k.island, "agent", k.agent, "err", err)
 		}

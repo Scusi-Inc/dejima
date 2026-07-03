@@ -461,6 +461,13 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	if !execContains(calls, "tmux", "new-session", "agent-p2", "DEJIMA_AGENT_ID=p2", "claude") {
 		t.Errorf("expected a tmux new-session running claude for p2; execs=%v", calls)
 	}
+	// Stamp p2's identity into the tmux SESSION environment so a shell later
+	// spawned in the pane (e.g. a hand-run `claude --resume`) inherits p2's
+	// DEJIMA_AGENT_ID, not the container-wide PRIMARY id — the mailbox-scoping
+	// clobber we hit live.
+	if !execContains(calls, "tmux", "set-environment", "agent-p2", "DEJIMA_AGENT_ID", "p2") {
+		t.Errorf("expected the tmux session env to be stamped with p2's DEJIMA_AGENT_ID; execs=%v", calls)
+	}
 	// The co-located agent must get its per-type shim run (installs the
 	// agent-state hook into the shared ~/.claude) before launch — start.sh only
 	// runs the primary's. Without this, p2 has no heartbeat → wake-on-message,
