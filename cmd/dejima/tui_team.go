@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -74,11 +75,19 @@ type teamFocusItem struct {
 // openTeamView opens the Team overlay and kicks off the owner-only token list.
 // The host field is prefilled with the current connection target when that's a
 // real host:port — that's the address this very client dialed, so it's the one a
-// teammate would dial too. When we're on the local socket (activeHost == "")
-// there's nothing to prefill: the operator must supply the daemon's reachable
-// address, which the daemon can't self-detect.
+// teammate would dial too. On the local socket (activeHost == "") the client IS
+// the host, so the daemon's own tailnet IP (`tailscale ip -4`) is the address a
+// teammate dials — prefill it with the default TCP port so the minted invite is
+// reachable out-of-the-box. (Before, the operator had to type it by hand; the
+// daemon can't self-detect its address, but a co-resident client can.)
 func (m tuiModel) openTeamView() (tea.Model, tea.Cmd) {
-	m.team = &teamView{loading: true, scopeAll: true, scopeSel: map[string]bool{}, host: m.activeHost}
+	host := m.activeHost
+	if host == "" {
+		if ip, ok := tailscaleIPLookup(); ok {
+			host = net.JoinHostPort(ip, defaultDaemonTCPPort)
+		}
+	}
+	m.team = &teamView{loading: true, scopeAll: true, scopeSel: map[string]bool{}, host: host}
 	return m, m.loadTokensCmd()
 }
 
@@ -608,6 +617,17 @@ func (m tuiModel) renderMintedInvite() string {
 		b.WriteString(styleWaiting.Render("  Send this invite — shown once, and it carries the secret (treat like a password):"))
 		b.WriteString("\n\n")
 		b.WriteString("  " + styleTitle.Render(v.mintedBlob) + "\n\n")
+		if isTailscaleHost(v.host) {
+			// This daemon is Tailscale-pinned, so the invite is useless until the
+			// teammate is on the tailnet — a cryptic timeout otherwise. Say so here,
+			// where the operator (who owns the tailnet) can act on it.
+			b.WriteString(styleWaiting.Render("  ⚠ This server is on Tailscale — your teammate must be on your tailnet first:"))
+			b.WriteString("\n")
+			b.WriteString(styleMuted.Render("    share JUST this node to their Tailscale (admin console → Machines → Share — not your whole tailnet),"))
+			b.WriteString("\n")
+			b.WriteString(styleMuted.Render("    then they run `tailscale up`. Grant exactly this one machine — nothing else on your network."))
+			b.WriteString("\n\n")
+		}
 		// Where + how to run it. The #1 onboarding confusion was teammates running
 		// `dejima join` over SSH ON THIS HOST (old shared binary → "unknown command
 		// join") instead of on their own laptop — and not realizing they must
