@@ -2029,8 +2029,9 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode([]byte(bracketedPaste(islandPath)))})
 	}
 
-	// Attach-file minibuffer (island session on a TTY): the attach chord (Ctrl-O)
-	// opens a local path prompt; the typed/pasted path is uploaded and its in-island
+	// Attach-file minibuffer (island session on a TTY): the attach chord (default
+	// Ctrl-]; DEJIMA_ATTACH_KEY) opens a local path prompt; the typed/pasted path
+	// is uploaded and its in-island
 	// path injected. Terminal drag-drop is flaky over tmux+SSH, so typing a path is
 	// the robust route.
 	var attachKey []byte
@@ -2088,7 +2089,7 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 			// keystrokes before it, then end the session with sessExitSummon. The
 			// deferred NormalClosure detaches cleanly — the tmux session lives on.
 			before, summon := splitOnSummon(b, summonable)
-			// Attach chord (Ctrl-O): open the local-path prompt. Forward bytes before
+			// Attach chord (default Ctrl-]): open the local-path prompt. Forward bytes before
 			// it; seed the buffer with anything typed/pasted after it in the same chunk.
 			if len(attachKey) > 0 {
 				pre, after, hit := splitOnAttach(before, attachKey)

@@ -121,10 +121,21 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 		return true, nil
 
 	case firstRunClientUnreachable:
+		host, label, source := resolveTarget()
 		fmt.Println()
 		fmt.Println(bold("Can't reach your Dejima host"))
 		fmt.Println()
-		fmt.Printf("  DEJIMA_HOST is set (%s) but the daemon isn't answering.\n", strings.TrimSpace(os.Getenv("DEJIMA_HOST")))
+		switch source {
+		case "profile":
+			// The just-joined-teammate case: a saved active profile, host down now.
+			fmt.Printf("  Your active profile %q points at %s, which isn't answering right now.\n", label, host)
+		case "flag":
+			fmt.Printf("  The host you launched with (%s) isn't answering.\n", host)
+		case "env":
+			fmt.Printf("  DEJIMA_HOST is set (%s) but the daemon isn't answering.\n", host)
+		default:
+			fmt.Println("  Your configured Dejima host isn't answering right now.")
+		}
 		fmt.Println()
 		if ans := readSingleKey("Troubleshoot the connection now? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
 			runConnectionTroubleshooter(ctx)
@@ -297,11 +308,18 @@ func detectFirstRunContext(ctx context.Context) firstRunContext {
 	if reachable {
 		return firstRunConfigured
 	}
-	if strings.TrimSpace(os.Getenv("DEJIMA_HOST")) != "" {
+	// Not reachable — but if we HAVE a connection target (an explicit DEJIMA_HOST
+	// or `-p` flag, OR a saved active profile from `dejima join <invite>` / the TUI
+	// switcher), this machine is a CLIENT whose host is momentarily down, NOT a
+	// fresh host to provision. resolveTarget() consults the profile, so a
+	// just-joined teammate (no DEJIMA_HOST, no local daemon) lands on the
+	// troubleshoot-then-dashboard path instead of the "set up a server" question
+	// they were wrongly getting (#209).
+	if _, _, source := resolveTarget(); source != "local" {
 		return firstRunClientUnreachable
 	}
-	// No reachable daemon and no host target. On macOS with no daemon installed,
-	// this is the fresh-Mac-mini-host case the provisioning wizard targets.
+	// No reachable daemon and no connection target at all. On macOS with no daemon
+	// installed, this is the fresh-Mac-mini-host case the provisioning wizard targets.
 	if runtime.GOOS == "darwin" {
 		if _, err := exec.LookPath("dejimad"); err != nil {
 			return firstRunFreshHost

@@ -16,11 +16,16 @@ import (
 )
 
 // Attach-file keybind. Inside an attached island session this chord (default
-// Ctrl-O, 0x0f) is intercepted CLIENT-side — before forwarding to the agent's
+// Ctrl-], 0x1d) is intercepted CLIENT-side — before forwarding to the agent's
 // PTY — to open a local path prompt (the attach minibuffer). Terminal drag-drop
 // is unreliable over tmux+SSH, so typing/pasting a path is the robust path.
-// Configurable via DEJIMA_ATTACH_KEY ("ctrl-o" | "ctrl-]" | "off"); the env is
-// the escape hatch when Ctrl-O collides with a downstream binding.
+//
+// The default is Ctrl-] (which sits next to the Ctrl-\ summon chord), NOT Ctrl-O:
+// Ctrl-O is a live Claude Code binding (expand/verbose), and the dominant
+// in-island agent IS Claude Code — intercepting Ctrl-O client-side would swallow
+// it before it reached the agent, so the operator could never send it through.
+// Ctrl-O remains selectable via DEJIMA_ATTACH_KEY for anyone who prefers it.
+// Configurable via DEJIMA_ATTACH_KEY ("ctrl-]" | "ctrl-o" | "off").
 const (
 	attachChordCtrlO  = 0x0f // Ctrl-O
 	attachChordCtrlRB = 0x1d // Ctrl-] (right bracket) — sits next to the Ctrl-\ summon chord
@@ -28,17 +33,18 @@ const (
 
 // configuredAttachKey returns the byte sequence that opens the attach minibuffer,
 // per DEJIMA_ATTACH_KEY. Empty (nil) disables it. Only honored on island sessions
-// on a real TTY (same gate as the paste bridge).
+// on a real TTY (same gate as the paste bridge). Default is Ctrl-] — see the note
+// on the chord constants for why not Ctrl-O.
 func configuredAttachKey() []byte {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEJIMA_ATTACH_KEY"))) {
 	case "off", "none":
 		return nil
-	case "ctrl-]", "ctrl+]", "c-]":
+	case "ctrl-o", "ctrl+o", "c-o":
+		return []byte{attachChordCtrlO}
+	case "ctrl-]", "ctrl+]", "c-]", "":
 		return []byte{attachChordCtrlRB}
-	case "ctrl-o", "ctrl+o", "c-o", "":
-		return []byte{attachChordCtrlO}
 	default:
-		return []byte{attachChordCtrlO}
+		return []byte{attachChordCtrlRB}
 	}
 }
 

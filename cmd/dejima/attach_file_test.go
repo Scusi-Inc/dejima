@@ -98,8 +98,12 @@ func TestExpandClientPath(t *testing.T) {
 
 func TestConfiguredAttachKey(t *testing.T) {
 	t.Setenv("DEJIMA_ATTACH_KEY", "")
+	if k := configuredAttachKey(); len(k) != 1 || k[0] != attachChordCtrlRB {
+		t.Errorf("default should be Ctrl-] (Ctrl-O collides with Claude Code), got %v", k)
+	}
+	t.Setenv("DEJIMA_ATTACH_KEY", "ctrl-o")
 	if k := configuredAttachKey(); len(k) != 1 || k[0] != attachChordCtrlO {
-		t.Errorf("default should be Ctrl-O, got %v", k)
+		t.Errorf("ctrl-o should map to 0x0f when explicitly opted in, got %v", k)
 	}
 	t.Setenv("DEJIMA_ATTACH_KEY", "ctrl-]")
 	if k := configuredAttachKey(); len(k) != 1 || k[0] != attachChordCtrlRB {

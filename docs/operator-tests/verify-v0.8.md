@@ -62,20 +62,23 @@ Teammate side (a second machine / account — Amanda's brew-installed client):
 ## F. Session exit / reconnect
 - [ ] Detaching a session (Ctrl-b d) or the terminal window closing **exits cleanly** — no spurious reconnect trap. A real link drop still auto-reconnects.
 
-## G. Attach a file to an agent (v0.8.5 — #267)
-Drop a local file into an attached agent's prompt. The **in-session Ctrl-O pasteboard
+## G. Attach a file to an agent (v0.8.5 — #267; default chord Ctrl-] since #270)
+Drop a local file into an attached agent's prompt. The **in-session pasteboard
 pass is the one item that can't be exercised from a build island** — it needs a real
 PTY + clipboard, so the minibuffer is covered by byte-fed tests and only a live host
-run confirms the chord + paste end-to-end. Attach to an agent first (`dejima connect`
-or `⏎` in the TUI), then:
-- [ ] The attach banner shows **"Attach a file: Ctrl-O."** (the label tracks `DEJIMA_ATTACH_KEY`).
-- [ ] **Ctrl-O** opens the local-path minibuffer; **type** a path → `⏎` → `📎 attached: <name>` and the agent receives it.
+run confirms the chord + paste end-to-end. The default chord is **Ctrl-]** (Ctrl-O
+collides with Claude Code's expand/verbose binding, and Claude Code is the dominant
+in-island agent; `DEJIMA_ATTACH_KEY=ctrl-o` opts back into Ctrl-O). Attach to an agent
+first (`dejima connect` or `⏎` in the TUI), then:
+- [ ] The attach banner shows **"Attach a file: Ctrl-]."** (the label tracks `DEJIMA_ATTACH_KEY`).
+- [ ] **Ctrl-]** opens the local-path minibuffer; **type** a path → `⏎` → `📎 attached: <name>` and the agent receives it.
 - [ ] **Pasteboard pass:** **paste** a path into the minibuffer with the OS clipboard (the flaky-over-SSH case) → bracketed-paste markers are stripped and the path lands intact.
 - [ ] A **non-image** file lands as a **pasted path the agent Reads** (no artifact forcing); an **image** lands as an artifact (reuses the paste pipeline).
 - [ ] **Esc / Ctrl-C** cancels the minibuffer and the chord byte is **not** forwarded to the agent; `Ctrl-U` clears the line.
-- [ ] `DEJIMA_ATTACH_KEY=ctrl-]` remaps the chord; `=off` disables it (the banner drops the "Attach a file" hint).
+- [ ] `DEJIMA_ATTACH_KEY=ctrl-o` remaps the chord to Ctrl-O; `=off` disables it (the banner drops the "Attach a file" hint).
+- [ ] **Not-swallowed check:** with the default chord, pressing **Ctrl-O** in an attached Claude Code agent still reaches it (expand/verbose works) — dejima no longer eats it.
 - [ ] **CLI twin:** `dejima attach <island>[/<agent>] <path>` uploads + points the agent at it (`📎 attached: … → …`); a missing path or a directory errors cleanly ("not a readable file").
-- [ ] **Discoverability:** the FleetView `?` help overlay lists `dejima attach …` with the in-session `Ctrl-O` hint.
+- [ ] **Discoverability:** the FleetView `?` help overlay lists `dejima attach …` with the in-session `Ctrl-]` hint.
 
 ---
 
