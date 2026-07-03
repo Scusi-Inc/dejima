@@ -426,18 +426,91 @@ func provPhaseVMRightsize(pc *provCtx) error {
 	}
 	fmt.Printf("  ⚠ Docker VM has only %s of %s host RAM — islands share this pool and will OOM.\n",
 		humanBytes(vm), humanBytes(host))
-	fmt.Printf("    Recommended: ~%dGB. `dejima doctor --fix` scripts the colima resize.\n", vmmem.RecommendedGB(host))
+	recGB := vmmem.RecommendedGB(host)
+
+	// colima can resize from the CLI, so do it inline — suggest the ~⅔ default but
+	// let the user confirm or override the number. Docker Desktop has no CLI resize
+	// (its memory is a GUI slider), so that path keeps the doctor/checklist hint.
+	if vmmem.ColimaAvailable() {
+		fmt.Printf("    Recommended: ~%dGB (≈⅔ of host). colima can apply this directly.\n", recGB)
+		gb := pc.promptMemoryGB(recGB)
+
+		// A resize starts colima with the new size; on an already-running VM that
+		// restarts it, bouncing every island. Warn + default-NO before that, but
+		// still proceed under --yes (the scriptable path) with a clear log line.
+		if colimaRunning() {
+			fmt.Println("  ⚠ colima is already running — applying a new memory size RESTARTS the VM")
+			fmt.Println("    and BOUNCES all islands (every running container restarts).")
+			if pc.yes {
+				fmt.Println("  --yes: proceeding with the resize (this bounces running islands).")
+			} else if !pc.confirm(fmt.Sprintf("  Resize to %dGB now and bounce running islands?", gb), false) {
+				pc.addManual(fmt.Sprintf("Resize the Docker VM to %dGB when islands are idle: colima start --memory %d", gb, gb))
+				return nil
+			}
+		}
+
+		// Omit --cpu/--disk so colima keeps its saved values for those.
+		if err := execInteractive("colima", "start", "--memory", strconv.Itoa(gb)); err != nil {
+			fmt.Printf("  ✗ colima start --memory %d: %v\n", gb, err)
+			pc.addManual(fmt.Sprintf("Right-size the Docker VM: colima start --memory %d", gb))
+			return nil
+		}
+		fmt.Printf("  ✓ ran: colima start --memory %d\n", gb)
+		return nil
+	}
+
+	// Docker Desktop — no CLI resize; point at doctor --fix / the GUI slider.
+	fmt.Printf("    Recommended: ~%dGB. `dejima doctor --fix` scripts the colima resize.\n", recGB)
 	if pc.confirm("  Run `dejima doctor --fix` now?", true) {
 		if self, err := os.Executable(); err == nil {
 			if err := execInteractive(self, "doctor", "--fix"); err != nil {
 				fmt.Printf("  ✗ doctor --fix: %v\n", err)
-				pc.addManual(fmt.Sprintf("Right-size the Docker VM (Docker Desktop → Settings → Resources, or colima start --memory %d)", vmmem.RecommendedGB(host)))
+				pc.addManual(fmt.Sprintf("Right-size the Docker VM (Docker Desktop → Settings → Resources, or colima start --memory %d)", recGB))
 			}
 		}
 	} else {
-		pc.addManual(fmt.Sprintf("Right-size the Docker VM to ~%dGB (Docker Desktop → Settings → Resources)", vmmem.RecommendedGB(host)))
+		pc.addManual(fmt.Sprintf("Right-size the Docker VM to ~%dGB (Docker Desktop → Settings → Resources)", recGB))
 	}
 	return nil
+}
+
+// promptMemoryGB asks the user to confirm the recommended VM memory size (in GB)
+// or override it with a custom figure. An empty answer takes the default; a
+// positive integer takes that value; garbage re-prompts once then falls back to
+// the default. Under --yes it returns the default without prompting.
+func (pc *provCtx) promptMemoryGB(def int) int {
+	if pc.yes {
+		return def
+	}
+	prompt := fmt.Sprintf("  Docker VM memory in GB [%d]: ", def)
+	if gb, ok := parseMemoryGB(readSingleKey(prompt), def); ok {
+		return gb
+	}
+	fmt.Println("  (not a positive whole number — press Enter for the default, or type a GB value)")
+	gb, _ := parseMemoryGB(readSingleKey(prompt), def)
+	return gb
+}
+
+// parseMemoryGB interprets one answer to the memory-size prompt. Empty means
+// "take the default"; a positive integer means that many GB; anything else is
+// garbage — it returns the default with ok=false so the caller can re-prompt.
+func parseMemoryGB(answer string, def int) (gb int, ok bool) {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return def, true
+	}
+	n, err := strconv.Atoi(answer)
+	if err != nil || n <= 0 {
+		return def, false
+	}
+	return n, true
+}
+
+// colimaRunning reports whether the colima VM is currently up. `colima status`
+// exits 0 only when the VM is running, so the exit code is the signal (matching
+// how dockerReachable shells out on `docker version`).
+func colimaRunning() bool {
+	return exec.Command("colima", "status").Run() == nil
 }
 
 // ---------------------------------------------------------------------------
