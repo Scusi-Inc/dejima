@@ -199,6 +199,46 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .copy-btn:hover { opacity: 0.85; }
 .fit-hint { color: var(--muted); font-size: 0.85rem; }
 
+/* Quickstart scenarios: two dead-simple copy-paste paths ------------- */
+.scenario-jump { display: flex; gap: 0.7rem; flex-wrap: wrap; margin: 0.2rem 0 1.5rem; }
+.scenario-jump .btn-ghost { padding: 0.45rem 1rem; font-size: 0.9rem; }
+.scenarios { display: grid; gap: 1.1rem; margin: 1.2rem 0 2.2rem; }
+.scenario { border: 1px solid var(--border); border-radius: 10px;
+  padding: 1.3rem 1.4rem; background: var(--code-bg);
+  scroll-margin-top: 1.5rem; min-width: 0; }
+.scenario.primary { border-color: var(--accent); }
+.scenario-head { display: flex; align-items: baseline; gap: 0.6rem;
+  flex-wrap: wrap; margin-bottom: 0.15rem; }
+.scenario-head h3 { margin: 0; font-size: 1.15rem; color: var(--hover); }
+.scenario-tag { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--bg); background: var(--accent); border-radius: 999px;
+  padding: 0.14rem 0.6rem; font-weight: 700; }
+.scenario-sub { color: var(--muted); font-size: 0.92rem; margin: 0.15rem 0 1.1rem; }
+.step { margin: 1rem 0; min-width: 0; }
+.step-label { color: var(--hover); font-weight: 600; font-size: 0.95rem; }
+.step-label .step-n { display: inline-flex; align-items: center; justify-content: center;
+  width: 1.35rem; height: 1.35rem; border-radius: 999px; background: var(--border);
+  color: var(--fg); font-size: 0.78rem; font-weight: 700; margin-right: 0.5rem; }
+.step .os { color: var(--muted); font-size: 0.82rem; margin: 0.5rem 0 0.15rem;
+  display: flex; align-items: center; }
+.os-ico { width: 0.95em; height: 0.95em; margin-right: 0.4em; fill: currentColor;
+  flex-shrink: 0; }
+/* command box with an inline copy button */
+.cmd { position: relative; margin: 0.3rem 0 0; min-width: 0; }
+.cmd pre { margin: 0; padding-right: 4.6rem; }
+.cmd-copy { position: absolute; top: 0.45rem; right: 0.45rem; background: var(--accent);
+  color: var(--bg); border: 0; border-radius: 6px; padding: 0.28rem 0.7rem;
+  font-weight: 600; cursor: pointer; font-size: 0.78rem; transition: opacity 0.12s; }
+.cmd-copy:hover { opacity: 0.85; }
+/* host + client side by side inside scenario 2 */
+.hc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.4rem; }
+.hc { border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.1rem;
+  background: var(--bg); min-width: 0; }
+.hc-order { display: inline-block; font-size: 0.68rem; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--accent); font-weight: 700; margin-bottom: 0.1rem; }
+.hc h4 { margin: 0 0 0.15rem; font-size: 1rem; color: var(--hover); }
+.hc .hc-sub { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.6rem; }
+
 /* Long-form guides & posts ------------------------------------------ */
 .post-meta { color: var(--muted); font-size: 0.8rem; margin: 1.4rem 0 0.3rem;
   text-transform: uppercase; letter-spacing: 0.06em; }
@@ -240,7 +280,7 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .post-more a { font-weight: 600; }
 
 @media (max-width: 720px) {
-  .proof, .cards { grid-template-columns: 1fr; }
+  .proof, .cards, .hc-cols { grid-template-columns: 1fr; }
   main { padding: 2.5rem 1.25rem 5rem; }
   .hero-h { font-size: 1.7rem; }
   .post-h { font-size: 1.6rem; }
