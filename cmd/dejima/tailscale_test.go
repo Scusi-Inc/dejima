@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"strings"
 	"testing"
 
@@ -28,6 +29,21 @@ func TestIsTailscaleHost(t *testing.T) {
 		if got := isTailscaleHost(host); got != want {
 			t.Errorf("isTailscaleHost(%q) = %v, want %v", host, got, want)
 		}
+	}
+}
+
+func TestTCPReachable(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if !tcpReachable(addr) {
+		t.Errorf("open listener %s should be reachable", addr)
+	}
+	_ = ln.Close()
+	if tcpReachable(addr) {
+		t.Errorf("closed listener %s should not be reachable", addr)
 	}
 }
 

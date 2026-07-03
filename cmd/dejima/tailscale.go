@@ -84,6 +84,18 @@ func isTailscaleHost(hostPort string) bool {
 		ip[2] == 0x11 && ip[3] == 0x5c && ip[4] == 0xa1 && ip[5] == 0xe0
 }
 
+// tcpReachable reports whether hostPort accepts a TCP connection within a short
+// timeout — a direct check that a daemon's tailnet listener is actually up, used
+// to VERIFY (not just claim) remote reachability at the end of provisioning.
+func tcpReachable(hostPort string) bool {
+	c, err := net.DialTimeout("tcp", hostPort, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
 // printTailscaleJoinHelp replaces the opaque "context deadline exceeded" a
 // teammate would otherwise hit when they join a Tailscale-pinned daemon without
 // being on its tailnet. The profile is already saved, so a retry after joining
