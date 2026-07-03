@@ -29,7 +29,7 @@
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Can a team share one Dejima host?","acceptedAnswer":{"@type":"Answer","text":"Yes. Several people connect to one daemon over your tailnet, each with a scoped token. Owner, operator, and viewer roles let people act within their authority, and the audit ledger records who did what."}},
 {"@type":"Question","name":"Do I need a per-seat subscription to run agents for a team?","acceptedAnswer":{"@type":"Answer","text":"No. Dejima is free and open source. You run it on a box you own and add people with scoped tokens. There is no per-seat bill and no vendor account holding your code."}},
-{"@type":"Question","name":"How do I control what each teammate can do?","acceptedAnswer":{"@type":"Answer","text":"Mint role-scoped tokens with dejima token create --role operator --island foo. Operators run the fleet but can't purge, viewers only observe, and you can scope a token to specific islands."}}
+{"@type":"Question","name":"How do I control what each teammate can do?","acceptedAnswer":{"@type":"Answer","text":"Mint role-scoped tokens with dejima token create --role operator --island foo, or from the dashboard by pressing I (the owner-only Team panel). Operators run the fleet but can't purge, viewers only observe, and you can scope a token to specific islands."}}
 ]}
 ]}
 </script>
@@ -76,7 +76,7 @@
     </div>
     <div class="card">
       <h3>Roles and scoped tokens</h3>
-      <p>Owner, operator, and viewer roles, minted as tokens you can scope to specific islands: <code>dejima token create --role operator --island foo</code>. Operators run the fleet but can't purge; viewers only observe.</p>
+      <p>Owner, operator, and viewer roles, minted as tokens you can scope to specific islands: <code>dejima token create --role operator --island foo</code>, or from the dashboard with <kbd>I</kbd> (the owner-only Team panel). Operators run the fleet but can't purge; viewers only observe.</p>
     </div>
     <div class="card">
       <h3>A shared record</h3>
@@ -105,7 +105,7 @@
     </div>
     <div class="faq-item">
       <h3>How do I control what each teammate can do?</h3>
-      <p>Mint role-scoped tokens with <code>dejima token create --role operator --island foo</code>. Operators run the fleet but can't purge, viewers only observe, and you can scope a token to specific islands.</p>
+      <p>Mint role-scoped tokens with <code>dejima token create --role operator --island foo</code>, or from the dashboard by pressing <kbd>I</kbd> (the owner-only Team panel). Operators run the fleet but can't purge, viewers only observe, and you can scope a token to specific islands.</p>
     </div>
   </div>
 
