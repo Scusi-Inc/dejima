@@ -1983,6 +1983,11 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
 	})
 
+	// altScreen tracks whether the agent is currently in a full-screen TUI, by
+	// watching its output for the alt-screen escapes. Gated notices below consult
+	// it so the client never writes into a TUI's screen (which corrupts its cursor).
+	var altScreen altScreenWatch
+
 	readReason := make(chan sessReason, 1)
 	go func() {
 		for {
@@ -2002,6 +2007,7 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 				printPresence("now attached", env.Attached)
 			case "data":
 				if raw, derr := base64StdDecode(env.B64); derr == nil {
+					altScreen.observe(raw)
 					_, _ = os.Stdout.Write(raw)
 				}
 			case "error":
@@ -2027,6 +2033,17 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 	// attach-file minibuffer and the drag-drop/clipboard bridge below.
 	inject := func(islandPath string) {
 		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode([]byte(bracketedPaste(islandPath)))})
+	}
+
+	// sessionNotice prints an inline [dejima] status line to the user's terminal —
+	// but ONLY when the agent isn't in a full-screen TUI. Writing into a TUI's
+	// alt-screen collides with its own cursor/redraw (the notice parks the cursor
+	// on the injected token); the injected token/path is feedback enough there.
+	sessionNotice := func(format string, a ...any) {
+		if altScreen.active.Load() {
+			return
+		}
+		fmt.Fprintf(os.Stderr, format, a...)
 	}
 
 	// Attach-file minibuffer (island session on a TTY): the attach chord (default
@@ -2116,7 +2133,7 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 							return
 						}
 						inject(islandPath)
-						fmt.Fprintf(os.Stderr, "\r\n[dejima] uploaded → %s\r\n", islandPath)
+						sessionNotice("\r\n[dejima] uploaded → %s\r\n", islandPath)
 					},
 					func() bool { // Ctrl-V / Alt-V clipboard image
 						if bridge.clip == nil {
@@ -2131,7 +2148,7 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 							return false // no image on the clipboard → forward the keystroke
 						}
 						inject(islandPath)
-						fmt.Fprintf(os.Stderr, "\r\n[dejima] pasted image → %s\r\n", islandPath)
+						sessionNotice("\r\n[dejima] pasted image → %s\r\n", islandPath)
 						return true
 					})
 			}
