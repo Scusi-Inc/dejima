@@ -93,7 +93,7 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .btn-ghost { color: var(--accent); text-decoration: none; border: 1px solid var(--accent);
   padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
 .btn-ghost:hover { background: var(--hover); border-color: var(--hover); color: var(--bg); }
-.proof { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem;
+.proof { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem;
   margin: 1.5rem 0 2.2rem; }
 .proof-tile { border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem;
   background: transparent; }
