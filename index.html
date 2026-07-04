@@ -55,24 +55,41 @@
 <section class="hero">
   <p class="hero-eyebrow">Manage a fleet of agents on your Mac mini, Linux box, local folder, or cloud.</p>
   <h1 class="hero-h">Infrastructure for your agents.<br>None of the worry.</h1>
+  <p class="hero-sub">Run your coding agents without the tmux-and-SSH grind, and without handing them the whole machine.</p>
   <div class="hero-cta">
     <a class="btn-primary" href="quickstart.html">Run it yourself →</a>
     <a class="btn-ghost" href="#is-it-for-me">Ask AI if it fits</a>
   </div>
 </section>
 
-<section class="proof" aria-label="What you get">
+<section class="qol" aria-label="Why Dejima is nicer to use">
+  <div class="proof-tile">
+    <h3>Ditch the tmux + SSH grind</h3>
+    <p>Your sessions live on the server, so you can close your laptop and the agents keep working, then reconnect from any device. It runs on tmux under the hood, so you keep the multi-window power without babysitting SSH.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>Your whole fleet on one screen</h3>
+    <p>Every agent's status at a glance in one dashboard. Jump between projects and agents with a keystroke, so switching context costs you nothing.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>It pings you when an agent needs you</h3>
+    <p>Get a notification the moment an agent finishes or is waiting on your input, so you're not watching a terminal to catch the handoff.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>Many agents, no collisions</h3>
+    <p>Each agent gets its own git worktree automatically, so Claude Code, Codex, and headless runs can share one repo without stepping on each other.</p>
+  </div>
+</section>
+<p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
+
+<section class="proof" aria-label="Contained by design">
   <div class="proof-tile">
     <h3>Secure sandboxing</h3>
-    <p>Rogue agents can't break out. Each one is sealed in its own walled-off island — no reach to your host machine, your files, or your other projects. Host access is deny-all, granted file by file.</p>
+    <p>Rogue agents can't break out. Each one is sealed in its own walled-off island, with no reach to your host machine, your files, or your other projects. Host access is deny-all, granted file by file.</p>
   </div>
   <div class="proof-tile">
-    <h3>Central control &amp; insights</h3>
-    <p>One dashboard for every agent — Claude Code, Codex, OpenClaw, whatever you run. Watch status, logs, and the audit trail in real time, then start, stop, or steer the whole fleet from one place.</p>
-  </div>
-  <div class="proof-tile">
-    <h3>Up and running in minutes</h3>
-    <p>Guided setup, then always ready. Install once, then just run <code>dejima</code> — the TUI takes over, no tmux or SSH to wrangle. Runs on a Mac mini, Linux box, local folder, or cloud.</p>
+    <h3>Your code never leaves your box</h3>
+    <p>It all runs on hardware you own. The agents' model calls go out, but your source, your files, and your credentials stay inside your perimeter. There's no managed cloud in the loop and no vendor account holding your work.</p>
   </div>
 </section>
 
