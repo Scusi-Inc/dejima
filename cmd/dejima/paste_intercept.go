@@ -48,13 +48,15 @@ type pasteScanner struct {
 
 // process feeds raw stdin bytes through the scanner. It returns the bytes to
 // forward to the agent (byte-exact for everything not bridged) and:
-//   - calls onDrop(localPath) for a detected dropped local file (swallowed);
+//   - calls onDrop(localPath, bracketed) for a detected dropped local file; if it
+//     returns true the paste is swallowed (upload/confirm), if false the paste is
+//     forwarded verbatim as text (the caller declined to ingest it);
 //   - calls onPasteKey() on a Ctrl-V/Alt-V trigger — if it returns true (an image
 //     was pasted) the keystroke is swallowed, else it's forwarded unchanged.
 //
 // Either callback may be nil. Bytes belonging to an incomplete sequence are held
 // internally and emitted later.
-func (s *pasteScanner) process(in []byte, onDrop func(localPath string), onPasteKey func() (handled bool)) []byte {
+func (s *pasteScanner) process(in []byte, onDrop func(localPath string, bracketed []byte) bool, onPasteKey func() (handled bool)) []byte {
 	data := append(s.buf, in...)
 	s.buf = nil
 	var out []byte
@@ -109,10 +111,19 @@ func (s *pasteScanner) process(in []byte, onDrop func(localPath string), onPaste
 		data = data[j+len(bpEnd):]
 		s.inPaste = false
 		if path, ok := droppedLocalFile(content); ok && onDrop != nil {
-			onDrop(path) // swallow the paste; caller uploads + injects the island path
-			continue
+			// Rebuild the original bracketed paste so onDrop can forward it as TEXT
+			// when it declines to ingest (returns false) — e.g. a plain path pasted
+			// as a reference, or auto-upload disabled / a full-screen TUI attached.
+			bracketed := make([]byte, 0, len(bpStart)+len(content)+len(bpEnd))
+			bracketed = append(bracketed, bpStart...)
+			bracketed = append(bracketed, content...)
+			bracketed = append(bracketed, bpEnd...)
+			if onDrop(path, bracketed) {
+				continue // consumed: uploaded, or a confirm was opened
+			}
+			// declined → fall through and forward the paste verbatim (as text)
 		}
-		// Not a local file → a normal text paste: reconstruct it verbatim.
+		// Not a local file (or drop declined) → a normal text paste: reconstruct it.
 		out = append(out, []byte(bpStart)...)
 		out = append(out, content...)
 		out = append(out, []byte(bpEnd)...)

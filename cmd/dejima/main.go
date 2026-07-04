@@ -2056,6 +2056,9 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 		attachKey = configuredAttachKey()
 	}
 	var attaching *attachState
+	// pendingUp holds a pasted file PATH awaiting the operator's upload confirm (in
+	// a plain shell). Nothing is ever silently uploaded — see resolveUpload.
+	var pendingUp *pendingUpload
 	finishAttach := func(p string) {
 		p = expandClientPath(p)
 		if p == "" {
@@ -2086,6 +2089,35 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 			finishAttach(p)
 		}
 	}
+	// resolveUpload answers the file-upload confirm (plain shell): 'u'/'y' uploads
+	// the pending file; ANY other key forwards the pasted PATH as text (so a reflex
+	// Enter sends the path, never uploads) followed by the operator's keystrokes.
+	// Nothing is ever silently uploaded.
+	resolveUpload := func(b []byte) {
+		pu := pendingUp
+		pendingUp = nil
+		if len(b) == 0 {
+			return
+		}
+		switch b[0] {
+		case 'u', 'U', 'y', 'Y':
+			islandPath, err := bridge.drop(pu.path)
+			if err != nil {
+				sessionNotice("\r\n[dejima] upload failed: %v\r\n", err)
+			} else {
+				inject(islandPath)
+				sessionNotice("\r\n📎 uploaded → %s\r\n", filepath.Base(pu.path))
+			}
+			if rest := b[1:]; len(rest) > 0 {
+				_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(rest)})
+			}
+		default:
+			// Decline → send the path to the agent as pasted text, then the operator's
+			// keystroke(s) verbatim (never strip — an Esc byte could head an escape seq).
+			_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(pu.bracketed)})
+			_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(b)})
+		}
+	}
 
 	for {
 		select {
@@ -2096,6 +2128,13 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 		case r := <-readReason:
 			return r
 		case b := <-stdinCh:
+			// A pending upload-confirm owns the next keystroke: 'u'/'y' uploads,
+			// any other key sends the path as text. (Plain shell only — a TUI or
+			// the disable toggle never opens a confirm.)
+			if pendingUp != nil {
+				resolveUpload(b)
+				continue
+			}
 			// While the attach minibuffer is open it owns the keystroke stream:
 			// collect a path (not forwarded to the agent) until Enter or Esc.
 			if attaching != nil {
@@ -2126,14 +2165,18 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 			// (P2b): upload it and inject the in-island path. Byte-exact otherwise.
 			if intercept {
 				before = paste.process(before,
-					func(localPath string) { // drag-drop
-						islandPath, err := bridge.drop(localPath)
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "\r\n[dejima] couldn't upload %s: %v\r\n", localPath, err)
-							return
+					func(localPath string, bracketed []byte) bool { // pasted/dropped file path
+						switch pasteDropPolicy(altScreen.active.Load()) {
+						case pasteAsText:
+							// Disabled, or a full-screen TUI is attached: never silently
+							// upload — forward the path to the agent as plain text.
+							return false
+						default: // pasteConfirm (plain shell): ask before ingesting.
+							pendingUp = &pendingUpload{path: localPath, bracketed: bracketed}
+							fmt.Fprintf(os.Stderr, "\r\n📎 %s is a file on your computer — [u] upload it to the agent · any other key = paste the path as text\r\n",
+								filepath.Base(localPath))
+							return true
 						}
-						inject(islandPath)
-						sessionNotice("\r\n[dejima] uploaded → %s\r\n", islandPath)
 					},
 					func() bool { // Ctrl-V / Alt-V clipboard image
 						if bridge.clip == nil {

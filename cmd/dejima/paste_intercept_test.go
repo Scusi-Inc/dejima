@@ -14,7 +14,7 @@ func feedAll(s *pasteScanner, chunks ...[]byte) (string, []string) {
 	var out strings.Builder
 	var drops []string
 	for _, c := range chunks {
-		out.Write(s.process(c, func(p string) { drops = append(drops, p) }, nil))
+		out.Write(s.process(c, func(p string, _ []byte) bool { drops = append(drops, p); return true }, nil))
 	}
 	return out.String(), drops
 }
