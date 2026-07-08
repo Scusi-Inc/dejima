@@ -279,6 +279,25 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   `docker pause` (doesn't free RAM) / CRIU (fragile). Matters for interactive/terminal agents;
   headless/stateless ones (e.g. the watchtower) cold-start fine. Pairs with the scheduled-wake
   primitive above.
+- **[NEAR-TERM] Terminal rendering corruption over the Windows-client → macOS-daemon link**
+  — reported 2026-07-08 (GIZMO Windows client, multiple attached tabs): the rendered display
+  degrades **progressively** over a session — status/prompt lines redraw at the wrong width and
+  overprint themselves (a one-row status line wraps + fragments). Signature points at a
+  **terminal-size mismatch**: the island PTY (tmux + Claude Code drawing into it) believes it's a
+  different width than the actual Windows Terminal tab. Leading hypothesis: **SIGWINCH / resize
+  propagation** — the Windows client *polls* for size changes rather than using SIGWINCH (see the
+  Native-Windows-client note below), so a missed/late resize event leaves tmux+agent drawing at a
+  stale width; reattaching resyncs the size (which is why it "self-heals" briefly). Secondary
+  suspects, since both sit directly in the client-side PTY byte path and both changed this week:
+  the **paste scanner** (`cmd/dejima/paste_intercept.go`, #300) and the **alt-screen watcher**
+  (`cmd/dejima/altscreen.go`, #299) — the alt-screen holdback buffer for split reads is a state
+  machine that could desync. **Isolation plan for whoever picks this up** (fastest test first):
+  (1) `Ctrl-L` redraw → clean means cosmetic-not-wedged; (2) detach+reattach → clean means
+  client-side accumulation over the link; (3) `DEJIMA_PASTE_UPLOAD=off DEJIMA_ATTACH_KEY=off
+  dejima connect …` → clean means our interceptors, still-broken means resize/tmux; (4) confirm
+  no client/daemon **version skew** (`dejima version` both ends). Relates to the fragile
+  cross-machine resize path already flagged under *Cross-machine validation* and the
+  Windows-client SIGWINCH-polling note. Owner: backend (d5) once isolated to a layer.
 - **Per-user daemons on one host (shared-fate consideration)** — one host runs **one** system
   daemon (`1 dejima = 1 server`), so separate OS accounts on the same machine still *share* it:
   the operator's `update`/`restart`/crash blips every user on that host (felt during the
