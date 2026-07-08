@@ -78,21 +78,78 @@ func TestParseTailscaleIPv4(t *testing.T) {
 	}
 }
 
-// TestOpenTeamViewPrefill: on the local socket the host prefills from the
-// captured tailnet IP (with the default TCP port); connected remotely, the
-// active host wins and no lookup happens.
-func TestOpenTeamViewPrefill(t *testing.T) {
-	orig := tailscaleIPLookup
-	t.Cleanup(func() { tailscaleIPLookup = orig })
+// TestDaemonInviteHost: the MagicDNS name is preferred over the raw tailnet IP
+// (stable across tailnets), with the IP as the fallback when MagicDNS is off.
+func TestDaemonInviteHost(t *testing.T) {
+	origIP, origFQDN := tailscaleIPLookup, tailscaleFQDNLookup
+	t.Cleanup(func() { tailscaleIPLookup, tailscaleFQDNLookup = origIP, origFQDN })
 
-	// Local socket → prefill "<tailnet-ip>:7273".
+	// MagicDNS name available → prefer it, rawIP=false.
+	tailscaleFQDNLookup = func() string { return "minion.tail2f808e.ts.net" }
+	tailscaleIPLookup = func() (string, bool) { return "100.77.85.107", true }
+	if hp, raw, ok := daemonInviteHost(); !ok || raw || hp != "minion.tail2f808e.ts.net:7273" {
+		t.Errorf("daemonInviteHost with FQDN = (%q,%v,%v), want (minion.tail2f808e.ts.net:7273,false,true)", hp, raw, ok)
+	}
+
+	// No MagicDNS → fall back to the raw IP, rawIP=true so callers can warn.
+	tailscaleFQDNLookup = func() string { return "" }
+	if hp, raw, ok := daemonInviteHost(); !ok || !raw || hp != "100.77.85.107:7273" {
+		t.Errorf("daemonInviteHost IP-only = (%q,%v,%v), want (100.77.85.107:7273,true,true)", hp, raw, ok)
+	}
+
+	// Neither → not ok.
+	tailscaleIPLookup = func() (string, bool) { return "", false }
+	if _, _, ok := daemonInviteHost(); ok {
+		t.Error("daemonInviteHost with no tailnet address should return ok=false")
+	}
+}
+
+func TestIsRawTailscaleIP(t *testing.T) {
+	cases := map[string]bool{
+		"100.77.85.107:7273":       true,  // raw CGNAT IP — the fragile form
+		"100.64.0.1":               true,  // raw, no port
+		"[fd7a:115c:a1e0::1]:7273": true,  // raw Tailscale IPv6
+		"minion.ts.net:7273":       false, // MagicDNS name — the robust form
+		"example.com:7273":         false, // not a tailnet host at all
+		"192.168.1.5:7273":         false, // LAN
+		"":                         false,
+	}
+	for host, want := range cases {
+		if got := isRawTailscaleIP(host); got != want {
+			t.Errorf("isRawTailscaleIP(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+// TestOpenTeamViewPrefill: on the local socket the host prefills from the
+// captured tailnet address — MagicDNS name preferred, IP as fallback (with the
+// default TCP port); connected remotely, the active host wins and no lookup
+// happens.
+func TestOpenTeamViewPrefill(t *testing.T) {
+	origIP, origFQDN := tailscaleIPLookup, tailscaleFQDNLookup
+	t.Cleanup(func() { tailscaleIPLookup, tailscaleFQDNLookup = origIP, origFQDN })
+
+	// Local socket, MagicDNS available → prefill the name.
+	tailscaleFQDNLookup = func() string { return "minion.tail2f808e.ts.net" }
+	tailscaleIPLookup = func() (string, bool) {
+		t.Fatal("must not fall back to the IP when MagicDNS is available")
+		return "", false
+	}
+	m1, _ := tuiModel{activeHost: ""}.openTeamView()
+	if got := m1.(tuiModel).team.host; got != "minion.tail2f808e.ts.net:7273" {
+		t.Errorf("local-socket prefill (MagicDNS) = %q, want minion.tail2f808e.ts.net:7273", got)
+	}
+
+	// Local socket, no MagicDNS → prefill "<tailnet-ip>:7273".
+	tailscaleFQDNLookup = func() string { return "" }
 	tailscaleIPLookup = func() (string, bool) { return "100.77.85.107", true }
 	m2, _ := tuiModel{activeHost: ""}.openTeamView()
 	if got := m2.(tuiModel).team.host; got != "100.77.85.107:7273" {
-		t.Errorf("local-socket prefill = %q, want 100.77.85.107:7273", got)
+		t.Errorf("local-socket prefill (IP fallback) = %q, want 100.77.85.107:7273", got)
 	}
 
-	// Remote → activeHost wins; the lookup must not even run.
+	// Remote → activeHost wins; neither lookup runs.
+	tailscaleFQDNLookup = func() string { t.Fatal("must not look up MagicDNS when already remote"); return "" }
 	tailscaleIPLookup = func() (string, bool) { t.Fatal("must not look up tailnet IP when already remote"); return "", false }
 	m3, _ := tuiModel{activeHost: "minion.ts.net:7274"}.openTeamView()
 	if got := m3.(tuiModel).team.host; got != "minion.ts.net:7274" {

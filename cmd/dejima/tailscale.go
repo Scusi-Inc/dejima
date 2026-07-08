@@ -18,6 +18,42 @@ const defaultDaemonTCPPort = "7273"
 // without a real `tailscale` binary.
 var tailscaleIPLookup = tailscaleIPv4
 
+// tailscaleFQDNLookup is indirected (like tailscaleIPLookup) so tests can stub
+// the MagicDNS-name capture without a real `tailscale` binary.
+var tailscaleFQDNLookup = sshTailnetFQDN
+
+// daemonInviteHost returns the address a teammate should dial to reach the LOCAL
+// daemon over the tailnet, preferring the host's MagicDNS name
+// (<host>.<tailnet>.ts.net) over the raw tailnet IPv4.
+//
+// Why prefer the name: a MagicDNS name resolves to the right address from every
+// tailnet — INCLUDING one the node is *shared* into, where Tailscale often
+// re-addresses the node so the raw 100.x IP differs from what the operator sees.
+// Baking a raw IP into an invite therefore strands a node-shared teammate on an
+// address that doesn't exist in their tailnet; the name doesn't have that
+// failure mode. rawIP reports that only an IP was available (MagicDNS off), so
+// callers can warn.
+func daemonInviteHost() (hostPort string, rawIP bool, ok bool) {
+	if fqdn := strings.TrimSpace(tailscaleFQDNLookup()); fqdn != "" {
+		return net.JoinHostPort(fqdn, defaultDaemonTCPPort), false, true
+	}
+	if ip, ok := tailscaleIPLookup(); ok {
+		return net.JoinHostPort(ip, defaultDaemonTCPPort), true, true
+	}
+	return "", false, false
+}
+
+// isRawTailscaleIP reports whether hostPort is a Tailscale host expressed as a
+// raw 100.x/fd7a IP rather than a MagicDNS "*.ts.net" name — the fragile form
+// for a teammate reached via node-sharing, since that IP can be remapped in the
+// teammate's tailnet. Used to warn the operator at invite time.
+func isRawTailscaleIP(hostPort string) bool {
+	if !isTailscaleHost(hostPort) {
+		return false
+	}
+	return net.ParseIP(hostOnly(hostPort)) != nil
+}
+
 // tailscaleIPv4 returns this machine's Tailscale IPv4 address via `tailscale ip
 // -4`, if Tailscale is installed and up. It's used to prefill the invite host
 // when the operator mints FROM the host itself (local socket): the daemon can't
@@ -101,12 +137,24 @@ func tcpReachable(hostPort string) bool {
 // being on its tailnet. The profile is already saved, so a retry after joining
 // the tailnet Just Works.
 func printTailscaleJoinHelp(hostPort string) {
+	host := hostOnly(hostPort)
 	fmt.Println()
-	fmt.Println(bold("This server is on Tailscale (" + hostOnly(hostPort) + ") — your computer isn't on its tailnet yet."))
-	fmt.Println("Your profile is saved. To connect, get on the tailnet, then re-run the same command:")
-	fmt.Println("    1. Install Tailscale:  https://tailscale.com/download")
-	fmt.Println("    2. Join the tailnet — ask your teammate to share this node")
-	fmt.Println("       (Tailscale admin console → Machines → Share), accept it, then `tailscale up`.")
-	fmt.Println("    3. Re-run `dejima join <invite>` (or just `dejima`) — the saved profile will connect.")
+	fmt.Println(bold("This server is on Tailscale (" + host + ") — your computer can't reach its tailnet yet."))
+	fmt.Println("Your profile is saved, so once you're on the tailnet just re-run the same command.")
+	fmt.Println("Being *signed in* to Tailscale isn't enough — you have to be on THIS server's tailnet:")
+	fmt.Println("    1. The Dejima installer already set Tailscale up for you. If you skipped it:")
+	fmt.Println("       curl -fsSL https://tailscale.com/install.sh | sh   (or `brew install tailscale`)")
+	fmt.Println("    2. Ask the operator to share this node with you (Tailscale admin console →")
+	fmt.Println("       Machines → Share). Open the share link they send and ACCEPT it — that's the")
+	fmt.Println("       step that puts the server on your tailnet.")
+	fmt.Printf("    3. Confirm you can reach it:  tailscale ping %s\n", host)
+	fmt.Println("    4. Re-run `dejima join <invite>` (or just `dejima`) — the saved profile connects.")
+	if isRawTailscaleIP(hostPort) {
+		fmt.Println()
+		fmt.Println("  Note: this invite uses a raw tailnet IP. If the server was *shared* with you,")
+		fmt.Println("  your Tailscale may list it under a DIFFERENT 100.x address than the one above —")
+		fmt.Printf("  check `tailscale status` for the shared node's IP. Ask the operator to re-issue\n")
+		fmt.Println("  the invite with the server's MagicDNS name (*.ts.net), which avoids this entirely.")
+	}
 	fmt.Println()
 }

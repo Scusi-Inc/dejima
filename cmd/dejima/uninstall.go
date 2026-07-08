@@ -114,6 +114,11 @@ func newUninstallCmd() *cobra.Command {
 			// removing a live container still interrupts in-flight work, so we
 			// guard both modes uniformly.
 			if !force {
+				// This queries each island (a network round-trip apiece) before any
+				// output — announce it so the terminal isn't blank while it runs.
+				if len(islands) > 0 {
+					fmt.Printf("Checking %s for unpushed work…\n", countNoun(len(islands), "island"))
+				}
 				var atRisk []string
 				for _, isl := range islands {
 					if reason := islandAtRisk(ctx, c, isl); reason != "" {
@@ -167,10 +172,14 @@ func newUninstallCmd() *cobra.Command {
 			//    disk so a reinstall re-adopts the island by name.
 			for _, isl := range islands {
 				if purge {
+					// Print the action BEFORE the (slow, container-stopping) call so
+					// each island shows progress instead of a silent stall.
+					fmt.Printf("  purging %s… ", isl.Name)
 					if err := c.DeleteIsland(ctx, isl.Name, true); err != nil {
+						fmt.Println("failed")
 						fmt.Fprintf(os.Stderr, "  warning: purge %s: %v\n", isl.Name, err)
 					} else {
-						fmt.Printf("  purged %s\n", isl.Name)
+						fmt.Println("done")
 					}
 					continue
 				}
@@ -179,19 +188,23 @@ func newUninstallCmd() *cobra.Command {
 					fmt.Printf("  kept %s (volumes + config retained)\n", isl.Name)
 					continue
 				}
+				fmt.Printf("  stopping %s… ", isl.Name)
 				if _, err := c.HibernateIsland(ctx, isl.Name); err != nil {
+					fmt.Println("failed")
 					fmt.Fprintf(os.Stderr, "  warning: stop %s: %v\n", isl.Name, err)
 				} else {
-					fmt.Printf("  kept %s (stopped; volumes + config retained)\n", isl.Name)
+					fmt.Println("done (kept; volumes + config retained)")
 				}
 			}
 
 			// 2. Uninstall the service (stops the daemon).
 			if mgr, mErr := serviceMgr(systemSvc); mErr == nil {
+				fmt.Print("  uninstalling the dejimad service… ")
 				if err := mgr.Uninstall(); err != nil {
+					fmt.Println("failed")
 					fmt.Fprintf(os.Stderr, "  warning: service uninstall: %v\n", err)
 				} else {
-					fmt.Println("  service uninstalled")
+					fmt.Println("done")
 				}
 			}
 

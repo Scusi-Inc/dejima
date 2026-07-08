@@ -109,7 +109,20 @@ func newTokenInviteCmd() *cobra.Command {
 			}
 			host = strings.TrimSpace(host)
 			if host == "" {
-				return fmt.Errorf("--host is required (the daemon host:port the teammate will dial)")
+				// The daemon can't self-detect its reachable address, but when this
+				// command runs ON the host we can read the tailnet name/IP directly.
+				// Prefer the MagicDNS name (stable across tailnets) over a raw IP.
+				if h, _, ok := daemonInviteHost(); ok {
+					host = h
+					fmt.Fprintf(os.Stderr, "note: --host not given; using this host's tailnet address %s\n", host)
+				} else {
+					return fmt.Errorf("--host is required (the daemon host:port the teammate will dial, e.g. a MagicDNS name minion.tailXXXX.ts.net:%s or ip:port)", defaultDaemonTCPPort)
+				}
+			}
+			if isRawTailscaleIP(host) {
+				fmt.Fprintf(os.Stderr, "warning: --host %s is a raw tailnet IP. If you reach teammates via node-sharing,\n"+
+					"         their Tailscale may re-address this node to a different 100.x IP and the invite\n"+
+					"         will time out. Prefer this host's MagicDNS name (*.ts.net) — enable MagicDNS if off.\n", hostOnly(host))
 			}
 			c, err := client()
 			if err != nil {
@@ -146,7 +159,7 @@ func newTokenInviteCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "", "owner, operator, or viewer (required)")
-	cmd.Flags().StringVar(&host, "host", "", "daemon host:port the teammate dials (required)")
+	cmd.Flags().StringVar(&host, "host", "", "daemon host:port the teammate dials (default: this host's MagicDNS name / tailnet IP when run on the host)")
 	cmd.Flags().StringVar(&owner, "owner", "", "tenant the teammate acts as — they see + create only this tenant's islands (default: the host owner, i.e. full access)")
 	cmd.Flags().StringVar(&label, "label", "", "human label for the token (e.g. amanda, phone)")
 	cmd.Flags().StringVar(&name, "name", "", "suggested profile name for the teammate (default: host's first label)")
@@ -183,14 +196,16 @@ func newJoinCmd() *cobra.Command {
 			fmt.Printf("joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
 			// Preflight the connection so a Tailscale-pinned daemon doesn't leave the
 			// teammate to hit an opaque "context deadline exceeded" on the next
-			// command. The profile is saved regardless, so a retry after they get on
-			// the tailnet Just Works.
-			if err := verifyDejimaHost(cmd.Context()); err != nil {
+			// command. Probe the invite's OWN host directly (tcpReachable) rather than
+			// going through resolveHost/Health — the latter can resolve a different
+			// target and mask an unreachable tailnet host as "fine". The profile is
+			// saved regardless, so a retry after they get on the tailnet Just Works.
+			if !tcpReachable(p.Host) {
 				if isTailscaleHost(p.Host) {
 					printTailscaleJoinHelp(p.Host)
 					return nil
 				}
-				fmt.Printf("note: couldn't reach %s yet (%v) — the profile is saved; retry with `dejima ls` or `dejima`.\n", p.Host, err)
+				fmt.Printf("note: couldn't reach %s yet — the profile is saved; retry with `dejima ls` or `dejima`.\n", p.Host)
 				return nil
 			}
 			fmt.Println("next: `dejima ls` to see islands, or `dejima` for the TUI.")

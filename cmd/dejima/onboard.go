@@ -273,14 +273,16 @@ func firstRunJoin(ctx context.Context) (bool, error) {
 	fmt.Printf("Joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
 	// Confirm the connection now (bounded) so the teammate gets immediate
 	// feedback, but never block the dashboard on it: the profile is saved either
-	// way, and a transient failure shouldn't strand them.
-	if err := verifyDejimaHost(ctx); err != nil {
+	// way, and a transient failure shouldn't strand them. Probe the invite's own
+	// host directly rather than via resolveHost/Health, which can resolve a
+	// different target and mask an unreachable tailnet host as "verified".
+	if !tcpReachable(p.Host) {
 		if isTailscaleHost(p.Host) {
 			// A Tailscale-pinned daemon is unreachable until the teammate is on the
 			// tailnet — guide them there instead of the opaque timeout error.
 			printTailscaleJoinHelp(p.Host)
 		} else {
-			fmt.Printf("note: couldn't reach %s yet (%v) — the profile is saved; the dashboard will retry.\n", p.Host, err)
+			fmt.Printf("note: couldn't reach %s yet — the profile is saved; the dashboard will retry.\n", p.Host)
 		}
 	} else {
 		fmt.Println("Connection verified. Opening the dashboard.")
