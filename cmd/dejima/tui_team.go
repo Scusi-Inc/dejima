@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 	"time"
@@ -76,15 +75,17 @@ type teamFocusItem struct {
 // The host field is prefilled with the current connection target when that's a
 // real host:port — that's the address this very client dialed, so it's the one a
 // teammate would dial too. On the local socket (activeHost == "") the client IS
-// the host, so the daemon's own tailnet IP (`tailscale ip -4`) is the address a
-// teammate dials — prefill it with the default TCP port so the minted invite is
-// reachable out-of-the-box. (Before, the operator had to type it by hand; the
-// daemon can't self-detect its address, but a co-resident client can.)
+// the host, so the daemon's own tailnet address is what a teammate dials — we
+// prefill it (with the default TCP port) so the minted invite is reachable
+// out-of-the-box. We prefer the MagicDNS name over the raw tailnet IP: a shared
+// node keeps its name but not always its IP across tailnets, so the name is the
+// robust thing to hand a teammate. (The daemon can't self-detect its address,
+// but a co-resident client can.)
 func (m tuiModel) openTeamView() (tea.Model, tea.Cmd) {
 	host := m.activeHost
 	if host == "" {
-		if ip, ok := tailscaleIPLookup(); ok {
-			host = net.JoinHostPort(ip, defaultDaemonTCPPort)
+		if h, _, ok := daemonInviteHost(); ok {
+			host = h
 		}
 	}
 	m.team = &teamView{loading: true, scopeAll: true, scopeSel: map[string]bool{}, host: host}
@@ -620,13 +621,27 @@ func (m tuiModel) renderMintedInvite() string {
 		if isTailscaleHost(v.host) {
 			// This daemon is Tailscale-pinned, so the invite is useless until the
 			// teammate is on the tailnet — a cryptic timeout otherwise. Say so here,
-			// where the operator (who owns the tailnet) can act on it.
+			// where the operator (who owns the tailnet) can act on it. Note the
+			// order: the installer in step 1 below sets Tailscale up, but the
+			// operator-side share is what actually grants the route.
 			b.WriteString(styleWaiting.Render("  ⚠ This server is on Tailscale — your teammate must be on your tailnet first:"))
 			b.WriteString("\n")
-			b.WriteString(styleMuted.Render("    share JUST this node to their Tailscale (admin console → Machines → Share — not your whole tailnet),"))
+			b.WriteString(styleMuted.Render("    share JUST this node to them (admin console → Machines → Share — not your whole tailnet),"))
 			b.WriteString("\n")
-			b.WriteString(styleMuted.Render("    then they run `tailscale up`. Grant exactly this one machine — nothing else on your network."))
-			b.WriteString("\n\n")
+			b.WriteString(styleMuted.Render("    send them the share link; they ACCEPT it (being signed in to Tailscale isn't enough)."))
+			b.WriteString("\n")
+			if isRawTailscaleIP(v.host) {
+				// A raw 100.x IP can be re-addressed in the teammate's tailnet when
+				// the node is *shared*, stranding them on an IP that isn't there. The
+				// MagicDNS name resolves correctly on both sides — steer to it.
+				b.WriteString(styleWaiting.Render("    ⚠ This invite uses a raw tailnet IP (" + hostOnly(v.host) + ")."))
+				b.WriteString("\n")
+				b.WriteString(styleMuted.Render("      A shared node can appear under a DIFFERENT IP in their tailnet. Turn on MagicDNS"))
+				b.WriteString("\n")
+				b.WriteString(styleMuted.Render("      and re-invite with this host's name (…ts.net) to avoid a broken connection."))
+				b.WriteString("\n")
+			}
+			b.WriteString("\n")
 		}
 		// Where + how to run it. The #1 onboarding confusion was teammates running
 		// `dejima join` over SSH ON THIS HOST (old shared binary → "unknown command
@@ -636,6 +651,7 @@ func (m tuiModel) renderMintedInvite() string {
 		b.WriteString(styleHeader.Render("  Your teammate runs this on THEIR OWN computer (their laptop) — not on this host:"))
 		b.WriteString("\n\n")
 		b.WriteString("    1. " + styleAccent.Render(installClientCmd) + "\n")
+		b.WriteString(styleMuted.Render("       installs the dejima CLI and sets up Tailscale (prompts them to sign in)") + "\n")
 		b.WriteString(styleMuted.Render("       macOS also: "+installClientBrew+"   ·   Windows: "+installClientWin) + "\n")
 		b.WriteString("    2. " + styleAccent.Render("dejima join "+truncate(v.mintedBlob, 24)+"…") + "\n\n")
 		b.WriteString(styleMuted.Render("    …or accept it in the TUI: Connection (s) → [j] join via invite, then paste."))
