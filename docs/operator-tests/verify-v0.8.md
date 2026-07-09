@@ -13,7 +13,7 @@ a1/d5 on anything that fails.
 dejima update            # → v0.8.0
 # then RESTART dejimad on Minion so daemon-side defaults take effect:
 dejima service restart --system      # (host-terminals on-by-default, egress-on, etc. are DAEMON changes)
-dejima version           # confirm 0.8.0 on BOTH client and daemon
+dejima --version           # confirm 0.8.0 on BOTH client and daemon
 ```
 
 > Existing islands run on **stale pre-v0.8 images** until `dejima upgrade <name>`.
