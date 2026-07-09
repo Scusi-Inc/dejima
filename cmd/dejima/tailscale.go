@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os/exec"
@@ -52,6 +53,88 @@ func isRawTailscaleIP(hostPort string) bool {
 		return false
 	}
 	return net.ParseIP(hostOnly(hostPort)) != nil
+}
+
+// tailscaleNode is the subset of a `tailscale status --json` node (Self or a
+// Peer) needed to map a tailnet IP to its MagicDNS name.
+type tailscaleNode struct {
+	DNSName      string   `json:"DNSName"`
+	TailscaleIPs []string `json:"TailscaleIPs"`
+}
+
+// tailscaleStatusNodes returns every node in `tailscale status --json` (Self +
+// Peers). Indirected for tests. nil when Tailscale is unavailable.
+var tailscaleStatusNodes = func() []tailscaleNode {
+	out, err := exec.Command("tailscale", "status", "--json").Output()
+	if err != nil {
+		return nil
+	}
+	var st struct {
+		Self tailscaleNode            `json:"Self"`
+		Peer map[string]tailscaleNode `json:"Peer"`
+	}
+	if json.Unmarshal(out, &st) != nil {
+		return nil
+	}
+	nodes := make([]tailscaleNode, 0, len(st.Peer)+1)
+	nodes = append(nodes, st.Self)
+	for _, p := range st.Peer {
+		nodes = append(nodes, p)
+	}
+	return nodes
+}
+
+// magicDNSNameForHost resolves a Tailscale IP host[:port] to the owning node's
+// MagicDNS name[:port] by scanning `tailscale status --json` (self + peers) for
+// the node that advertises that IP. This is what lets an operator connected to a
+// remote daemon by its raw tailnet IP still mint a name-based invite. ok is
+// false when Tailscale is unavailable, MagicDNS is off (no DNSName), or no node
+// advertises that IP.
+func magicDNSNameForHost(hostPort string) (string, bool) {
+	ip := hostOnly(hostPort)
+	if net.ParseIP(ip) == nil {
+		return "", false
+	}
+	for _, n := range tailscaleStatusNodes() {
+		name := strings.TrimSuffix(strings.TrimSpace(n.DNSName), ".")
+		if name == "" {
+			continue
+		}
+		for _, nip := range n.TailscaleIPs {
+			if strings.TrimSpace(nip) == ip {
+				if _, port, err := net.SplitHostPort(hostPort); err == nil && port != "" {
+					return net.JoinHostPort(name, port), true
+				}
+				return name, true
+			}
+		}
+	}
+	return "", false
+}
+
+// inviteHostFor picks the address to bake into a team invite, given the
+// operator's active connection host (as from resolveHost(): "" for the local
+// socket, else the host:port this client dials the daemon at). That dialed
+// address is also what a teammate dials, so it's the right default — but when
+// it's a raw tailnet IP we upgrade it to the daemon's MagicDNS name, which
+// resolves correctly across tailnets (a shared node's IP can differ on the
+// teammate's side). This is what makes a remote mint (operator on a laptop
+// connected to a remote daemon by IP) produce a name-based invite, not just a
+// mint run on the daemon host. rawIP reports whether the RESULT is still a raw
+// tailnet IP, so callers can warn.
+func inviteHostFor(activeHost string) (hostPort string, rawIP bool, ok bool) {
+	activeHost = strings.TrimSpace(activeHost)
+	if activeHost == "" {
+		// Local socket: detect the local daemon's own tailnet address.
+		return daemonInviteHost()
+	}
+	if isRawTailscaleIP(activeHost) {
+		if name, ok := magicDNSNameForHost(activeHost); ok {
+			return name, false, true
+		}
+		return activeHost, true, true // no name found — keep the IP, caller warns
+	}
+	return activeHost, false, true
 }
 
 // tailscaleIPv4 returns this machine's Tailscale IPv4 address via `tailscale ip

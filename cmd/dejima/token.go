@@ -109,12 +109,14 @@ func newTokenInviteCmd() *cobra.Command {
 			}
 			host = strings.TrimSpace(host)
 			if host == "" {
-				// The daemon can't self-detect its reachable address, but when this
-				// command runs ON the host we can read the tailnet name/IP directly.
-				// Prefer the MagicDNS name (stable across tailnets) over a raw IP.
-				if h, _, ok := daemonInviteHost(); ok {
+				// Default to the address a teammate dials: the daemon's own tailnet
+				// address when minting on the host, or the address THIS client dials
+				// the daemon at when connected remotely — upgraded from a raw tailnet
+				// IP to the daemon's MagicDNS name (stable across tailnets) when we can
+				// resolve it. See inviteHostFor.
+				if h, _, ok := inviteHostFor(resolveHost()); ok {
 					host = h
-					fmt.Fprintf(os.Stderr, "note: --host not given; using this host's tailnet address %s\n", host)
+					fmt.Fprintf(os.Stderr, "note: --host not given; using the daemon's address %s\n", host)
 				} else {
 					return fmt.Errorf("--host is required (the daemon host:port the teammate will dial, e.g. a MagicDNS name minion.tailXXXX.ts.net:%s or ip:port)", defaultDaemonTCPPort)
 				}
