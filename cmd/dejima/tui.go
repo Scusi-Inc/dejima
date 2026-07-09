@@ -3069,7 +3069,12 @@ func (m tuiModel) renderList(width int) (string, int) {
 			}
 			return styleErrored.Render("error: "+m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)"), -1
 		}
-		body := styleMuted.Render("no islands yet\n\n`q` to quit, then `dejima init --repo <url>`")
+		// First-run: no islands yet. The "+ new island" row is already selected
+		// (visibleRows always ends with it), so Enter creates one — but say so,
+		// since a bare empty pane gave no hint that the TUI itself can set one up
+		// (people were told to quit and use the CLI). Make it an obvious prompt.
+		body := styleAccent.Render("+ Set up your first island") + "\n\n" +
+			styleMuted.Render("Press Enter to start — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
 		// Nudge missing Claude creds before the first island, so claude-code/codex
 		// agents don't start unauthenticated and fail at first attach.
 		if m.setupChecked && !m.claudeSeeded {

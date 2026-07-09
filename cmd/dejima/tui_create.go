@@ -44,6 +44,7 @@ const (
 type creatorModel struct {
 	client      *api.Client
 	daemonLocal bool
+	callerRole  string           // "owner"|"operator"|"viewer"|"" — gates how GitHub-connect guidance is phrased (adding an identity is owner-only)
 	existing    []api.IslandInfo // for name disambiguation + per-repo island counts
 
 	step creatorStep
@@ -132,6 +133,7 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 	c := &creatorModel{
 		client:       m.client,
 		daemonLocal:  resolveHost() == "",
+		callerRole:   m.callerRole,
 		existing:     m.islands,
 		statusCache:  map[string]reposrc.Status{},
 		imageMissing: m.overview != nil && !m.overview.IslandImagePresent,
@@ -141,10 +143,15 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 	if cfg.RepoRoot == "" {
 		pwd, _ := os.Getwd()
 		c.step = stepRoot
+		// GitHub is a first-class source here (not just after a local scan): a
+		// teammate driving a REMOTE daemon has no useful local repos to scan, so
+		// burying "Browse my GitHub repos" behind a scan hid the option they most
+		// needed. See viewPick — the same choice also lives there post-scan.
 		c.rootChoices = []string{
 			"Scan this directory (" + tildeify(pwd) + ")",
 			"Choose another directory…",
-			"Skip — enter a repo URL or path manually",
+			"Browse my GitHub repos…",
+			"Enter a repo URL or path manually",
 		}
 		return m, nil
 	}
@@ -303,6 +310,8 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 1:
 			c.rootTyping, c.rootInput = true, ""
 		case 2:
+			return m.creatorEnterGitHub()
+		case 3:
 			c.step = stepManual
 		}
 	}
@@ -461,9 +470,20 @@ func (m tuiModel) onGhIdentities(msg ghIdentitiesMsg) (tea.Model, tea.Cmd) {
 	c.ghIdentities = msg.identities
 	switch len(c.ghIdentities) {
 	case 0:
-		c.ghHint = "No GitHub identities on the daemon yet.\n" +
-			"Add one with `dejima auth push --github` (from a machine with gh),\n" +
-			"or run `gh auth login` on the daemon host — then come back."
+		// Adding a GitHub identity is owner-only (PUT /v1/credentials/github/{name}
+		// is capOwner), so guide by role: an owner can connect one now; a teammate
+		// (operator/viewer) has to ask the host owner.
+		if c.callerRole == "operator" || c.callerRole == "viewer" {
+			c.ghHint = "No GitHub identity on the server yet — and connecting one is the owner's call.\n" +
+				"Ask the host owner to run `dejima auth push --github` (from a machine where\n" +
+				"`gh` is logged in). Once they do, your GitHub repos show up here.\n\n" +
+				"Meanwhile you can still start from a public git URL (back → “Enter a repo URL”)."
+		} else {
+			c.ghHint = "No GitHub identity on the server yet — let's connect one:\n" +
+				"On a machine where `gh` is logged in, run `dejima auth push --github` (it pushes\n" +
+				"your GitHub login to the daemon), or run `gh auth login` on the daemon host.\n" +
+				"Then come back here and your repos will be listed."
+		}
 		return m, nil
 	case 1:
 		return m.creatorSelectIdentity(c.ghIdentities[0]) // no point making them pick
