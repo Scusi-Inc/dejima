@@ -551,7 +551,7 @@ func (m tuiModel) fetchOverviewCmd() tea.Cmd {
 // fetchTerminalsCmd loads host terminals, but only once the daemon has said it
 // offers them (avoids a 403 on every poll when the feature is off).
 func (m tuiModel) fetchTerminalsCmd() tea.Cmd {
-	if !m.hostTerminalsEnabled() {
+	if !m.hostTerminalsAvailable() {
 		return nil
 	}
 	return func() tea.Msg {
@@ -1341,7 +1341,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/", "`":
 		// Toggle + focus the pinned host-terminal band (above the island list).
 		// `/` is the primary key; backtick kept as an alias.
-		if m.hostTerminalsEnabled() {
+		if m.hostTerminalsAvailable() {
 			m.bandExpanded = true
 			m.bandFocused = true
 			if m.bandSel >= m.bandRowCount() {
@@ -1355,7 +1355,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "t":
 		// New host terminal (uncontained shell on the daemon host) + attach.
-		if m.hostTerminalsEnabled() {
+		if m.hostTerminalsAvailable() {
 			return m, m.createTerminalCmd("")
 		}
 		m.lastNotice = hostTerminalsOffNote
@@ -1875,10 +1875,25 @@ type treeRow struct {
 	depth int
 }
 
-// hostTerminalsEnabled reports whether the daemon offers host terminals (so the
-// TUI shows the Host section). Driven by the overview capability.
+// hostTerminalsEnabled reports whether the daemon offers host terminals.
+// Driven by the overview capability. Prefer hostTerminalsAvailable at UI/poll
+// sites — this bare flag ignores the caller's role.
 func (m tuiModel) hostTerminalsEnabled() bool {
 	return m.overview != nil && m.overview.HostTerminalsEnabled
+}
+
+// hostTerminalsAvailable reports whether host terminals are usable by THIS
+// caller: the daemon offers them AND the caller isn't a non-owner. Host
+// terminals are uncontained host shells — an owner-only surface (GET/POST
+// /v1/terminals is capOwner in roleauth) — so an operator/viewer must not poll,
+// render, or try to open them: each call 403s "requires owner", and a passive
+// poll flashes an error the teammate can't act on. We exclude the known
+// non-owner roles (rather than requiring role=="owner") so an owner is never
+// hidden if the daemon didn't stamp a role. The caller's role rides in on the
+// same overview response that sets HostTerminalsEnabled, so it's known whenever
+// this can be true.
+func (m tuiModel) hostTerminalsAvailable() bool {
+	return m.hostTerminalsEnabled() && m.callerRole != "operator" && m.callerRole != "viewer"
 }
 
 // hostTerminalsOffNote explains the `/` and `t` no-op when the daemon has host
@@ -3285,7 +3300,7 @@ func (m tuiModel) bandRowCount() int { return len(m.terminals) + 1 }
 // expands to the terminal list + a "+ new terminal" row, with bandSel
 // highlighted. Rows are clipped (never wrapped) to width, like the island list.
 func (m tuiModel) renderBand(width int) (string, int) {
-	if !m.hostTerminalsEnabled() {
+	if !m.hostTerminalsAvailable() {
 		return "", 0
 	}
 	n := len(m.terminals)
@@ -3765,7 +3780,7 @@ func (m tuiModel) renderFooter() string {
 	// purge, rename, ssh setup, …) + globals. Those keys still work directly;
 	// they're listed in the ⏎ menu and in [?] help.
 	term := ""
-	if m.hostTerminalsEnabled() {
+	if m.hostTerminalsAvailable() {
 		term = "   [/] host terminal"
 	}
 	keys1 := "[⏎] open agent(s)   [>] island shell" + term
