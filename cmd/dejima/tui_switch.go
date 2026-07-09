@@ -130,6 +130,11 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 	m.islands = nil
 	m.detail = nil
 	m.overview = nil
+	// The caller's role/owner is per-connection — a teammate can be owner on one
+	// server and operator on another. Clear it on every switch so nothing (e.g.
+	// the owner-only host-terminal band) reads the previous server's role; the
+	// new overview re-stamps it.
+	m.callerOwner, m.callerRole = "", ""
 	m.events_ = nil
 	m.selected = 0
 	m.lastError = ""
@@ -160,6 +165,7 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 			m.islands = nil
 			m.detail = nil
 			m.overview = nil
+			m.callerOwner, m.callerRole = "", "" // role is per-connection; don't carry it across a switch
 			m.events_ = nil
 			m.selected = 0
 			m.lastError = ""
@@ -278,6 +284,11 @@ func (m tuiModel) switcherJoinSubmit() (tea.Model, tea.Cmd) {
 	m.islands = nil
 	m.detail = nil
 	m.overview = nil
+	// The caller's role/owner is per-connection — a teammate can be owner on one
+	// server and operator on another. Clear it on every switch so nothing (e.g.
+	// the owner-only host-terminal band) reads the previous server's role; the
+	// new overview re-stamps it.
+	m.callerOwner, m.callerRole = "", ""
 	m.events_ = nil
 	m.selected = 0
 	m.lastError = ""
