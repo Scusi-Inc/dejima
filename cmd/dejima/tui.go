@@ -134,10 +134,12 @@ type tuiModel struct {
 	// teammate's list is already owner-filtered server-side (P2).
 	callerOwner string
 	callerRole  string // "owner" | "operator" | "viewer" | "" (unknown)
-	ownerLens   int    // lensOwn (default) | lensAll
-	width       int
-	height      int
-	lastError   string
+
+	tipTick   int // advances each overview poll; drives the rotating header Tip line (see currentTip)
+	ownerLens int // lensOwn (default) | lensAll
+	width     int
+	height    int
+	lastError string
 	// daemonHelp, when non-nil, is an actionable diagnosis of a *local*
 	// daemon-unreachable failure (why dejimad isn't up + how to fix it). Computed
 	// once when the connection error arrives — service.Detect() shells out, so it
@@ -788,6 +790,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case overviewMsg:
 		m.overview = msg
+		m.tipTick++ // rotate the header Tip line on the poll cadence
 		if msg != nil {
 			// The caller's own identity (multi-tenant "who am I") drives the
 			// ownership lens: callerOwner is what the your-islands view filters to,
@@ -2904,12 +2907,16 @@ func (m tuiModel) renderHeader() string {
 		topLine = style.Width(infoW).Render(full)
 	}
 
+	// The two former subtitle lines are collapsed into one, freeing a row for a
+	// rotating Tip (feature discovery) under the tagline. The Tip is one short
+	// line; the full set lives in `?` help.
+	tipLine := styleAccent.Render("Tip") + styleMuted.Render("  "+currentTip(m.tipTick))
 	info := strings.Join([]string{
 		topLine,
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
-		styleMuted.Render("Each island is a repo in its own container — host one or more agents, or just shell in."),
-		styleMuted.Render("Close the terminal — agents keep running; reattach from any device."),
+		styleMuted.Render("Each island is a repo in its own container — agents keep running."),
+		tipLine,
 		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open agent(s)  ·  ") + styleAccent.Render(">") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("s") + styleMuted.Render(" settings  ·  ") + styleAccent.Render("?") + styleMuted.Render(" help"),
 		serverLine,
 	}, "\n")
@@ -3945,6 +3952,13 @@ func (m tuiModel) renderHelp() string {
 	}
 	b.WriteString(styleMuted.Render(strings.Join(paraLines, "\n")))
 	b.WriteString("\n\n")
+	// Tips — the full set of the one-liners that rotate in the header.
+	b.WriteString(styleHeader.Render(truncateDisplay("Tips", contentW)))
+	b.WriteString("\n")
+	for _, tip := range dashboardTips {
+		b.WriteString("  " + styleMuted.Render(truncateDisplay(tip, contentW-2)) + "\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(styleHeader.Render(truncateDisplay("Glyphs", contentW)))
 	b.WriteString("\n  ")
 	// These two lines mix styled spans, so we can't safely cut them mid-ANSI.
