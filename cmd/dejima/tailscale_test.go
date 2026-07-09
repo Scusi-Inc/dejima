@@ -121,13 +121,80 @@ func TestIsRawTailscaleIP(t *testing.T) {
 	}
 }
 
+// TestMagicDNSNameForHost: a raw tailnet IP resolves to the owning node's
+// MagicDNS name (with the port carried over) by scanning tailscale status.
+func TestMagicDNSNameForHost(t *testing.T) {
+	orig := tailscaleStatusNodes
+	t.Cleanup(func() { tailscaleStatusNodes = orig })
+	tailscaleStatusNodes = func() []tailscaleNode {
+		return []tailscaleNode{
+			{DNSName: "laptop.tail2f808e.ts.net.", TailscaleIPs: []string{"100.85.200.90"}},
+			{DNSName: "minion.tail2f808e.ts.net.", TailscaleIPs: []string{"100.77.85.107", "fd7a:115c:a1e0::1"}},
+		}
+	}
+	if got, ok := magicDNSNameForHost("100.77.85.107:7273"); !ok || got != "minion.tail2f808e.ts.net:7273" {
+		t.Errorf("magicDNSNameForHost(ip:port) = (%q,%v), want (minion.tail2f808e.ts.net:7273,true)", got, ok)
+	}
+	if got, ok := magicDNSNameForHost("100.77.85.107"); !ok || got != "minion.tail2f808e.ts.net" {
+		t.Errorf("magicDNSNameForHost(ip) = (%q,%v), want (minion.tail2f808e.ts.net,true)", got, ok)
+	}
+	// An IP no node advertises → not found (don't guess).
+	if _, ok := magicDNSNameForHost("100.99.99.99:7273"); ok {
+		t.Error("magicDNSNameForHost for an unknown IP should be ok=false")
+	}
+	// Tailscale unavailable → not found.
+	tailscaleStatusNodes = func() []tailscaleNode { return nil }
+	if _, ok := magicDNSNameForHost("100.77.85.107:7273"); ok {
+		t.Error("magicDNSNameForHost with no tailscale should be ok=false")
+	}
+}
+
+// TestInviteHostFor: the remote-mint upgrade — an operator connected to a
+// daemon by its raw tailnet IP still gets a name-based invite when the name is
+// resolvable; local socket falls back to the local daemon's own address.
+func TestInviteHostFor(t *testing.T) {
+	origNodes, origIP, origFQDN := tailscaleStatusNodes, tailscaleIPLookup, tailscaleFQDNLookup
+	t.Cleanup(func() {
+		tailscaleStatusNodes, tailscaleIPLookup, tailscaleFQDNLookup = origNodes, origIP, origFQDN
+	})
+	tailscaleStatusNodes = func() []tailscaleNode {
+		return []tailscaleNode{{DNSName: "minion.tail2f808e.ts.net.", TailscaleIPs: []string{"100.77.85.107"}}}
+	}
+
+	// Remote, active host is a raw tailnet IP → upgraded to the MagicDNS name.
+	if hp, raw, ok := inviteHostFor("100.77.85.107:7273"); !ok || raw || hp != "minion.tail2f808e.ts.net:7273" {
+		t.Errorf("inviteHostFor(raw IP) = (%q,%v,%v), want (minion.tail2f808e.ts.net:7273,false,true)", hp, raw, ok)
+	}
+
+	// Remote, raw IP with no resolvable name → keep the IP, flag rawIP so the
+	// caller warns.
+	tailscaleStatusNodes = func() []tailscaleNode { return nil }
+	if hp, raw, ok := inviteHostFor("100.77.85.107:7273"); !ok || !raw || hp != "100.77.85.107:7273" {
+		t.Errorf("inviteHostFor(unresolvable raw IP) = (%q,%v,%v), want (100.77.85.107:7273,true,true)", hp, raw, ok)
+	}
+
+	// Remote, already a MagicDNS name → passed through untouched.
+	if hp, raw, ok := inviteHostFor("minion.ts.net:7274"); !ok || raw || hp != "minion.ts.net:7274" {
+		t.Errorf("inviteHostFor(name) = (%q,%v,%v), want (minion.ts.net:7274,false,true)", hp, raw, ok)
+	}
+
+	// Local socket → detect the local daemon's own address (daemonInviteHost).
+	tailscaleFQDNLookup = func() string { return "here.tail2f808e.ts.net" }
+	tailscaleIPLookup = func() (string, bool) { return "100.64.0.9", true }
+	if hp, _, ok := inviteHostFor(""); !ok || hp != "here.tail2f808e.ts.net:7273" {
+		t.Errorf("inviteHostFor(local) = (%q,%v), want (here.tail2f808e.ts.net:7273,true)", hp, ok)
+	}
+}
+
 // TestOpenTeamViewPrefill: on the local socket the host prefills from the
 // captured tailnet address — MagicDNS name preferred, IP as fallback (with the
-// default TCP port); connected remotely, the active host wins and no lookup
-// happens.
+// default TCP port); connected remotely by IP it upgrades to the MagicDNS name;
+// an already-named remote host is passed through.
 func TestOpenTeamViewPrefill(t *testing.T) {
-	origIP, origFQDN := tailscaleIPLookup, tailscaleFQDNLookup
-	t.Cleanup(func() { tailscaleIPLookup, tailscaleFQDNLookup = origIP, origFQDN })
+	origIP, origFQDN, origNodes := tailscaleIPLookup, tailscaleFQDNLookup, tailscaleStatusNodes
+	t.Cleanup(func() {
+		tailscaleIPLookup, tailscaleFQDNLookup, tailscaleStatusNodes = origIP, origFQDN, origNodes
+	})
 
 	// Local socket, MagicDNS available → prefill the name.
 	tailscaleFQDNLookup = func() string { return "minion.tail2f808e.ts.net" }
@@ -148,11 +215,18 @@ func TestOpenTeamViewPrefill(t *testing.T) {
 		t.Errorf("local-socket prefill (IP fallback) = %q, want 100.77.85.107:7273", got)
 	}
 
-	// Remote → activeHost wins; neither lookup runs.
-	tailscaleFQDNLookup = func() string { t.Fatal("must not look up MagicDNS when already remote"); return "" }
-	tailscaleIPLookup = func() (string, bool) { t.Fatal("must not look up tailnet IP when already remote"); return "", false }
-	m3, _ := tuiModel{activeHost: "minion.ts.net:7274"}.openTeamView()
-	if got := m3.(tuiModel).team.host; got != "minion.ts.net:7274" {
+	// Remote by raw IP → upgraded to the daemon's MagicDNS name.
+	tailscaleStatusNodes = func() []tailscaleNode {
+		return []tailscaleNode{{DNSName: "minion.tail2f808e.ts.net.", TailscaleIPs: []string{"100.77.85.107"}}}
+	}
+	m3, _ := tuiModel{activeHost: "100.77.85.107:7273"}.openTeamView()
+	if got := m3.(tuiModel).team.host; got != "minion.tail2f808e.ts.net:7273" {
+		t.Errorf("remote-by-IP prefill = %q, want the upgraded MagicDNS name", got)
+	}
+
+	// Remote, already a name → passed through.
+	m4, _ := tuiModel{activeHost: "minion.ts.net:7274"}.openTeamView()
+	if got := m4.(tuiModel).team.host; got != "minion.ts.net:7274" {
 		t.Errorf("remote prefill = %q, want the active host", got)
 	}
 }

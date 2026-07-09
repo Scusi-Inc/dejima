@@ -74,19 +74,15 @@ type teamFocusItem struct {
 // openTeamView opens the Team overlay and kicks off the owner-only token list.
 // The host field is prefilled with the current connection target when that's a
 // real host:port — that's the address this very client dialed, so it's the one a
-// teammate would dial too. On the local socket (activeHost == "") the client IS
-// the host, so the daemon's own tailnet address is what a teammate dials — we
-// prefill it (with the default TCP port) so the minted invite is reachable
-// out-of-the-box. We prefer the MagicDNS name over the raw tailnet IP: a shared
-// node keeps its name but not always its IP across tailnets, so the name is the
-// robust thing to hand a teammate. (The daemon can't self-detect its address,
-// but a co-resident client can.)
+// teammate would dial too — but when that address is a raw tailnet IP we upgrade
+// it to the daemon's MagicDNS name (a shared node keeps its name but not always
+// its IP across tailnets, so the name is the robust thing to hand a teammate).
+// On the local socket (activeHost == "") we detect the local daemon's own
+// tailnet address instead. See inviteHostFor.
 func (m tuiModel) openTeamView() (tea.Model, tea.Cmd) {
-	host := m.activeHost
-	if host == "" {
-		if h, _, ok := daemonInviteHost(); ok {
-			host = h
-		}
+	host, _, ok := inviteHostFor(m.activeHost)
+	if !ok {
+		host = m.activeHost // no tailnet address found (e.g. local socket, Tailscale off)
 	}
 	m.team = &teamView{loading: true, scopeAll: true, scopeSel: map[string]bool{}, host: host}
 	return m, m.loadTokensCmd()
