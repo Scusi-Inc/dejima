@@ -134,6 +134,11 @@
     <p><strong>Connecting your own laptop to your own remote server?</strong> Same three steps. You're both the operator and the invitee: share the server to your own account (or you're already on the same network), install the client, and <code>dejima join</code>. If you'd rather not mint an invite for yourself, point the client at the server directly with <code>dejima profile add mini your-server:7273 &amp;&amp; dejima profile switch mini</code>, then run <code>dejima</code>.</p>
   </div>
 
+  <div class="callout">
+    <p><strong>On a Mac? Use a modern terminal.</strong> For agent tabs <em>and</em> for copying things out of an agent (like an auth URL an agent prints when it asks you to sign in), run Dejima in <a href="https://iterm2.com/" target="_blank" rel="noopener">iTerm2</a>, <a href="https://wezterm.org/" target="_blank" rel="noopener">WezTerm</a>, <a href="https://kitty.sh/" target="_blank" rel="noopener">kitty</a>, or <a href="https://ghostty.org/" target="_blank" rel="noopener">Ghostty</a>. macOS <strong>Terminal.app can't</strong> open agents as tabs (Dejima falls back to a new window per agent) and doesn't accept the clipboard sequence agents use, so pressing <kbd>c</kbd> to copy a URL says "copied!" but nothing lands on your clipboard.</p>
+    <p class="small"><strong>Copy a login URL out of an agent by hand:</strong> hold <kbd>⌥ Option</kbd> and drag to select the URL, then <kbd>⌘C</kbd> — Option bypasses tmux's mouse capture so the selection is a real one. Or, in iTerm2, turn on <em>Settings → General → Selection → "Applications in terminal may access clipboard"</em> and the agent's own copy key works directly. (Dejima's island tmux already forwards the clipboard sequence correctly — the gap is only the outer terminal.)</p>
+  </div>
+
   <h2 id="faq">Common questions</h2>
   <div class="faq">
     <div class="faq-item">
@@ -151,6 +156,10 @@
     <div class="faq-item">
       <h3>The server has to be macOS or Linux, right?</h3>
       <p>Yes. The Dejima server (the daemon) runs on macOS or Linux, since it needs Docker. Windows is fine as a client: it can connect to and drive a server, it just can't host one.</p>
+    </div>
+    <div class="faq-item">
+      <h3>Copying a login URL out of an agent doesn't work (or new agents open in separate windows)?</h3>
+      <p>You're most likely on macOS Terminal.app, which can't open agents as tabs and doesn't accept the clipboard sequence agents use — so pressing <kbd>c</kbd> to copy an auth URL reports success but leaves your clipboard empty. Switch to <a href="https://iterm2.com/" target="_blank" rel="noopener">iTerm2</a>, <a href="https://wezterm.org/" target="_blank" rel="noopener">WezTerm</a>, <a href="https://kitty.sh/" target="_blank" rel="noopener">kitty</a>, or <a href="https://ghostty.org/" target="_blank" rel="noopener">Ghostty</a>, which support both. To grab a URL without switching, hold <kbd>⌥ Option</kbd> and drag to select it, then <kbd>⌘C</kbd> — Option bypasses tmux's mouse capture. In iTerm2 you can also enable <em>Settings → General → Selection → "Applications in terminal may access clipboard"</em> so the agent's copy key works. Dejima's island tmux already forwards the clipboard sequence; only the outer Mac terminal is the limitation.</p>
     </div>
   </div>
 
