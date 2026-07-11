@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +20,7 @@ import (
 func newUpdateCmd() *cobra.Command {
 	var checkOnly bool
 	var source string
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update Dejima to the latest release (use --check to only look)",
@@ -28,7 +31,9 @@ func newUpdateCmd() *cobra.Command {
 			"    release SHA256SUMS, and replaces this binary in place.\n" +
 			"  • source install — fast-forwards your checkout and reinstalls\n" +
 			"    (git pull --ff-only && make install && dejima service restart). A dirty or\n" +
-			"    diverged tree is refused.\n\n" +
+			"    diverged tree is refused. Because this RESTARTS the daemon and closes every\n" +
+			"    attached terminal fleet-wide, it is refused while terminals are attached\n" +
+			"    unless you pass --force (containers and agents keep running; you reattach).\n\n" +
 			"Use --check to only report whether an update is available, without applying it.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := selfupdate.Check(cmd.Context())
@@ -67,13 +72,57 @@ func newUpdateCmd() *cobra.Command {
 					return err
 				}
 			}
+			// The source apply ends in `dejima service restart`, which RESTARTS the
+			// daemon and drops EVERY attached terminal fleet-wide (containers and
+			// agents keep running; clients reattach). Refuse without --force when
+			// terminals are attached, so a routine `dejima update` never yanks live
+			// sessions out from under an operator — the TUI enforces the same gate.
+			if !force {
+				if n, known := attachedClientCount(cmd.Context()); known && n > 0 {
+					return fmt.Errorf(
+						"%s attached — a source update RESTARTS the daemon and closes ALL open terminals fleet-wide "+
+							"(containers and agents keep running; you just reattach). Detach them first, or re-run with --force",
+						pluralClients(n))
+				} else if !known {
+					fmt.Println("\n⚠ could not verify attached terminals — the daemon restart will close any open " +
+						"terminals fleet-wide (containers and agents keep running; you just reattach).")
+				}
+			}
 			fmt.Printf("\napplying source update in %s:\n", dir)
 			return selfupdate.ApplySource(cmd.Context(), dir, true, cmd.OutOrStdout(), selfupdate.ExecRunner(cmd.OutOrStdout()))
 		},
 	}
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "only report whether an update is available; don't apply it")
 	cmd.Flags().StringVar(&source, "source", "", "path to the dejima checkout (default: found from the current directory)")
+	cmd.Flags().BoolVar(&force, "force", false, "apply a daemon-restarting (source) update even while terminals are attached — closes them fleet-wide")
 	return cmd
+}
+
+// attachedClientCount best-effort queries the local daemon for how many clients
+// are currently attached across all islands. known=false means the count could
+// not be obtained (daemon unreachable / older daemon / overview error), in which
+// case the caller warns rather than hard-blocking. Used to gate the
+// daemon-restarting source update.
+func attachedClientCount(ctx context.Context) (n int, known bool) {
+	c, err := client()
+	if err != nil {
+		return 0, false
+	}
+	octx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	o, err := c.Overview(octx)
+	if err != nil || o == nil {
+		return 0, false
+	}
+	return o.AttachedClients, true
+}
+
+// pluralClients renders an attached-client count for the refusal message.
+func pluralClients(n int) string {
+	if n == 1 {
+		return "1 terminal is"
+	}
+	return fmt.Sprintf("%d terminals are", n)
 }
 
 // selfExe returns the running binary's path for display, or "this binary".

@@ -7,7 +7,9 @@ import (
 
 // TestHelpSectionsAndKeys asserts the help overlay is organized into the four
 // flat sections and documents every key — including the ones that used to be
-// hidden behind the [a] advanced toggle (I) or undocumented entirely (X/v/S/U).
+// hidden behind the [a] advanced toggle (I) or undocumented entirely (X/v), and
+// the update-safety scheme: u/U update the client, the Server menu [H] holds the
+// daemon update + SSH setup.
 func TestHelpSectionsAndKeys(t *testing.T) {
 	help := plain((tuiModel{width: 100}).renderHelp())
 
@@ -19,13 +21,14 @@ func TestHelpSectionsAndKeys(t *testing.T) {
 
 	// Keys that must be discoverable straight from `?` (no toggle).
 	wants := map[string]string{
-		"I": "invite a teammate",      // was buried under [a] advanced
-		"X": "remove the highlighted", // was undocumented
-		"v": "provider / model",       // was undocumented
-		"S": "set up SSH fleet-wide",  // was undocumented
-		"U": "update Dejima itself",   // was undocumented (distinct from [u])
-		"O": "owner lens",             // multi-tenant
-		"%": "host utilization",       // aggregate
+		"I":          "invite a teammate",           // was buried under [a] advanced
+		"X":          "remove the highlighted",      // was undocumented
+		"v":          "provider / model",            // was undocumented
+		"ssh":        "set up SSH fleet-wide",       // SSH setup now lives in the Server menu
+		"u/U":        "update the dejima client",    // u/U → client-only update
+		"servermenu": "server menu — update daemon", // the Server menu [H] itself
+		"O":          "owner lens",                  // multi-tenant
+		"%":          "host utilization",            // aggregate
 	}
 	for key, phrase := range wants {
 		if !strings.Contains(help, phrase) {

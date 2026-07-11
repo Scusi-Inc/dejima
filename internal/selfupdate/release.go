@@ -105,16 +105,36 @@ func ReplaceExecutable(newPath, target string) error {
 		// can't clear it, and the rename collides with "Access is denied". A
 		// timestamped name never collides. Sweep stale sidecars best-effort (the
 		// still-locked running one stays and is harmless; cleaned a future run).
+		//
+		// The overriding safety goal on this path is: NEVER leave the install with
+		// no dejima.exe. Every failure branch below either restores the original or
+		// tells the user exactly how to reinstall.
+		const reinstall = "reinstall the client with: irm https://dejima.tech/install-client.ps1 | iex"
 		for _, f := range oldSidecars(target) {
 			_ = os.Remove(f)
 		}
 		old := fmt.Sprintf("%s.old-%d", target, time.Now().UnixNano())
 		if err := os.Rename(target, old); err != nil {
-			return fmt.Errorf("set aside running exe: %w", err)
+			// The original is untouched — nothing was moved — so this is safe to fail.
+			return fmt.Errorf("set aside running exe: %w — %s", err, reinstall)
 		}
 		if err := os.Rename(newPath, target); err != nil {
-			_ = os.Rename(old, target) // roll back
-			return err
+			// Swap failed with the original set aside: put it back so the install
+			// isn't left binary-less. If even the rollback fails, say so loudly.
+			if rbErr := os.Rename(old, target); rbErr != nil {
+				return fmt.Errorf("swap to new binary failed (%v) AND rollback failed (%v) — %s at %s may be missing; %s",
+					err, rbErr, filepath.Base(target), target, reinstall)
+			}
+			return fmt.Errorf("swap to new binary failed, original restored: %w — if %s is missing, %s",
+				err, filepath.Base(target), reinstall)
+		}
+		// The swap reported success; confirm the new binary is actually present
+		// before we declare victory. If it somehow isn't, restore the original
+		// rather than leaving a broken install.
+		if _, statErr := os.Stat(target); statErr != nil {
+			_ = os.Rename(old, target) // best-effort restore
+			return fmt.Errorf("updated binary missing after swap (%v) — restored the original; if it's gone, %s",
+				statErr, reinstall)
 		}
 		_ = os.Remove(old) // best-effort; locked while this build keeps running, swept next run
 		return nil
