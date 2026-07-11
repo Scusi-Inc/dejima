@@ -20,6 +20,7 @@ var dashboardTips = []string{
 	"Schedule ambient work: dejima wake <name> --every 720h --task \"…\".",
 	"Let an island spawn sub-agents on a budget: dejima spawn grant.",
 	"Press / for the host-terminal band; t adds one (owner only).",
+	"macOS: iTerm2/WezTerm/Ghostty give tabs + copy; Terminal.app can't.",
 }
 
 // currentTip returns the tip to show for a given rotation tick, advancing slowly

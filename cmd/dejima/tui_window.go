@@ -213,10 +213,35 @@ func openInEditor(alias, preferred string) error {
 	return fmt.Errorf("no editor CLI found on PATH — set one in settings (,) or install code/cursor; or connect manually: Remote-SSH → %s, open %s", alias, editorWorkspace)
 }
 
-// openMacTerminal opens the command in a new iTerm tab (in the current window,
-// matching the new-tab behavior of tmux and Windows Terminal) or, on
-// Terminal.app — whose AppleScript has no first-class tab support — a new window.
+// openMacTerminal opens the command in a new TAB of the current window when the
+// terminal supports it (matching the new-tab behavior of tmux and Windows
+// Terminal), falling back to the AppleScript path otherwise. iTerm2 gets a tab
+// via osascript; WezTerm and kitty each get one via their own CLI (guarded so a
+// missing/disabled CLI degrades rather than errors); everything else — including
+// Terminal.app, whose AppleScript has no first-class tab support, and Ghostty,
+// which has no reliable "open tab with command" CLI — falls through to the
+// existing osascript path (a new iTerm tab or Terminal.app window).
 func openMacTerminal(inner string) error {
+	switch currentTerminal() {
+	case terminalWezTerm:
+		if err := spawnWezTermTab(inner); err == nil {
+			return nil
+		}
+		// wezterm CLI missing or spawn failed → fall through to osascript.
+	case terminalKitty:
+		if err := spawnKittyTab(inner); err == nil {
+			return nil
+		}
+		// kitty CLI missing or remote control off → fall through to osascript.
+	}
+	return openMacTerminalOSA(inner)
+}
+
+// openMacTerminalOSA is the AppleScript path: a new iTerm tab in the current
+// window, or — on Terminal.app, whose AppleScript has no first-class tab
+// support — a new window. This is the durable fallback for every terminal whose
+// native new-tab CLI is unavailable.
+func openMacTerminalOSA(inner string) error {
 	var script string
 	if os.Getenv("TERM_PROGRAM") == "iTerm.app" {
 		script = fmt.Sprintf(`tell application "iTerm"

@@ -264,7 +264,7 @@ type actionMenuItem struct {
 func initialTUIModel(c *api.Client) tuiModel {
 	host, label, source := resolveTarget()
 	cfg, _ := clientcfg.Load()
-	return tuiModel{
+	m := tuiModel{
 		client:       c,
 		dirtyOps:     map[string]string{},
 		expanded:     map[string]bool{},
@@ -273,6 +273,13 @@ func initialTUIModel(c *api.Client) tuiModel {
 		activeSource: source,
 		editor:       cfg.Editor,
 	}
+	// One-time, gentle nudge for Apple Terminal users (no agent tabs, no OSC 52
+	// clipboard). macTermNudge persists a marker the first time it fires, so this
+	// surfaces once and then stays quiet.
+	if note := macTermNudge(); note != "" {
+		m.lastNotice = note
+	}
+	return m
 }
 
 // settingsModel is the general-settings overlay (opened with 's'). It's a small
