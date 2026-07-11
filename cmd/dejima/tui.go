@@ -250,12 +250,19 @@ type actionMenu struct {
 	items []actionMenuItem
 	sel   int
 	row   treeRow // the row the menu was opened on; re-anchored to on dispatch
+	// global marks a menu not anchored to a list row (the Server menu [H]): its
+	// items act on the host/daemon, not the highlighted island, so chooseMenuItem
+	// skips the row re-anchor that per-row menus need.
+	global bool
 }
 
 type actionMenuItem struct {
 	label  string // human label, e.g. "Hibernate"
 	key    string // the accelerator this dispatches, e.g. "h" (empty when open is set)
 	danger bool   // destructive — rendered in alarm color
+	// disabled greys the item out and makes it un-selectable (e.g. "daemon up to
+	// date" — shown for context, but there's nothing to do).
+	disabled bool
 	// open, when set, is a menu-only action with no global hotkey — chooseMenuItem
 	// calls it directly (after re-anchoring) instead of re-dispatching a key.
 	open func(tuiModel) (tea.Model, tea.Cmd)
@@ -364,15 +371,16 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 4: // Check for updates (re-poll GitHub) — stays open; line refreshes
 				m.lastNotice = "checking for updates…"
 				return m, tea.Batch(fetchLatestReleaseCmd(), m.fetchOverviewCmd())
-			case 5: // Update — same flow as 'U' (confirm, then client/daemon apply)
+			case 5: // Update — same flow as 'u'/'U': the CLIENT binary only. The daemon
+				// self-update (fleet-wide restart) lives in the Server menu [H] so it
+				// can't fire as a side effect of a routine update.
 				m.settings = nil
 				m.updateError = ""
-				switch {
-				case m.clientUpdate:
+				if m.clientUpdate {
 					m.confirm = &confirmPrompt{verb: "update-client"}
-				case m.daemonUpdate:
-					m.confirm = &confirmPrompt{verb: "update-daemon"}
-				default:
+				} else if m.daemonUpdate {
+					m.lastNotice = "client up to date — a daemon update is available in the Server menu [H]"
+				} else {
 					m.lastNotice = "already up to date"
 				}
 				return m, nil
@@ -1363,9 +1371,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.lastNotice = hostTerminalsOffNote
 		return m, nil
-	case "s", ",":
-		// General settings (editor · group-by-repo · connection target). Server
-		// switching now lives inside here rather than owning its own hotkey.
+	case "s", "S", ",":
+		// General settings (editor · group-by-repo · connection target). Both s and
+		// S open it (S used to be SSH setup — that moved into the Server menu [H] and
+		// the per-row actions menu [m]). Server switching lives inside here rather
+		// than owning its own hotkey.
 		return m.openSettings(), nil
 	case ">":
 		// In-island /workspace shell for the selected island. (Enter opens the
@@ -1573,10 +1583,22 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if name := m.selectedName(); name != "" {
 			m.confirm = &confirmPrompt{verb: "reset", island: name}
 		}
-	case "u":
-		if name := m.selectedName(); name != "" {
-			m.confirm = &confirmPrompt{verb: "upgrade", island: name}
+	case "u", "U":
+		// Update the CLIENT (this local dejima binary) only. Both u and U route here.
+		//
+		// The DAEMON self-update — which restarts the daemon and drops EVERY attached
+		// terminal fleet-wide — deliberately does NOT live on this key anymore: it
+		// moved to the Server menu ([H]) behind an explicit, clearly-warned confirm,
+		// so a routine "get latest" keypress can never restart the daemon as a side
+		// effect. lowercase-u used to arm island-upgrade; that moved into the [m]
+		// actions menu (Upgrade to the current image).
+		m.updateError = "" // clear a prior failure when retrying
+		if m.clientUpdate {
+			m.confirm = &confirmPrompt{verb: "update-client"}
+		} else {
+			m.lastNotice = "client is up to date"
 		}
+		return m, nil
 	case "b":
 		if !m.building {
 			m.confirm = &confirmPrompt{verb: "build-image"}
@@ -1585,33 +1607,17 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if name := m.selectedName(); name != "" {
 			m.confirm = &confirmPrompt{verb: "purge", island: name}
 		}
-	case "S":
-		// Set up SSH for the whole account: authorize this machine's key
-		// fleet-wide + write ~/.ssh/config entries for every island (the TUI
-		// equivalent of `ssh authorize --account` + `ssh config --all --install`).
-		if m.overview == nil || m.overview.SSHAddr == "" {
-			m.lastError = "ssh façade is off — start dejimad with --ssh (e.g. `dejima service install --ssh :2222`)"
-			return m, nil
-		}
-		m.confirm = &confirmPrompt{verb: "setup-ssh"}
-		return m, nil
+	case "H":
+		// Server menu — host/daemon controls (update daemon, SSH setup, build image,
+		// refresh). A discoverable surface mirroring the per-row [m] actions menu; the
+		// direct keys (/, b, R) still work. The daemon self-update lives ONLY here,
+		// behind an explicit fleet-wide-restart warning.
+		return m.openServerMenu(), nil
 	case "esc":
 		// Dismiss whichever sticky update banner is showing (no overlay here):
 		// a failure, or an applied-but-needs-restart notice. (Green fades itself.)
 		m.updateError = ""
 		m.restartPending = ""
-		return m, nil
-	case "U":
-		// Update Dejima itself (distinct from lowercase 'u' = upgrade an island).
-		m.updateError = "" // clear a prior failure when retrying
-		switch {
-		case m.clientUpdate:
-			m.confirm = &confirmPrompt{verb: "update-client"}
-		case m.daemonUpdate:
-			m.confirm = &confirmPrompt{verb: "update-daemon"}
-		default:
-			m.lastNotice = "already up to date"
-		}
 		return m, nil
 	case "R":
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd())
@@ -2138,12 +2144,18 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 			return mm.openIdentityEditor(islandName)
 		}})
 		if m.overview != nil && m.overview.SSHAddr != "" {
-			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", key: "S"})
+			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+				return mm.startSSHSetup()
+			}})
 		}
 		if isl.Container == "running" {
+			upgradeName := isl.Name
 			items = append(items,
 				actionMenuItem{label: "Reset agent state", key: "r", danger: true},
-				actionMenuItem{label: "Upgrade to the current image", key: "u"},
+				actionMenuItem{label: "Upgrade to the current image", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					mm.confirm = &confirmPrompt{verb: "upgrade", island: upgradeName}
+					return mm, nil
+				}},
 			)
 		}
 		items = append(items, actionMenuItem{label: "Purge island", key: "d", danger: true})
@@ -2217,25 +2229,83 @@ func (m tuiModel) actionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // shifts selection), and the accelerator handlers act on currentRow — without
 // this, a destructive action like purge could land on the wrong island.
 func (m tuiModel) chooseMenuItem(it actionMenuItem) (tea.Model, tea.Cmd) {
+	if it.disabled {
+		return m, nil // context-only line (e.g. "daemon up to date") — nothing to do
+	}
+	global := m.menu.global
 	target := m.menu.row
 	m.menu = nil
-	idx := -1
-	for i, r := range m.visibleRows() {
-		if r == target {
-			idx = i
-			break
+	// A global menu (the Server menu [H]) isn't anchored to a list row, so there's
+	// nothing to re-anchor — its items act on the host/daemon.
+	if !global {
+		idx := -1
+		for i, r := range m.visibleRows() {
+			if r == target {
+				idx = i
+				break
+			}
 		}
+		if idx < 0 {
+			// The row vanished while the menu was open (purged/closed elsewhere).
+			m.lastError = "selection changed — reopen the menu"
+			return m, nil
+		}
+		m.selected = idx
 	}
-	if idx < 0 {
-		// The row vanished while the menu was open (purged/closed elsewhere).
-		m.lastError = "selection changed — reopen the menu"
-		return m, nil
-	}
-	m.selected = idx
 	if it.open != nil {
 		return it.open(m)
 	}
 	return m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(it.key)})
+}
+
+// startSSHSetup arms the account-wide SSH-setup confirm (authorize this machine's
+// key fleet-wide + write ~/.ssh/config for every island), or explains the façade
+// is off. Reachable from the Server menu [H] and the per-row actions menu [m];
+// it used to be the top-level S key (now Settings).
+func (m tuiModel) startSSHSetup() (tea.Model, tea.Cmd) {
+	if m.overview == nil || m.overview.SSHAddr == "" {
+		m.lastError = "ssh façade is off — start dejimad with --ssh (e.g. `dejima service install --ssh :2222`)"
+		return m, nil
+	}
+	m.confirm = &confirmPrompt{verb: "setup-ssh"}
+	return m, nil
+}
+
+// openServerMenu builds the Server menu [H] — host/daemon controls that used to be
+// scattered across top-level keys. It mirrors the per-row actions menu ([m]) but
+// is global (not anchored to a list row). The daemon self-update lives ONLY here,
+// behind an explicit fleet-wide-restart warning, so it can never fire as a side
+// effect of a routine keypress. The direct keys (/, b, R) still work; this is an
+// additional, discoverable surface.
+func (m tuiModel) openServerMenu() tuiModel {
+	var items []actionMenuItem
+
+	// Update daemon — the fleet-wide-restart action. Only actionable when the
+	// daemon is actually behind; otherwise a greyed context line.
+	if m.daemonUpdate {
+		items = append(items, actionMenuItem{
+			label: "Update daemon (RESTARTS it — closes all terminals fleet-wide)",
+			open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+				mm.updateError = "" // clear a prior failure when retrying
+				mm.confirm = &confirmPrompt{verb: "update-daemon"}
+				return mm, nil
+			},
+		})
+	} else {
+		items = append(items, actionMenuItem{label: "Update daemon — up to date", disabled: true})
+	}
+
+	items = append(items, actionMenuItem{label: "Set up SSH (this device → every island)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+		return mm.startSSHSetup()
+	}})
+	items = append(items, actionMenuItem{label: "Build island image", key: "b"})
+	if m.hostTerminalsAvailable() {
+		items = append(items, actionMenuItem{label: "Host terminals", key: "/"})
+	}
+	items = append(items, actionMenuItem{label: "Refresh", key: "R"})
+
+	m.menu = &actionMenu{title: "Server · host & daemon", items: items, global: true}
+	return m
 }
 
 // resourceEditor is the per-island Resources overlay (memory limit + OOM
@@ -2790,9 +2860,17 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 		// A clean landing — green, and it fades on its own (updateNoticeFadedMsg).
 		return " ✓ " + m.updateApplied,
 			" ✓ updated ", styleSuccessBroadcast, true
-	case m.clientUpdate || m.daemonUpdate:
+	case m.clientUpdate:
+		// [U] applies the CLIENT update. The daemon self-update (if also behind)
+		// lives in the Server menu [H] behind a fleet-wide-restart warning, so it's
+		// deliberately not on this key.
 		return " ⬆ update available: " + m.updateParts() + "   ·   [U] update",
 			" ⬆ [U] update ", styleBroadcast, true
+	case m.daemonUpdate:
+		// Daemon-only: [U] is client-only now, so point at the Server menu, which
+		// warns before the fleet-wide restart.
+		return " ⬆ daemon update available: " + m.updateParts() + "   ·   [H] server menu → update daemon",
+			" ⬆ daemon update [H] ", styleBroadcast, true
 	}
 	return "", "", lipgloss.Style{}, false
 }
@@ -3796,7 +3874,7 @@ func (m tuiModel) renderFooter() string {
 		term = "   [/] host terminal"
 	}
 	keys1 := "[⏎] open agent(s)   [>] island shell" + term
-	keys2 := "[s] settings   [m] actions   [space] expand   [?] help   [q] quit"
+	keys2 := "[s] settings   [m] actions   [H] server   [space] expand   [?] help   [q] quit"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -3892,12 +3970,11 @@ func (m tuiModel) renderHelp() string {
 		{"v", "set an agent's LLM provider / model / key (key-requiring types)"},
 		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
 		{"a", "attach here — replaces the dashboard with the agent"},
-		{"m", "actions menu for the highlighted row (attach, hibernate, rename, ssh, purge…)"},
+		{"m", "actions menu for the highlighted row (attach, hibernate, rename, upgrade, ssh, purge…)"},
 		{"c", "open the island in your editor over SSH, straight at /workspace"},
 		{"h", "hibernate — stop the container, keep all data"},
 		{"w", "wake a hibernated island"},
 		{"r", "reset agent state (workspace preserved) — confirms first"},
-		{"u", "upgrade — recreate on the current island image, all state kept — confirms first"},
 		{"d", "purge — destroy the island and its volumes — confirms first"},
 	})
 
@@ -3912,11 +3989,11 @@ func (m tuiModel) renderHelp() string {
 	})
 
 	sec("Server controls (the daemon / host)", [][2]string{
+		{"H", "server menu — update daemon · set up SSH fleet-wide · build image · refresh"},
+		{"u / U", "update the dejima client (this local binary); the daemon update lives in the Server menu [H]"},
+		{"s / S", "settings — editor · group-by-repo · connection target (which server)"},
 		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
 		{"b", "build the island image on the daemon host — confirms first"},
-		{"S", "set up SSH fleet-wide — authorize this machine + write ~/.ssh/config for every island"},
-		{"s", "settings — editor · group-by-repo · connection target (which server)"},
-		{"U", "update Dejima itself — client and/or daemon (distinct from [u] upgrade-island)"},
 		{"R", "refresh now"},
 	})
 
@@ -4095,7 +4172,7 @@ func (m tuiModel) renderConfirm() string {
 			prompt = fmt.Sprintf("The daemon held off — attached terminal(s) would be disconnected. Force the update to %s and restart now? Type 'y' and Enter: %s",
 				m.latestRelease, c.answer)
 		} else {
-			prompt = fmt.Sprintf("Update the daemon to %s and restart it (briefly disconnects)? Type 'y' and Enter: %s",
+			prompt = fmt.Sprintf("Update the daemon to %s? Updating the daemon RESTARTS it and closes ALL open terminals fleet-wide — containers and agents keep running, you just reattach. Continue? Type 'y' and Enter: %s",
 				m.latestRelease, c.answer)
 		}
 	}
@@ -4131,17 +4208,25 @@ func (m tuiModel) renderActionMenu() string {
 	b.WriteString("\n\n")
 	for i, it := range am.items {
 		mark := "   "
-		if i == am.sel {
+		if i == am.sel && !it.disabled {
 			mark = styleAccent.Render(" ▸ ")
 		}
 		st := lipgloss.NewStyle()
 		switch {
+		case it.disabled:
+			st = styleMuted
 		case i == am.sel:
 			st = styleSelected
 		case it.danger:
 			st = styleErrored
 		}
-		b.WriteString(mark + st.Render(it.label) + styleMuted.Render("  ["+it.key+"]") + "\n")
+		// Only menu items backed by a global hotkey advertise a "[key]"; menu-only
+		// (open-func) and disabled lines omit the empty bracket.
+		accel := ""
+		if it.key != "" {
+			accel = styleMuted.Render("  [" + it.key + "]")
+		}
+		b.WriteString(mark + st.Render(it.label) + accel + "\n")
 	}
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
@@ -4207,8 +4292,11 @@ func (m tuiModel) renderSettings() string {
 		target = "local"
 	}
 	updateRow := "Update                    " + styleMuted.Render("up to date")
-	if m.clientUpdate || m.daemonUpdate {
+	switch {
+	case m.clientUpdate:
 		updateRow = "Update                    " + styleWaiting.Render("→ "+m.latestRelease)
+	case m.daemonUpdate:
+		updateRow = "Update                    " + styleMuted.Render("daemon update → Server menu [H]")
 	}
 	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
 	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))
