@@ -378,15 +378,14 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 4: // Check for updates (re-poll GitHub) — stays open; line refreshes
 				m.lastNotice = "checking for updates…"
 				return m, tea.Batch(fetchLatestReleaseCmd(), m.fetchOverviewCmd())
-			case 5: // Update — same flow as 'u'/'U': the CLIENT binary only. The daemon
-				// self-update (fleet-wide restart) lives in the Server menu [H] so it
-				// can't fire as a side effect of a routine update.
+			case 5: // Update — same flow as 'u'/'U': client first, then the daemon (the
+				// daemon update goes through the fleet-wide-restart warning + gate).
 				m.settings = nil
 				m.updateError = ""
 				if m.clientUpdate {
 					m.confirm = &confirmPrompt{verb: "update-client"}
 				} else if m.daemonUpdate {
-					m.lastNotice = "client up to date — a daemon update is available in the Server menu [H]"
+					m.confirm = &confirmPrompt{verb: "update-daemon"}
 				} else {
 					m.lastNotice = "already up to date"
 				}
@@ -1068,11 +1067,19 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.lastError = msg.err.Error()
-			// A local daemon that's gone unreachable: attach a one-shot, actionable
-			// diagnosis (computed here, not in the renderer, since it shells out).
-			if m.activeHost == "" && isConnectionError(msg.err) {
-				d := diagnoseLocalDaemon()
-				m.daemonHelp = &d
+			// A daemon that's gone unreachable: attach an actionable diagnosis
+			// (computed here, not in the renderer, since the local path shells out).
+			// Local → why dejimad on this machine is down + how to fix; remote → calm
+			// recovery steps for a teammate/laptop pointed at a server (safe work,
+			// auto-retry, tailnet check, reinstall, ask-operator).
+			if isConnectionError(msg.err) {
+				if m.activeHost == "" {
+					d := diagnoseLocalDaemon()
+					m.daemonHelp = &d
+				} else {
+					d := diagnoseRemoteDaemon(m.activeHost)
+					m.daemonHelp = &d
+				}
 			}
 		}
 		return m, nil
@@ -1591,19 +1598,20 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirm = &confirmPrompt{verb: "reset", island: name}
 		}
 	case "u", "U":
-		// Update the CLIENT (this local dejima binary) only. Both u and U route here.
-		//
-		// The DAEMON self-update — which restarts the daemon and drops EVERY attached
-		// terminal fleet-wide — deliberately does NOT live on this key anymore: it
-		// moved to the Server menu ([H]) behind an explicit, clearly-warned confirm,
-		// so a routine "get latest" keypress can never restart the daemon as a side
-		// effect. lowercase-u used to arm island-upgrade; that moved into the [m]
-		// actions menu (Upgrade to the current image).
+		// Update Dejima: the client first (this local binary), then the daemon if the
+		// client is already current and the daemon is behind. The daemon update goes
+		// through the explicit "this RESTARTS the daemon and closes all terminals
+		// fleet-wide" confirm + the defer-while-attached gate (see the update-daemon
+		// verb) — so it's a consented action, not a silent side effect, and clients
+		// reconnect through the restart. Also reachable deliberately via [H]. (Old
+		// lowercase-u = island-upgrade moved into the [m] actions menu.)
 		m.updateError = "" // clear a prior failure when retrying
 		if m.clientUpdate {
 			m.confirm = &confirmPrompt{verb: "update-client"}
+		} else if m.daemonUpdate {
+			m.confirm = &confirmPrompt{verb: "update-daemon"}
 		} else {
-			m.lastNotice = "client is up to date"
+			m.lastNotice = "already up to date"
 		}
 		return m, nil
 	case "b":
@@ -3997,7 +4005,7 @@ func (m tuiModel) renderHelp() string {
 
 	sec("Server controls (the daemon / host)", [][2]string{
 		{"H", "server menu — update daemon · set up SSH fleet-wide · build image · refresh"},
-		{"u / U", "update the dejima client (this local binary); the daemon update lives in the Server menu [H]"},
+		{"u / U", "update Dejima — the client first, then the daemon if needed (daemon update warns + gates: it restarts the daemon, closing all terminals fleet-wide). Also in [H]"},
 		{"s / S", "settings — editor · group-by-repo · connection target (which server)"},
 		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
 		{"b", "build the island image on the daemon host — confirms first"},
@@ -4303,7 +4311,7 @@ func (m tuiModel) renderSettings() string {
 	case m.clientUpdate:
 		updateRow = "Update                    " + styleWaiting.Render("→ "+m.latestRelease)
 	case m.daemonUpdate:
-		updateRow = "Update                    " + styleMuted.Render("daemon update → Server menu [H]")
+		updateRow = "Update                    " + styleWaiting.Render("daemon → "+m.latestRelease+" (restarts daemon)")
 	}
 	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
 	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))

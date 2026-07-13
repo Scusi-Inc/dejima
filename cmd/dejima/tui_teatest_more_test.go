@@ -164,9 +164,13 @@ func TestTUISetupSSHGate(t *testing.T) {
 // self-update lives exclusively in the Server menu [H]. This is the core
 // safety guarantee: a routine "get latest" keypress can never restart the daemon
 // (which would drop every attached terminal fleet-wide).
-func TestTUIUpdateKeysClientOnly(t *testing.T) {
+// TestTUIUpdateKeys: u/U update the client first, then the daemon when the
+// client is current and the daemon is behind. The daemon update still goes
+// through the update-daemon confirm (which carries the fleet-wide-restart
+// warning + defer-while-attached gate) — it's consented, not a surprise.
+func TestTUIUpdateKeys(t *testing.T) {
 	for _, k := range []string{"u", "U"} {
-		// Client behind → arms update-client.
+		// Client behind → arms update-client (takes precedence over the daemon).
 		m := seededModel(t, island("alpha"))
 		m.clientUpdate = true
 		m = driveKeys(t, m, k)
@@ -174,23 +178,20 @@ func TestTUIUpdateKeysClientOnly(t *testing.T) {
 			t.Fatalf("%q with a client update should arm update-client, got %+v", k, m.confirm)
 		}
 
-		// Daemon behind ONLY → must NOT arm any update-daemon confirm; notice only.
+		// Daemon behind ONLY → arms the (warned + gated) update-daemon confirm.
 		m2 := seededModel(t, island("alpha"))
 		m2.daemonUpdate = true
 		m2 = driveKeys(t, m2, k)
-		if m2.confirm != nil {
-			t.Fatalf("%q must never arm a daemon update (client-only), got %+v", k, m2.confirm)
-		}
-		if !strings.Contains(m2.lastNotice, "client is up to date") {
-			t.Errorf("%q with only a daemon update should notice the client is up to date, got %q", k, m2.lastNotice)
+		if m2.confirm == nil || m2.confirm.verb != "update-daemon" {
+			t.Fatalf("%q with only a daemon update should arm update-daemon, got %+v", k, m2.confirm)
 		}
 
-		// Both behind → still only the client confirm (never the daemon one).
+		// Both behind → the client goes first (never jumps straight to the daemon).
 		m3 := seededModel(t, island("alpha"))
 		m3.clientUpdate, m3.daemonUpdate = true, true
 		m3 = driveKeys(t, m3, k)
 		if m3.confirm == nil || m3.confirm.verb != "update-client" {
-			t.Fatalf("%q with both behind should arm update-client (not daemon), got %+v", k, m3.confirm)
+			t.Fatalf("%q with both behind should arm update-client first, got %+v", k, m3.confirm)
 		}
 	}
 }

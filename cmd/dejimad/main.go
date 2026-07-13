@@ -417,6 +417,15 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	select {
 	case <-ctx.Done():
 		log.Info("shutdown signal received")
+		// Make the restart transparent to attached terminals: close every session
+		// websocket with a reconnect-triggering code BEFORE Shutdown (which does
+		// not close hijacked websockets). Clients re-dial and resume the still-
+		// running in-island tmux, so a self-update/restart is a ~1s blink rather
+		// than a fleet-wide terminal drop. Give the closes a brief moment to flush.
+		if n := server.CloseSessionsForRestart(); n > 0 {
+			log.Info("signalled attached sessions to reconnect through restart", "sessions", n)
+			time.Sleep(200 * time.Millisecond)
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)

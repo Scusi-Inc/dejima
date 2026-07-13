@@ -21,14 +21,14 @@ func TestHelpSectionsAndKeys(t *testing.T) {
 
 	// Keys that must be discoverable straight from `?` (no toggle).
 	wants := map[string]string{
-		"I":          "invite a teammate",           // was buried under [a] advanced
-		"X":          "remove the highlighted",      // was undocumented
-		"v":          "provider / model",            // was undocumented
-		"ssh":        "set up SSH fleet-wide",       // SSH setup now lives in the Server menu
-		"u/U":        "update the dejima client",    // u/U → client-only update
-		"servermenu": "server menu — update daemon", // the Server menu [H] itself
-		"O":          "owner lens",                  // multi-tenant
-		"%":          "host utilization",            // aggregate
+		"I":          "invite a teammate",                // was buried under [a] advanced
+		"X":          "remove the highlighted",           // was undocumented
+		"v":          "provider / model",                 // was undocumented
+		"ssh":        "set up SSH fleet-wide",            // SSH setup now lives in the Server menu
+		"u/U":        "update Dejima — the client first", // u/U → client, then daemon (gated)
+		"servermenu": "server menu — update daemon",      // the Server menu [H] itself
+		"O":          "owner lens",                       // multi-tenant
+		"%":          "host utilization",                 // aggregate
 	}
 	for key, phrase := range wants {
 		if !strings.Contains(help, phrase) {

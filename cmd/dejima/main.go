@@ -1786,10 +1786,24 @@ func classifySessionClose(err error, ctx context.Context) sessReason {
 	if ctx.Err() != nil {
 		return sessExitCtx
 	}
-	if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+	switch websocket.CloseStatus(err) {
+	case websocket.StatusNormalClosure:
+		// A deliberate, clean end: Ctrl-b d detach, the agent exiting, or an
+		// explicit server error envelope. We're done — do not reconnect.
 		return sessExitClean
+	case websocket.StatusServiceRestart, websocket.StatusGoingAway:
+		// The daemon is going down for a restart/self-update (1012), or is
+		// otherwise going away (1001). The in-island tmux keeps running, so
+		// reconnect patiently through the bounce — this is the transparent-restart
+		// path. (Falls into the default below; called out explicitly so the intent
+		// is legible and unit-tested.)
+		return sessReconnect
+	default:
+		// Any transport error (CloseStatus reports -1), abnormal close (1006), or
+		// other non-normal code is a link drop — the host sleeping/waking, a
+		// network/Tailscale blip — that we transparently reconnect through.
+		return sessReconnect
 	}
-	return sessReconnect
 }
 
 // runSessionLoop bridges the local terminal to a session websocket, transparently
