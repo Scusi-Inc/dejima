@@ -1067,11 +1067,19 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.lastError = msg.err.Error()
-			// A local daemon that's gone unreachable: attach a one-shot, actionable
-			// diagnosis (computed here, not in the renderer, since it shells out).
-			if m.activeHost == "" && isConnectionError(msg.err) {
-				d := diagnoseLocalDaemon()
-				m.daemonHelp = &d
+			// A daemon that's gone unreachable: attach an actionable diagnosis
+			// (computed here, not in the renderer, since the local path shells out).
+			// Local → why dejimad on this machine is down + how to fix; remote → calm
+			// recovery steps for a teammate/laptop pointed at a server (safe work,
+			// auto-retry, tailnet check, reinstall, ask-operator).
+			if isConnectionError(msg.err) {
+				if m.activeHost == "" {
+					d := diagnoseLocalDaemon()
+					m.daemonHelp = &d
+				} else {
+					d := diagnoseRemoteDaemon(m.activeHost)
+					m.daemonHelp = &d
+				}
 			}
 		}
 		return m, nil

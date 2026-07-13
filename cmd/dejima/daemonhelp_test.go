@@ -51,6 +51,54 @@ func TestDiagnoseLocalDaemon_SocketStale(t *testing.T) {
 	}
 }
 
+// A remote-target unreachable diagnosis must reassure (work is safe on the
+// server), promise the automatic retry, and offer the tailnet check + client
+// reinstall + ask-the-operator escape hatch — the calm recovery path a teammate
+// on a phone needs, not the local "start dejimad" steps.
+func TestDiagnoseRemoteDaemon(t *testing.T) {
+	d := diagnoseRemoteDaemon("mac-mini:7273")
+	if !d.Remote {
+		t.Fatalf("remote diagnosis must set Remote=true")
+	}
+	if !strings.Contains(d.Cause, "safe") || !strings.Contains(d.Cause, "mac-mini:7273") {
+		t.Fatalf("remote cause should reassure and name the host; got %q", d.Cause)
+	}
+	if !hasStepContaining(d.Steps, "retries automatically") {
+		t.Errorf("remote steps should mention the automatic retry; got %v", d.Steps)
+	}
+	if !hasStepContaining(d.Steps, "tailscale status") || !hasStepContaining(d.Steps, "tailscale ping mac-mini") {
+		t.Errorf("remote steps should offer the tailnet check with a bare host; got %v", d.Steps)
+	}
+	if !hasStepContaining(d.Steps, "install-client") {
+		t.Errorf("remote steps should offer a client reinstall; got %v", d.Steps)
+	}
+	if !hasStepContaining(d.Steps, "operator") {
+		t.Errorf("remote steps should offer the ask-the-operator fallback; got %v", d.Steps)
+	}
+	// The render must carry the reassurance + the auto-retry closing line, and must
+	// NOT tell a remote user to run commands "on the host shell" (that's the local
+	// footer).
+	out := renderDaemonHelp(d)
+	if !strings.Contains(out, "safe") {
+		t.Errorf("remote render should keep the reassurance; got:\n%s", out)
+	}
+	if strings.Contains(out, "on the host shell") {
+		t.Errorf("remote render must not use the local host-shell footer; got:\n%s", out)
+	}
+}
+
+// An empty host (profile with no host recorded) must still render without a bare
+// dangling `tailscale ping` — it falls back to a placeholder.
+func TestDiagnoseRemoteDaemon_EmptyHost(t *testing.T) {
+	d := diagnoseRemoteDaemon("")
+	if !strings.Contains(d.Cause, "the server") {
+		t.Fatalf("empty-host cause should fall back to \"the server\"; got %q", d.Cause)
+	}
+	if !hasStepContaining(d.Steps, "tailscale ping <server>") {
+		t.Errorf("empty-host should render a ping placeholder; got %v", d.Steps)
+	}
+}
+
 // compactSteps must drop the empty strings logHint() returns on unmanaged OSes,
 // so the rendered list never shows a blank bullet.
 func TestCompactStepsDropsEmpty(t *testing.T) {

@@ -23,6 +23,7 @@ func TestClassifySessionClose(t *testing.T) {
 		want sessReason
 	}{
 		{"normal closure (detach / agent exit) → exit", websocket.CloseError{Code: websocket.StatusNormalClosure}, bg, sessExitClean},
+		{"service restart (daemon self-update) → reconnect", websocket.CloseError{Code: websocket.StatusServiceRestart}, bg, sessReconnect},
 		{"going away (daemon restart) → reconnect", websocket.CloseError{Code: websocket.StatusGoingAway}, bg, sessReconnect},
 		{"abnormal closure (1006) → reconnect", websocket.CloseError{Code: websocket.StatusAbnormalClosure}, bg, sessReconnect},
 		{"transport error (EOF) → reconnect", io.EOF, bg, sessReconnect},

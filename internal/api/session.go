@@ -189,6 +189,79 @@ func (s *Server) presenceSnapshot(island, agentID string) []PresenceEntry {
 	return t.Snapshot()
 }
 
+// statusRestart is the websocket close code the daemon sends every attached
+// session on shutdown so the client reconnects through it instead of exiting.
+// 1012 (Service Restart) is the semantically correct code; coder/websocket
+// exposes it as StatusServiceRestart and permits it on the wire. The client's
+// classifySessionClose maps any non-NormalClosure close (this included) to a
+// patient reconnect, and the in-island tmux survives the daemon bounce, so the
+// terminal resumes after a ~1s blink rather than dropping.
+const statusRestart = websocket.StatusServiceRestart
+
+// sessionConnHandle is the per-connection registry key. Like presenceHandle it
+// must be NON-zero-size so distinct connections get distinct map keys (Go
+// allocates every &struct{}{} to the same address).
+type sessionConnHandle struct{ _ byte }
+
+// registerSessionConn adds a live session websocket to the restart registry and
+// returns its handle. Every session/terminal websocket (agent sessions, host
+// terminals, island shells) registers on Accept and unregisters on close, so
+// CloseSessionsForRestart can reach each one. If a restart is already in flight
+// when a late connection registers, it is closed immediately with the restart
+// code (it would otherwise miss the broadcast and hang until its own teardown).
+func (s *Server) registerSessionConn(conn *websocket.Conn) *sessionConnHandle {
+	s.restartMu.Lock()
+	if s.sessionConns == nil {
+		s.sessionConns = map[*sessionConnHandle]*websocket.Conn{}
+	}
+	restarting := s.restarting
+	h := &sessionConnHandle{}
+	s.sessionConns[h] = conn
+	s.restartMu.Unlock()
+	if restarting {
+		_ = conn.Close(statusRestart, "dejimad restarting")
+	}
+	return h
+}
+
+// unregisterSessionConn drops a connection from the restart registry (deferred
+// on the handler's exit).
+func (s *Server) unregisterSessionConn(h *sessionConnHandle) {
+	s.restartMu.Lock()
+	delete(s.sessionConns, h)
+	s.restartMu.Unlock()
+}
+
+// restartInProgress reports whether CloseSessionsForRestart has run. The session
+// pumps consult it before emitting their normal "deliberate end" signals so a
+// daemon shutdown doesn't masquerade as a detach/exit and stop the client.
+func (s *Server) restartInProgress() bool {
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+	return s.restarting
+}
+
+// CloseSessionsForRestart marks the daemon as restarting and closes every
+// attached session websocket with a reconnect-triggering close (Service Restart,
+// 1012). Clients re-dial and resume the still-running in-island tmux, turning a
+// daemon self-update/restart into a brief reconnect blink rather than a
+// fleet-wide terminal drop. Call it during shutdown BEFORE http.Server.Shutdown
+// (which does not close hijacked websockets). Returns the number closed so the
+// caller can log it and pause briefly for the closes to flush.
+func (s *Server) CloseSessionsForRestart() int {
+	s.restartMu.Lock()
+	s.restarting = true
+	conns := make([]*websocket.Conn, 0, len(s.sessionConns))
+	for _, c := range s.sessionConns {
+		conns = append(conns, c)
+	}
+	s.restartMu.Unlock()
+	for _, c := range conns {
+		_ = c.Close(statusRestart, "dejimad restarting")
+	}
+	return len(conns)
+}
+
 func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	agentID := r.PathValue("id") // empty for the legacy /session route → primary
@@ -245,7 +318,21 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("ws accept", "err", err)
 		return
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	// On a normal end, close cleanly (NormalClosure → the client stops). During a
+	// daemon restart, CloseSessionsForRestart has already closed this conn with
+	// the Service-Restart code and set restarting, so this deferred NormalClosure
+	// is a no-op (the first close wins) — and we also skip it explicitly to keep
+	// intent obvious.
+	defer func() {
+		if !s.restartInProgress() {
+			conn.Close(websocket.StatusNormalClosure, "")
+		}
+	}()
+
+	// Register with the restart registry so a daemon shutdown can reach this
+	// live conn and close it with a reconnect-triggering code.
+	connHandle := s.registerSessionConn(conn)
+	defer s.unregisterSessionConn(connHandle)
 
 	// Per-session cancel so `dejima sessions revoke` can forcibly drop us.
 	ctx, cancel := context.WithCancel(r.Context())
@@ -451,7 +538,16 @@ func (s *Server) serveTmuxWS(
 		s.log.Error(logName+" ws accept", "err", err)
 		return
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	// See sessionWS: during a daemon restart the conn is already closed with the
+	// Service-Restart code, so skip the NormalClosure (which would stop the client).
+	defer func() {
+		if !s.restartInProgress() {
+			conn.Close(websocket.StatusNormalClosure, "")
+		}
+	}()
+
+	connHandle := s.registerSessionConn(conn)
+	defer s.unregisterSessionConn(connHandle)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -545,7 +641,15 @@ func (s *Server) serveTmuxWS(
 				// persists across that. Only a genuine PTY EOF reaches here with a
 				// live ctx, so this cleanly discriminates "terminal gone" (stop)
 				// from "link blipped" (reconnect).
-				_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "exit"})
+				//
+				// EXCEPTION: during a daemon restart the daemon kills its docker-exec
+				// PTYs, so this read errors with a live ctx and would look like a
+				// deliberate exit. Skip the "exit" signal when restarting — the conn
+				// has already been (or is about to be) closed with the Service-Restart
+				// code, which the client reconnects through.
+				if !s.restartInProgress() {
+					_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "exit"})
+				}
 				cancel()
 				return
 			}

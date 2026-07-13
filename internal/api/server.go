@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/aoos/dejima/internal/agentcreds"
 	"github.com/aoos/dejima/internal/capability"
 	"github.com/aoos/dejima/internal/egress"
@@ -50,14 +52,28 @@ const (
 
 // Server is the Dejima HTTP API server.
 type Server struct {
-	rt        runtime.Runtime
-	log       *slog.Logger
-	mu        sync.Mutex
-	locks     map[string]*sync.Mutex // per-island
-	presence  map[string]*presenceTracker
-	events    *events.Manager
-	mailbox   *mailbox.Store // intra-island agent message ring (Lane 5, Phase 1)
-	linkQueue *link.Queue    // pending cross-island action approvals (Lane 5, Phase 3; in-memory, fail-closed)
+	rt       runtime.Runtime
+	log      *slog.Logger
+	mu       sync.Mutex
+	locks    map[string]*sync.Mutex // per-island
+	presence map[string]*presenceTracker
+
+	// Graceful-restart machinery. restartMu guards the live-session-websocket
+	// registry and the restarting flag. On daemon shutdown,
+	// CloseSessionsForRestart sets restarting and closes every attached session
+	// websocket with a reconnect-triggering close code (Service Restart, 1012),
+	// so clients re-dial and resume the still-running in-island tmux instead of
+	// reading the shutdown as a deliberate detach. restarting also makes the
+	// session pumps SKIP their normal "deliberate end" signals (the handler's
+	// NormalClosure and the {"type":"exit"} PTY-error envelope) so the 1012 close
+	// wins the race — otherwise a restart would look like an exit and drop the
+	// terminal instead of reconnecting.
+	restartMu    sync.Mutex
+	restarting   bool
+	sessionConns map[*sessionConnHandle]*websocket.Conn
+	events       *events.Manager
+	mailbox      *mailbox.Store // intra-island agent message ring (Lane 5, Phase 1)
+	linkQueue    *link.Queue    // pending cross-island action approvals (Lane 5, Phase 3; in-memory, fail-closed)
 
 	// Wake-on-message (Lane 5, Phase 3.5). wakeEnabled gates the default
 	// soft-notify; wakeNudges batches pending notifications. injectFn/idleFn are

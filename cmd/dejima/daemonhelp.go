@@ -18,8 +18,49 @@ import (
 // should itself be running dejimad); a client pointed at a remote host has its
 // own path, runConnectionTroubleshooter.
 type daemonDiagnosis struct {
-	Cause string   // one-line "what's actually wrong"
-	Steps []string // ordered remediation, most-likely fix first
+	Cause  string   // one-line "what's actually wrong"
+	Steps  []string // ordered remediation, most-likely fix first
+	Remote bool     // target is a remote host (changes the render's closing line)
+}
+
+// diagnoseRemoteDaemon builds calm, numbered recovery guidance for when the
+// client can't reach a REMOTE daemon (DEJIMA_HOST or an active profile pointing
+// at a server) — the case a teammate on a phone or a laptop pointed at a server
+// hits. Unlike the local diagnosis it can't probe the far side, so it reassures
+// first (the work is safe; this is only the connection) and then lists the few
+// things the user can actually do from here, ordered most-reassuring /
+// most-likely-transient first. Pure string-building (no shelling out), so it's
+// cheap to compute on the error.
+func diagnoseRemoteDaemon(host string) daemonDiagnosis {
+	host = strings.TrimSpace(host)
+	shown := host
+	if shown == "" {
+		shown = "the server"
+	}
+	reinstall := "curl -fsSL https://dejima.tech/install-client.sh | bash"
+	if runtime.GOOS == "windows" {
+		reinstall = "irm https://dejima.tech/install-client.ps1 | iex"
+	}
+	return daemonDiagnosis{
+		Remote: true,
+		Cause: "can't reach " + shown + " right now — your islands and agents are safe on the server; " +
+			"this is just the connection between here and there.",
+		Steps: compactSteps([]string{
+			"it's often a brief blip (the server can restart after an update) — this retries automatically, so give it ~15s.",
+			"check you're on the tailnet:  tailscale status   (the server should be listed) · tailscale ping " + pingTarget(host),
+			"refresh this client if it won't recover:  " + reinstall,
+			"still stuck? the server may be down — ask the operator, or check the host.",
+		}),
+	}
+}
+
+// pingTarget renders the bare host (no :port) for a `tailscale ping` hint,
+// falling back to a placeholder when the target is unknown.
+func pingTarget(host string) string {
+	if strings.TrimSpace(host) == "" {
+		return "<server>"
+	}
+	return hostOnly(host)
 }
 
 // diagnoseLocalDaemon classifies a local daemon-connection failure by probing
@@ -201,7 +242,11 @@ func reportSetupIncomplete() {
 // place of the bare "(daemon unreachable?)" line when the local daemon is down.
 func renderDaemonHelp(d daemonDiagnosis) string {
 	var b strings.Builder
-	b.WriteString(styleErrored.Render("dejimad isn't reachable"))
+	if d.Remote {
+		b.WriteString(styleErrored.Render("Can't reach the server"))
+	} else {
+		b.WriteString(styleErrored.Render("dejimad isn't reachable"))
+	}
 	b.WriteString("\n\n")
 	b.WriteString(d.Cause)
 	if len(d.Steps) > 0 {
@@ -212,6 +257,10 @@ func renderDaemonHelp(d daemonDiagnosis) string {
 			b.WriteString("  • " + s + "\n")
 		}
 	}
-	b.WriteString("\n" + styleMuted.Render("press q to quit, then run one of the above on the host shell"))
+	if d.Remote {
+		b.WriteString("\n" + styleMuted.Render("this keeps retrying on its own — press q to quit if you'd rather stop"))
+	} else {
+		b.WriteString("\n" + styleMuted.Render("press q to quit, then run one of the above on the host shell"))
+	}
 	return b.String()
 }
