@@ -229,6 +229,12 @@ type tuiModel struct {
 	// but this running process is still the old one until they relaunch. Stays
 	// until restart or an explicit [esc] dismiss.
 	restartPending string
+	// updating is a BLUE in-progress banner shown while an update command is
+	// running — a daemon source update does `git pull && make install` (tens of
+	// seconds) before it restarts, and without this the TUI looks frozen between
+	// the keypress and the result. Set when the update command fires, cleared by
+	// its result (applied / restart-pending / error).
+	updating string
 }
 
 type confirmPrompt struct {
@@ -838,6 +844,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case clientUpdatedMsg:
+		m.updating = "" // the in-progress banner gives way to the result
 		if msg.err != nil {
 			m.updateError = "client update failed: " + msg.err.Error()
 			m.updateApplied, m.restartPending = "", ""
@@ -851,6 +858,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case daemonUpdatedMsg:
+		m.updating = "" // the in-progress banner gives way to the result
 		switch {
 		case msg.err != nil:
 			// The install now runs synchronously, so an error here is a real
@@ -1724,10 +1732,16 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		}
 	case "update-client":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			m.updating = "downloading the client update…"
+			m.updateError = ""
 			return m, applyClientUpdateCmd(m.latestRelease)
 		}
 	case "update-daemon":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+			// A source-install daemon rebuilds (git pull + make install) before it
+			// restarts — tens of seconds. Show progress so it doesn't look frozen.
+			m.updating = "updating the daemon (building + installing, then restarting)…"
+			m.updateError = ""
 			return m, m.updateDaemonCmd(c.force)
 		}
 	}
@@ -2861,6 +2875,13 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 		}
 		return fmt.Sprintf(" ! %d cross-island action(s) %s   ·   [V] review", n, tail),
 			fmt.Sprintf(" ! %d to approve ", n), st, true
+	case m.updating != "":
+		// An update is being applied right now. A source daemon update rebuilds for
+		// tens of seconds before restarting; without this in-progress banner the TUI
+		// looks frozen between the keypress and the result. Blue; cleared by the
+		// result (applied / restart-pending / error).
+		return " ⟳ " + m.updating,
+			" ⟳ updating… ", styleWarnBroadcast, true
 	case m.updateError != "":
 		// A failed self-update outranks everything else here and stays put (red)
 		// until retried [U] or dismissed [esc] — never wiped by a poll.
@@ -4119,26 +4140,24 @@ func healthGlyph(ok bool) string {
 
 func (m tuiModel) renderConfirm() string {
 	c := m.confirm
-	var prompt string
+	// prompt = the question; input = what to type (its own bold line below the
+	// question, so the "how to confirm" step is unmissable instead of buried at
+	// the tail of a long sentence). A y/n verb sets input to the default "y".
+	var prompt, input string
 	switch c.verb {
 	case "reset":
-		prompt = fmt.Sprintf("Clear agent state for %q (workspace preserved)? Type 'y' and press Enter: %s",
-			c.island, c.answer)
+		prompt = fmt.Sprintf("Clear agent state for %q? (workspace preserved)", c.island)
 	case "upgrade":
-		prompt = fmt.Sprintf("Recreate %q on the current island image (all state preserved)? Type 'y' and press Enter: %s",
-			c.island, c.answer)
+		prompt = fmt.Sprintf("Recreate %q on the current island image? (all state preserved)", c.island)
 	case "recreate-island":
-		prompt = fmt.Sprintf("OOM priority changed — restart %q now to apply? (recreates the container; workspace + agents preserved) Type 'y' and Enter: %s",
-			c.island, c.answer)
+		prompt = fmt.Sprintf("OOM priority changed — restart %q now to apply? (recreates the container; workspace + agents preserved)", c.island)
 	case "build-image":
-		prompt = fmt.Sprintf("Rebuild the island image? Takes a few minutes; islands pick it up on upgrade. Type 'y' and press Enter: %s",
-			c.answer)
+		prompt = "Rebuild the island image? Takes a few minutes; islands pick it up on upgrade."
 	case "purge":
-		prompt = fmt.Sprintf("DESTROY %q (including all volumes). Type the island name to confirm: %s",
-			c.island, c.answer)
+		prompt = fmt.Sprintf("DESTROY %q, including all volumes. This cannot be undone.", c.island)
+		input = "the island name (" + c.island + ")"
 	case "force-purge":
-		prompt = fmt.Sprintf("%q has unpushed/uncommitted work that will be LOST. Force-purge anyway? Type 'y' and Enter: %s",
-			c.island, c.answer)
+		prompt = fmt.Sprintf("%q has unpushed/uncommitted work that will be LOST. Force-purge anyway?", c.island)
 	case "remove-agent":
 		who := c.agent
 		if isl, ok := m.islandByName(c.island); ok {
@@ -4146,58 +4165,50 @@ func (m tuiModel) renderConfirm() string {
 				who = lbl
 			}
 		}
-		prompt = fmt.Sprintf("Remove agent %q (id %s) from island %q — destroys its worktree + agent state. Type the agent id %q to confirm: %s",
-			who, c.agent, c.island, c.agent, c.answer)
+		prompt = fmt.Sprintf("Remove agent %q (id %s) from island %q — destroys its worktree + agent state.", who, c.agent, c.island)
+		input = "the agent id (" + c.agent + ")"
 	case "remove-terminal":
-		prompt = fmt.Sprintf("Close host terminal %s (kills the shell on the daemon host)? Type 'y' and press Enter: %s",
-			c.agent, c.answer)
+		prompt = fmt.Sprintf("Close host terminal %s? (kills the shell on the daemon host)", c.agent)
 	case "approve-action":
-		prompt = fmt.Sprintf("⚠ Approve this DESTRUCTIVE cross-island action (%s)? It runs once approved. Type 'y' and press Enter: %s",
-			c.agent, c.answer)
+		prompt = fmt.Sprintf("⚠ Approve this DESTRUCTIVE cross-island action (%s)? It runs once approved.", c.agent)
 	case "deny-action":
-		prompt = fmt.Sprintf("Deny action %s. Reason (optional) — type one and press Enter, or just Enter: %s",
-			c.agent, c.answer)
+		prompt = fmt.Sprintf("Deny action %s.", c.agent)
+		input = "an optional reason (or leave blank)"
 	case "approve-rule":
-		prompt = fmt.Sprintf("Approve %s AND auto-approve this link+action going forward. Type '<max> [<ttl>]' (e.g. '20 1h'; blank = unlimited, no expiry) and Enter: %s",
-			c.agent, c.answer)
+		prompt = fmt.Sprintf("Approve %s AND auto-approve this link+action going forward.", c.agent)
+		input = "'<max> [<ttl>]' (e.g. '20 1h'; blank = unlimited, no expiry)"
 	case "open-all-agents":
-		prompt = fmt.Sprintf("Open all %d agents of %q in separate windows? Type 'y' and press Enter: %s",
-			len(m.attachableAgentIDs(c.island)), c.island, c.answer)
+		prompt = fmt.Sprintf("Open all %d agents of %q in separate windows?", len(m.attachableAgentIDs(c.island)), c.island)
 	case "relabel-agent":
-		prompt = fmt.Sprintf("Rename agent %s (blank clears the label). Type a name and press Enter: %s",
-			c.agent, c.answer)
+		prompt = fmt.Sprintf("Rename agent %s.", c.agent)
+		input = "a name (blank clears the label)"
 	case "rename-island":
-		prompt = fmt.Sprintf("Rename %q (display title; blank resets to the name). Type a title and press Enter: %s",
-			c.island, c.answer)
+		prompt = fmt.Sprintf("Rename %q.", c.island)
+		input = "a display title (blank resets to the name)"
 	case "setup-ssh":
-		prompt = fmt.Sprintf("Authorize this machine's SSH key for ALL islands and add ~/.ssh/config entries for VS Code/Cursor? Type 'y' and Enter: %s",
-			c.answer)
+		prompt = "Authorize this machine's SSH key for ALL islands and add ~/.ssh/config entries for VS Code/Cursor?"
 	case "update-client":
-		prompt = fmt.Sprintf("Download %s and replace this dejima binary (verified against the release checksums)? Type 'y' and Enter: %s",
-			m.latestRelease, c.answer)
+		prompt = fmt.Sprintf("Download %s and replace this dejima binary? (verified against the release checksums)", m.latestRelease)
 	case "update-daemon":
 		if c.force {
 			// The daemon deferred because clients are attached; forcing disconnects
 			// them. This is a DISTINCT decision from the first confirm — say so, or
 			// it reads as the same prompt asked twice.
-			prompt = fmt.Sprintf("The daemon held off — attached terminal(s) would be disconnected. Force the update to %s and restart now? Type 'y' and Enter: %s",
-				m.latestRelease, c.answer)
+			prompt = fmt.Sprintf("The daemon held off — attached terminal(s) would be disconnected. Force the update to %s and restart now?", m.latestRelease)
 		} else {
-			prompt = fmt.Sprintf("Update the daemon to %s? Updating the daemon RESTARTS it and closes ALL open terminals fleet-wide — containers and agents keep running, you just reattach. Continue? Type 'y' and Enter: %s",
-				m.latestRelease, c.answer)
+			prompt = fmt.Sprintf("Update the daemon to %s? This RESTARTS the daemon and closes ALL open terminals fleet-wide — containers and agents keep running, you just reattach.", m.latestRelease)
 		}
 	}
 	// Render inside the centered styleMenuBox (View supplies the border): a clear
-	// title, the prompt with a blinking-style cursor on the typed answer, and a
-	// key hint — so the confirm is an unmissable pop-up, not a one-line footer.
+	// title, the question, a BOLD input line, the typed answer with a cursor, and
+	// a key hint — so the confirm is an unmissable pop-up and "how to say yes" is
+	// obvious, not buried.
 	title := styleHeader.Render("Confirm")
 	switch c.verb {
 	case "purge", "force-purge", "remove-agent", "remove-terminal":
 		title = styleErrored.Render("⚠  Confirm")
 	}
-	hint := styleHeader.Render("Enter = confirm    ·    Esc = cancel")
-	// Wrap the prompt so a long one (e.g. approve-rule's "<max> [<ttl>]…") doesn't
-	// run off the box and hide the typed answer + cursor.
+	// Wrap the question so a long one doesn't run off the box.
 	width := m.width - 10
 	if width > 76 {
 		width = 76
@@ -4205,8 +4216,22 @@ func (m tuiModel) renderConfirm() string {
 	if width < 24 {
 		width = 24
 	}
-	body := lipgloss.NewStyle().Width(width).Render(prompt + "▌")
-	return title + "\n\n" + body + "\n\n" + hint
+	question := lipgloss.NewStyle().Width(width).Render(prompt)
+
+	// The action line: for a y/n verb, "▸ Type  y  then Enter"; for a typed verb,
+	// name what to type. The typed answer + cursor sit right after it.
+	verb := "Type"
+	what := input
+	if what == "" {
+		what = "y"
+	}
+	action := styleAccent.Render("▸ "+verb+" ") +
+		styleTitle.Render(what) +
+		styleAccent.Render(" then press Enter")
+	answerLine := styleHeader.Render("  › ") + styleTitle.Render(c.answer+"▌")
+
+	hint := styleMuted.Render("Enter = confirm    ·    Esc = cancel")
+	return title + "\n\n" + question + "\n\n" + action + "\n" + answerLine + "\n\n" + hint
 }
 
 // renderActionMenu draws the inner content of the per-row context popup: a
