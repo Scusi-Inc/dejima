@@ -225,7 +225,7 @@ func TestTUIServerMenuDaemonUpdate(t *testing.T) {
 		t.Fatalf("selecting Update daemon should arm update-daemon, got %+v", m.confirm)
 	}
 	prompt := m.renderConfirm()
-	if !strings.Contains(prompt, "RESTARTS it") || !strings.Contains(prompt, "fleet-wide") {
+	if !strings.Contains(prompt, "RESTARTS the daemon") || !strings.Contains(prompt, "fleet-wide") {
 		t.Errorf("daemon-update confirm must warn about the fleet-wide restart, got %q", prompt)
 	}
 

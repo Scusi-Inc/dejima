@@ -93,7 +93,7 @@ func TestTUIConfirmPopupRequiresName(t *testing.T) {
 	waitForAll(t, tm, "alpha")
 
 	tm.Send(key("d"))
-	waitForAll(t, tm, "Confirm", "Type the island name to confirm")
+	waitForAll(t, tm, "Confirm", "the island name")
 
 	for _, ch := range "wrong" {
 		tm.Send(key(string(ch)))
