@@ -2875,17 +2875,13 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 		// A clean landing — green, and it fades on its own (updateNoticeFadedMsg).
 		return " ✓ " + m.updateApplied,
 			" ✓ updated ", styleSuccessBroadcast, true
-	case m.clientUpdate:
-		// [U] applies the CLIENT update. The daemon self-update (if also behind)
-		// lives in the Server menu [H] behind a fleet-wide-restart warning, so it's
-		// deliberately not on this key.
+	case m.clientUpdate, m.daemonUpdate:
+		// [U] applies the update — the client first, then the daemon if it's behind.
+		// updateParts() names whichever is stale (client / daemon / both). A daemon
+		// update goes through the fleet-wide-restart warning + attach-gate; also
+		// reachable via the Server menu [H].
 		return " ⬆ update available: " + m.updateParts() + "   ·   [U] update",
 			" ⬆ [U] update ", styleBroadcast, true
-	case m.daemonUpdate:
-		// Daemon-only: [U] is client-only now, so point at the Server menu, which
-		// warns before the fleet-wide restart.
-		return " ⬆ daemon update available: " + m.updateParts() + "   ·   [H] server menu → update daemon",
-			" ⬆ daemon update [H] ", styleBroadcast, true
 	}
 	return "", "", lipgloss.Style{}, false
 }
