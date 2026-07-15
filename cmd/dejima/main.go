@@ -226,6 +226,7 @@ func newRootCmd() *cobra.Command {
 		newExecCmd(),
 		newCpCmd(),
 		newPasteCmd(),
+		newVoiceCmd(),
 		newAttachCmd(),
 		newPortCmd(),
 		newCapCmd(),
