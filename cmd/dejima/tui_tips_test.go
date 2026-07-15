@@ -44,6 +44,23 @@ func TestFooterTipsVoiceNudge(t *testing.T) {
 			t.Error("voice tip should not appear once dictation is ready")
 		}
 	}
+
+	// After the boost cap: the voice tip stays in the pool but is no longer boosted
+	// (single occurrence, not the second slot) — no perma-nag for veterans.
+	m3 := tuiModel{voice: notReadyStatus, voiceTipShown: voiceBoostCap}
+	eased := m3.footerTips()
+	n, secondIsVoice := 0, len(eased) > 1 && eased[1] == tipVoice
+	for _, tp := range eased {
+		if tp == tipVoice {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("eased voice tip should appear exactly once, got %d", n)
+	}
+	if secondIsVoice {
+		t.Error("eased voice tip should no longer occupy the boosted second slot")
+	}
 }
 
 func TestFooterTipTextRotates(t *testing.T) {

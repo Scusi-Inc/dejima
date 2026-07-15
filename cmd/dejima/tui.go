@@ -174,8 +174,9 @@ type tuiModel struct {
 	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
 	building     bool              // island image build in flight
 
-	ticks int            // tickMsg counter: drives footer-tip rotation + occasional voice re-check
-	voice voicein.Status // cached voice-dictation readiness (refreshed on tick + settings-open)
+	ticks         int            // tickMsg counter: drives footer-tip rotation + occasional voice re-check
+	voice         voicein.Status // cached voice-dictation readiness (refreshed on tick + settings-open)
+	voiceTipShown int            // times the voice tip has been shown this session; eases the boost after voiceBoostCap
 
 	help       bool            // help overlay visible (all key sections always shown)
 	helpMore   bool            // help: the collapsible reference (glyphs + CLI) is expanded
@@ -746,6 +747,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// voice footer tip once the operator has set it up.
 		if m.ticks%voiceCheckTicks == 1 {
 			m.voice = voicein.Check()
+		}
+		// At each tip-rotation boundary, count a voice-tip showing so its boost eases
+		// to normal rotation after enough exposure (don't perma-nag a veteran who
+		// deliberately skips voice — the tip stays in the pool, just stops repeating).
+		if m.ticks%tipRotateTicks == 0 && m.footerTipText() == tipVoice {
+			m.voiceTipShown++
 		}
 		if m.demo {
 			m.demoTick++ // advance the synthetic fleet so agent states churn on screen

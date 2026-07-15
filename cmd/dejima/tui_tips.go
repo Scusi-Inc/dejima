@@ -10,6 +10,10 @@ const (
 	// voiceCheckTicks: re-probe voice readiness ~every 30s (a cheap PATH+stat probe
 	// gated off the 2s tick so it isn't run every frame).
 	voiceCheckTicks = 15
+	// voiceBoostCap: after the voice tip has been shown this many times in a
+	// session, ease its boost back to normal rotation (still in the pool, no longer
+	// prioritized/repeated) so a veteran who skips voice isn't nagged forever.
+	voiceBoostCap = 8
 )
 
 const (
@@ -29,8 +33,12 @@ func (m tuiModel) footerTips() []string {
 		tips = append(tips, tipHostTerm)
 	}
 	if !m.voice.Ready() {
-		tips = insertStringAt(tips, 1, tipVoice) // high, but not the very first shown
-		tips = append(tips, tipVoice)            // and a second slot → recurs more often
+		if m.voiceTipShown < voiceBoostCap {
+			tips = insertStringAt(tips, 1, tipVoice) // high, but not the very first shown
+			tips = append(tips, tipVoice)            // and a second slot → recurs more often
+		} else {
+			tips = append(tips, tipVoice) // boost eased: still in the pool, just normal rotation
+		}
 	}
 	return tips
 }
