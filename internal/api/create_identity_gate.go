@@ -39,7 +39,11 @@ func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) 
 	if req.AllowNoIdentity || !reposrc.IsURL(repo) || s.islandWillHaveGitHubIdentity(req.GitHubIdentity) {
 		return nil
 	}
-	if s.anonCloneFn(ctx, repo) {
+	// Only probe real git-remote schemes. A file:// or other exotic URL is treated
+	// as not anonymously reachable → gate, so the daemon never points `git
+	// ls-remote` at a caller-supplied local path or non-git scheme (closes the
+	// file:// local-path probe vector).
+	if isGitRemoteURL(repo) && s.anonCloneFn(ctx, repo) {
 		return nil // public / anonymously reachable — no identity needed
 	}
 	return fmt.Errorf("%q needs a GitHub identity to clone (it isn't anonymously reachable) but none is "+
@@ -56,6 +60,27 @@ func (s *Server) islandWillHaveGitHubIdentity(named string) bool {
 	}
 	store, err := githubid.Load()
 	return err == nil && len(store.Identities) > 0
+}
+
+// isGitRemoteURL reports whether url is a network git remote we should probe —
+// an https/http/git/ssh scheme, or scp-style user@host:path. Everything else
+// (notably file://) is NOT a network remote, so the gate treats it as
+// not-anon-reachable rather than shelling `git ls-remote` at it.
+func isGitRemoteURL(url string) bool {
+	for _, p := range []string{"https://", "http://", "git://", "ssh://"} {
+		if strings.HasPrefix(url, p) {
+			return true
+		}
+	}
+	// scp-style: user@host:path — an "@" in the part before the first ":" and no
+	// slash in that host segment (mirrors reposrc.IsURL's scp detection).
+	if i := strings.Index(url, ":"); i > 0 {
+		host := url[:i]
+		if strings.Contains(host, "@") && !strings.Contains(host, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 // repoAnonCloneable probes whether url is reachable WITHOUT credentials. It
