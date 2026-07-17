@@ -499,6 +499,16 @@ type GitHubIdentitiesResponse struct {
 // it to avoid attaching into a still-provisioning, empty workspace.
 type WorkspaceReadyResponse struct {
 	Ready bool `json:"ready"`
+	// CloneFailed is set when the island entrypoint RECORDED a failed repo clone
+	// (report_clone_failure in image/start.sh writes /home/dejima/.dejima/
+	// clone-status). Only meaningful when Ready is false — its presence
+	// distinguishes "clone failed" from "still cloning".
+	CloneFailed bool `json:"clone_failed,omitempty"`
+	// CloneReason is that classifier's value: "auth" | "not-found" | "error".
+	// This set is a CONTRACT with report_clone_failure (writer) and the client's
+	// cloneFailureHint map (reader) — keep the three in sync; an unknown value
+	// still degrades to a generic hint client-side.
+	CloneReason string `json:"clone_reason,omitempty"`
 }
 
 // PutGitHubIdentityRequest is the body of PUT /v1/credentials/github/:name —

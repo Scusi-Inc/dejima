@@ -135,7 +135,20 @@ paths:
             application/json:
               schema:
                 type: object
-                properties: { ready: { type: boolean } }
+                properties:
+                  ready: { type: boolean }
+                  clone_failed:
+                    type: boolean
+                    description: >-
+                      Set when the island entrypoint recorded a failed repo clone
+                      (only meaningful when ready is false — distinguishes a failed
+                      clone from one still in progress).
+                  clone_reason:
+                    type: string
+                    description: >-
+                      Classifier for the failure — one of "auth", "not-found",
+                      "error" (a contract with report_clone_failure in
+                      image/start.sh).
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/resources:
     parameters: [ { $ref: "#/components/parameters/Name" } ]

@@ -711,12 +711,12 @@ func (c *Client) GetIsland(ctx context.Context, name string) (*IslandInfo, error
 
 // WorkspaceReady reports whether the island's repo clone has landed in
 // /workspace yet. Used by `dejima connect` to wait out provisioning.
-func (c *Client) WorkspaceReady(ctx context.Context, name string) (bool, error) {
+func (c *Client) WorkspaceReady(ctx context.Context, name string) (WorkspaceReadyResponse, error) {
 	var out WorkspaceReadyResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+name+"/workspace-ready", nil, &out); err != nil {
-		return false, err
+		return WorkspaceReadyResponse{}, err
 	}
-	return out.Ready, nil
+	return out, nil
 }
 
 // CreateIsland provisions a new island. The returned CreateIslandResponse

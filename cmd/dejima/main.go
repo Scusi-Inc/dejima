@@ -1433,7 +1433,9 @@ func newConnectCmd() *cobra.Command {
 			// /workspace. Don't drop the operator into an empty dir: if a repo is
 			// expected, wait (bounded) for the clone to land before attaching.
 			if info.Repo != "" {
-				waitForWorkspaceReady(cmd.Context(), c, name)
+				if failed, reason := waitForWorkspaceReady(cmd.Context(), c, name); failed {
+					return fmt.Errorf("%s", cloneFailureHint(name, reason))
+				}
 			}
 			// No agent (explicit --shell, or an island with no agents) → a contained
 			// shell at /workspace. Otherwise attach the resolved agent.
@@ -1476,7 +1478,9 @@ func newShellCmd() *cobra.Command {
 				return fmt.Errorf("island %q is not running (container: %s); `dejima wake %s` first", name, info.Container, name)
 			}
 			if info.Repo != "" {
-				waitForWorkspaceReady(cmd.Context(), c, name)
+				if failed, reason := waitForWorkspaceReady(cmd.Context(), c, name); failed {
+					return fmt.Errorf("%s", cloneFailureHint(name, reason))
+				}
 			}
 			return runInShellSession(cmd.Context(), c, name, label, false) // bare CLI — no dashboard to summon back to
 		},
@@ -1597,13 +1601,21 @@ func defaultLabel() string {
 // (older daemon without the endpoint, transient failure) just proceeds to
 // attach. It prints a one-time notice so a multi-second clone doesn't look like
 // a hang. Cancellable via ctx (Ctrl-C).
-func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) {
+// waitForWorkspaceReady blocks (bounded) until the island's repo clone lands, so
+// connect doesn't attach to an empty /workspace mid-clone. It returns
+// (cloneFailed, reason) when the entrypoint RECORDED a clone failure, so the
+// caller can surface it and stop instead of waiting the full window then dropping
+// the operator into a repo-less island.
+func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) (cloneFailed bool, reason string) {
 	deadline := time.Now().Add(2 * time.Minute)
 	notified := false
 	for {
-		ready, err := c.WorkspaceReady(ctx, name)
-		if err != nil || ready || time.Now().After(deadline) {
-			return
+		st, err := c.WorkspaceReady(ctx, name)
+		if err != nil || st.Ready || time.Now().After(deadline) {
+			return false, ""
+		}
+		if st.CloneFailed {
+			return true, st.CloneReason
 		}
 		if !notified {
 			fmt.Printf("waiting for workspace to finish provisioning (cloning)…\n")
@@ -1611,9 +1623,28 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) {
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return false, ""
 		case <-time.After(time.Second):
 		}
+	}
+}
+
+// cloneFailureHint maps a recorded clone-failure reason to actionable dejima
+// guidance. The reason set ("auth" | "not-found" | "error") is a CONTRACT with
+// report_clone_failure in image/start.sh — keep this switch in sync with it; an
+// unknown reason still degrades to a generic pointer rather than an empty message.
+func cloneFailureHint(name, reason string) string {
+	switch reason {
+	case "auth":
+		return fmt.Sprintf("clone failed (auth) — this island can't authenticate to the git remote. "+
+			"Push a GitHub token (`dejima auth push --github`), then `dejima upgrade %s` to re-clone.", name)
+	case "not-found":
+		return fmt.Sprintf("clone failed (not-found) — the repo couldn't be reached or found. "+
+			"Check the URL and that the island's identity can see it (private repos need a token with access), then `dejima upgrade %s`.", name)
+	case "error":
+		return fmt.Sprintf("clone failed — git couldn't clone the repo. See `dejima logs %s` for the full output.", name)
+	default:
+		return fmt.Sprintf("clone failed (%s) — see `dejima logs %s` for details.", reason, name)
 	}
 }
 
