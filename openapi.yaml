@@ -1265,6 +1265,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GitHubDeviceStartResponse" }
+        "403":
+          description: Insufficient role (operator or owner required)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "501":
           description: Device flow not configured (no OAuth app); use the PAT path
           content:
@@ -2527,7 +2532,7 @@ components:
         verification_uri: { type: string }
         expires_in: { type: integer }
         interval: { type: integer }
-        scopes: { type: string, description: the access being granted, for the UX to surface }
+        scopes: { type: string, description: "the access being granted (surfaced by the UX)" }
     GitHubDevicePollRequest:
       type: object
       required: [session_id, name]
