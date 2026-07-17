@@ -45,6 +45,45 @@ func TestBlockDoomedClone(t *testing.T) {
 	}
 }
 
+// TestGateSchemeAllowlist: only real git-remote schemes are probed; a file:// (or
+// other non-git) URL is gated WITHOUT ever shelling ls-remote at it.
+func TestGateSchemeAllowlist(t *testing.T) {
+	srv, _, _ := wakeServer(t)
+
+	// isGitRemoteURL truth table.
+	for _, u := range []string{"https://github.com/o/r", "http://x/y", "git://x/y", "ssh://git@x/y", "git@github.com:o/r.git"} {
+		if !isGitRemoteURL(u) {
+			t.Errorf("isGitRemoteURL(%q) = false, want true", u)
+		}
+	}
+	for _, u := range []string{"file:///etc/passwd", "file://./repo", "ftp://x/y", "/local/path", "weird://z"} {
+		if isGitRemoteURL(u) {
+			t.Errorf("isGitRemoteURL(%q) = true, want false", u)
+		}
+	}
+
+	// A file:// URL (IsURL true, but not a git remote): gated, and the probe is
+	// never called.
+	probed := false
+	srv.anonCloneFn = func(context.Context, string) bool { probed = true; return true }
+	if err := srv.blockDoomedClone(context.Background(), CreateIslandRequest{Repo: "file:///srv/secret-repo"}); err == nil {
+		t.Error("a file:// repo with no identity should be gated")
+	}
+	if probed {
+		t.Error("the anon probe must NOT run for a non-git-remote scheme (file://)")
+	}
+
+	// An https URL still gets probed.
+	probed = false
+	srv.anonCloneFn = func(context.Context, string) bool { probed = true; return true }
+	if err := srv.blockDoomedClone(context.Background(), CreateIslandRequest{Repo: "https://github.com/o/r"}); err != nil {
+		t.Errorf("anon-reachable https repo should pass: %v", err)
+	}
+	if !probed {
+		t.Error("the anon probe should run for an https git remote")
+	}
+}
+
 // TestCreateIslandIdentityGate exercises the gate through the HTTP create handler:
 // a private-ish URL repo with no identity is refused with the remedy, and --force
 // (allow_no_identity) lets it through.
