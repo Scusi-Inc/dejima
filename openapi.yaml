@@ -2134,6 +2134,7 @@ components:
         role: { type: string }
         owner: { type: string }
         tags: { type: object, additionalProperties: { type: string } }
+        github_cred_missing: { type: boolean, description: named GitHub identity no longer resolves for this island's tenant (clone/push will fail) }
         state: { type: string, description: desired state from config }
         container: { type: string, description: observed runtime status }
         created_at: { type: string, format: date-time }

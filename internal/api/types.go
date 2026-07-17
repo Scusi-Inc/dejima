@@ -22,11 +22,17 @@ type IslandInfo struct {
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
-	Role      string            `json:"role,omitempty"`
-	Owner     string            `json:"owner,omitempty"`
-	Tags      map[string]string `json:"tags,omitempty"`
-	State     string            `json:"state"`     // desired state from config
-	Container string            `json:"container"` // observed status from runtime
+	Role  string            `json:"role,omitempty"`
+	Owner string            `json:"owner,omitempty"`
+	Tags  map[string]string `json:"tags,omitempty"`
+	// GitHubCredMissing is set when the island NAMES a GitHub identity that no
+	// longer resolves for its tenant (deleted, or now out-of-tenant under the
+	// owner-scoping rules) — so clone/push will fail. A health surface so the
+	// operator/member can re-connect (docs/github-identities.md), not a silent
+	// break. Not set for islands that name no identity.
+	GitHubCredMissing bool   `json:"github_cred_missing,omitempty"`
+	State             string `json:"state"`     // desired state from config
+	Container         string `json:"container"` // observed status from runtime
 	// NoHibernate is true when the island is pinned awake (exempt from idle
 	// auto-hibernate). Set via PATCH /v1/islands/{name} (dejima pin/unpin).
 	NoHibernate bool            `json:"no_hibernate,omitempty"`

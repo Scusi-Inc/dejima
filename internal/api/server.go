@@ -2807,6 +2807,17 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		CreatedAt:   p.CreatedAt,
 		LastUsedAt:  p.LastUsedAt,
 	}
+	// Health surface (v1b): an island whose NAMED GitHub identity no longer
+	// resolves for its tenant will fail to clone/push — flag it so it's not a
+	// silent break. Cheap (a small local store read); only when an identity is
+	// explicitly named, so public-repo islands aren't false-flagged.
+	if id := strings.TrimSpace(p.GitHubIdentity); id != "" {
+		if store, err := githubid.Load(); err == nil {
+			if _, ok := store.ResolveForIsland(ghOwner(p.Owner), id); !ok {
+				info.GitHubCredMissing = true
+			}
+		}
+	}
 	if status, err := s.rt.Status(ctx, p.ContainerName()); err == nil {
 		info.Container = string(status)
 		if status == runtime.StatusRunning {
