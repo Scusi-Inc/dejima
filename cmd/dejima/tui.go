@@ -1217,15 +1217,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.creator = nil
 			// Open the new island in a new tab so the dashboard stays up; fall back
 			// to attaching in this terminal when there's no new-window backend.
+			// Attach straight into the PRIMARY agent (by id) rather than the bare
+			// island, so a multi-agent island doesn't dump a non-technical operator
+			// onto the `connect` "Attach which? [1]" picker right after create.
 			if canOpenNewWindow() {
-				if err := m.openInNewWindow(msg.name, "", ""); err != nil {
+				if err := m.openInNewWindow(msg.name, msg.agentID, msg.agentLabel); err != nil {
 					m.lastError = err.Error()
 				} else {
 					m.lastNotice = "created " + msg.name + " — opened in a new tab"
 				}
 				return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
 			}
-			m.connectTo = msg.name // drop straight into the new island's session
+			m.connectTo, m.connectAgent = msg.name, msg.agentID // drop straight into the primary agent
 			return m, tea.Quit
 		}
 		return m, nil
