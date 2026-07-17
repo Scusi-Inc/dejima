@@ -31,6 +31,7 @@ func newAuthPushCmd() *cobra.Command {
 	var github bool
 	var name string
 	var makeDefault bool
+	var shared bool
 	var host string
 	cmd := &cobra.Command{
 		Use:   "push",
@@ -63,7 +64,7 @@ func newAuthPushCmd() *cobra.Command {
 					id = login
 				}
 				if _, err := c.PutGitHubIdentity(cmd.Context(), id, api.PutGitHubIdentityRequest{
-					Login: login, ID: ghUserID, Host: host, Token: token, Default: makeDefault,
+					Login: login, ID: ghUserID, Host: host, Token: token, Default: makeDefault, Shared: shared,
 				}); err != nil {
 					return err
 				}
@@ -89,7 +90,8 @@ func newAuthPushCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&github, "github", false, "push the active gh account as a daemon GitHub identity")
 	cmd.Flags().StringVar(&name, "name", "", "identity name (default: the GitHub login)")
-	cmd.Flags().BoolVar(&makeDefault, "default", false, "make this the daemon's default GitHub identity")
+	cmd.Flags().BoolVar(&makeDefault, "default", false, "make this the daemon's default GitHub identity (host owner only)")
+	cmd.Flags().BoolVar(&shared, "shared", false, "host owner only: make this host identity usable by every teammate's islands (a team-wide org credential)")
 	cmd.Flags().StringVar(&host, "host", "", "GitHub host for --github (default github.com; set a GitHub Enterprise host to seed an enterprise identity)")
 	return cmd
 }
