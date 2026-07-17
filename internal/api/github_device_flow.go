@@ -213,6 +213,12 @@ func (s *Server) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Request) 
 		s.deviceSessions.del(req.SessionID)
 		writeJSON(w, http.StatusOK, GitHubDevicePollResponse{State: string(res.State)})
 	default: // pending / slow_down — keep waiting, echo the interval so the client paces itself
+		if res.State == deviceSlowDown {
+			// GitHub's slow_down means "back off by +5s"; persist the bump so every
+			// subsequent poll (and the echoed interval the client honors) reflects it.
+			sess.interval += 5
+			s.deviceSessions.put(req.SessionID, sess)
+		}
 		writeJSON(w, http.StatusOK, GitHubDevicePollResponse{State: string(res.State), Interval: sess.interval})
 	}
 }
