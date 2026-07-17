@@ -83,6 +83,11 @@ type Server struct {
 	injectFn    func(ctx context.Context, p *project.Project, a *project.AgentSpec, text string) error
 	idleFn      func(island, agent string) bool
 
+	// Claude credential auto-seed (see claude_autoseed.go). autoSeed guards the
+	// one-shot capture so it runs at most once per boot and short-circuits cheaply
+	// on the steady-state (already-seeded) path.
+	autoSeed autoSeedState
+
 	// In-memory ring buffer of recent attach/detach events. Bounded so the
 	// daemon never accumulates client history indefinitely. Not persisted —
 	// daemon restart loses it. Surveillance-free by design.
@@ -414,6 +419,11 @@ func (s *Server) maybeUpdateAgentState(e events.Event) {
 	s.agentStateMu.Lock()
 	s.agentStates[agentStateKey(e.Island, e.Agent)] = AgentStateInfo{Latest: short, UpdatedAt: e.Timestamp}
 	s.agentStateMu.Unlock()
+
+	// An agent reaching a turn boundary means it's running a real session — which
+	// for claude-code means it's logged in. Piggyback that as a cheap "go check"
+	// nudge to capture the operator's login host-side (no-op once seeded).
+	s.tryAutoSeedClaude(e.Island)
 }
 
 // agentStateKey is the composite map key for an (island, agent) agent-state.
