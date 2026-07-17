@@ -1236,7 +1236,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.creator != nil {
 			if msg.err != nil {
 				m.creator.creating = false
-				m.creator.err = msg.err.Error()
+				if isGitHubIdentityGateError(msg.err) {
+					// Upgrade the daemon's bare "needs a GitHub identity" refusal into
+					// a guided connect step instead of a dead-end error (surface 2).
+					m.creator.gateRepo = m.creator.resolution.Repo
+					m.creator.step = stepGitHubGate
+					m.creator.err = ""
+				} else {
+					m.creator.err = msg.err.Error()
+				}
 				return m, nil
 			}
 			m.creator = nil
