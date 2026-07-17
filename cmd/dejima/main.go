@@ -1560,14 +1560,18 @@ func selectAgentFromList(island string, agents []api.AgentInfo, in io.Reader, in
 // with the list and the explicit shorthand to use. Runs in cooked mode, before any
 // raw-mode PTY.
 func chooseAgent(island string, agents []api.AgentInfo, in io.Reader, interactive bool) (string, error) {
-	fmt.Fprintf(os.Stderr, "Island %q has %d agents:\n", island, len(agents))
+	fmt.Fprintf(os.Stderr, "%q has %d agents running — which one's terminal do you want to open?\n", island, len(agents))
 	for i, a := range agents {
 		fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, agentDisplay(a.Label, a.ID))
 	}
 	if !interactive {
 		return "", fmt.Errorf("island %q has multiple agents — pick one with `%s/<agent>` (or `%s/shell` for a workspace shell)", island, island, island)
 	}
-	fmt.Fprint(os.Stderr, "Attach which? [1] ")
+	// Spell out the default and the escape hatch — this picker is the first thing a
+	// new user hits after creating a multi-agent island, so "Attach which? [1]" with
+	// no context reads as an error prompt rather than a friendly choice.
+	fmt.Fprintf(os.Stderr, "Open which? Press Enter for 1) %s, or type a number (Ctrl-C to cancel): ",
+		agentDisplay(agents[0].Label, agents[0].ID))
 	line, _ := bufio.NewReader(in).ReadString('\n')
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -1575,7 +1579,7 @@ func chooseAgent(island string, agents []api.AgentInfo, in io.Reader, interactiv
 	}
 	n, err := strconv.Atoi(line)
 	if err != nil || n < 1 || n > len(agents) {
-		return "", fmt.Errorf("not a valid choice: %q (expected 1-%d)", line, len(agents))
+		return "", fmt.Errorf("%q isn't one of the choices — enter a number from 1 to %d, or press Ctrl-C to cancel", line, len(agents))
 	}
 	return agents[n-1].ID, nil
 }
