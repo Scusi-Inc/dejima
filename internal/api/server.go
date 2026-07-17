@@ -173,6 +173,12 @@ type Server struct {
 	// can be covered without reaching GitHub.
 	reposFetch func(ctx context.Context, id githubid.Identity, limit int) (githubid.RepoList, error)
 
+	// anonCloneFn probes whether a repo URL is reachable WITHOUT credentials (the
+	// public-repo check behind the create-time identity gate). Defaults to
+	// repoAnonCloneable (a real git ls-remote); tests inject a stub so the gate is
+	// covered without network.
+	anonCloneFn func(ctx context.Context, url string) bool
+
 	// capAdapter runs capability targets (the broker's execution half). nil ⇒
 	// resolve per host OS via capability.DefaultAdapter on demand; tests inject one.
 	capAdapter capability.Adapter
@@ -301,6 +307,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		events_:     map[string][]events.Event{},
 		eventsCap:   50,
 		reposFetch:  githubid.ListRepos,
+		anonCloneFn: repoAnonCloneable,
 		startedAt:   time.Now().UTC(),
 	}
 	// Wake-on-message seams (swappable in tests) + the store's arrival hook.
@@ -1506,6 +1513,15 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "" {
 		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed)"))
 		return
+	}
+	// Stop a doomed private-repo clone before it launches into an empty, repo-less
+	// island (see create_identity_gate.go). A seed-backed create clones locally, so
+	// only gate when there's no seed source.
+	if strings.TrimSpace(req.SeedPath) == "" {
+		if err := s.blockDoomedClone(r.Context(), req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 	name := req.Name
 	if name == "" {
