@@ -14,6 +14,8 @@ package voicein
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +25,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -46,6 +49,15 @@ const DefaultModel = "ggml-base.en.bin"
 // modelBaseURL is the canonical whisper.cpp GGML model host (Hugging Face). The
 // install step fetches DefaultModel from here into the per-user model dir.
 const modelBaseURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+
+// modelSHA256 pins the expected SHA-256 of each model we fetch by name, so a
+// tampered/MITM'd download (the transport is HTTPS-only, but weights aren't a
+// signed binary) is rejected before it lands. A model we don't have a pin for
+// (a custom DEJIMA_VOICE_MODEL) is downloaded without verification — the pin
+// only tightens the default path, never blocks an operator-managed model.
+var modelSHA256 = map[string]string{
+	"ggml-base.en.bin": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+}
 
 // whisperBins are the whisper.cpp CLI names we probe, newest-first: modern builds
 // ship `whisper-cli`; older ones `main`/`whisper`. Homebrew's `whisper-cpp`
@@ -170,6 +182,7 @@ type InstallPlan struct {
 	BrewPackages []string // missing tools to `brew install` (whisper-cpp, sox)
 	ModelURL     string   // "" when the model is already present
 	ModelDest    string
+	ModelSHA256  string // expected checksum of the download; "" = unverified (custom model)
 }
 
 // Empty reports whether there's nothing left to do.
@@ -188,6 +201,7 @@ func PlanInstall(st Status) InstallPlan {
 	if !st.ModelPresent {
 		p.ModelURL = modelBaseURL + DefaultModel
 		p.ModelDest = st.ModelPath
+		p.ModelSHA256 = modelSHA256[filepath.Base(st.ModelPath)]
 	}
 	return p
 }
@@ -223,9 +237,13 @@ func whisperArgs(model, wav string) []string {
 	return []string{"-m", model, "-f", wav, "-nt", "-np"}
 }
 
-// cleanTranscript normalizes whisper.cpp output into a single injectable line:
-// drops bracketed/parenthesized non-speech tags ([BLANK_AUDIO], (silence)),
-// collapses internal whitespace/newlines, trims edges. Pure — unit-tested.
+// cleanTranscript normalizes whisper.cpp output into a single, injection-safe
+// line: drops bracketed/parenthesized non-speech tags ([BLANK_AUDIO], (silence)),
+// strips control bytes — including ESC, so a stray bracketed-paste terminator
+// (ESC[201~) or any terminal escape can never break out of the paste envelope we
+// inject into — and collapses whitespace/newlines. whisper emits natural-language
+// text so this is belt-and-suspenders, but it hardens the inject seam. Pure —
+// unit-tested.
 func cleanTranscript(raw string) string {
 	var b strings.Builder
 	skipDepth := 0
@@ -238,9 +256,16 @@ func cleanTranscript(raw string) string {
 				skipDepth--
 			}
 		default:
-			if skipDepth == 0 {
-				b.WriteRune(r)
+			if skipDepth > 0 {
+				continue
 			}
+			// Drop non-whitespace control bytes (ESC, DEL, …); real whitespace
+			// (\n\t\r) passes through for strings.Fields to collapse, so word
+			// boundaries survive.
+			if unicode.IsControl(r) && !unicode.IsSpace(r) {
+				continue
+			}
+			b.WriteRune(r)
 		}
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
@@ -295,7 +320,7 @@ func Install(ctx context.Context, plan InstallPlan, out io.Writer) error {
 	}
 	if plan.ModelURL != "" {
 		fmt.Fprintf(out, "Downloading speech model %s (~142 MB, one time)…\n", DefaultModel)
-		if err := downloadModel(ctx, plan.ModelURL, plan.ModelDest); err != nil {
+		if err := downloadModel(ctx, plan.ModelURL, plan.ModelDest, plan.ModelSHA256); err != nil {
 			return fmt.Errorf("download model: %w", err)
 		}
 		fmt.Fprintf(out, "  ✓ model at %s\n", plan.ModelDest)
@@ -304,8 +329,10 @@ func Install(ctx context.Context, plan InstallPlan, out io.Writer) error {
 }
 
 // downloadModel streams url to dest atomically (temp + rename) so an interrupted
-// download never leaves a half-written model that later looks "present".
-func downloadModel(ctx context.Context, url, dest string) error {
+// download never leaves a half-written model that later looks "present". When
+// wantSHA is non-empty, the stream is hashed and a mismatch aborts the install
+// (nothing is renamed into place) — closing the tamper/MITM gap on the fetch.
+func downloadModel(ctx context.Context, url, dest, wantSHA string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
@@ -327,12 +354,18 @@ func downloadModel(ctx context.Context, url, dest string) error {
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
 		tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	if wantSHA != "" {
+		if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, wantSHA) {
+			return fmt.Errorf("model checksum mismatch (got %s, want %s) — refusing a tampered download", got, wantSHA)
+		}
 	}
 	return os.Rename(tmpName, dest)
 }

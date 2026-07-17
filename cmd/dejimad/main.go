@@ -413,6 +413,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	go server.RunSpawnReaper(ctx)                   // reap exited/aged/orphaned ephemeral sub-agents
 	server.SetWakeNotify(wakeNotify)
 	go server.RunWakeNotifier(ctx, wakeFlush) // wake-on-message (Lane 5 P3.5); no-op when disabled
+	go server.RunClaudeAutoSeed(ctx)          // capture the operator's first in-island Claude login host-side; self-disables once seeded
 
 	select {
 	case <-ctx.Done():

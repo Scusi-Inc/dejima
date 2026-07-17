@@ -329,6 +329,11 @@ type CreateIslandRequest struct {
 	// surfaced in IslandInfo for wrapper dashboards. Optional.
 	Owner string            `json:"owner,omitempty"`
 	Tags  map[string]string `json:"tags,omitempty"`
+	// AllowNoIdentity overrides the doomed-private-clone gate: normally a remote
+	// repo that isn't anonymously cloneable and has no GitHub identity is rejected
+	// at create (it would come up as an empty, repo-less island). Set true (CLI
+	// `--force`) to create anyway and authenticate later.
+	AllowNoIdentity bool `json:"allow_no_identity,omitempty"`
 }
 
 // CreateIslandResponse is the result of POST /v1/islands: an IslandInfo

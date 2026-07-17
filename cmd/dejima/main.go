@@ -1249,6 +1249,7 @@ func newInitCmd() *cobra.Command {
 		cpus       string
 		disk       string
 		localCopy  bool
+		force      bool
 		ghIdentity string
 		owner      string
 		tagPairs   []string
@@ -1318,16 +1319,17 @@ func newInitCmd() *cobra.Command {
 				owner = defaultOwner()
 			}
 			info, err := c.CreateIsland(ctx, api.CreateIslandRequest{
-				Name:           name,
-				Repo:           res.Repo,
-				SeedPath:       res.SeedPath,
-				Agent:          agent,
-				Agents:         reqAgents,
-				Image:          image,
-				Cmd:            cmdStr,
-				GitHubIdentity: ghIdentity,
-				Owner:          owner,
-				Tags:           tags,
+				Name:            name,
+				Repo:            res.Repo,
+				SeedPath:        res.SeedPath,
+				Agent:           agent,
+				Agents:          reqAgents,
+				Image:           image,
+				Cmd:             cmdStr,
+				GitHubIdentity:  ghIdentity,
+				AllowNoIdentity: force,
+				Owner:           owner,
+				Tags:            tags,
 				Resources: api.Resources{
 					Memory: memory,
 					CPUs:   cpus,
@@ -1362,6 +1364,7 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&image, "image", "", "island image (default: dejima/island:latest)")
 	cmd.Flags().StringVar(&cmdStr, "cmd", "", `entrypoint command for --agent headless (e.g. "python my_loop.py"); ignored for other agents`)
 	cmd.Flags().StringVar(&ghIdentity, "github-identity", "", "daemon GitHub identity to clone/push as (see `dejima auth status`); default: the daemon's default identity")
+	cmd.Flags().BoolVar(&force, "force", false, "create even when a remote repo has no GitHub identity and isn't anonymously cloneable (you'll authenticate later); by default that's refused so the island doesn't come up empty")
 	cmd.Flags().StringVar(&memory, "memory", "", "memory limit (e.g. 4G); default: unlimited")
 	cmd.Flags().StringVar(&cpus, "cpus", "", "CPU limit (e.g. 2.0); default: unlimited")
 	cmd.Flags().StringVar(&disk, "disk", "", "disk size (e.g. 20G); default: unlimited")

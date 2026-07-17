@@ -337,6 +337,10 @@ func newTestServer(t *testing.T) (http.Handler, *fakeRuntime) {
 	ledger.ResetDefault()         // re-resolve the ledger under this test's HOME
 	f := &fakeRuntime{status: runtime.StatusRunning}
 	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	// Tests must not reach the network: treat every repo as anonymously cloneable
+	// so the create-time identity gate never fires here. Gate behavior is covered
+	// explicitly in create_identity_gate_test.go by stubbing this false.
+	srv.anonCloneFn = func(context.Context, string) bool { return true }
 	return srv.Handler(), f
 }
 
@@ -474,6 +478,13 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	// idle-hibernate, and the idle metric are silently dead for it.
 	if !execContains(calls, "/opt/dejima/agents/claude-code/init.sh", "DEJIMA_AGENT_ID=p2") {
 		t.Errorf("expected p2's per-type shim (init.sh) to run before launch; execs=%v", calls)
+	}
+	// The shim also receives this agent's worktree so init.sh can pre-accept
+	// Claude Code's per-project trust/onboarding for it — each agent runs in its
+	// own worktree, which Claude otherwise treats as a new untrusted project and
+	// re-prompts on, even though the OAuth credential is shared via ~/.claude.
+	if !execContains(calls, "/opt/dejima/agents/claude-code/init.sh", "DEJIMA_WORKTREE='/workspace/.agents/p2'") {
+		t.Errorf("expected p2's shim to receive its worktree via DEJIMA_WORKTREE; execs=%v", calls)
 	}
 
 	// List shows both agents.

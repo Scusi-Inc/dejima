@@ -1805,6 +1805,7 @@ components:
         seed_path: { type: string, description: host path bind-mounted read-only as the clone source (local daemon only) }
         owner: { type: string }
         tags: { type: object, additionalProperties: { type: string } }
+        allow_no_identity: { type: boolean, description: "create even when a remote repo has no GitHub identity and isn't anonymously cloneable (authenticate later); default false refuses it" }
     CreateIslandResponse:
       allOf:
         - $ref: "#/components/schemas/IslandInfo"

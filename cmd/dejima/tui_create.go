@@ -112,7 +112,11 @@ type repoStatusMsg struct {
 }
 type islandCreatedMsg struct {
 	name string
-	err  error
+	// primary agent (element 0), so the auto-open attaches straight into it
+	// instead of landing on the multi-agent `connect` picker.
+	agentID    string
+	agentLabel string
+	err        error
 }
 type ghIdentitiesMsg struct {
 	identities []githubid.Meta
@@ -214,7 +218,12 @@ func (c *creatorModel) createCmd() tea.Cmd {
 		if err != nil {
 			return islandCreatedMsg{err: err}
 		}
-		return islandCreatedMsg{name: info.Name}
+		msg := islandCreatedMsg{name: info.Name}
+		if len(info.Agents) > 0 { // element 0 is the primary agent
+			msg.agentID = info.Agents[0].ID
+			msg.agentLabel = info.Agents[0].Label
+		}
+		return msg
 	}
 }
 

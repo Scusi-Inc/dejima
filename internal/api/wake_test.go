@@ -21,6 +21,7 @@ func wakeServer(t *testing.T) (*Server, http.Handler, *fakeRuntime) {
 	ledger.ResetDefault()
 	f := &fakeRuntime{status: runtime.StatusRunning}
 	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv.anonCloneFn = func(context.Context, string) bool { return true } // no network in tests; gate covered explicitly
 	return srv, srv.Handler(), f
 }
 

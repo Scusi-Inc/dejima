@@ -83,6 +83,11 @@ type Server struct {
 	injectFn    func(ctx context.Context, p *project.Project, a *project.AgentSpec, text string) error
 	idleFn      func(island, agent string) bool
 
+	// Claude credential auto-seed (see claude_autoseed.go). autoSeed guards the
+	// one-shot capture so it runs at most once per boot and short-circuits cheaply
+	// on the steady-state (already-seeded) path.
+	autoSeed autoSeedState
+
 	// In-memory ring buffer of recent attach/detach events. Bounded so the
 	// daemon never accumulates client history indefinitely. Not persisted —
 	// daemon restart loses it. Surveillance-free by design.
@@ -167,6 +172,12 @@ type Server struct {
 	// githubid.ListRepos (a live GitHub call); tests inject a stub so the handler
 	// can be covered without reaching GitHub.
 	reposFetch func(ctx context.Context, id githubid.Identity, limit int) (githubid.RepoList, error)
+
+	// anonCloneFn probes whether a repo URL is reachable WITHOUT credentials (the
+	// public-repo check behind the create-time identity gate). Defaults to
+	// repoAnonCloneable (a real git ls-remote); tests inject a stub so the gate is
+	// covered without network.
+	anonCloneFn func(ctx context.Context, url string) bool
 
 	// capAdapter runs capability targets (the broker's execution half). nil ⇒
 	// resolve per host OS via capability.DefaultAdapter on demand; tests inject one.
@@ -296,6 +307,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		events_:     map[string][]events.Event{},
 		eventsCap:   50,
 		reposFetch:  githubid.ListRepos,
+		anonCloneFn: repoAnonCloneable,
 		startedAt:   time.Now().UTC(),
 	}
 	// Wake-on-message seams (swappable in tests) + the store's arrival hook.
@@ -414,6 +426,11 @@ func (s *Server) maybeUpdateAgentState(e events.Event) {
 	s.agentStateMu.Lock()
 	s.agentStates[agentStateKey(e.Island, e.Agent)] = AgentStateInfo{Latest: short, UpdatedAt: e.Timestamp}
 	s.agentStateMu.Unlock()
+
+	// An agent reaching a turn boundary means it's running a real session — which
+	// for claude-code means it's logged in. Piggyback that as a cheap "go check"
+	// nudge to capture the operator's login host-side (no-op once seeded).
+	s.tryAutoSeedClaude(e.Island)
 }
 
 // agentStateKey is the composite map key for an (island, agent) agent-state.
@@ -1497,6 +1514,15 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed)"))
 		return
 	}
+	// Stop a doomed private-repo clone before it launches into an empty, repo-less
+	// island (see create_identity_gate.go). A seed-backed create clones locally, so
+	// only gate when there's no seed source.
+	if strings.TrimSpace(req.SeedPath) == "" {
+		if err := s.blockDoomedClone(r.Context(), req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 	name := req.Name
 	if name == "" {
 		src := req.Repo
@@ -2291,10 +2317,18 @@ func (s *Server) setSessionAgentEnv(ctx context.Context, p *project.Project, a *
 // block the launch (the agent still runs; it just may lack the heartbeat hook).
 func (s *Server) runAgentShim(ctx context.Context, p *project.Project, a *project.AgentSpec) {
 	shim := "/opt/dejima/agents/" + a.Type + "/init.sh"
+	// This agent's worktree, so init.sh can pre-accept Claude Code's per-project
+	// trust/onboarding for it — each agent runs in its own worktree, which Claude
+	// otherwise treats as a new untrusted project and re-prompts on. Empty → the
+	// primary's /workspace. Single-quoted since a worktree path is daemon-derived.
+	wt := a.Worktree
+	if wt == "" {
+		wt = "/workspace"
+	}
 	// `[ -x ] || exit 0` keeps a missing shim (unknown type / stale image) silent.
 	cmd := "[ -x " + shim + " ] || exit 0; exec " + shim
 	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
-		[]string{"sh", "-c", "DEJIMA_AGENT_ID=" + a.ID + " " + cmd})
+		[]string{"sh", "-c", "DEJIMA_AGENT_ID=" + a.ID + " DEJIMA_WORKTREE='" + wt + "' " + cmd})
 	if err != nil || code != 0 {
 		s.log.Warn("agent shim", "island", p.Name, "agent", a.ID, "type", a.Type,
 			"code", code, "err", err, "stderr", strings.TrimSpace(stderr))
