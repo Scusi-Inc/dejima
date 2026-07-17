@@ -2301,10 +2301,18 @@ func (s *Server) setSessionAgentEnv(ctx context.Context, p *project.Project, a *
 // block the launch (the agent still runs; it just may lack the heartbeat hook).
 func (s *Server) runAgentShim(ctx context.Context, p *project.Project, a *project.AgentSpec) {
 	shim := "/opt/dejima/agents/" + a.Type + "/init.sh"
+	// This agent's worktree, so init.sh can pre-accept Claude Code's per-project
+	// trust/onboarding for it — each agent runs in its own worktree, which Claude
+	// otherwise treats as a new untrusted project and re-prompts on. Empty → the
+	// primary's /workspace. Single-quoted since a worktree path is daemon-derived.
+	wt := a.Worktree
+	if wt == "" {
+		wt = "/workspace"
+	}
 	// `[ -x ] || exit 0` keeps a missing shim (unknown type / stale image) silent.
 	cmd := "[ -x " + shim + " ] || exit 0; exec " + shim
 	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
-		[]string{"sh", "-c", "DEJIMA_AGENT_ID=" + a.ID + " " + cmd})
+		[]string{"sh", "-c", "DEJIMA_AGENT_ID=" + a.ID + " DEJIMA_WORKTREE='" + wt + "' " + cmd})
 	if err != nil || code != 0 {
 		s.log.Warn("agent shim", "island", p.Name, "agent", a.ID, "type", a.Type,
 			"code", code, "err", err, "stderr", strings.TrimSpace(stderr))
