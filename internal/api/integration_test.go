@@ -337,6 +337,10 @@ func newTestServer(t *testing.T) (http.Handler, *fakeRuntime) {
 	ledger.ResetDefault()         // re-resolve the ledger under this test's HOME
 	f := &fakeRuntime{status: runtime.StatusRunning}
 	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	// Tests must not reach the network: treat every repo as anonymously cloneable
+	// so the create-time identity gate never fires here. Gate behavior is covered
+	// explicitly in create_identity_gate_test.go by stubbing this false.
+	srv.anonCloneFn = func(context.Context, string) bool { return true }
 	return srv.Handler(), f
 }
 
