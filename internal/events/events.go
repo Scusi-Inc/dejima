@@ -54,6 +54,14 @@ const (
 	// wrapper can subscribe to implement its own routing/priority. Payload carries
 	// island/agent and cross_island/action flags (never the message body).
 	TypeMailboxArrival Type = "mailbox.arrival"
+
+	// Claude credentials auto-seeded: the daemon captured the operator's Claude
+	// login from an island (its first in-island sign-in) and stored it host-side,
+	// so every FUTURE island inherits it with no prompt — automating `dejima auth
+	// push`. Surfaced (never silent) so the operator knows their login is now
+	// host-side; the payload NAMES the source island so a surprise capture is
+	// obvious. Never carries the secret.
+	TypeCredentialsAutoSeeded Type = "credentials.claude.autoseeded"
 )
 
 // catalog is every event type a subscriber can filter on, in display order.
@@ -68,6 +76,7 @@ var catalog = []Type{
 	TypeAgentWaitingForInput, TypeAgentTaskComplete, TypeAgentError, TypeAgentUsage,
 	TypeAgentSilent, TypeAgentRecovered,
 	TypeLinkActionPending,
+	TypeCredentialsAutoSeeded,
 }
 
 // KnownTypes returns the catalog of subscribable event types (a copy).
