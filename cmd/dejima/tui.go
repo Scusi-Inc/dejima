@@ -204,6 +204,7 @@ type tuiModel struct {
 	approvals    *approvalsView    // non-nil while the action-gate approvals overlay is open (opened with `V`)
 	identity     *identityView     // non-nil while the visual-identity editor is open (opened with `i`)
 	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
+	github       *githubView       // non-nil while the self-serve GitHub identity pane is open (settings → GitHub)
 	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
@@ -333,7 +334,7 @@ var editorChoices = []editorChoice{
 }
 
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 7 // editor · group-by-repo · connection target · team · check-for-updates · update · voice
+const settingsTopLen = 8 // editor · group-by-repo · connection target · team · check-for-updates · update · voice · github
 
 func (m tuiModel) openSettings() tuiModel {
 	m.voice = voicein.Check() // fresh status for the Voice-dictation row
@@ -417,6 +418,9 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.lastNotice = "installing voice dictation in a new window…"
 				}
 				return m, nil
+			case 7: // GitHub → the self-serve identity pane
+				m.settings = nil
+				return m.openGithubView()
 			}
 		}
 		// Editor sub-page: choose + persist, then back to the top page.
@@ -974,6 +978,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastNotice = msg.notice
 		return m, nil
 
+	case githubIdentitiesMsg:
+		if m.github != nil {
+			m.github.loading = false
+			if msg.err != nil {
+				m.github.err = msg.err.Error()
+			} else {
+				m.github.identities = msg.identities
+				m.github.err = ""
+			}
+		}
+		return m, nil
+
 	case tokenRevokedMsg:
 		if m.team != nil {
 			if msg.err != nil {
@@ -1312,6 +1328,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The per-row action menu owns keys while open.
 	if m.menu != nil {
 		return m.actionMenuKey(msg)
+	}
+	// The GitHub identity pane owns keys while open.
+	if m.github != nil {
+		return m.githubKey(msg)
 	}
 	// The settings overlay owns keys while open.
 	if m.settings != nil {
@@ -2829,6 +2849,10 @@ func (m tuiModel) View() string {
 	}
 	if m.team != nil {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderTeamView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.github != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderGithubView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.aggregate != nil {
@@ -4407,6 +4431,13 @@ func (m tuiModel) renderSettings() string {
 		voiceRow += styleMuted.Render("not set up  · ⏎ install")
 	}
 	row(6, "", voiceRow)
+	githubRow := "GitHub                    "
+	if miss := m.githubMissingCredIslands(); len(miss) > 0 {
+		githubRow += styleWaiting.Render(fmt.Sprintf("⚠ %d island(s) need reconnect", len(miss))) + styleMuted.Render("  →")
+	} else {
+		githubRow += styleMuted.Render("connect your GitHub for private repos") + styleMuted.Render("  →")
+	}
+	row(7, "", githubRow)
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()
