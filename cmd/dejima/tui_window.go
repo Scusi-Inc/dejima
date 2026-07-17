@@ -141,6 +141,30 @@ func (m tuiModel) openHostTermWindow(id, label string) error {
 	}
 }
 
+// openVoiceInstallWindow launches `dejima voice install` in a new window/tab so
+// the TUI stays up while the (interactive brew + model-download) install runs.
+// It's host-local — no island/target — so no DEJIMA_HOST is needed. Returns an
+// error the caller turns into a "run it in a terminal" hint when a new window
+// isn't possible (plain non-tmux Linux/macOS).
+func (m tuiModel) openVoiceInstallWindow() error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "voice-install"
+	inner := fmt.Sprintf("DEJIMA_TAB_TITLE=%s exec %s voice install", shquote(title), shquote(exe))
+	switch {
+	case os.Getenv("TMUX") != "":
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "voice install", "", "", title, nil, "")
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima voice install` in another terminal")
+	}
+}
+
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the
