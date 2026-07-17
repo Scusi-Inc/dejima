@@ -518,7 +518,39 @@ type PutGitHubIdentityRequest struct {
 	ID      int64  `json:"id,omitempty"`   // GitHub numeric user id, for the canonical noreply commit email
 	Host    string `json:"host,omitempty"` // defaults to github.com
 	Token   string `json:"token"`
-	Default bool   `json:"default,omitempty"` // make this the default identity
+	Default bool   `json:"default,omitempty"` // make this the default identity (host owner only)
+	Shared  bool   `json:"shared,omitempty"`  // host owner only: mark a host identity usable by every tenant's islands
+}
+
+// GitHubDeviceStartResponse is the body of POST /v1/credentials/github/device-flow/start.
+// The client shows UserCode + VerificationURI and polls with SessionID. The
+// device_code that exchanges for the token is held server-side and never returned.
+type GitHubDeviceStartResponse struct {
+	SessionID       string `json:"session_id"`
+	UserCode        string `json:"user_code"`
+	VerificationURI string `json:"verification_uri"`
+	ExpiresIn       int    `json:"expires_in"`
+	Interval        int    `json:"interval"`
+	Scopes          string `json:"scopes"` // surfaced so the UX can state what's granted
+}
+
+// GitHubDevicePollRequest is the body of POST /v1/credentials/github/device-flow/poll.
+type GitHubDevicePollRequest struct {
+	SessionID string `json:"session_id"`
+	Name      string `json:"name"`              // identity name to store the captured token under
+	Default   bool   `json:"default,omitempty"` // host owner only
+	Shared    bool   `json:"shared,omitempty"`  // host owner only
+}
+
+// GitHubDevicePollResponse reports the flow state. State is one of
+// authorization_pending | slow_down | expired | access_denied | authorized. On
+// authorized, Identity + Login name the stored credential; on pending/slow_down,
+// Interval is the seconds to wait before polling again.
+type GitHubDevicePollResponse struct {
+	State    string `json:"state"`
+	Interval int    `json:"interval,omitempty"`
+	Identity string `json:"identity,omitempty"`
+	Login    string `json:"login,omitempty"`
 }
 
 // DeleteGitHubIdentityResponse reports which islands still referenced the

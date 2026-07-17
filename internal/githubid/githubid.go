@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -23,13 +24,24 @@ import (
 // DefaultHost is the GitHub host assumed when an identity doesn't name one.
 const DefaultHost = "github.com"
 
-// Identity is one GitHub login the daemon can act as.
+// Identity is one GitHub login the daemon can act as. Owner scopes it to a tenant
+// so a team member can self-serve credentials for their OWN islands without the
+// host owner having to hold a token for the member's private repos.
 type Identity struct {
-	Name  string `json:"name"`         // dejima-local handle: "work", "personal", …
+	Name  string `json:"name"`         // dejima-local handle: "work", "personal", … (unique per Owner)
 	Login string `json:"login"`        // GitHub username
 	ID    int64  `json:"id,omitempty"` // GitHub numeric user id (for the canonical noreply commit email); 0 if unknown
 	Host  string `json:"host"`         // "github.com" or an enterprise host
 	Token string `json:"token"`        // OAuth/PAT token — secret, never returned to clients
+	// Owner is the tenant that owns this identity ("" = a legacy/host identity).
+	// Server-authoritative: set from the authenticated caller, never client-forged.
+	// An identity is only ever materialized into islands of the same Owner (plus
+	// host-Shared identities into any island) — the containment invariant.
+	Owner string `json:"owner,omitempty"`
+	// Shared marks a HOST identity as deliberately usable by every tenant's islands
+	// (a team-wide org credential). Only the host owner may set it. Ignored on a
+	// non-host identity.
+	Shared bool `json:"shared,omitempty"`
 }
 
 // Meta is an identity without its token: the safe view to hand back to clients.
@@ -38,12 +50,19 @@ type Meta struct {
 	Login   string `json:"login"`
 	Host    string `json:"host"`
 	Default bool   `json:"default"`
+	Owner   string `json:"owner,omitempty"`
+	Shared  bool   `json:"shared,omitempty"`
 }
 
-// Store is the per-daemon identity set with one default.
+// Store is the per-daemon identity set. Identities are owner-scoped (a flat list,
+// unique by (Owner, Name)). Default is the HOST owner's default name; Defaults
+// holds each non-host tenant's default. The legacy Identities map is read on load
+// and migrated into Idents (as host/"" identities), then dropped on save.
 type Store struct {
-	Default    string              `json:"default"`
-	Identities map[string]Identity `json:"identities"`
+	Default    string              `json:"default,omitempty"`    // host owner's default identity name
+	Defaults   map[string]string   `json:"defaults,omitempty"`   // tenant owner → default identity name
+	Idents     []Identity          `json:"idents,omitempty"`     // owner-scoped identities
+	Identities map[string]Identity `json:"identities,omitempty"` // LEGACY map (bare-name keyed); migrated → Idents on load
 }
 
 func storePath() (string, error) {
@@ -101,10 +120,36 @@ func loadLocked() (*Store, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return nil, fmt.Errorf("parse github identity store: %w", err)
 	}
-	if s.Identities == nil {
-		s.Identities = map[string]Identity{}
-	}
+	s.migrateLegacy()
 	return &s, nil
+}
+
+// migrateLegacy folds a pre-owner-scoping store (the bare-name Identities map)
+// into the owner-scoped Idents list, attributing legacy identities to the host
+// ("" owner). Idempotent; runs on every load and is a no-op once migrated.
+func (s *Store) migrateLegacy() {
+	if len(s.Identities) == 0 {
+		s.Identities = nil
+		return
+	}
+	for name, id := range s.Identities {
+		id.Name = name // the map key was the source of truth for the name
+		id.Owner = ""  // legacy identities are host-owned
+		if _, ok := s.find("", id.Name); !ok {
+			s.Idents = append(s.Idents, id)
+		}
+	}
+	s.Identities = nil
+}
+
+// find returns the index of the (owner, name) identity, or ok=false.
+func (s *Store) find(owner, name string) (int, bool) {
+	for i := range s.Idents {
+		if s.Idents[i].Owner == owner && s.Idents[i].Name == name {
+			return i, true
+		}
+	}
+	return -1, false
 }
 
 // Save persists the store atomically at 0600 (it holds tokens).
@@ -145,69 +190,207 @@ func (s *Store) saveLocked() error {
 	return os.Rename(tmpName, p)
 }
 
-// Put adds or updates an identity (keyed by Name). The first identity added
-// becomes the default.
-func (s *Store) Put(id Identity) {
-	if s.Identities == nil {
-		s.Identities = map[string]Identity{}
+// nameRE bounds identity names: a leading alphanumeric, then alphanumerics and
+// . _ - (no NUL, whitespace, or the separator characters composite keys would
+// need). Keeps names safe as file/dir components and store keys.
+var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// ValidateName rejects an unusable identity name before it's stored.
+func ValidateName(name string) error {
+	if !nameRE.MatchString(name) {
+		return fmt.Errorf("invalid identity name %q: use 1–64 chars of letters, digits, . _ - starting with a letter or digit", name)
 	}
+	return nil
+}
+
+// PutOwned adds or updates the identity keyed by (Owner, Name). id.Owner must be
+// set by the caller (server-authoritative). The first identity added for an owner
+// becomes that owner's default.
+func (s *Store) PutOwned(id Identity) {
 	if strings.TrimSpace(id.Host) == "" {
 		id.Host = DefaultHost
 	}
-	s.Identities[id.Name] = id
-	if s.Default == "" {
-		s.Default = id.Name
+	if i, ok := s.find(id.Owner, id.Name); ok {
+		s.Idents[i] = id
+	} else {
+		s.Idents = append(s.Idents, id)
+	}
+	if s.DefaultFor(id.Owner) == "" {
+		s.setDefaultForRaw(id.Owner, id.Name)
 	}
 }
 
-// Remove deletes an identity. If it was the default, the default falls to the
-// first remaining identity (by name), or is cleared when none remain.
-func (s *Store) Remove(name string) bool {
-	if _, ok := s.Identities[name]; !ok {
+// DeleteOwned removes the (owner, name) identity, repointing that owner's default
+// to a remaining identity of theirs (or clearing it).
+func (s *Store) DeleteOwned(owner, name string) bool {
+	i, ok := s.find(owner, name)
+	if !ok {
 		return false
 	}
-	delete(s.Identities, name)
-	if s.Default == name {
-		s.Default = ""
-		if list := s.List(); len(list) > 0 {
-			s.Default = list[0].Name
+	s.Idents = append(s.Idents[:i], s.Idents[i+1:]...)
+	if s.DefaultFor(owner) == name {
+		s.setDefaultForRaw(owner, "")
+		for _, m := range s.ownedNames(owner) {
+			s.setDefaultForRaw(owner, m)
+			break
 		}
 	}
 	return true
 }
 
-// SetDefault marks name as the default identity.
-func (s *Store) SetDefault(name string) error {
-	if _, ok := s.Identities[name]; !ok {
+// DefaultFor returns owner's default identity name ("" if none). The host owner's
+// default lives in Default (legacy-compatible); tenants' in Defaults.
+func (s *Store) DefaultFor(owner string) string {
+	if owner == "" {
+		return s.Default
+	}
+	return s.Defaults[owner]
+}
+
+// setDefaultForRaw sets owner's default without validating existence (callers
+// that need validation use SetDefaultFor).
+func (s *Store) setDefaultForRaw(owner, name string) {
+	if owner == "" {
+		s.Default = name
+		return
+	}
+	if s.Defaults == nil {
+		s.Defaults = map[string]string{}
+	}
+	if name == "" {
+		delete(s.Defaults, owner)
+	} else {
+		s.Defaults[owner] = name
+	}
+}
+
+// SetDefaultFor marks (owner, name) as owner's default. Errors if owner has no
+// identity by that name.
+func (s *Store) SetDefaultFor(owner, name string) error {
+	if _, ok := s.find(owner, name); !ok {
 		return fmt.Errorf("no such github identity %q", name)
 	}
-	s.Default = name
+	s.setDefaultForRaw(owner, name)
 	return nil
 }
 
-// Resolve returns the identity for name, or the default when name is empty. ok
-// is false when nothing matches (unknown name, or empty name with no default).
-func (s *Store) Resolve(name string) (Identity, bool) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = s.Default
+// ownedNames returns the sorted identity names owned by owner.
+func (s *Store) ownedNames(owner string) []string {
+	var out []string
+	for _, id := range s.Idents {
+		if id.Owner == owner {
+			out = append(out, id.Name)
+		}
 	}
-	if name == "" {
-		return Identity{}, false
-	}
-	id, ok := s.Identities[name]
-	return id, ok
-}
-
-// List returns identity metadata (no tokens), sorted by name.
-func (s *Store) List() []Meta {
-	out := make([]Meta, 0, len(s.Identities))
-	for _, id := range s.Identities {
-		out = append(out, Meta{Name: id.Name, Login: id.Login, Host: id.Host, Default: id.Name == s.Default})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.Strings(out)
 	return out
 }
+
+// The HOST tenant is represented as "" throughout the store (legacy identities
+// already carry Owner==""); the API layer translates project.HostOwner() → "" at
+// the boundary, so githubid needs no notion of the host owner's label.
+
+// ResolveForIsland picks the identity to materialize into an island owned by
+// islandOwner ("" = a host island), requesting name (or the owner's default when
+// empty). THE CONTAINMENT CHOKEPOINT: a host island may use any host identity; a
+// tenant island may use only its OWN identities or a host identity marked Shared.
+// An operator's token can never reach another tenant's island.
+func (s *Store) ResolveForIsland(islandOwner, name string) (Identity, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		if name = s.defaultName(islandOwner); name == "" {
+			return Identity{}, false
+		}
+	}
+	hostIsland := islandOwner == ""
+	for _, id := range s.Idents {
+		if id.Name != name {
+			continue
+		}
+		switch {
+		case hostIsland && id.Owner == "": // host island ↔ any host identity
+			return id, true
+		case id.Owner == islandOwner: // exact tenant match
+			return id, true
+		case id.Shared && id.Owner == "": // host-shared → any island
+			return id, true
+		}
+	}
+	return Identity{}, false
+}
+
+// defaultName resolves the effective default identity NAME for an island owned by
+// islandOwner: the owner's own default, else (for a tenant) the host default only
+// if it's Shared. A host island uses the host default directly.
+func (s *Store) defaultName(islandOwner string) string {
+	if d := s.DefaultFor(islandOwner); d != "" {
+		return d
+	}
+	if islandOwner == "" {
+		return "" // host island with no host default → nothing
+	}
+	if hd := s.Default; hd != "" {
+		if i, ok := s.find("", hd); ok && s.Idents[i].Shared {
+			return hd
+		}
+	}
+	return ""
+}
+
+// ListForOwner returns the identity metadata (no tokens) visible to owner ("" =
+// host): their own identities, plus host-Shared ones. ownsAll (the host owner)
+// sees everything.
+func (s *Store) ListForOwner(owner string, ownsAll bool) []Meta {
+	out := make([]Meta, 0, len(s.Idents))
+	for _, id := range s.Idents {
+		visible := ownsAll || id.Owner == owner || (id.Shared && id.Owner == "")
+		if !visible {
+			continue
+		}
+		out = append(out, Meta{
+			Name: id.Name, Login: id.Login, Host: id.Host,
+			Default: id.Name == s.DefaultFor(id.Owner),
+			Owner:   id.Owner, Shared: id.Shared,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Owner != out[j].Owner {
+			return out[i].Owner < out[j].Owner
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// Find returns the (owner, name) identity (with token) — for handlers that need
+// to check existence/ownership before a write.
+func (s *Store) Find(owner, name string) (Identity, bool) {
+	if i, ok := s.find(owner, name); ok {
+		return s.Idents[i], true
+	}
+	return Identity{}, false
+}
+
+// --- back-compat shims: operate on the HOST tenant ("") -------------------
+// These preserve the pre-owner-scoping API for host-owner call sites (and tests)
+// that manage the daemon's own identities; the owner-aware methods above are the
+// path for tenant-scoped operations.
+
+// Put adds/updates a host identity (its Owner is used as-is; the zero value ""
+// is the host tenant).
+func (s *Store) Put(id Identity) { s.PutOwned(id) }
+
+// Resolve resolves a host identity by name (or the host default when empty).
+func (s *Store) Resolve(name string) (Identity, bool) { return s.ResolveForIsland("", name) }
+
+// SetDefault sets the host default identity.
+func (s *Store) SetDefault(name string) error { return s.SetDefaultFor("", name) }
+
+// Remove deletes a host identity.
+func (s *Store) Remove(name string) bool { return s.DeleteOwned("", name) }
+
+// List returns host (+ host-shared) identity metadata.
+func (s *Store) List() []Meta { return s.ListForOwner("", false) }
 
 // HostsYAML renders the gh hosts.yml for a single identity — what gh reads from
 // GH_CONFIG_DIR to authenticate git over HTTPS inside an island. Only ever one

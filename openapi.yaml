@@ -1254,6 +1254,43 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/credentials/github/device-flow/start:
+    post:
+      tags: [credentials]
+      summary: Begin a guided GitHub device-flow sign-in (captures a token into the caller's own tenant)
+      operationId: gitHubDeviceStart
+      responses:
+        "200":
+          description: OK — show user_code at verification_uri, then poll
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubDeviceStartResponse" }
+        "501":
+          description: Device flow not configured (no OAuth app); use the PAT path
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/credentials/github/device-flow/poll:
+    post:
+      tags: [credentials]
+      summary: Poll a pending device-flow sign-in; on authorization stores the token as the caller's identity
+      operationId: gitHubDevicePoll
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GitHubDevicePollRequest" }
+      responses:
+        "200":
+          description: Current flow state (authorization_pending | slow_down | expired | access_denied | authorized)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubDevicePollResponse" }
+        "403":
+          description: Session belongs to another tenant, or non-owner set default/shared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/credentials/providers:
     get:
       tags: [credentials]
@@ -2463,6 +2500,8 @@ components:
         login: { type: string }
         host: { type: string }
         default: { type: boolean }
+        owner: { type: string, description: tenant that owns this identity (empty = host) }
+        shared: { type: boolean, description: host identity usable by every tenant's islands }
     GitHubIdentitiesResponse:
       type: object
       properties:
@@ -2477,7 +2516,32 @@ components:
         id: { type: integer, format: int64, description: GitHub numeric user id (for the noreply commit email) }
         host: { type: string, default: github.com }
         token: { type: string }
-        default: { type: boolean }
+        default: { type: boolean, description: make this the default (host owner only) }
+        shared: { type: boolean, description: host owner only — mark usable by every tenant's islands }
+    GitHubDeviceStartResponse:
+      type: object
+      properties:
+        session_id: { type: string, description: opaque handle to poll (the device_code stays server-side) }
+        user_code: { type: string }
+        verification_uri: { type: string }
+        expires_in: { type: integer }
+        interval: { type: integer }
+        scopes: { type: string, description: the access being granted, for the UX to surface }
+    GitHubDevicePollRequest:
+      type: object
+      required: [session_id, name]
+      properties:
+        session_id: { type: string }
+        name: { type: string, description: identity name to store the captured token under }
+        default: { type: boolean, description: host owner only }
+        shared: { type: boolean, description: host owner only }
+    GitHubDevicePollResponse:
+      type: object
+      properties:
+        state: { type: string, description: "authorization_pending | slow_down | expired | access_denied | authorized" }
+        interval: { type: integer, description: seconds to wait before polling again (pending/slow_down) }
+        identity: { type: string, description: stored identity name (on authorized) }
+        login: { type: string, description: GitHub login (on authorized) }
     DeleteGitHubIdentityResponse:
       type: object
       properties:
