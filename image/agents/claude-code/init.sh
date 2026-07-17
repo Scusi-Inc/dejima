@@ -30,6 +30,36 @@ if [[ -d "$HOST_CLAUDE" ]]; then
     done
 fi
 
+# --- Claude Code per-project trust + onboarding ----------------------------
+# Each agent runs in its OWN git worktree, which Claude Code treats as a new,
+# untrusted project — so a second agent added to an island hits the first-run
+# "trust this folder" + onboarding prompt even though the OAuth credential is
+# already shared via ~/.claude. Pre-accept trust + onboarding for THIS agent's
+# worktree so it launches straight into a ready session. Idempotent and
+# non-clobbering: merges into the shared ~/.claude.json, preserving every other
+# key (history, other projects). DEJIMA_WORKTREE defaults to /workspace (the
+# primary agent); the daemon sets it per added agent.
+WT="${DEJIMA_WORKTREE:-/workspace}"
+CLAUDE_JSON="$HOME/.claude.json"
+if command -v jq >/dev/null 2>&1; then
+    cur='{}'
+    if [[ -f "$CLAUDE_JSON" ]] && jq -e . "$CLAUDE_JSON" >/dev/null 2>&1; then
+        cur=$(cat "$CLAUDE_JSON")
+    fi
+    if seeded=$(printf '%s' "$cur" | jq --arg wt "$WT" '
+        .hasCompletedOnboarding = true
+        | .projects = (.projects // {})
+        | .projects[$wt] = ((.projects[$wt] // {})
+            + { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true })
+    ' 2>/dev/null) && [[ -n "$seeded" ]]; then
+        # Atomic write so a concurrent claude process sharing this home volume
+        # never sees a torn ~/.claude.json.
+        tmp="$CLAUDE_JSON.dejima.tmp"
+        printf '%s\n' "$seeded" >"$tmp" && mv -f "$tmp" "$CLAUDE_JSON"
+        chmod 600 "$CLAUDE_JSON" 2>/dev/null || true
+    fi
+fi
+
 # --- CLAUDE.md template ----------------------------------------------------
 TEMPLATE="/opt/dejima/agents/claude-code/CLAUDE.md"
 TARGET="/workspace/CLAUDE.md"
