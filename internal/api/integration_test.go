@@ -475,6 +475,13 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	if !execContains(calls, "/opt/dejima/agents/claude-code/init.sh", "DEJIMA_AGENT_ID=p2") {
 		t.Errorf("expected p2's per-type shim (init.sh) to run before launch; execs=%v", calls)
 	}
+	// The shim also receives this agent's worktree so init.sh can pre-accept
+	// Claude Code's per-project trust/onboarding for it — each agent runs in its
+	// own worktree, which Claude otherwise treats as a new untrusted project and
+	// re-prompts on, even though the OAuth credential is shared via ~/.claude.
+	if !execContains(calls, "/opt/dejima/agents/claude-code/init.sh", "DEJIMA_WORKTREE='/workspace/.agents/p2'") {
+		t.Errorf("expected p2's shim to receive its worktree via DEJIMA_WORKTREE; execs=%v", calls)
+	}
 
 	// List shows both agents.
 	rr = do(t, h, http.MethodGet, "/v1/islands/proj/agents", "")
