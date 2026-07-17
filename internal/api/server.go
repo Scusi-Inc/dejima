@@ -1018,7 +1018,21 @@ func (s *Server) workspaceReady(w http.ResponseWriter, r *http.Request) {
 	if _, _, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); err == nil && code == 0 {
 		ready = true
 	}
-	writeJSON(w, http.StatusOK, WorkspaceReadyResponse{Ready: ready})
+	resp := WorkspaceReadyResponse{Ready: ready}
+	if !ready {
+		// Not ready yet: is it still cloning, or did the clone FAIL? The entrypoint
+		// records a classified reason at this path on failure (report_clone_failure
+		// in image/start.sh) — its presence means a failed clone, so connect can
+		// surface it and stop instead of waiting the full window then attaching to a
+		// repo-less /workspace. One extra cheap cat, only on the not-ready branch.
+		if out, _, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"cat", "/home/dejima/.dejima/clone-status"}); err == nil && code == 0 {
+			if reason := strings.TrimSpace(out); reason != "" {
+				resp.CloneFailed = true
+				resp.CloneReason = reason
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // agentsLive reports whether the island container is running (so callers know
