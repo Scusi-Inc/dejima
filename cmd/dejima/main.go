@@ -271,6 +271,7 @@ func newRootCmd() *cobra.Command {
 		newAuthCmd(),
 		newTokenCmd(),
 		newJoinCmd(),
+		newGithubCmd(),
 		newProviderCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),

@@ -200,6 +200,31 @@ func (c *Client) PutGitHubIdentity(ctx context.Context, name string, req PutGitH
 	return out.Identities, nil
 }
 
+// GitHubDeviceStart begins a guided device-flow GitHub sign-in (no PAT paste).
+// The returned UserCode + VerificationURI are shown to the operator; poll with
+// SessionID. A daemon with no OAuth app configured returns an error whose message
+// points at the `dejima auth push --github` token path instead.
+func (c *Client) GitHubDeviceStart(ctx context.Context) (GitHubDeviceStartResponse, error) {
+	var out GitHubDeviceStartResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/credentials/github/device-flow/start", nil, &out); err != nil {
+		return GitHubDeviceStartResponse{}, err
+	}
+	return out, nil
+}
+
+// GitHubDevicePoll checks a device-flow session and, once authorized, stores the
+// captured token as the identity named req.Name. State is one of
+// authorization_pending | slow_down | expired | access_denied | authorized; on
+// authorized the response's Identity + Login name the stored credential. Honor
+// the response Interval (the server backs off on slow_down) for the next poll.
+func (c *Client) GitHubDevicePoll(ctx context.Context, req GitHubDevicePollRequest) (GitHubDevicePollResponse, error) {
+	var out GitHubDevicePollResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/credentials/github/device-flow/poll", req, &out); err != nil {
+		return GitHubDevicePollResponse{}, err
+	}
+	return out, nil
+}
+
 // DeleteGitHubIdentity removes a GitHub identity from the daemon and returns the
 // names of any islands that still referenced it, so the caller can warn that
 // those islands will lose this auth on their next reseed.
