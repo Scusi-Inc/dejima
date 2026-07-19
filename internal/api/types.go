@@ -22,11 +22,17 @@ type IslandInfo struct {
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
-	Role      string            `json:"role,omitempty"`
-	Owner     string            `json:"owner,omitempty"`
-	Tags      map[string]string `json:"tags,omitempty"`
-	State     string            `json:"state"`     // desired state from config
-	Container string            `json:"container"` // observed status from runtime
+	Role  string            `json:"role,omitempty"`
+	Owner string            `json:"owner,omitempty"`
+	Tags  map[string]string `json:"tags,omitempty"`
+	// GitHubCredMissing is set when the island NAMES a GitHub identity that no
+	// longer resolves for its tenant (deleted, or now out-of-tenant under the
+	// owner-scoping rules) — so clone/push will fail. A health surface so the
+	// operator/member can re-connect (docs/github-identities.md), not a silent
+	// break. Not set for islands that name no identity.
+	GitHubCredMissing bool   `json:"github_cred_missing,omitempty"`
+	State             string `json:"state"`     // desired state from config
+	Container         string `json:"container"` // observed status from runtime
 	// NoHibernate is true when the island is pinned awake (exempt from idle
 	// auto-hibernate). Set via PATCH /v1/islands/{name} (dejima pin/unpin).
 	NoHibernate bool            `json:"no_hibernate,omitempty"`
@@ -518,7 +524,39 @@ type PutGitHubIdentityRequest struct {
 	ID      int64  `json:"id,omitempty"`   // GitHub numeric user id, for the canonical noreply commit email
 	Host    string `json:"host,omitempty"` // defaults to github.com
 	Token   string `json:"token"`
-	Default bool   `json:"default,omitempty"` // make this the default identity
+	Default bool   `json:"default,omitempty"` // make this the default identity (host owner only)
+	Shared  bool   `json:"shared,omitempty"`  // host owner only: mark a host identity usable by every tenant's islands
+}
+
+// GitHubDeviceStartResponse is the body of POST /v1/credentials/github/device-flow/start.
+// The client shows UserCode + VerificationURI and polls with SessionID. The
+// device_code that exchanges for the token is held server-side and never returned.
+type GitHubDeviceStartResponse struct {
+	SessionID       string `json:"session_id"`
+	UserCode        string `json:"user_code"`
+	VerificationURI string `json:"verification_uri"`
+	ExpiresIn       int    `json:"expires_in"`
+	Interval        int    `json:"interval"`
+	Scopes          string `json:"scopes"` // surfaced so the UX can state what's granted
+}
+
+// GitHubDevicePollRequest is the body of POST /v1/credentials/github/device-flow/poll.
+type GitHubDevicePollRequest struct {
+	SessionID string `json:"session_id"`
+	Name      string `json:"name"`              // identity name to store the captured token under
+	Default   bool   `json:"default,omitempty"` // host owner only
+	Shared    bool   `json:"shared,omitempty"`  // host owner only
+}
+
+// GitHubDevicePollResponse reports the flow state. State is one of
+// authorization_pending | slow_down | expired | access_denied | authorized. On
+// authorized, Identity + Login name the stored credential; on pending/slow_down,
+// Interval is the seconds to wait before polling again.
+type GitHubDevicePollResponse struct {
+	State    string `json:"state"`
+	Interval int    `json:"interval,omitempty"`
+	Identity string `json:"identity,omitempty"`
+	Login    string `json:"login,omitempty"`
 }
 
 // DeleteGitHubIdentityResponse reports which islands still referenced the

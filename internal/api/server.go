@@ -179,6 +179,15 @@ type Server struct {
 	// covered without network.
 	anonCloneFn func(ctx context.Context, url string) bool
 
+	// GitHub device-flow credential capture. githubClientID is the Dejima OAuth
+	// app's public client id (DEJIMAD_GITHUB_CLIENT_ID); empty ⇒ device flow is
+	// dark and the PAT path is the only route. The two Fn fields are the GitHub
+	// calls, injectable so the flow is tested without reaching GitHub.
+	githubClientID  string
+	deviceSessions  *deviceSessions
+	ghDeviceStartFn func(ctx context.Context, clientID string) (deviceStartResult, error)
+	ghDevicePollFn  func(ctx context.Context, clientID, deviceCode string) (devicePollResult, error)
+
 	// capAdapter runs capability targets (the broker's execution half). nil ⇒
 	// resolve per host OS via capability.DefaultAdapter on demand; tests inject one.
 	capAdapter capability.Adapter
@@ -314,6 +323,12 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 	s.injectFn = s.tmuxInject
 	s.idleFn = s.agentIdleAtBoundary
 	s.mailbox.SetArrivalHook(s.onMailboxArrival)
+	// GitHub device-flow capture: real GitHub calls by default (tests stub them);
+	// client id from env, empty ⇒ device flow dark (PAT path only).
+	s.githubClientID = strings.TrimSpace(os.Getenv("DEJIMAD_GITHUB_CLIENT_ID"))
+	s.deviceSessions = newDeviceSessions()
+	s.ghDeviceStartFn = githubDeviceStart
+	s.ghDevicePollFn = githubDevicePoll
 	return s
 }
 
@@ -680,6 +695,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /v1/credentials/github/{name}", s.handlePutGitHubIdentity)
 	mux.HandleFunc("DELETE /v1/credentials/github/{name}", s.handleDeleteGitHubIdentity)
 	mux.HandleFunc("GET /v1/credentials/github/{name}/repos", s.handleGitHubRepos)
+	mux.HandleFunc("POST /v1/credentials/github/device-flow/start", s.handleGitHubDeviceStart)
+	mux.HandleFunc("POST /v1/credentials/github/device-flow/poll", s.handleGitHubDevicePoll)
 	mux.HandleFunc("GET /v1/credentials/providers", s.handleListProviderCreds)
 	mux.HandleFunc("PUT /v1/credentials/providers/{provider}", s.handlePutProviderCred)
 	mux.HandleFunc("DELETE /v1/credentials/providers/{provider}", s.handleDeleteProviderCred)
@@ -850,21 +867,24 @@ func (s *Server) handleClaudeCredsStatus(w http.ResponseWriter, _ *http.Request)
 }
 
 // handleGitHubIdentities lists the daemon's GitHub identities (no tokens).
-func (s *Server) handleGitHubIdentities(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleGitHubIdentities(w http.ResponseWriter, r *http.Request) {
 	store, err := githubid.Load()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.List()})
+	// An operator sees only their own tenant's identities (plus host-shared ones);
+	// the host owner sees all.
+	owner, ownsAll := s.callerGHScope(r.Context())
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
 }
 
 // handlePutGitHubIdentity adds or updates a named GitHub identity. This is how
 // a credentialed client seeds the daemon (`dejima auth push --github`).
 func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
-	if name == "" {
-		writeError(w, http.StatusBadRequest, errors.New("identity name is required"))
+	if err := githubid.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	var req PutGitHubIdentityRequest
@@ -876,10 +896,21 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, errors.New("login and token are required"))
 		return
 	}
-	store, err := githubid.Update(func(s *githubid.Store) error {
-		s.Put(githubid.Identity{Name: name, Login: req.Login, ID: req.ID, Host: req.Host, Token: req.Token})
+	// Tenancy: the identity is stamped with the AUTHENTICATED caller's owner
+	// (server-authoritative — an operator can only push into their OWN tenant).
+	// Only the host owner may set the daemon default or mark an identity shared.
+	owner, ownsAll := s.callerGHScope(r.Context())
+	if !ownsAll && (req.Default || req.Shared) {
+		writeError(w, http.StatusForbidden, errors.New("only the host owner can set a github identity as default or shared"))
+		return
+	}
+	store, err := githubid.Update(func(st *githubid.Store) error {
+		st.PutOwned(githubid.Identity{
+			Name: name, Login: req.Login, ID: req.ID, Host: req.Host, Token: req.Token,
+			Owner: owner, Shared: ownsAll && req.Shared,
+		})
 		if req.Default {
-			_ = s.SetDefault(name)
+			_ = st.SetDefaultFor(owner, name)
 		}
 		return nil
 	})
@@ -887,16 +918,18 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.log.Info("github identity stored", "name", name, "login", req.Login)
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.List()})
+	s.log.Info("github identity stored", "name", name, "login", req.Login, "owner", owner, "shared", ownsAll && req.Shared)
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
 }
 
-// handleDeleteGitHubIdentity removes a GitHub identity.
+// handleDeleteGitHubIdentity removes a GitHub identity. An operator can delete
+// only their OWN tenant's identity; the host owner deletes host identities.
 func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	owner, _ := s.callerGHScope(r.Context())
 	var missing bool
-	if _, err := githubid.Update(func(s *githubid.Store) error {
-		missing = !s.Remove(name)
+	if _, err := githubid.Update(func(st *githubid.Store) error {
+		missing = !st.DeleteOwned(owner, name)
 		return nil
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -906,7 +939,7 @@ func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", name))
 		return
 	}
-	affected := s.islandsUsingIdentity(name)
+	affected := s.islandsUsingIdentity(owner, name)
 	if len(affected) > 0 {
 		s.log.Warn("deleted a github identity still referenced by islands",
 			"name", name, "islands", affected)
@@ -914,17 +947,17 @@ func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, DeleteGitHubIdentityResponse{AffectedIslands: affected})
 }
 
-// islandsUsingIdentity returns the names of islands that reference the named
-// GitHub identity. Best-effort: a project-list failure yields no names rather
-// than blocking the delete.
-func (s *Server) islandsUsingIdentity(name string) []string {
+// islandsUsingIdentity returns the names of the owner's islands that reference
+// the named GitHub identity. Best-effort: a project-list failure yields no names
+// rather than blocking the delete.
+func (s *Server) islandsUsingIdentity(owner, name string) []string {
 	projects, err := project.List()
 	if err != nil {
 		return nil
 	}
 	var out []string
 	for _, p := range projects {
-		if p.GitHubIdentity == name {
+		if p.GitHubIdentity == name && ghOwner(p.Owner) == owner {
 			out = append(out, p.Name)
 		}
 	}
@@ -939,7 +972,8 @@ func (s *Server) handleGitHubRepos(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	id, ok := store.Resolve(r.PathValue("name"))
+	owner, _ := s.callerGHScope(r.Context())
+	id, ok := store.ResolveForIsland(owner, r.PathValue("name"))
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", r.PathValue("name")))
 		return
@@ -1617,7 +1651,10 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Errorf("load github identities: %w", err))
 			return
 		}
-		if _, ok := store.Resolve(gid); !ok {
+		// The new island will be owned by the caller, so validate the identity
+		// resolves within the caller's tenant (own + host-shared).
+		callerOwner, _ := s.callerGHScope(r.Context())
+		if _, ok := store.ResolveForIsland(callerOwner, gid); !ok {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("unknown github identity %q (see `dejima auth status`)", gid))
 			return
 		}
@@ -2770,6 +2807,17 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		CreatedAt:   p.CreatedAt,
 		LastUsedAt:  p.LastUsedAt,
 	}
+	// Health surface (v1b): an island whose NAMED GitHub identity no longer
+	// resolves for its tenant will fail to clone/push — flag it so it's not a
+	// silent break. Cheap (a small local store read); only when an identity is
+	// explicitly named, so public-repo islands aren't false-flagged.
+	if id := strings.TrimSpace(p.GitHubIdentity); id != "" {
+		if store, err := githubid.Load(); err == nil {
+			if _, ok := store.ResolveForIsland(ghOwner(p.Owner), id); !ok {
+				info.GitHubCredMissing = true
+			}
+		}
+	}
 	if status, err := s.rt.Status(ctx, p.ContainerName()); err == nil {
 		info.Container = string(status)
 		if status == runtime.StatusRunning {
@@ -2916,7 +2964,7 @@ func islandGHConfigDir(p *project.Project) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("load github identities: %w", err)
 	}
-	id, ok := store.Resolve(p.GitHubIdentity)
+	id, ok := store.ResolveForIsland(ghOwner(p.Owner), p.GitHubIdentity)
 	if !ok {
 		return "", nil
 	}
@@ -2948,7 +2996,7 @@ func islandGitConfig(p *project.Project) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("load github identities: %w", err)
 	}
-	id, ok := store.Resolve(p.GitHubIdentity)
+	id, ok := store.ResolveForIsland(ghOwner(p.Owner), p.GitHubIdentity)
 	if !ok {
 		return "", nil
 	}
@@ -3024,11 +3072,18 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		binds = append(binds, runtime.BindMount{
 			HostPath: dir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
 		})
-	} else if ghDir, err := paths.HostGHConfigDir(); err == nil {
-		if _, statErr := os.Stat(ghDir); statErr == nil {
-			binds = append(binds, runtime.BindMount{
-				HostPath: ghDir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
-			})
+	} else if ghOwner(p.Owner) == "" {
+		// v1b containment: the host's own ~/.config/gh is a HOST-island-only
+		// fallback. A tenant island that resolves no identity gets NO gh credential
+		// (surfaced via health + the self-serve "connect GitHub" prompt) rather than
+		// silently inheriting the host operator's login — that inheritance was the
+		// over-mount finding this feature closes.
+		if ghDir, err := paths.HostGHConfigDir(); err == nil {
+			if _, statErr := os.Stat(ghDir); statErr == nil {
+				binds = append(binds, runtime.BindMount{
+					HostPath: ghDir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
+				})
+			}
 		}
 	}
 

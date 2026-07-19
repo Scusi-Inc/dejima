@@ -41,7 +41,7 @@ func TestUpdateIsSerializedAndAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Identities) != n {
+	if len(s.Idents) != n {
 		t.Fatalf("lost updates under concurrency: got %d identities, want %d", len(s.Identities), n)
 	}
 }

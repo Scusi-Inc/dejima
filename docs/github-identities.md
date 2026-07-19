@@ -99,3 +99,59 @@ The push/clone identity comes from the selected GitHub identity. Commit
 author name/email still come from the host `~/.gitconfig` mount, so a commit is
 *authored* per your gitconfig and *pushed* as the chosen identity. For most
 setups these line up; per-identity commit authorship is a possible follow-up.
+
+## Owner-scoped identities (team self-serve)
+
+Identities are **tenant-scoped**: a team member (operator) provides credentials
+for **their own** private repos, usable only by **their own** islands — the host
+owner is not in the loop, and one member's token can never reach another
+member's island.
+
+### Connecting GitHub (a member, self-serve)
+
+Two paths, both self-scoping to the caller's tenant:
+
+1. **Guided sign-in (device flow)** — `dejima github connect [name]`. Shows a
+   short code + `https://github.com/login/device`; approve in the browser and the
+   daemon captures the token — no PAT to hand-make. Requires the daemon to be
+   configured with an OAuth app (below); otherwise it points you at the PAT path.
+2. **Paste a token** — `dejima auth push --github [--name <name>]` pushes the
+   machine's active `gh` login, or use a **fine-grained PAT** scoped to just the
+   repos you need (the least-privilege option — tighter than the device flow's
+   `repo` scope).
+
+`dejima auth status` lists **your** identities (the host owner sees all). Only the
+host owner may set an identity as the daemon `--default` or mark it `--shared` (a
+team-wide org credential usable by every tenant).
+
+### Enabling the guided device flow (operator, one-time)
+
+The device flow needs a **GitHub OAuth App** (public client id — no client secret
+for device flow):
+
+1. GitHub → Settings → Developer settings → **OAuth Apps** → New OAuth App.
+2. Enable **Device Flow** on the app.
+3. Set **`DEJIMAD_GITHUB_CLIENT_ID`** to the app's client id and restart the daemon.
+
+Until it's set, the device-flow endpoints return `501` and the **PAT path is the
+only route** — the feature ships fully working without the app; the guided flow
+lights up once it's registered. Scopes requested: `repo` (clone **and** push —
+agents commit) + `read:org`, surfaced in the flow (never silent).
+
+### Scoping & containment
+
+- Each identity is stamped with its **owner** (the authenticated caller — never
+  client-forged). All resolution goes through one chokepoint,
+  `Store.ResolveForIsland`: a tenant island resolves only its owner's identities
+  plus host-**shared** ones. An operator's token is **never** materialized into
+  another tenant's island.
+- The host's own `~/.config/gh` is a **host-island-only** fallback. A tenant
+  island that resolves no identity gets **no** credential (recover with the
+  self-serve paths above) rather than silently inheriting the host operator's
+  login — the over-mount this scoping closes.
+- **Security note (device-flow / captured tokens):** a connected token is
+  materialized into the owner's **own** islands (the read-only `gh` config mount),
+  so a compromised agent inside one of their islands could use it to reach GitHub
+  — inherent to giving an island clone/push access, and **contained to that
+  tenant** by `ResolveForIsland`. Prefer a fine-grained per-repo PAT to bound what
+  a captured credential can do.

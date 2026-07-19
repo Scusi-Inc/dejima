@@ -134,26 +134,28 @@ var roleRouteCap = map[string]roleCap{
 	"DELETE /v1/islands/{name}/mcp/grants/{server}":        capOperate,
 
 	// --- owner only (explicit; also the default for anything unlisted) ---
-	"DELETE /v1/islands/{name}":                   capOwner, // purge — the operator/owner divide
-	"POST /v1/image/build":                        capOwner,
-	"POST /v1/admin/update":                       capOwner,
-	"POST /v1/panic":                              capOwner,
-	"DELETE /v1/panic":                            capOwner,
-	"POST /v1/sessions/revoke":                    capOwner,
-	"GET /v1/ssh/account-keys":                    capOwner, // access-control config
-	"POST /v1/ssh/account-keys":                   capOwner,
-	"PUT /v1/credentials/claude":                  capOwner,
-	"PUT /v1/credentials/github/{name}":           capOwner,
-	"DELETE /v1/credentials/github/{name}":        capOwner,
-	"PUT /v1/credentials/providers/{provider}":    capOwner,
-	"DELETE /v1/credentials/providers/{provider}": capOwner,
-	"POST /v1/events/subscribe":                   capOwner,
-	"DELETE /v1/events/subscriptions/{id}":        capOwner,
-	"GET /v1/terminals":                           capOwner, // uncontained host shells
-	"POST /v1/terminals":                          capOwner,
-	"DELETE /v1/terminals/{id}":                   capOwner,
-	"PATCH /v1/terminals/{id}":                    capOwner,
-	"GET /v1/terminals/{id}/session":              capOwner,
+	"DELETE /v1/islands/{name}":                     capOwner, // purge — the operator/owner divide
+	"POST /v1/image/build":                          capOwner,
+	"POST /v1/admin/update":                         capOwner,
+	"POST /v1/panic":                                capOwner,
+	"DELETE /v1/panic":                              capOwner,
+	"POST /v1/sessions/revoke":                      capOwner,
+	"GET /v1/ssh/account-keys":                      capOwner, // access-control config
+	"POST /v1/ssh/account-keys":                     capOwner,
+	"PUT /v1/credentials/claude":                    capOwner,
+	"PUT /v1/credentials/github/{name}":             capOperate, // self-scoped: an operator pushes only into their OWN tenant (handler enforces); host-owner keeps default/shared/cross-tenant authority
+	"DELETE /v1/credentials/github/{name}":          capOperate, // operator deletes only their OWN tenant's identity (handler enforces)
+	"POST /v1/credentials/github/device-flow/start": capOperate, // guided sign-in; captures into the caller's own tenant
+	"POST /v1/credentials/github/device-flow/poll":  capOperate,
+	"PUT /v1/credentials/providers/{provider}":      capOwner,
+	"DELETE /v1/credentials/providers/{provider}":   capOwner,
+	"POST /v1/events/subscribe":                     capOwner,
+	"DELETE /v1/events/subscriptions/{id}":          capOwner,
+	"GET /v1/terminals":                             capOwner, // uncontained host shells
+	"POST /v1/terminals":                            capOwner,
+	"DELETE /v1/terminals/{id}":                     capOwner,
+	"PATCH /v1/terminals/{id}":                      capOwner,
+	"GET /v1/terminals/{id}/session":                capOwner,
 	// Island-listener routes that also exist on the operator mux. On this surface
 	// they are owner-only; their real, attenuated home is tokenauth's allow-list.
 	"POST /v1/internal/agent-event": capOwner,
