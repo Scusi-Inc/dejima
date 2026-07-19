@@ -127,11 +127,37 @@ func markConnHelpOffered() error {
 // "can't reach my Dejima host" failures: wrong/missing DEJIMA_HOST, not on the
 // tailnet, or the host's daemon not exposing TCP.
 func runConnectionTroubleshooter(ctx context.Context) {
-	host := strings.TrimSpace(os.Getenv("DEJIMA_HOST"))
+	host, label, source := resolveTarget()
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, bold("Connection troubleshooter"))
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "  Target: %s\n", host)
+
+	// The most common post-update lockout isn't an unreachable host — it's NO
+	// usable target: an unreadable saved config, or nothing configured at all
+	// (e.g. an update wiped a bare DEJIMA_HOST export). Guide to join/onboard
+	// rather than probing Tailscale/TCP for a host that was never set.
+	switch {
+	case source == "unreadable":
+		fmt.Fprintln(os.Stderr, "  ✗ your saved connection is unreadable (client.json is corrupt).")
+		fmt.Fprintln(os.Stderr, "    Re-join with `dejima join <invite>`, or run `dejima onboard`.")
+		fmt.Fprintln(os.Stderr)
+		return
+	case host == "": // source == "local": no DEJIMA_HOST and no active profile
+		fmt.Fprintln(os.Stderr, "  ✗ no saved Dejima connection — no DEJIMA_HOST and no active profile.")
+		fmt.Fprintln(os.Stderr, "    Joining a team/host? Paste your invite:  `dejima join <invite>`   (or `dejima onboard`).")
+		fmt.Fprintln(os.Stderr, "    Running a daemon on THIS machine? Start it:  `dejima service install`.")
+		fmt.Fprintln(os.Stderr)
+		return
+	}
+
+	switch source {
+	case "profile":
+		fmt.Fprintf(os.Stderr, "  Target: %s  (profile %q)\n", host, label)
+	case "flag":
+		fmt.Fprintf(os.Stderr, "  Target: %s  (from -p/--host)\n", host)
+	default:
+		fmt.Fprintf(os.Stderr, "  Target: %s  (DEJIMA_HOST)\n", host)
+	}
 
 	// 1. Is Tailscale present and up here? The host accepts only tailnet peers.
 	if _, err := exec.LookPath("tailscale"); err != nil {
@@ -1045,7 +1071,12 @@ func newCloneCmd() *cobra.Command {
 }
 
 func client() (*api.Client, error) {
-	return clientForHost(resolveHost())
+	host, _, source := resolveTarget()
+	if source == "unreadable" {
+		return nil, fmt.Errorf("your saved Dejima connection is unreadable (client.json is corrupt) — " +
+			"re-join with `dejima join <invite>`, or run `dejima onboard`")
+	}
+	return clientForHost(host)
 }
 
 // resolveTarget picks the daemon connection target and a human label for it.
@@ -1071,7 +1102,15 @@ func resolveTarget() (host, label, source string) {
 	if h := strings.TrimSpace(os.Getenv("DEJIMA_HOST")); h != "" {
 		return h, h, "env"
 	}
-	cfg, _ := clientcfg.Load()
+	cfg, err := clientcfg.Load()
+	if err != nil {
+		// The saved connection is UNREADABLE (client.json corrupt beyond .bak
+		// recovery). Do NOT silently fall through to the local socket — that's the
+		// silent-lockout bug. Surface a distinct source so client() can turn it into
+		// an actionable error instead of a confusing "connection refused" on a local
+		// socket the user never meant to use.
+		return "", "", "unreadable"
+	}
 	if h, ok := cfg.ActiveHost(); ok {
 		return h, cfg.ActiveProfile, "profile"
 	}

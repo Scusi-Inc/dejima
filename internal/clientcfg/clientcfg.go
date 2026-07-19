@@ -269,7 +269,17 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if err := json.Unmarshal(data, &c); err != nil {
-		return c, err
+		// client.json is corrupt. Try the last-known-good backup so a botched write
+		// or external corruption doesn't silently lock the user out of their saved
+		// connection — restore it as the live config so we're durable next time too.
+		if bak, berr := os.ReadFile(p + ".bak"); berr == nil {
+			var bc Config
+			if json.Unmarshal(bak, &bc) == nil {
+				_ = os.WriteFile(p, bak, 0o600)
+				return bc, nil
+			}
+		}
+		return Config{}, fmt.Errorf("client config %s is unreadable (corrupt JSON): %w", p, err)
 	}
 	return c, nil
 }
@@ -284,5 +294,28 @@ func Save(c Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o600)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	// Keep the current config as last-known-good (only if it parses) BEFORE
+	// overwriting, so a later corrupt read can auto-restore from it (see Load).
+	// A saved connection profile is a lockout risk if it's ever lost.
+	if prev, rerr := os.ReadFile(p); rerr == nil {
+		var tmp Config
+		if json.Unmarshal(prev, &tmp) == nil {
+			_ = os.WriteFile(p+".bak", prev, 0o600)
+		}
+	}
+	// Atomic write: a temp file in the same dir + rename, so a crash or a full
+	// disk mid-write can't leave a half-written client.json that locks the user
+	// out of their saved connection.
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }

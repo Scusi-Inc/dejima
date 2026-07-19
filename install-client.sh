@@ -206,6 +206,17 @@ if [[ -n "$server_host" ]]; then
         info "  (server may be down, or Tailscale not connected yet)"
     fi
 
+    # Persist a DURABLE connection profile in client.json — this survives shell-rc
+    # edits and client updates, unlike the bare `export DEJIMA_HOST` below which an
+    # update wiping ~/.zshenv silently strips, locking the user out with no message.
+    # The profile is the durable store; the rc export stays as a current-shell
+    # convenience. `add` errors if it already exists (re-install) — ignore that and
+    # still `switch` so the profile becomes active either way.
+    "$BIN_DIR/dejima" profile add "$server_host" "$candidate_host" >/dev/null 2>&1 || true
+    if "$BIN_DIR/dejima" profile switch "$server_host" >/dev/null 2>&1; then
+        ok "saved a durable connection profile ($server_host → $candidate_host)"
+    fi
+
     # Pick the most appropriate rc file: zsh on macOS, bash on Linux.
     rc=""
     case "$os" in
