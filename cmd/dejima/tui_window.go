@@ -141,6 +141,31 @@ func (m tuiModel) openHostTermWindow(id, label string) error {
 	}
 }
 
+// openGithubConnectWindow launches the guided `dejima github connect` device-flow
+// sign-in in a new window/tab (it opens a browser + polls, so it belongs in its
+// own window, not the dashboard). It talks to the daemon, so it inherits the
+// TUI's DEJIMA_HOST. Returns an error the caller turns into a "run it in a
+// terminal" hint when a new window isn't possible.
+func (m tuiModel) openGithubConnectWindow() error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "github-connect"
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s github connect",
+		shquote(m.activeHost), shquote(title), shquote(exe))
+	switch {
+	case os.Getenv("TMUX") != "":
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "github connect", "", "", title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima github connect` in another terminal")
+	}
+}
+
 // openVoiceInstallWindow launches `dejima voice install` in a new window/tab so
 // the TUI stays up while the (interactive brew + model-download) install runs.
 // It's host-local — no island/target — so no DEJIMA_HOST is needed. Returns an
