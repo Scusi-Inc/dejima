@@ -20,15 +20,16 @@ import (
 type creatorStep int
 
 const (
-	stepRoot   creatorStep = iota // first-load: choose a directory to scan
-	stepPick                      // pick a discovered repo (or switch to manual)
-	stepManual                    // type a URL or path
-	stepGitHub                    // browse a daemon GitHub identity's repos
-	stepSource                    // diverged local repo: clone origin vs local copy
-	stepAgent                     // choose an agent (primary, then any extras)
-	stepAgents                    // roster: review seeded agents, add more, or continue
-	stepName                      // confirm/edit the island name
-	stepCreate                    // provisioning in flight
+	stepRoot       creatorStep = iota // first-load: choose a directory to scan
+	stepPick                          // pick a discovered repo (or switch to manual)
+	stepManual                        // type a URL or path
+	stepGitHub                        // browse a daemon GitHub identity's repos
+	stepSource                        // diverged local repo: clone origin vs local copy
+	stepAgent                         // choose an agent (primary, then any extras)
+	stepAgents                        // roster: review seeded agents, add more, or continue
+	stepName                          // confirm/edit the island name
+	stepCreate                        // provisioning in flight
+	stepGitHubGate                    // create refused: private repo needs a GitHub identity — guided connect
 )
 
 // ghBrowsePhase tracks the two steps of the daemon-backed GitHub browser.
@@ -92,6 +93,11 @@ type creatorModel struct {
 	pickingExtra bool                   // true while the picker is adding a non-primary agent
 	nameInput    string
 	creating     bool
+	// gateRepo/forceNoIdentity drive the guided first-clone step: when a create is
+	// refused because a private repo has no GitHub identity, gateRepo names it and
+	// the flow moves to stepGitHubGate; forceNoIdentity retries with the override.
+	gateRepo        string
+	forceNoIdentity bool
 	// imageMissing is true when the daemon has no island image yet, so this
 	// create will trigger a one-time multi-minute base-image build. Used to set
 	// that expectation up front instead of leaving the user staring at a silent
@@ -184,12 +190,13 @@ func repoStatusCmd(path string) tea.Cmd {
 // the primary, mirrored into the scalar fields too).
 func (c *creatorModel) buildRequest() api.CreateIslandRequest {
 	req := api.CreateIslandRequest{
-		Name:           c.nameInput,
-		Repo:           c.resolution.Repo,
-		SeedPath:       c.resolution.SeedPath,
-		Agent:          c.agents[0].Type, // primary (scalar back-compat path)
-		Cmd:            c.agents[0].Cmd,  // headless only; empty for interactive agents
-		GitHubIdentity: c.ghIdentity,     // "" unless sourced via the GitHub browser
+		Name:            c.nameInput,
+		Repo:            c.resolution.Repo,
+		SeedPath:        c.resolution.SeedPath,
+		Agent:           c.agents[0].Type,  // primary (scalar back-compat path)
+		Cmd:             c.agents[0].Cmd,   // headless only; empty for interactive agents
+		GitHubIdentity:  c.ghIdentity,      // "" unless sourced via the GitHub browser
+		AllowNoIdentity: c.forceNoIdentity, // set by the guided-gate "create anyway" path
 	}
 	if len(c.agents) > 1 {
 		req.Agents = c.agents
@@ -271,8 +278,46 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.creatorAgentsKey(msg)
 	case stepName:
 		return m.creatorNameKey(msg)
+	case stepGitHubGate:
+		return m.creatorGitHubGateKey(msg)
 	}
 	return m, nil // stepCreate: ignore input while provisioning
+}
+
+// creatorGitHubGateKey drives the guided first-clone gate (a private repo with no
+// GitHub identity). [c] launches the guided connect (in its own window); Enter
+// retries the create once connected; [f] creates anyway (authenticate later);
+// esc cancels.
+func (m tuiModel) creatorGitHubGateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	c := m.creator
+	switch msg.String() {
+	case "c", "C":
+		if err := m.openGithubConnectWindow(); err != nil {
+			c.err = "couldn't open a window — run `dejima github connect` in a terminal, then press Enter"
+		} else {
+			c.err = "opened `dejima github connect` — approve it on GitHub, then press Enter to retry"
+		}
+		return m, nil
+	case "enter", "r", "R":
+		c.creating, c.step, c.err = true, stepCreate, ""
+		return m, c.createCmd()
+	case "f", "F":
+		c.forceNoIdentity = true
+		c.creating, c.step, c.err = true, stepCreate, ""
+		return m, c.createCmd()
+	case "esc", "q":
+		m.creator = nil
+		return m, nil
+	}
+	return m, nil
+}
+
+// isGitHubIdentityGateError reports whether a create failed the daemon's
+// private-repo identity gate (blockDoomedClone) — the signal that upgrades the
+// bare error into the guided connect step. Matched on the stable phrase the gate
+// emits; keep in sync with blockDoomedClone in internal/api/create_identity_gate.go.
+func isGitHubIdentityGateError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "needs a GitHub identity to clone")
 }
 
 func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -773,6 +818,16 @@ func (c *creatorModel) view(width int) string {
 		} else {
 			b.WriteString(styleMuted.Render("cloning the repo and starting the agent; it opens when ready."))
 		}
+	case stepGitHubGate:
+		b.WriteString(styleWaiting.Render("🔒 " + c.gateRepo + " needs your GitHub to clone"))
+		b.WriteString("\n\n")
+		b.WriteString(styleMuted.Render("  It's private (or not anonymously reachable) and no GitHub identity is set."))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("  Connect once and every island you create can clone your private repos."))
+		b.WriteString("\n\n")
+		b.WriteString("  " + styleAccent.Render("[c]") + " Connect your GitHub (guided sign-in)\n")
+		b.WriteString("  " + styleAccent.Render("[Enter]") + " I've connected — retry the clone\n")
+		b.WriteString("  " + styleMuted.Render("[f] Create anyway, authenticate later   ·   [esc] Cancel"))
 	}
 
 	if c.err != "" {
