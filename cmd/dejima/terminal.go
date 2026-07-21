@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
+	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/paths"
 )
 
@@ -22,6 +24,7 @@ const (
 	terminalWezTerm
 	terminalKitty
 	terminalGhostty
+	terminalWarp
 )
 
 // classifyTerminal identifies the terminal from its environment signals. It's a
@@ -42,6 +45,8 @@ func classifyTerminal(termProgram, term, kittyWindowID string) terminalKind {
 		return terminalWezTerm
 	case "ghostty":
 		return terminalGhostty
+	case "WarpTerminal":
+		return terminalWarp
 	}
 	if term == "xterm-kitty" || kittyWindowID != "" {
 		return terminalKitty
@@ -56,6 +61,55 @@ func currentTerminal() terminalKind {
 		os.Getenv("TERM"),
 		os.Getenv("KITTY_WINDOW_ID"),
 	)
+}
+
+// parseTerminalKind maps a user-facing terminal name (DEJIMA_TERMINAL or the
+// clientcfg setting) to a kind. ok is false for "" / "auto" (no override → the
+// caller auto-detects) and for anything unrecognized.
+func parseTerminalKind(s string) (kind terminalKind, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto", "auto-detect":
+		return terminalUnknown, false
+	case "terminal", "apple", "apple_terminal", "terminal.app":
+		return terminalAppleTerminal, true
+	case "iterm", "iterm2", "iterm.app":
+		return terminalITerm2, true
+	case "ghostty":
+		return terminalGhostty, true
+	case "wezterm":
+		return terminalWezTerm, true
+	case "kitty":
+		return terminalKitty, true
+	case "warp":
+		return terminalWarp, true
+	default:
+		return terminalUnknown, false
+	}
+}
+
+// resolveTerminalKind is the terminal openMacTerminal launches into, honoring the
+// precedence: DEJIMA_TERMINAL env > clientcfg.Terminal setting > auto-detect from
+// $TERM_PROGRAM. The override fixes terminals we detect but couldn't previously
+// launch (Ghostty fell through to Apple Terminal), and lets a user force one.
+func resolveTerminalKind() terminalKind {
+	if k, ok := parseTerminalKind(os.Getenv("DEJIMA_TERMINAL")); ok {
+		return k
+	}
+	if cfg, err := clientcfg.Load(); err == nil {
+		if k, ok := parseTerminalKind(cfg.Terminal); ok {
+			return k
+		}
+	}
+	return currentTerminal()
+}
+
+// spawnGhosttyWindow opens inner in a NEW Ghostty window via `open -na Ghostty
+// --args -e /bin/sh -c <inner>`. inner is a shell command string; it's passed as
+// a single discrete argv element (not through a shell here), so `/bin/sh -c`
+// receives it intact — no extra quoting needed. Returns an error (→ osascript
+// fallback) if the launch fails.
+func spawnGhosttyWindow(inner string) error {
+	return exec.Command("open", "-na", "Ghostty", "--args", "-e", "/bin/sh", "-c", inner).Run()
 }
 
 // spawnWezTermTab opens inner in a NEW TAB of the current WezTerm window via

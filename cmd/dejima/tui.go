@@ -315,8 +315,9 @@ type settingsModel struct {
 type settingsPage int
 
 const (
-	settingsTop    settingsPage = iota // the preferences list
-	settingsEditor                     // the editor radio sub-page
+	settingsTop      settingsPage = iota // the preferences list
+	settingsEditor                       // the editor radio sub-page
+	settingsTerminal                     // the default-terminal radio sub-page
 )
 
 type editorChoice struct {
@@ -333,8 +334,29 @@ var editorChoices = []editorChoice{
 	{"VS Code Insiders", "code-insiders"},
 }
 
+// terminalChoices is the "Default terminal" radio: which terminal to spawn
+// agent/host windows into (value stored in clientcfg.Terminal; "" = auto-detect
+// from $TERM_PROGRAM). DEJIMA_TERMINAL overrides this at runtime.
+var terminalChoices = []editorChoice{
+	{"Auto-detect", ""},
+	{"Ghostty", "ghostty"},
+	{"iTerm2", "iterm"},
+	{"WezTerm", "wezterm"},
+	{"kitty", "kitty"},
+	{"Apple Terminal", "terminal"},
+}
+
+func terminalIndex(v string) int {
+	for i, c := range terminalChoices {
+		if c.cmd == v {
+			return i
+		}
+	}
+	return 0
+}
+
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 8 // editor · group-by-repo · connection target · team · check-for-updates · update · voice · github
+const settingsTopLen = 9 // editor · group-by-repo · connection target · team · check-for-updates · update · voice · github · terminal
 
 func (m tuiModel) openSettings() tuiModel {
 	m.voice = voicein.Check() // fresh status for the Voice-dictation row
@@ -355,12 +377,15 @@ func editorIndex(cmd string) int {
 func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.settings
 	rows := settingsTopLen
-	if s.page == settingsEditor {
+	switch s.page {
+	case settingsEditor:
 		rows = len(editorChoices)
+	case settingsTerminal:
+		rows = len(terminalChoices)
 	}
 	switch msg.String() {
 	case "esc", "q", "ctrl+c", "left", "h":
-		if s.page == settingsEditor { // back to the top page, don't close
+		if s.page != settingsTop { // a sub-page → back to the top page, don't close
 			s.page, s.sel = settingsTop, 0
 			return m, nil
 		}
@@ -421,7 +446,26 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 7: // GitHub → the self-serve identity pane
 				m.settings = nil
 				return m.openGithubView()
+			case 8: // Default terminal → radio sub-page
+				cfg, _ := clientcfg.Load()
+				s.page, s.sel = settingsTerminal, terminalIndex(cfg.Terminal)
+				return m, nil
 			}
+		}
+		if s.page == settingsTerminal {
+			// Default-terminal sub-page: choose + persist, then back to the top page.
+			choice := terminalChoices[s.sel]
+			cfg, _ := clientcfg.Load()
+			cfg.Terminal = choice.cmd
+			if err := clientcfg.Save(cfg); err != nil {
+				m.lastError = "couldn't save settings: " + err.Error()
+			} else if choice.cmd == "" {
+				m.lastNotice = "terminal: auto-detect"
+			} else {
+				m.lastNotice = "terminal set to " + choice.label
+			}
+			s.page, s.sel = settingsTop, 0
+			return m, nil
 		}
 		// Editor sub-page: choose + persist, then back to the top page.
 		choice := editorChoices[s.sel]
@@ -4390,6 +4434,26 @@ func (m tuiModel) renderSettings() string {
 		b.WriteString(styleMuted.Render("↑/↓ move · ⏎ choose · esc back"))
 		return b.String()
 	}
+	if st.page == settingsTerminal {
+		cur := ""
+		if cfg, err := clientcfg.Load(); err == nil {
+			cur = cfg.Terminal
+		}
+		b.WriteString(styleHeader.Render("Settings · default terminal"))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("which terminal 'open agent' / new windows spawn into (DEJIMA_TERMINAL overrides)"))
+		b.WriteString("\n\n")
+		for i, c := range terminalChoices {
+			dot := "○ "
+			if c.cmd == cur {
+				dot = "● "
+			}
+			row(i, dot, c.label)
+		}
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("↑/↓ move · ⏎ choose · esc back"))
+		return b.String()
+	}
 
 	b.WriteString(styleHeader.Render("Settings"))
 	b.WriteString("\n")
@@ -4446,6 +4510,11 @@ func (m tuiModel) renderSettings() string {
 		githubRow += styleMuted.Render("connect your GitHub for private repos") + styleMuted.Render("  →")
 	}
 	row(7, "", githubRow)
+	termLabel := "auto-detect"
+	if cfg, err := clientcfg.Load(); err == nil && cfg.Terminal != "" {
+		termLabel = terminalChoices[terminalIndex(cfg.Terminal)].label
+	}
+	row(8, "", "Default terminal          "+styleMuted.Render(termLabel)+styleMuted.Render("  →"))
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()
