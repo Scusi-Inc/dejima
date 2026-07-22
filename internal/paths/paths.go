@@ -95,6 +95,17 @@ func TokenPath(name string) (string, error) {
 	return filepath.Join(dir, "token"), nil
 }
 
+// ProvisioningStatePath returns ~/.dejima/provisioning-state.json — the
+// resumable progress record for `dejima onboard --provision-host`. Left in place
+// after a completed run as a record; `--reset` clears it.
+func ProvisioningStatePath() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "provisioning-state.json"), nil
+}
+
 // HostKeyPath returns ~/.dejima/ssh_host_ed25519 — the daemon's SSH host key
 // for the SSH-façade listener. One key for the daemon (it is the single SSH
 // front door for every island), generated on first use, 0600.
