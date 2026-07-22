@@ -994,28 +994,6 @@ func (c *Client) UpdateIslandResources(ctx context.Context, name string, req Upd
 	return &out, nil
 }
 
-// SetIslandIdentity sets an island's operator-chosen visual identity (color +
-// glyph) override and returns the updated island info. Color must be a hex
-// string (#rgb or #rrggbb); glyph must be exactly one rune.
-func (c *Client) SetIslandIdentity(ctx context.Context, name, color, glyph string) (*IslandInfo, error) {
-	var out IslandInfo
-	req := SetIslandIdentityRequest{Color: color, Glyph: glyph}
-	if err := c.do(ctx, http.MethodPut, "/v1/islands/"+name+"/identity", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// ClearIslandIdentity removes an island's visual-identity override and returns
-// the updated island info (Identity then omitted).
-func (c *Client) ClearIslandIdentity(ctx context.Context, name string) (*IslandInfo, error) {
-	var out IslandInfo
-	if err := c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/identity", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // IslandEvents returns the recent event log for one island.
 func (c *Client) IslandEvents(ctx context.Context, name string) ([]events.Event, error) {
 	var out []events.Event

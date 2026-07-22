@@ -171,12 +171,9 @@ run_full_roundtrip(){
   uninstall_keep_islands
   expect_ok "named volume SURVIVED --keep-islands" docker volume inspect "$WS_VOL"
   if [ -f "$CFG" ]; then pass "$CFG config SURVIVED --keep-islands"; else fail "config was deleted by --keep-islands (it must be kept)"; fi
-  # The data is intact independent of any container/daemon. Use a plain public
-  # image (busybox), NOT dejima/island:latest — uninstall may have removed the
-  # island image, which would fail this read even though the kept volume is fine
-  # (a passing guarantee reading red). busybox decouples the check from Dejima.
+  # The data is intact independent of any container/daemon.
   local voldata
-  voldata="$(docker run --rm -v "$WS_VOL":/ws:ro busybox sh -c 'cat /ws/keep.txt' 2>/dev/null)"
+  voldata="$(docker run --rm -v "$WS_VOL":/ws:ro dejima/island:latest sh -c 'cat /ws/keep.txt' 2>/dev/null)"
   assert_eq "$voldata" "$MARKER_TEXT" "workspace data persists in the kept volume (no daemon involved)"
 
   step "Reinstall ($label) → re-adopt the island + marker"
