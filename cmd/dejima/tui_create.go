@@ -26,6 +26,7 @@ const (
 	stepGitHub                        // browse a daemon GitHub identity's repos
 	stepSource                        // diverged local repo: clone origin vs local copy
 	stepAgent                         // choose an agent (primary, then any extras)
+	stepAgentName                     // name that agent (blank = use its id)
 	stepAgents                        // roster: review seeded agents, add more, or continue
 	stepName                          // confirm/edit the island name
 	stepCreate                        // provisioning in flight
@@ -84,6 +85,11 @@ type creatorModel struct {
 	pendingOrigin string
 	pendingAhead  int
 	sourceCursor  int
+
+	// agent naming: the type/cmd chosen at stepAgent, held until the label is
+	// entered at stepAgentName and the pair is appended to agents together.
+	pendingAgent api.AgentSpecRequest
+	agentNameIn  string
 
 	// resolved selection
 	resolution   reposrc.Resolution
@@ -274,6 +280,8 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.creatorSourceKey(msg)
 	case stepAgent:
 		return m.creatorAgentKey(msg)
+	case stepAgentName:
+		return m.creatorAgentNameKey(msg)
 	case stepAgents:
 		return m.creatorAgentsKey(msg)
 	case stepName:
@@ -374,8 +382,11 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) creatorPickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
-	// Two action rows sit below the discovered repos: enter-a-URL and browse-GitHub.
-	lastRow := len(c.repos) + 1
+	// Two remote-source action rows lead, then the discovered local repos.
+	lastRow := pickRowFirstRepo + len(c.repos) - 1
+	if len(c.repos) == 0 {
+		lastRow = pickRowManual
+	}
 	switch msg.String() {
 	case "esc", "q":
 		m.creator = nil
@@ -402,26 +413,28 @@ func (m tuiModel) creatorPickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorPickEnter() (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch c.repoCursor {
-	case len(c.repos): // ✎ enter a URL or path
+	case pickRowManual:
 		c.step, c.manualInput, c.err = stepManual, "", ""
 		return m, nil
-	case len(c.repos) + 1: // ⬇ browse GitHub
+	case pickRowGitHub:
 		return m.creatorEnterGitHub()
 	default:
-		if len(c.repos) == 0 {
+		i := c.repoCursor - pickRowFirstRepo
+		if i < 0 || i >= len(c.repos) {
 			return m, nil
 		}
-		return m.creatorSelectRepo(c.repos[c.repoCursor])
+		return m.creatorSelectRepo(c.repos[i])
 	}
 }
 
 // ensureStatus lazily fetches working-tree status for the highlighted repo. No-op
 // when the cursor is on one of the trailing action rows.
 func (c *creatorModel) ensureStatus() tea.Cmd {
-	if c.repoCursor >= len(c.repos) {
+	i := c.repoCursor - pickRowFirstRepo
+	if i < 0 || i >= len(c.repos) {
 		return nil
 	}
-	p := c.repos[c.repoCursor].Path
+	p := c.repos[i].Path
 	if _, ok := c.statusCache[p]; ok {
 		return nil
 	}
@@ -690,12 +703,44 @@ func (m tuiModel) creatorAgentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			c.pickingExtra = false
 			c.step = stepAgents
 		} else {
-			c.step = stepPick
+			c.step = stepName
 		}
 	case pickerDone:
-		c.agents = append(c.agents, api.AgentSpecRequest{Type: c.picker.typ(), Cmd: c.picker.cmd()})
+		// Hold the spec and ask for its label before committing it, so an agent
+		// can be named at creation time — previously the only way to name one was
+		// to create the island, then rename it afterwards.
+		c.pendingAgent = api.AgentSpecRequest{Type: c.picker.typ(), Cmd: c.picker.cmd()}
+		c.agentNameIn = ""
+		c.step = stepAgentName
+	}
+	return m, nil
+}
+
+// creatorAgentNameKey names the agent chosen at stepAgent. Blank keeps the
+// agent's generated id, which is what the flow did before naming existed — so
+// Enter straight through is unchanged for anyone who doesn't care.
+func (m tuiModel) creatorAgentNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	c := m.creator
+	switch msg.String() {
+	case "esc":
+		c.agentNameIn = ""
+		c.step = stepAgent
+	case "enter":
+		spec := c.pendingAgent
+		spec.Label = strings.TrimSpace(c.agentNameIn)
+		c.agents = append(c.agents, spec)
+		c.pendingAgent = api.AgentSpecRequest{}
+		c.agentNameIn = ""
 		c.pickingExtra = false
 		c.step = stepAgents
+	case "backspace":
+		if c.agentNameIn != "" {
+			c.agentNameIn = c.agentNameIn[:len(c.agentNameIn)-1]
+		}
+	default:
+		if s := msg.String(); len(s) == 1 {
+			c.agentNameIn += s
+		}
 	}
 	return m, nil
 }
@@ -714,7 +759,8 @@ func (m tuiModel) creatorAgentsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			c.agents = c.agents[:len(c.agents)-1]
 		}
 	case "enter":
-		c.step = stepName
+		c.creating, c.step, c.err = true, stepCreate, ""
+		return m, c.createCmd()
 	case "esc":
 		// Re-pick from scratch: clear the roster and choose the primary again.
 		c.agents = nil
@@ -729,7 +775,7 @@ func (m tuiModel) creatorNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
 	case "esc":
-		c.step = stepAgents
+		c.step = stepPick
 	case "enter":
 		if strings.TrimSpace(c.nameInput) == "" {
 			return m, nil
@@ -738,8 +784,8 @@ func (m tuiModel) creatorNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			c.err = err.Error()
 			return m, nil
 		}
-		c.creating, c.step, c.err = true, stepCreate, ""
-		return m, c.createCmd()
+		c.err = ""
+		c.step = stepAgent
 	case "backspace":
 		if c.nameInput != "" {
 			c.nameInput = c.nameInput[:len(c.nameInput)-1]
@@ -804,6 +850,8 @@ func (c *creatorModel) view(width int) string {
 		c.viewSource(&b)
 	case stepAgent:
 		c.viewAgent(&b)
+	case stepAgentName:
+		c.viewAgentName(&b)
 	case stepAgents:
 		c.viewAgents(&b)
 	case stepName:
@@ -852,23 +900,28 @@ func (c *creatorModel) viewRoot(b *strings.Builder) {
 }
 
 func (c *creatorModel) viewPick(b *strings.Builder) {
-	b.WriteString(styleMuted.Render("Repos in " + tildeify(c.root)))
-	b.WriteString("\n\n")
-	if c.scanning {
-		b.WriteString(styleMuted.Render("scanning…"))
-		return
+	// Remote sources lead. Cloning from GitHub is the common case — a local repo
+	// is the exception, and burying the GitHub row under a scan of whatever
+	// happens to be in one directory made the primary path the least visible.
+	// Two labelled sections, so it reads as a choice between kinds of source
+	// rather than one long undifferentiated list.
+	c.writeHeader(b, "Clone from GitHub")
+	c.writeChoice(b, c.repoCursor == pickRowGitHub, "⬇  Browse my GitHub repos…")
+	c.writeChoice(b, c.repoCursor == pickRowManual, "✎  Enter a repo URL or path…")
+
+	b.WriteString("\n")
+	c.writeHeader(b, "Use a local repo — "+tildeify(c.root))
+	switch {
+	case c.scanning:
+		b.WriteString(styleMuted.Render("  scanning…") + "\n")
+	case len(c.repos) == 0:
+		b.WriteString(styleMuted.Render("  no git repos found here") + "\n")
+	default:
+		for i, repo := range c.repos {
+			line := fmt.Sprintf("%-22s %s", truncate(repo.Name, 22), c.repoMeta(repo))
+			c.writeChoice(b, c.repoCursor == pickRowFirstRepo+i, line)
+		}
 	}
-	if len(c.repos) == 0 {
-		b.WriteString(styleMuted.Render("no git repos found here — pull from a URL or GitHub instead."))
-		b.WriteString("\n\n")
-	}
-	for i, repo := range c.repos {
-		line := fmt.Sprintf("%-22s %s", truncate(repo.Name, 22), c.repoMeta(repo))
-		c.writeChoice(b, i == c.repoCursor, line)
-	}
-	// Always-present sources below the discovered repos.
-	c.writeChoice(b, c.repoCursor == len(c.repos), "✎  Enter a repo URL or path…")
-	c.writeChoice(b, c.repoCursor == len(c.repos)+1, "⬇  Browse my GitHub repos…")
 	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [/] type a URL/path   [esc] cancel"))
 }
 
@@ -985,6 +1038,16 @@ func (c *creatorModel) viewAgent(b *strings.Builder) {
 	c.picker.view(b, "Agent", c.keyGap)
 }
 
+// viewAgentName asks for the agent's display name.
+func (c *creatorModel) viewAgentName(b *strings.Builder) {
+	b.WriteString(styleMuted.Render(c.resolution.Note))
+	b.WriteString("\n\n")
+	b.WriteString(styleMuted.Render("Name this " + c.pendingAgent.Type + " agent (e.g. \"frontend\") — or leave blank to use its id."))
+	b.WriteString("\n\n")
+	b.WriteString("agent name: " + styleAccent.Render(c.agentNameIn+"_"))
+	b.WriteString("\n\n" + styleMuted.Render("[⏎] continue   [esc] pick a different agent"))
+}
+
 // viewAgents renders the seeded-agent roster: the primary plus any extras, with
 // keys to add another, drop the last, or continue.
 func (c *creatorModel) viewAgents(b *strings.Builder) {
@@ -994,13 +1057,17 @@ func (c *creatorModel) viewAgents(b *strings.Builder) {
 	b.WriteString("\n\n")
 	for i, a := range c.agents {
 		role := fmt.Sprintf("agent %d", i+1)
-		line := fmt.Sprintf("%-9s %s", role, a.Type)
+		name := a.Label
+		if name == "" {
+			name = styleMuted.Render("(auto id)")
+		}
+		line := fmt.Sprintf("%-9s %-14s %s", role, name, a.Type)
 		if a.Cmd != "" {
 			line += "  — " + a.Cmd
 		}
 		c.writeChoice(b, false, line)
 	}
-	b.WriteString("\n" + styleMuted.Render("[a] add another   [d] remove last   [⏎] continue   [esc] start over"))
+	b.WriteString("\n" + styleMuted.Render("[a] add another   [d] remove last   [⏎] create & connect   [esc] start over"))
 }
 
 func (c *creatorModel) viewName(b *strings.Builder) {
@@ -1017,7 +1084,25 @@ func (c *creatorModel) viewName(b *strings.Builder) {
 	if c.imageMissing {
 		b.WriteString("\n\n" + styleWaiting.Render("ℹ first island — this also builds the base image (one-time, a few minutes)."))
 	}
-	b.WriteString("\n\n" + styleMuted.Render("[⏎] create & connect   [esc] back"))
+	b.WriteString("\n\n" + styleMuted.Render("[⏎] next: choose an agent   [esc] back"))
+}
+
+// Fixed row indices for the repo picker. The two remote-source actions occupy
+// the first rows; discovered local repos follow. Named because the cursor
+// arithmetic is shared between the view, the key handler and the enter action —
+// index drift between those three is exactly the bug this prevents.
+const (
+	pickRowGitHub    = 0
+	pickRowManual    = 1
+	pickRowFirstRepo = 2
+)
+
+// writeHeader renders a non-selectable section label. It deliberately consumes
+// no cursor index — the list widget maps rows to indices 1:1, so a header has to
+// be printed outside that mapping.
+func (c *creatorModel) writeHeader(b *strings.Builder, text string) {
+	b.WriteString(styleMuted.Render("  " + text))
+	b.WriteString("\n")
 }
 
 func (c *creatorModel) writeChoice(b *strings.Builder, selected bool, text string) {

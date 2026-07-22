@@ -44,16 +44,30 @@ func TestRosterFlow(t *testing.T) {
 	c := &creatorModel{step: stepAgent, picker: newAgentPicker(), resolution: reposrc.Resolution{Repo: "r"}}
 	m := tuiModel{creator: c}
 
-	// Pick the primary (shell leads the picker) → lands on the roster.
+	// Pick the primary (shell leads the picker) → naming step → roster. The
+	// agent is only committed once its name is confirmed, so a blank Enter here
+	// is the "don't care" path that keeps the generated id.
+	m = feedCreator(m, "enter")
+	if c.step != stepAgentName {
+		t.Fatalf("after primary pick: step=%v, want stepAgentName", c.step)
+	}
 	m = feedCreator(m, "enter")
 	if c.step != stepAgents || len(c.agents) != 1 || c.agents[0].Type != "shell" {
 		t.Fatalf("after primary: step=%v agents=%+v", c.step, c.agents)
 	}
+	if c.agents[0].Label != "" {
+		t.Errorf("blank name should leave Label empty, got %q", c.agents[0].Label)
+	}
 
-	// Add an extra agent: 'a' → picker, pick claude-code (down,enter) → roster.
+	// Add an extra agent: 'a' → picker, pick claude-code (down,enter), then type
+	// a name for it — naming at creation time is the point of the extra step.
 	m = feedCreator(m, "a", "down", "enter")
+	m = feedCreator(m, "a", "p", "i", "enter")
 	if c.step != stepAgents || len(c.agents) != 2 || c.agents[1].Type != "claude-code" {
 		t.Fatalf("after add: step=%v agents=%+v", c.step, c.agents)
+	}
+	if c.agents[1].Label != "api" {
+		t.Errorf("agent label = %q, want \"api\"", c.agents[1].Label)
 	}
 
 	// Remove the last (extra) — primary stays.
@@ -68,16 +82,11 @@ func TestRosterFlow(t *testing.T) {
 		t.Fatalf("primary dropped: agents=%+v", c.agents)
 	}
 
-	// Continue → name step.
+	// Continue → creates. The island name is asked for BEFORE the agent now, so
+	// the roster is the last step rather than a detour on the way to naming.
 	m = feedCreator(m, "enter")
-	if c.step != stepName {
-		t.Fatalf("continue: step=%v, want stepName", c.step)
-	}
-
-	// esc from name → back to the roster.
-	feedCreator(m, "esc")
-	if c.step != stepAgents {
-		t.Fatalf("esc from name: step=%v, want stepAgents", c.step)
+	if c.step != stepCreate {
+		t.Fatalf("continue: step=%v, want stepCreate", c.step)
 	}
 }
 
@@ -85,8 +94,8 @@ func TestRosterFlow(t *testing.T) {
 func TestExtraPickBackDiscards(t *testing.T) {
 	c := &creatorModel{step: stepAgent, picker: newAgentPicker(), resolution: reposrc.Resolution{Repo: "r"}}
 	m := tuiModel{creator: c}
-	m = feedCreator(m, "enter") // primary
-	m = feedCreator(m, "a")     // start adding extra
+	m = feedCreator(m, "enter", "enter") // primary: pick, then accept the default name
+	m = feedCreator(m, "a")              // start adding extra
 	if c.step != stepAgent || !c.pickingExtra {
 		t.Fatalf("not in extra-pick: step=%v pickingExtra=%v", c.step, c.pickingExtra)
 	}

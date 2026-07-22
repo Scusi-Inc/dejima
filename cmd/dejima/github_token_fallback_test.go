@@ -10,8 +10,11 @@ import (
 // the DEFAULT path rather than an edge case: if the match breaks, every new
 // operator gets the dead-end exit 1 again.
 func TestDeviceFlowUnconfiguredDetection(t *testing.T) {
-	// Verbatim from internal/api/github_device_flow.go.
-	daemon := errors.New("guided GitHub sign-in isn't configured on this daemon (no OAuth app); use `dejima auth push --github` with a token instead")
+	// The daemon's refusal, up to the part we match on. NB: deliberately does not
+	// include the trailing `dejima <cmd>` the real message carries — the coverage
+	// gate scans test files for command tokens and would read one here as "that
+	// command is now tested" (same trap noted in clone_hint_test.go).
+	daemon := errors.New("guided GitHub sign-in isn't configured on this daemon (no OAuth app); use the token path instead")
 	if !deviceFlowUnconfigured(daemon) {
 		t.Error("did not recognise the daemon's 'not configured' refusal — the token fallback would never trigger")
 	}
