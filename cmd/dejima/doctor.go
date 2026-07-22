@@ -177,6 +177,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkInstallMeta(r)
 	checkStateOwnership(r)
 	checkListenerExposure(r)
+	checkEgressProxy(r)
 
 	// --- Projects -------------------------------------------------------
 	c, err := client()

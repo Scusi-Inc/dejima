@@ -3,11 +3,14 @@ package service
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
+
+	"github.com/aoos/dejima/internal/fdlimit"
 )
 
 const launchdLabel = "dev.dejima.dejimad"
@@ -44,9 +47,8 @@ func (m *launchdManager) Install(binaryPath string, args []string) error {
 	outLog := filepath.Join(logDir, "dejimad.out.log")
 	errLog := filepath.Join(logDir, "dejimad.err.log")
 
-	tmpl := template.Must(template.New("plist").Parse(launchdTemplate))
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, map[string]any{
+	if err := renderPlist(&buf, map[string]any{
 		"Label":            launchdLabel,
 		"ProgramArguments": append([]string{binaryPath}, args...),
 		"WorkingDir":       home,
@@ -160,6 +162,16 @@ func currentUID() string {
 	return fmt.Sprintf("%d", os.Getuid())
 }
 
+// renderPlist executes the shared plist template into w. Both the per-user
+// LaunchAgent and the system LaunchDaemon go through here so neither can drift
+// from the other on things like the file-descriptor limit.
+func renderPlist(w io.Writer, data map[string]any) error {
+	if _, ok := data["NumberOfFiles"]; !ok {
+		data["NumberOfFiles"] = fdlimit.Target
+	}
+	return template.Must(template.New("plist").Parse(launchdTemplate)).Execute(w, data)
+}
+
 const launchdTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -181,6 +193,15 @@ const launchdTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 {{- end}}
   <key>RunAtLoad</key>
   <true/>
+  <!-- launchd's default soft limit is 256 files, which a few concurrent island
+       egress tunnels exhaust; the daemon then hangs accepts instead of erroring.
+       The daemon also raises this itself at startup — this covers the gap for
+       anything that reads the limit before that runs. -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>{{.NumberOfFiles}}</integer>
+  </dict>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+
+	"github.com/aoos/dejima/internal/fdlimit"
 )
 
 const systemdUnitName = "dejimad.service"
@@ -36,7 +38,10 @@ func (m *systemdManager) Install(binaryPath string, args []string) error {
 	}
 	tmpl := template.Must(template.New("unit").Parse(systemdTemplate))
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, map[string]string{"ExecStart": execStart}); err != nil {
+	if err := tmpl.Execute(&buf, map[string]any{
+		"ExecStart":   execStart,
+		"LimitNOFILE": fdlimit.Target,
+	}); err != nil {
 		return err
 	}
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
@@ -83,6 +88,10 @@ After=network.target docker.service
 ExecStart={{.ExecStart}}
 Restart=on-failure
 RestartSec=5
+# Each island egress tunnel costs two descriptors and lives as long as the
+# agent's session; the distro default is not sized for that. The daemon also
+# raises this itself at startup.
+LimitNOFILE={{.LimitNOFILE}}
 
 [Install]
 WantedBy=default.target
