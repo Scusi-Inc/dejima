@@ -153,6 +153,7 @@ type tuiModel struct {
 	sshPort        string // resolved SSH-façade port
 	sshResolvedFor string // the SSHAddr we last resolved, so we don't re-exec tailscale each frame
 	latestRelease  string // newest published release tag (from GitHub; "" until fetched)
+	updateCheckErr string // why the last release check failed ("" = it succeeded)
 	clientUpdate   bool   // this CLI build is behind latestRelease
 	daemonUpdate   bool   // the connected daemon is behind latestRelease
 	connectTo      string // set on quit-to-connect; main() acts on this
@@ -672,9 +673,14 @@ func (m tuiModel) Init() tea.Cmd {
 	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
-// latestReleaseMsg carries the newest published release tag (or "" on any
-// error — the update banner simply stays hidden, never blocks the TUI).
-type latestReleaseMsg struct{ latest string }
+// latestReleaseMsg carries the newest published release tag, or the reason the
+// check failed. Both matter: an empty tag with no reason is indistinguishable
+// from "you're on the latest", which is how a rate-limited check came to report
+// "already up to date" while silently knowing nothing.
+type latestReleaseMsg struct {
+	latest string
+	err    error
+}
 
 // fetchLatestReleaseCmd queries GitHub for the latest release tag. Run sparingly
 // (Init, manual refresh, and the slow releaseCheckInterval re-poll), never on the
@@ -685,7 +691,7 @@ func fetchLatestReleaseCmd() tea.Cmd {
 		defer cancel()
 		v, err := selfupdate.LatestRelease(ctx)
 		if err != nil {
-			return latestReleaseMsg{}
+			return latestReleaseMsg{err: err}
 		}
 		return latestReleaseMsg{latest: v}
 	}
@@ -876,8 +882,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case latestReleaseMsg:
 		if msg.latest != "" {
 			m.latestRelease = msg.latest
+			m.updateCheckErr = ""
 			m.clientUpdate = selfupdate.Evaluate(version.Version, msg.latest, selfupdate.DetectMode()).UpdateAvailable
 			m.daemonUpdate = daemonUpdateAvailable(msg.latest, m.overview)
+		} else if msg.err != nil {
+			// Remember WHY we don't know, so [U] can say "couldn't check"
+			// instead of claiming the build is current.
+			m.updateCheckErr = msg.err.Error()
 		}
 		return m, nil
 
@@ -1690,6 +1701,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirm = &confirmPrompt{verb: "update-client"}
 		} else if m.daemonUpdate {
 			m.confirm = &confirmPrompt{verb: "update-daemon"}
+		} else if m.updateCheckErr != "" {
+			// We never learned what the latest release is, so "up to date" would
+			// be a claim we can't support.
+			m.updateError = "couldn't check for updates: " + m.updateCheckErr
 		} else {
 			m.lastNotice = "already up to date"
 		}
