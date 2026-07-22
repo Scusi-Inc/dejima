@@ -160,6 +160,13 @@ dejima                # first-run wizard handles DEJIMA_HOST configuration
 
 ### Windows (PowerShell — prebuilt binary)
 
+> Open **PowerShell**, not Command Prompt. `irm` and `iex` are PowerShell
+> commands; in `cmd.exe` they fail with `'irm' is not recognized as an internal
+> or external command`. From Command Prompt, use
+> `powershell -NoProfile -Command "irm https://dejima.tech/install-client.ps1 | iex"`
+> instead. The same applies to `curl ... | bash` — there is no `bash` in
+> `cmd.exe`; that line is for macOS/Linux.
+
 ```powershell
 irm https://dejima.tech/install-client.ps1 | iex
 ```

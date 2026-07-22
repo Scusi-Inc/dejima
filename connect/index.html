@@ -113,7 +113,11 @@
       <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
       <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
     </div>
-    <p class="small">On Windows, use <code>npm i -g dejima</code>, or the PowerShell installer <code>irm https://dejima.tech/install-client.ps1 | iex</code>. The client is just the CLI; it doesn't run a server of its own.</p>
+    <p class="small">That line is bash &mdash; macOS or Linux. On Windows, open <strong>PowerShell</strong> (not Command
+      Prompt) and run <code>irm https://dejima.tech/install-client.ps1 | iex</code>, or use <code>npm i -g dejima</code>
+      which works from either. If you get <code>'irm' is not recognized&hellip;</code> you are in <code>cmd.exe</code>;
+      <code>powershell -NoProfile -Command "irm https://dejima.tech/install-client.ps1 | iex"</code> works there. The
+      client is just the CLI; it doesn't run a server of its own.</p>
   </div>
 
   <div class="step">

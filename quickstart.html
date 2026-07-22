@@ -76,7 +76,10 @@
         <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
         <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
       </div>
-      <p class="small">macOS or Linux. Sets up Tailscale, the island image, and the background daemon (and Docker, on macOS). Idempotent, so it's safe to re-run.</p>
+      <p class="small"><strong>macOS or Linux only</strong> &mdash; this line is bash, so it will not run on Windows
+        (<code>'bash' is not recognized&hellip;</code> means you are on Windows). Windows machines run the <em>client</em>
+        instead; see the next section. Sets up Tailscale, the island image, and the background daemon (and Docker, on
+        macOS). Idempotent, so it's safe to re-run.</p>
     </div>
 
     <div class="step">
@@ -129,9 +132,17 @@
             <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
             <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
           </div>
-          <p class="os"><svg class="os-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.1l7.5-1.03v7.24H3V5.1zm0 13.8l7.5 1.03v-7.15H3v6.12zM11.4 3.94L21 2.6v8.7h-9.6V3.94zm0 16.12L21 21.4v-8.62h-9.6v7.28z"/></svg>Windows (PowerShell)</p>
+          <p class="os"><svg class="os-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.1l7.5-1.03v7.24H3V5.1zm0 13.8l7.5 1.03v-7.15H3v6.12zM11.4 3.94L21 2.6v8.7h-9.6V3.94zm0 16.12L21 21.4v-8.62h-9.6v7.28z"/></svg>Windows &mdash; open <strong>PowerShell</strong>, not Command Prompt</p>
           <div class="cmd">
             <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
+            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          </div>
+          <p class="small">Press <kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em> / <em>Windows PowerShell</em>. If you see
+            <code>'irm' is not recognized as an internal or external command</code>, you are in Command Prompt
+            (<code>cmd.exe</code>) &mdash; <code>irm</code> and <code>iex</code> are PowerShell commands. Either reopen in
+            PowerShell, or paste this, which works from Command Prompt too:</p>
+          <div class="cmd">
+            <pre><code>powershell -NoProfile -Command "irm https://dejima.tech/install-client.ps1 | iex"</code></pre>
             <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
           </div>
           <details class="disclose">
