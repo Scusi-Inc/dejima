@@ -608,16 +608,23 @@ func newServiceCmd() *cobra.Command {
 			// Record install context so the daemon can later update + restart
 			// itself (TUI 'U' / dejima update): the source checkout for a source
 			// install, and whether it's a system service (restart domain).
-			meta := selfupdate.InstallMeta{System: systemSvc}
-			if selfupdate.DetectMode() == selfupdate.ModeSource {
-				meta.SourceDir = selfupdate.ResolveSourceDir()
-				if meta.SourceDir == "" {
-					// Say so. Silently recording nothing is what left operators
-					// with a daemon that refuses to self-update, discovered only
-					// much later when the TUI's [U] failed.
-					fmt.Fprintln(os.Stderr, "warning: couldn't locate your dejima checkout, so daemon self-update isn't wired up.")
-					fmt.Fprintln(os.Stderr, "         re-run this from inside your checkout to record it.")
-				}
+			// Record the checkout whenever we can actually find one, WITHOUT
+			// gating on DetectMode. DetectMode reads the version string, and a
+			// source build sitting exactly on a release tag looks identical to a
+			// packaged release — so gating here meant a build from a tagged
+			// checkout skipped recording, left SourceDir empty, and the daemon
+			// then chose the release path: download and overwrite its own binary
+			// in a root-owned /usr/local/bin, which it has no permission to do.
+			// A real checkout is better evidence of a source install than the
+			// version string, and the daemon already treats SourceDir as
+			// authoritative over DetectMode.
+			meta := selfupdate.InstallMeta{System: systemSvc, SourceDir: selfupdate.ResolveSourceDir()}
+			if meta.SourceDir == "" && selfupdate.DetectMode() == selfupdate.ModeSource {
+				// Say so. Silently recording nothing is what left operators with
+				// a daemon that refuses to self-update, discovered only much
+				// later when the TUI's [U] failed.
+				fmt.Fprintln(os.Stderr, "warning: couldn't locate your dejima checkout, so daemon self-update isn't wired up.")
+				fmt.Fprintln(os.Stderr, "         re-run this from inside your checkout to record it.")
 			}
 			if err := selfupdate.SaveInstallMeta(meta); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: could not record install metadata for self-update: %v\n", err)
