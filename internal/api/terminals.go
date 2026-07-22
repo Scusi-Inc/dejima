@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/aoos/dejima/internal/bridge"
 	"github.com/aoos/dejima/internal/hostterm"
-	"github.com/aoos/dejima/internal/hosttmux"
 )
 
 // Host terminals: operator shells running in tmux on the DAEMON HOST (no
@@ -154,14 +155,121 @@ func (s *Server) terminalSessionWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such terminal %q", id))
 		return
 	}
-	tmuxName := term.Tmux()
-	s.serveTmuxWS(w, r, "host terminal", id,
-		func(ctx context.Context, rows, cols uint16) (*bridge.PTYSession, error) {
-			return bridge.AttachToHostTmux(ctx, tmuxName, rows, cols)
-		},
-		func(ctx context.Context) (uint16, uint16, bool) {
-			return bridge.HostMaxClientSize(ctx, tmuxName)
-		})
+	label := r.URL.Query().Get("label")
+	if label == "" {
+		label = "anonymous"
+	}
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		s.log.Error("terminal ws accept", "err", err)
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	s.log.Info("host terminal attached", "id", id, "label", label)
+	defer s.log.Info("host terminal detached", "id", id, "label", label)
+
+	// Read client envelopes through a channel so we can race the first one
+	// against a short timer to size the PTY up-front (see sessionWS for why).
+	type wsRead struct {
+		env *SessionEnvelope
+		err error
+	}
+	envCh := make(chan wsRead)
+	go func() {
+		defer close(envCh)
+		for {
+			_, data, rerr := conn.Read(ctx)
+			if rerr != nil {
+				select {
+				case envCh <- wsRead{err: rerr}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			var env SessionEnvelope
+			if json.Unmarshal(data, &env) != nil {
+				continue
+			}
+			select {
+			case envCh <- wsRead{env: &env}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	var (
+		initRows, initCols uint16
+		pending            *SessionEnvelope
+	)
+	select {
+	case rd := <-envCh:
+		if rd.err == nil && rd.env != nil {
+			if rd.env.Type == "resize" {
+				initRows, initCols = rd.env.Rows, rd.env.Cols
+			} else {
+				pending = rd.env
+			}
+		}
+	case <-time.After(500 * time.Millisecond):
+	case <-ctx.Done():
+		return
+	}
+	if initRows == 0 || initCols == 0 {
+		if rr, cc, ok := bridge.HostMaxClientSize(ctx, term.Tmux()); ok {
+			initRows, initCols = rr, cc
+		}
+	}
+
+	sess, err := bridge.AttachToHostTmux(ctx, term.Tmux(), initRows, initCols)
+	if err != nil {
+		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
+		return
+	}
+	defer sess.Close()
+
+	_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "hello"})
+	if pending != nil {
+		applyEnvelope(sess, pending)
+	}
+
+	// PTY → websocket pump.
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := sess.Read(buf)
+			if n > 0 {
+				if sendEnvelope(ctx, conn, SessionEnvelope{Type: "data", B64: encodeB64(buf[:n])}) != nil {
+					cancel()
+					return
+				}
+			}
+			if rerr != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	// Websocket → PTY pump.
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case rd, ok := <-envCh:
+			if !ok || rd.err != nil {
+				return
+			}
+			if !applyEnvelope(sess, rd.env) {
+				return
+			}
+		}
+	}
 }
 
 // --- host tmux lifecycle (runs on the daemon host directly, no container) ---
@@ -169,8 +277,7 @@ func (s *Server) terminalSessionWS(w http.ResponseWriter, r *http.Request) {
 // startHostTmux brings a detached host tmux session up; a pre-existing session
 // is not an error (idempotent).
 func startHostTmux(ctx context.Context, session string) error {
-	argv := hosttmux.NewSessionArgs("new-session", "-d", "-s", session)
-	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", session).CombinedOutput()
 	if err != nil && strings.Contains(string(out), "duplicate session") {
 		return nil
 	}

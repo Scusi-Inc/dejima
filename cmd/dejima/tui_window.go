@@ -12,11 +12,7 @@ import (
 // in the current environment. The Enter key uses this to choose between
 // "open in a new window" (default) and "attach in-place, replacing the TUI"
 // (the graceful fallback).
-// canOpenNewWindow reports whether we can spawn a sibling window/tab for an
-// attach. It's a var so tests can force the in-process (quit-to-attach) path
-// deterministically regardless of GOOS (darwin/windows would otherwise always
-// be true, and macOS would try to script Terminal).
-var canOpenNewWindow = func() bool {
+func canOpenNewWindow() bool {
 	return os.Getenv("TMUX") != "" || goruntime.GOOS == "darwin" || goruntime.GOOS == "windows"
 }
 
@@ -66,7 +62,7 @@ func (m tuiModel) windowLabel(name, agentID, agentLabel string) string {
 	if suffix == "" {
 		return island
 	}
-	return island + "/" + suffix
+	return island + "-" + suffix
 }
 
 // openAgentWindow launches `dejima <verb> <name> [--agent id] [extra…]` in a
@@ -87,11 +83,9 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 	// back to the durable handles when none is set. The dashboard's own tab is
 	// titled "dejima" (set via tea.SetWindowTitle at startup).
 	winLabel := m.windowLabel(name, agentID, agentLabel)
-	// A shell command string: pin DEJIMA_HOST + the resolved tab title (so the
-	// spawned session's OSC title uses the agent's LABEL, not its id), then exec
-	// the verb. winLabel already prefers the label and falls back to the id.
-	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s %s %s",
-		shquote(m.activeHost), shquote(winLabel), shquote(exe), verb, shquote(name))
+	// A shell command string: pin DEJIMA_HOST, then exec the verb.
+	inner := fmt.Sprintf("DEJIMA_HOST=%s exec %s %s %s",
+		shquote(m.activeHost), shquote(exe), verb, shquote(name))
 	if agentID != "" {
 		inner += " --agent " + shquote(agentID)
 	}
@@ -108,36 +102,6 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 		return openWindowsTerminal(exe, verb, name, agentID, winLabel, extra, m.activeHost)
 	default:
 		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run the TUI inside tmux, or `dejima %s %s` in another terminal", verb, name)
-	}
-}
-
-// openHostTermWindow attaches to a host terminal (`dejima term attach <id>`) in a
-// separate window/tab, so the dashboard stays up — the same "don't hijack the
-// current view" behavior island shells and agent sessions already get. The tab is
-// titled "host/<label>" (falling back to the id), and the child inherits the TUI's
-// current DEJIMA_HOST so it hits the same daemon. The caller falls back to the
-// in-place quit-to-attach path when canOpenNewWindow() is false.
-func (m tuiModel) openHostTermWindow(id, label string) error {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "dejima"
-	}
-	title := "host/" + id
-	if label != "" {
-		title = "host/" + label
-	}
-	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s term attach %s",
-		shquote(m.activeHost), shquote(title), shquote(exe), shquote(id))
-	switch {
-	case os.Getenv("TMUX") != "":
-		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
-	case goruntime.GOOS == "darwin":
-		return openMacTerminal(inner)
-	case goruntime.GOOS == "windows":
-		// verb "term attach" is two trusted words; id is the terminal handle.
-		return openWindowsTerminal(exe, "term attach", id, "", title, nil, m.activeHost)
-	default:
-		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run the TUI inside tmux, or `dejima term attach %s` in another terminal", id)
 	}
 }
 
@@ -162,16 +126,7 @@ func openWindowsTerminal(exe, verb, name, agentID, title string, extra []string,
 	for _, e := range extra {
 		run += " " + e
 	}
-	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
-	// title matches the tab name. Strip cmd.exe-special chars from the title
-	// before interpolating it (it's a user label, unlike name/agentID/host above).
-	safeTitle := strings.Map(func(r rune) rune {
-		if strings.ContainsRune(`"&|<>^%!`, r) {
-			return -1
-		}
-		return r
-	}, title)
-	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& set "DEJIMA_TAB_TITLE=%s"&& %s`, host, safeTitle, run)
+	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& %s`, host, run)
 	if wt, err := exec.LookPath("wt.exe"); err == nil {
 		// -w 0 targets the CURRENT Windows Terminal window (a new tab in it).
 		// -w -1 / "new" would force a separate window every time — which is the

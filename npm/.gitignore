@@ -1,7 +1,2 @@
-# Per-platform packages scaffolded at publish time by
-# scripts/build-platform-packages.mjs — built in CI, never committed or published
-# from the tree.
-platforms/
-
-# Legacy: binary downloaded at install time by the old install.js (removed).
+# Downloaded at install time by install.js — never committed or published.
 binary/

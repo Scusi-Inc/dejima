@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/aoos/dejima/internal/clientcfg"
-	"github.com/aoos/dejima/internal/invite"
 )
 
 // normalizeHost trims the entered daemon address and appends the default port
@@ -35,7 +34,6 @@ type switcherModel struct {
 	step     switcherStep
 	label    string // add-flow inputs
 	host     string
-	blob     string // join-flow input: a pasted `dejima-invite:` blob
 	err      string
 }
 
@@ -45,7 +43,6 @@ const (
 	swList switcherStep = iota
 	swAddLabel
 	swAddHost
-	swJoin // paste a team invite blob → decode → save profile → connect
 )
 
 // openSwitcher loads saved profiles (prepending a synthetic "local") and opens
@@ -71,8 +68,6 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switcherAddLabelKey(msg)
 	case swAddHost:
 		return m.switcherAddHostKey(msg)
-	case swJoin:
-		return m.switcherJoinKey(msg)
 	}
 	// swList
 	switch msg.String() {
@@ -88,10 +83,6 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "a":
 		s.step, s.label, s.host, s.err = swAddLabel, "", "", ""
-	case "J", "i":
-		// Join via a team invite — paste the blob an owner sent you. (Capital J and
-		// `i` both open it; lowercase j is list navigation above.)
-		s.step, s.blob, s.err = swJoin, "", ""
 	case "d":
 		if s.cursor > 0 { // never delete the synthetic "local"
 			return m.switcherDelete()
@@ -130,11 +121,6 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 	m.islands = nil
 	m.detail = nil
 	m.overview = nil
-	// The caller's role/owner is per-connection — a teammate can be owner on one
-	// server and operator on another. Clear it on every switch so nothing (e.g.
-	// the owner-only host-terminal band) reads the previous server's role; the
-	// new overview re-stamps it.
-	m.callerOwner, m.callerRole = "", ""
 	m.events_ = nil
 	m.selected = 0
 	m.lastError = ""
@@ -145,10 +131,14 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 	s := m.switcher
 	target := s.profiles[s.cursor]
-	// Shared store mutation — the same path as `dejima profile rm`. Removes the
-	// profile and clears ActiveProfile if it was the one deleted (profile names
-	// are unique, so a name match is exact).
-	_ = clientcfg.RemoveProfile(target.Name)
+	cfg, _ := clientcfg.Load()
+	kept := cfg.Profiles[:0]
+	for _, p := range cfg.Profiles {
+		if p.Name != target.Name || p.Host != target.Host {
+			kept = append(kept, p)
+		}
+	}
+	cfg.Profiles = kept
 
 	// If we just deleted the profile we're connected through, the live client
 	// still points at the now-gone host — and that host may be exactly why the
@@ -157,6 +147,9 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 	// session instead of leaving it wedged on a dead connection.
 	var cmd tea.Cmd
 	if target.Host == m.activeHost {
+		if cfg.ActiveProfile == target.Name {
+			cfg.ActiveProfile = ""
+		}
 		if c, err := clientForHost(""); err == nil {
 			m.client = c
 			m.activeHost = ""
@@ -165,7 +158,6 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 			m.islands = nil
 			m.detail = nil
 			m.overview = nil
-			m.callerOwner, m.callerRole = "", "" // role is per-connection; don't carry it across a switch
 			m.events_ = nil
 			m.selected = 0
 			m.lastError = ""
@@ -173,9 +165,9 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Rebuild the displayed list from the persisted config (keep synthetic local at 0).
-	cfg, _ := clientcfg.Load()
-	s.profiles = append([]clientcfg.Profile{{Name: "local", Host: ""}}, cfg.Profiles...)
+	_ = clientcfg.Save(cfg)
+	// Rebuild the displayed list (keep synthetic local at 0).
+	s.profiles = append([]clientcfg.Profile{{Name: "local", Host: ""}}, kept...)
 	if s.cursor >= len(s.profiles) {
 		s.cursor = len(s.profiles) - 1
 	}
@@ -229,74 +221,6 @@ func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// switcherJoinKey drives the join-via-invite step: collect a pasted
-// `dejima-invite:` blob, then decode + save + connect on Enter. Unlike the
-// label/host fields, this accepts a multi-rune paste (a bracketed paste arrives
-// as a single KeyRunes event carrying the whole blob), since nobody hand-types
-// a ~150-char invite.
-func (m tuiModel) switcherJoinKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	s := m.switcher
-	switch msg.String() {
-	case "esc":
-		s.step, s.err = swList, ""
-		return m, nil
-	case "enter":
-		return m.switcherJoinSubmit()
-	case "backspace":
-		if r := []rune(s.blob); len(r) > 0 {
-			s.blob = string(r[:len(r)-1])
-		}
-		return m, nil
-	}
-	// Accept typed and pasted runes (the blob is the whole Runes slice).
-	if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-		s.blob += string(msg.Runes)
-	}
-	return m, nil
-}
-
-// switcherJoinSubmit decodes the pasted invite, persists it as the active
-// profile (host + token), and hot-swaps the client onto it — the TUI equivalent
-// of `dejima join <blob>`. Decode/save errors render verbatim in the overlay.
-func (m tuiModel) switcherJoinSubmit() (tea.Model, tea.Cmd) {
-	s := m.switcher
-	p, err := invite.Decode(s.blob)
-	if err != nil {
-		s.err = err.Error()
-		return m, nil
-	}
-	name, err := clientcfg.SaveInvite(p)
-	if err != nil {
-		s.err = err.Error()
-		return m, nil
-	}
-	// SaveInvite made the profile active and stored its token, so clientForHost
-	// resolves the bearer automatically (tokenForHost: profile token, env-wins).
-	c, err := clientForHost(p.Host)
-	if err != nil {
-		s.err = err.Error()
-		return m, nil
-	}
-	m.client = c
-	m.activeHost = p.Host
-	m.activeLabel = name
-	m.activeSource = "profile"
-	m.islands = nil
-	m.detail = nil
-	m.overview = nil
-	// The caller's role/owner is per-connection — a teammate can be owner on one
-	// server and operator on another. Clear it on every switch so nothing (e.g.
-	// the owner-only host-terminal band) reads the previous server's role; the
-	// new overview re-stamps it.
-	m.callerOwner, m.callerRole = "", ""
-	m.events_ = nil
-	m.selected = 0
-	m.lastError = ""
-	m.lastNotice = fmt.Sprintf("joined %s as %s — saved profile %q", p.Host, p.Role, name)
-	m.switcher = nil
-	return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
-}
-
 // printableInput returns the text a key event should contribute to a text field,
 // or "" for anything that isn't a single printable character. Filtering here
 // keeps control characters (NUL, etc.) and multi-rune editing keys out of saved
@@ -329,16 +253,6 @@ func (s *switcherModel) view() string {
 		b.WriteString("\n\n" + styleMuted.Render("How to find it: on the machine running dejimad, run ") + styleAccent.Render("tailscale ip") + styleMuted.Render(" → use that address with ") + styleAccent.Render(":7273") + styleMuted.Render("."))
 		b.WriteString("\n" + styleMuted.Render("(a bare host with no :port gets :7273 added automatically.)"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] save   [esc] back"))
-	case swJoin:
-		b.WriteString(styleMuted.Render("Joining a teammate's server? Paste the ") + styleAccent.Render("dejima-invite:") + styleMuted.Render(" blob they sent you."))
-		b.WriteString("\n" + styleMuted.Render("It carries the host + your access token — no env vars, no manual host:port."))
-		// Show a length indicator rather than the raw secret-bearing blob.
-		preview := styleMuted.Render("(nothing pasted yet)")
-		if s.blob != "" {
-			preview = styleAccent.Render(fmt.Sprintf("✓ %d characters pasted", len([]rune(strings.TrimSpace(s.blob)))))
-		}
-		b.WriteString("\n\ninvite: " + preview)
-		b.WriteString("\n\n" + styleMuted.Render("[⏎] join & connect   [esc] back"))
 	default:
 		b.WriteString(styleMuted.Render("Pick a target. Switching reconnects in place."))
 		b.WriteString("\n\n")
@@ -355,7 +269,7 @@ func (s *switcherModel) view() string {
 			}
 			b.WriteString("\n")
 		}
-		b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] connect   [a] add   [J] join via invite   [d] delete   [esc] close"))
+		b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] connect   [a] add   [d] delete   [esc] close"))
 	}
 
 	if s.err != "" {

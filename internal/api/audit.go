@@ -247,8 +247,6 @@ var auditableLifecycle = map[events.Type]bool{
 	events.TypePanicCleared:       true,
 	events.TypeDaemonStarted:      true,
 	events.TypeContainerCrashed:   true,
-	events.TypeAgentSilent:        true, // operator alert: a running agent went silent
-	events.TypeAgentRecovered:     true, // its heartbeat came back
 }
 
 // auditLifecycle appends a governance-relevant lifecycle event to the ledger.
@@ -259,28 +257,11 @@ func (s *Server) auditLifecycle(e events.Event) {
 		return
 	}
 	_ = s.ledgerAppend(ledger.Entry{
-		Type:       string(e.Type),
-		Island:     e.Island,
-		Agent:      e.Agent, // id stays the lookup handle
-		AgentLabel: eventAgentLabel(e),
-		Detail:     lifecycleDetail(e),
+		Type:   string(e.Type),
+		Island: e.Island,
+		Agent:  e.Agent,
+		Detail: lifecycleDetail(e),
 	})
-}
-
-// eventAgentLabel pulls the agent's human-given label out of an event payload,
-// when the emitter included one (the agent-added/removed lifecycle events do).
-// It lets the ledger carry a name alongside the bare agent id for read-side
-// display, without the id (the keyed lookup handle) ever changing.
-func eventAgentLabel(e events.Event) string {
-	if e.Payload == nil {
-		return ""
-	}
-	if v, ok := e.Payload["label"]; ok {
-		if sv, ok := v.(string); ok {
-			return sv
-		}
-	}
-	return ""
 }
 
 // lifecycleDetail extracts a short human-readable note from an event's payload
@@ -477,14 +458,14 @@ func writeAuditCSV(w http.ResponseWriter, entries []ledger.Entry) {
 	w.WriteHeader(http.StatusOK)
 	cw := csv.NewWriter(w)
 	_ = cw.Write([]string{
-		"seq", "time", "type", "island", "agent", "agent_label", "actor", "role",
+		"seq", "time", "type", "island", "agent", "actor", "role",
 		"method", "path", "status", "scope", "mode", "bytes", "decision", "detail", "chain",
 	})
 	for _, e := range entries {
 		_ = cw.Write([]string{
 			strconv.FormatUint(e.Seq, 10),
 			e.Time.UTC().Format(time.RFC3339),
-			e.Type, e.Island, e.Agent, e.AgentLabel, e.Actor, e.Role,
+			e.Type, e.Island, e.Agent, e.Actor, e.Role,
 			e.Method, e.Path, statusStr(e.Status), e.Scope, e.Mode,
 			strconv.FormatInt(e.Bytes, 10), e.Decision, e.Detail, e.Chain,
 		})

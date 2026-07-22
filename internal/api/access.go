@@ -103,16 +103,6 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	tmp.Close()
 
-	// `docker cp` preserves the SOURCE file's mode, and the daemon's temp file is
-	// 0600 owned by the daemon's host uid (e.g. 501 on macOS) — which the in-island
-	// agent (uid 1000) then can't read. Make it world-readable so a copied-in file
-	// (e.g. an image for the agent to ingest) is agent-readable with no in-container
-	// chmod (we can't chown: `docker exec` runs as the non-root container user).
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
 	// docker cp wants a path that exists; ensure parent dir on the container side.
 	parent := filepath.Dir(target)
 	_, _, _, _ = s.rt.Exec(r.Context(), p.ContainerName(), []string{"mkdir", "-p", parent})
@@ -203,17 +193,6 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Private visibility (P2): a teammate's overview reflects only its OWN islands;
-	// the host owner sees the whole fleet. Substrate/host facts below stay
-	// host-wide (they're not per-owner); the privacy-preserving cross-tenant
-	// rollup is the separate /v1/aggregate (P3).
-	visible := projects[:0]
-	for _, p := range projects {
-		if s.visibleTo(r.Context(), p) {
-			visible = append(visible, p)
-		}
-	}
-	projects = visible
 	out := OverviewResponse{
 		TotalIslands:         len(projects),
 		DaemonStartedAt:      s.startedAt,
@@ -261,50 +240,6 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	out.HostMemoryBytes = vmmem.HostMemoryBytes()
 	out.VMRecommendedBytes = vmmem.RecommendedBytes(out.HostMemoryBytes)
-	// Stamp the caller's own identity (multi-tenant "who am I") so a client can
-	// drive its own-vs-all view without a second request.
-	if id, ok := IdentityFromContext(r.Context()); ok {
-		out.Owner = id.Owner
-		out.Role = string(id.Role)
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// handleAggregate returns the privacy-preserving host-wide rollup: counts +
-// total mem/cpu/disk across ALL islands, regardless of owner, so any
-// authenticated caller (teammate included) can see shared-host utilization
-// WITHOUT seeing what runs. Deliberately NOT owner-filtered (that's the point,
-// vs the owner-scoped overview) and carries NO names, repos, owners, or
-// per-island rows. Mem/cpu are summed the same way as OverviewResponse.
-func (s *Server) handleAggregate(w http.ResponseWriter, r *http.Request) {
-	projects, err := project.List()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	out := AggregateResponse{TotalIslands: len(projects)}
-	allStats := s.statsAll(r.Context())
-	for _, p := range projects {
-		status, _ := s.rt.Status(r.Context(), p.ContainerName())
-		switch status {
-		case runtime.StatusRunning:
-			out.Running++
-			if stats, ok := allStats[p.ContainerName()]; ok {
-				out.MemoryUsageBytes += stats.MemoryUsageBytes
-				out.MemoryLimitBytes += stats.MemoryLimitBytes
-				out.CPUPercent += stats.CPUPercent
-			}
-		default:
-			if p.DesiredState == project.StateHibernated {
-				out.Hibernated++
-			}
-		}
-	}
-	for _, sz := range s.volumeSizes(r.Context()) {
-		if sz > 0 {
-			out.DiskTotalBytes += sz
-		}
-	}
 	writeJSON(w, http.StatusOK, out)
 }
 

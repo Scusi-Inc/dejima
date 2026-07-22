@@ -2,7 +2,7 @@
   "name": "@dejima/sdk",
   "version": "0.1.0",
   "description": "TypeScript/JavaScript client for the Dejima API — run a fleet of AI coding agents on hardware you own.",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

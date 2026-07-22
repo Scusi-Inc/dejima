@@ -35,19 +35,18 @@ import (
 // marshals identically whether the writer knew about it or not. Do NOT drop
 // omitempty on an existing or new field — it would silently break every chain.
 type Entry struct {
-	Seq        uint64    `json:"seq"`
-	Time       time.Time `json:"time"`
-	Type       string    `json:"type"` // port.grant | port.revoke | trade.read | trade.write | trade.deny | api.request | <lifecycle event>
-	Island     string    `json:"island"`
-	Agent      string    `json:"agent,omitempty"`       // agent id — the machine-keyed lookup handle
-	AgentLabel string    `json:"agent_label,omitempty"` // agent's human-given name, for read-side display (#190 label(id)); Agent stays the id
-	Scope      string    `json:"scope,omitempty"`       // scope name
-	Path       string    `json:"path,omitempty"`        // host path (scope) or path within scope (trade); request path (api.request)
-	Mode       string    `json:"mode,omitempty"`        // ro | rw
-	Bytes      int64     `json:"bytes,omitempty"`
-	SHA256     string    `json:"sha256,omitempty"`   // content hash of the file (trades)
-	Decision   string    `json:"decision,omitempty"` // allowed | denied
-	Detail     string    `json:"detail,omitempty"`
+	Seq      uint64    `json:"seq"`
+	Time     time.Time `json:"time"`
+	Type     string    `json:"type"` // port.grant | port.revoke | trade.read | trade.write | trade.deny | api.request | <lifecycle event>
+	Island   string    `json:"island"`
+	Agent    string    `json:"agent,omitempty"`
+	Scope    string    `json:"scope,omitempty"` // scope name
+	Path     string    `json:"path,omitempty"`  // host path (scope) or path within scope (trade); request path (api.request)
+	Mode     string    `json:"mode,omitempty"`  // ro | rw
+	Bytes    int64     `json:"bytes,omitempty"`
+	SHA256   string    `json:"sha256,omitempty"`   // content hash of the file (trades)
+	Decision string    `json:"decision,omitempty"` // allowed | denied
+	Detail   string    `json:"detail,omitempty"`
 	// Operational audit fields (api.request + lifecycle records).
 	Method string `json:"method,omitempty"` // HTTP method (api.request)
 	Status int    `json:"status,omitempty"` // HTTP status code (api.request)

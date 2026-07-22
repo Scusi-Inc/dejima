@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/aoos/dejima/internal/clientcfg"
 )
@@ -81,69 +80,6 @@ func TestAnnouncement(t *testing.T) {
 	}
 }
 
-// TestAnnouncementLifecycle locks in the update-bar states and their precedence:
-// red failure > orange restart-pending > green applied > amber available. The
-// styles differ per state so each reads distinctly.
-func TestAnnouncementLifecycle(t *testing.T) {
-	// lipgloss.Style isn't comparable (it holds funcs), so identify a style by
-	// what it renders.
-	sameStyle := func(a, b lipgloss.Style) bool { return a.Render("x") == b.Render("x") }
-	full := func(m tuiModel) (string, lipgloss.Style) {
-		f, _, st, ok := m.announcement()
-		if !ok {
-			t.Helper()
-			t.Fatal("expected an announcement")
-		}
-		return f, st
-	}
-
-	applied, appliedStyle := full(tuiModel{updateApplied: "daemon updated to v9 — restarting"})
-	if !strings.Contains(applied, "✓") || !sameStyle(appliedStyle, styleSuccessBroadcast) {
-		t.Errorf("applied should be a green ✓ banner: %q", applied)
-	}
-	restart, restartStyle := full(tuiModel{restartPending: "client updated to v9 — restart dejima to apply"})
-	if !strings.Contains(restart, "restart") || !sameStyle(restartStyle, styleWarnBroadcast) {
-		t.Errorf("restart-pending should be an orange banner: %q", restart)
-	}
-	failed, failStyle := full(tuiModel{updateError: "boom"})
-	if !strings.Contains(failed, "retry") || !sameStyle(failStyle, styleErrorBroadcast) {
-		t.Errorf("failure should be a red retry banner: %q", failed)
-	}
-
-	// Precedence: a failure outranks a pending restart, which outranks a fading
-	// success, which outranks the plain "available" prompt.
-	_, st := full(tuiModel{updateError: "boom", restartPending: "x", updateApplied: "y", clientUpdate: true})
-	if !sameStyle(st, styleErrorBroadcast) {
-		t.Error("failure must outrank every other update banner")
-	}
-	_, st = full(tuiModel{restartPending: "x", updateApplied: "y", clientUpdate: true})
-	if !sameStyle(st, styleWarnBroadcast) {
-		t.Error("restart-pending must outrank applied + available")
-	}
-	_, st = full(tuiModel{updateApplied: "y", clientUpdate: true})
-	if !sameStyle(st, styleSuccessBroadcast) {
-		t.Error("applied must outrank the available prompt")
-	}
-}
-
-// TestUpdateNoticeFade: the green banner clears only when the fade tick matches
-// the token that armed it — a newer banner set in between must survive.
-func TestUpdateNoticeFade(t *testing.T) {
-	var m tuiModel
-	m.showUpdateApplied("first")
-	stale := m.applyToken
-	m.showUpdateApplied("second") // a newer success takes the slot + its own token
-
-	out, _ := m.Update(updateNoticeFadedMsg{token: stale})
-	if got := out.(tuiModel).updateApplied; got != "second" {
-		t.Errorf("stale fade wiped a newer banner: updateApplied=%q, want %q", got, "second")
-	}
-	out, _ = out.(tuiModel).Update(updateNoticeFadedMsg{token: out.(tuiModel).applyToken})
-	if got := out.(tuiModel).updateApplied; got != "" {
-		t.Errorf("matching fade should clear the banner, got %q", got)
-	}
-}
-
 // resolveTarget is the single source of truth for the connection target. It must
 // honor DEJIMA_HOST first (override + in-island path), then the saved active
 // profile (so a remote target survives restarts), then the local socket.
@@ -198,100 +134,6 @@ func TestPrintableInput(t *testing.T) {
 				t.Fatalf("printableInput(%v) = %q, want %q", tc.msg, got, tc.want)
 			}
 		})
-	}
-}
-
-// goldenInvite is the frozen vector a1 published with the invite backend (PR
-// #219). Asserting against this exact string keeps the TUI join side in lockstep
-// with the issuer/encoder; if either drifts, this fails.
-const goldenInvite = "dejima-invite:eyJ2IjoxLCJob3N0IjoibWluaW9uLnRzLm5ldDo3Mjc0IiwidG9rZW4iOiJzZWtfYWJjMTIzIiwicm9sZSI6Im9wZXJhdG9yIiwiaXNsYW5kcyI6WyJ3ZWJhcHAiXSwibmFtZSI6Im1pbmlvbiIsImxhYmVsIjoiQW1hbmRhIn0"
-
-// TestSwitcherJoinKeyEntry: J (and i) from the list opens the join-via-invite
-// step; lowercase j stays list navigation.
-func TestSwitcherJoinKeyEntry(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	for _, key := range []string{"J", "i"} {
-		out, _ := (tuiModel{switcher: &switcherModel{}}).switcherKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
-		if got := out.(tuiModel).switcher.step; got != swJoin {
-			t.Errorf("key %q should open swJoin, got step %d", key, got)
-		}
-	}
-}
-
-// TestSwitcherJoinPaste: the join field takes a multi-rune paste (a bracketed
-// paste is one KeyRunes event) and backspace trims a rune.
-func TestSwitcherJoinPaste(t *testing.T) {
-	m := tuiModel{switcher: &switcherModel{step: swJoin}}
-	out, _ := m.switcherJoinKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(goldenInvite)})
-	m = out.(tuiModel)
-	if m.switcher.blob != goldenInvite {
-		t.Fatalf("paste should fill the blob, got %q", m.switcher.blob)
-	}
-	out, _ = m.switcherJoinKey(tea.KeyMsg{Type: tea.KeyBackspace})
-	if m2 := out.(tuiModel); m2.switcher.blob != goldenInvite[:len(goldenInvite)-1] {
-		t.Errorf("backspace should drop one rune, got %q", m2.switcher.blob)
-	}
-}
-
-// TestSwitcherJoinDecodeError: a malformed paste keeps the user in the join step
-// with the decoder's verbatim error — never a silent failure or a half-join.
-func TestSwitcherJoinDecodeError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	m := tuiModel{switcher: &switcherModel{step: swJoin, blob: "not-an-invite"}}
-	out, _ := m.switcherJoinSubmit()
-	m = out.(tuiModel)
-	if m.switcher == nil {
-		t.Fatal("a decode error must not close the switcher")
-	}
-	if m.switcher.err == "" {
-		t.Error("a decode error should be surfaced in the overlay")
-	}
-}
-
-// TestSwitcherJoinGoldenBlob: pasting a1's frozen invite decodes, persists a
-// profile carrying the host + token, makes it active, and connects (switcher
-// closes). This is the teammate half of invite -> paste -> connect.
-func TestSwitcherJoinGoldenBlob(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("DEJIMA_TOKEN", "") // so the persisted profile token is what resolves
-	t.Setenv("DEJIMA_HOST", "")
-
-	m := tuiModel{switcher: &switcherModel{step: swJoin, blob: goldenInvite}}
-	out, cmd := m.switcherJoinSubmit()
-	m = out.(tuiModel)
-	if m.switcher != nil {
-		t.Fatalf("a successful join should close the switcher (err=%q)", func() string {
-			if m.switcher != nil {
-				return m.switcher.err
-			}
-			return ""
-		}())
-	}
-	if m.activeHost != "minion.ts.net:7274" {
-		t.Errorf("activeHost = %q, want minion.ts.net:7274", m.activeHost)
-	}
-	if cmd == nil {
-		t.Error("join should kick a fresh fetch")
-	}
-	// The profile + token must be persisted and active.
-	cfg, err := clientcfg.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ActiveProfile != "minion" {
-		t.Errorf("ActiveProfile = %q, want minion", cfg.ActiveProfile)
-	}
-	var found *clientcfg.Profile
-	for i := range cfg.Profiles {
-		if cfg.Profiles[i].Name == "minion" {
-			found = &cfg.Profiles[i]
-		}
-	}
-	if found == nil {
-		t.Fatal("joined profile not saved")
-	}
-	if found.Host != "minion.ts.net:7274" || found.Token != "sek_abc123" || found.Role != "operator" {
-		t.Errorf("saved profile = %+v, want host=minion.ts.net:7274 token=sek_abc123 role=operator", *found)
 	}
 }
 

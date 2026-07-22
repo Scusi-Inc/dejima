@@ -5,10 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,8 +20,6 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/aoos/dejima/internal/clientcfg"
-	"github.com/aoos/dejima/internal/invite"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/vmmem"
 )
@@ -31,7 +27,7 @@ import (
 // newOnboardCmd is the explicit re-entry into the wizard. Always runs,
 // regardless of whether the dismissal marker exists.
 func newOnboardCmd() *cobra.Command {
-	var provisionHost, yes, reset, newHost bool
+	var provisionHost, yes, reset bool
 	cmd := &cobra.Command{
 		Use:   "onboard",
 		Short: "Walk through Dejima setup (run anytime to (re)configure).",
@@ -41,46 +37,27 @@ func newOnboardCmd() *cobra.Command {
 			"`--provision-host` (macOS) runs the full host-provisioning wizard: a fresh " +
 			"Mac mini → working Dejima agent server in one command (never-sleep power " +
 			"settings, Homebrew/Tailscale/Docker, then the daemon). Resumable; --yes runs " +
-			"non-interactively; --reset starts the provisioning from scratch.\n\n" +
-			"`--new-host` guides setting up a SEPARATE fresh Mac mini as a host from this " +
-			"machine: the pre-SSH steps (account, Remote Login, the headless Tailscale " +
-			"auth-key route) and the handoff to `--provision-host`.",
+			"non-interactively; --reset starts the provisioning from scratch.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if newHost {
-				// The zero-to-host guide sets up a DIFFERENT machine, not this one,
-				// so there's no local daemon to health-check — just record that
-				// onboarding was seen.
-				if err := runNewHostGuide(cmd.Context()); err != nil {
+			if provisionHost {
+				if err := runProvisionHost(cmd.Context(), yes, reset); err != nil {
 					return err
 				}
 				_ = writeDismissalMarker()
 				return nil
 			}
-			if provisionHost {
-				if err := runProvisionHost(cmd.Context(), yes, reset); err != nil {
-					return err
-				}
-				if !markSetupDoneIfHealthy(cmd.Context()) {
-					return errSetupIncomplete
-				}
-				return nil
-			}
 			if err := runOnboarding(cmd.Context()); err != nil {
 				return err
 			}
-			// Explicit `dejima onboard` dismisses the first-run prompt only if the
-			// daemon is actually reachable — otherwise we'd cache a half-setup the
-			// user can never re-trigger guided help for.
-			if !markSetupDoneIfHealthy(cmd.Context()) {
-				return errSetupIncomplete
-			}
+			// Explicit `dejima onboard` also dismisses the first-run prompt —
+			// the user has clearly seen the wizard.
+			_ = writeDismissalMarker()
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&provisionHost, "provision-host", false, "run the macOS host-provisioning wizard (fresh Mac mini → Dejima agent server)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "with --provision-host: auto-confirm scriptable steps, skip GUI pauses (collect them into a checklist)")
 	cmd.Flags().BoolVar(&reset, "reset", false, "with --provision-host: clear saved progress and start the provisioning from scratch")
-	cmd.Flags().BoolVar(&newHost, "new-host", false, "guide setting up a SEPARATE fresh Mac mini as a host (the pre-SSH steps + handoff)")
 	return cmd
 }
 
@@ -112,8 +89,7 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 	// matches the user's actual situation instead of asking everyone the same
 	// generic thing. A cheap probe (no docker/tailscale shell-outs) keeps the
 	// no-args path snappy.
-	kind := detectFirstRunContext(ctx)
-	switch kind {
+	switch detectFirstRunContext(ctx) {
 	case firstRunConfigured:
 		// Already talking to a daemon — nothing to set up. Drop straight into the
 		// dashboard and stop nagging.
@@ -121,174 +97,85 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 		return true, nil
 
 	case firstRunClientUnreachable:
-		host, label, source := resolveTarget()
 		fmt.Println()
 		fmt.Println(bold("Can't reach your Dejima host"))
 		fmt.Println()
-		switch source {
-		case "profile":
-			// The just-joined-teammate case: a saved active profile, host down now.
-			fmt.Printf("  Your active profile %q points at %s, which isn't answering right now.\n", label, host)
-		case "flag":
-			fmt.Printf("  The host you launched with (%s) isn't answering.\n", host)
-		case "env":
-			fmt.Printf("  DEJIMA_HOST is set (%s) but the daemon isn't answering.\n", host)
-		default:
-			fmt.Println("  Your configured Dejima host isn't answering right now.")
-		}
+		fmt.Printf("  DEJIMA_HOST is set (%s) but the daemon isn't answering.\n", strings.TrimSpace(os.Getenv("DEJIMA_HOST")))
 		fmt.Println()
 		if ans := readSingleKey("Troubleshoot the connection now? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
 			runConnectionTroubleshooter(ctx)
 		}
 		fmt.Println("Opening the dashboard. Re-run `dejima onboard` anytime.")
 		return true, nil
-	}
 
-	// No daemon reachable and no host target (firstRunFreshHost or
-	// firstRunGeneric). The ONE question that routes everything: set up a server
-	// here, or join one that already exists? Offering "join" closes the gap that
-	// stranded teammates (#68) — the prompt used to offer only "set up", which on
-	// a shared host spawns a daemon that COLLIDES with the operator's already
-	// running on :7273/:7274. Route first; then ask only what the chosen branch
-	// needs (join → paste an invite; set up → proceed).
-	fmt.Println()
-	fmt.Println(bold("First time — set up Dejima on this machine, or join one that already exists?"))
-	fmt.Println()
-	fmt.Println("    s) Set up Dejima on this machine (run a daemon here)")
-	fmt.Println("    j) Join an existing server — paste an invite from your team")
-	fmt.Println("    n) Not now — ask me again next time")
-	fmt.Println("    N) Never ask again")
-	fmt.Println()
-	switch readSingleKey("Choice [s/j/n/N]: ") {
-	case "j", "J", "join":
-		return firstRunJoin(ctx)
-	case "N", "never":
-		fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
-		_ = writeDismissalMarker()
-		return true, nil
-	case "n", "no", "later", "":
-		fmt.Println("OK — opening the dashboard. Run `dejima onboard` anytime.")
-		return true, nil
-	case "s", "S", "set", "setup", "y", "Y", "yes":
-		// fall through to the set-up branch below
-	default:
-		// An unrecognized key is non-committal: open the dashboard rather than
-		// guess a destructive default (installing a daemon on a shared host is the
-		// exact #68 hazard). The prompt returns next run.
-		fmt.Println("Didn't catch that — opening the dashboard. Re-run `dejima onboard` anytime.")
-		return true, nil
-	}
-
-	// Set-up branch, dispatched to the context-specific flow: a fresh Mac gets the
-	// richer host-provisioning sub-choice; anything else gets the generic
-	// walkthrough.
-	if kind == firstRunFreshHost {
-		return firstRunSetUpHost(ctx)
-	}
-	if err := runOnboarding(ctx); err != nil {
-		return false, err
-	}
-	markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up
-	return true, nil
-}
-
-// firstRunSetUpHost is the "set up here" branch on a fresh Mac: offer full host
-// provisioning (power settings + Homebrew/Tailscale/Docker + daemon) or just the
-// generic walkthrough. Reached only after the router's "set up" choice, so it no
-// longer re-asks the set-up-vs-join question.
-func firstRunSetUpHost(ctx context.Context) (bool, error) {
-	fmt.Println()
-	fmt.Println("  Provision this Mac into a secure, always-on Dejima host? That sets never-sleep")
-	fmt.Println("  power settings, Homebrew/Tailscale/Docker, and the daemon — one walkthrough.")
-	fmt.Println()
-	fmt.Println("    y) Yes, provision this host (dejima onboard --provision-host)")
-	fmt.Println("    g) Just the generic setup walkthrough")
-	fmt.Println("    n) Not now")
-	fmt.Println()
-	switch readSingleKey("Choice [y/g/n]: ") {
-	case "y", "Y", "yes":
-		if err := runProvisionHost(ctx, false, false); err != nil {
-			return false, err
+	case firstRunFreshHost:
+		fmt.Println()
+		fmt.Println(bold("First time — set this Mac up as an agent server?"))
+		fmt.Println()
+		fmt.Println("  I can provision this Mac into a secure, always-on Dejima host: never-sleep")
+		fmt.Println("  power settings, Homebrew/Tailscale/Docker, and the daemon — one walkthrough.")
+		fmt.Println()
+		fmt.Println("    y) Yes, provision this host (dejima onboard --provision-host)")
+		fmt.Println("    g) Just the generic setup walkthrough")
+		fmt.Println("    n) Not now — ask me again next time")
+		fmt.Println("    N) Never ask again")
+		fmt.Println()
+		switch readSingleKey("Choice [y/g/n/N]: ") {
+		case "y", "Y", "yes":
+			if err := runProvisionHost(ctx, false, false); err != nil {
+				return false, err
+			}
+			_ = writeDismissalMarker()
+			return true, nil
+		case "g", "G":
+			if err := runOnboarding(ctx); err != nil {
+				return false, err
+			}
+			_ = writeDismissalMarker()
+			return true, nil
+		case "N", "never":
+			fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
+			_ = writeDismissalMarker()
+			return true, nil
+		default:
+			fmt.Println("OK — opening the dashboard. Run `dejima onboard --provision-host` anytime.")
+			return true, nil
 		}
-		markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up; else the prompt returns next run
-		return true, nil
-	case "g", "G":
+	}
+
+	// Generic context (a non-host machine, or we couldn't tell): the original
+	// server-or-client walkthrough.
+	fmt.Println()
+	fmt.Println(bold("First time on this machine?"))
+	fmt.Println()
+	fmt.Println("  I can walk you through setting up Dejima — Docker check, daemon")
+	fmt.Println("  install, notification webhook, etc.")
+	fmt.Println()
+	fmt.Println("    y) Yes, walk me through it")
+	fmt.Println("    n) Not now — ask me again next time")
+	fmt.Println("    N) Never ask again (re-run anytime with `dejima onboard`)")
+	fmt.Println()
+
+	switch readSingleKey("Choice [y/n/N]: ") {
+	case "y", "Y", "yes":
 		if err := runOnboarding(ctx); err != nil {
 			return false, err
 		}
-		markSetupDoneIfHealthy(ctx)
+		_ = writeDismissalMarker()
+		return true, nil
+	case "N", "never":
+		fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
+		if err := writeDismissalMarker(); err != nil {
+			return false, err
+		}
+		return true, nil
+	case "n", "no", "later", "":
+		fmt.Println("OK — opening the dashboard. Run `dejima onboard` anytime to walk through setup.")
 		return true, nil
 	default:
-		fmt.Println("OK — opening the dashboard. Run `dejima onboard --provision-host` anytime.")
+		fmt.Println("Didn't catch that — treating as 'not now'.")
 		return true, nil
 	}
-}
-
-// joinFromInvite decodes a pasted invite blob and persists it as the active
-// connection profile (host + token). It's the pure core of the join flow — no
-// stdin, no network — shared with the CLI `dejima join` and the TUI switcher,
-// and the seam first-run-join tests drive. Returns the decoded payload and the
-// saved profile name.
-func joinFromInvite(blob string) (invite.Payload, string, error) {
-	p, err := invite.Decode(blob)
-	if err != nil {
-		return invite.Payload{}, "", err
-	}
-	name, err := clientcfg.SaveInvite(p)
-	if err != nil {
-		return p, "", err
-	}
-	return p, name, nil
-}
-
-// firstRunJoin is the teammate "Join a server" branch of the router: paste a
-// `dejima-invite:` blob, persist it as the active connection profile (host +
-// token), and connect — the no-CLI, no-env path a teammate needs to join an
-// existing daemon (#68). It mirrors `dejima join <blob>` and the TUI switcher's
-// join step, all three sharing invite.Decode + clientcfg.SaveInvite.
-func firstRunJoin(ctx context.Context) (bool, error) {
-	fmt.Println()
-	fmt.Println(bold("Join an existing Dejima server"))
-	fmt.Println()
-	fmt.Println("  Paste the invite a teammate sent you (it starts with `dejima-invite:`).")
-	fmt.Println("  It carries the daemon host + your access token — no env vars to set.")
-	fmt.Println()
-	blob := readSingleKey("Invite: ")
-	if strings.TrimSpace(blob) == "" {
-		fmt.Println("No invite entered — opening the dashboard. Run `dejima join <invite>` (or re-run `dejima onboard`) anytime.")
-		return true, nil
-	}
-	p, name, err := joinFromInvite(blob)
-	if err != nil {
-		// Decode/save errors are user-facing strings (a1's contract) — show
-		// verbatim, then fall through to the dashboard rather than blocking.
-		fmt.Println(err)
-		fmt.Println("Opening the dashboard. Try `dejima join <invite>` once you have a valid invite.")
-		return true, nil
-	}
-	scope := "all islands"
-	if len(p.Islands) > 0 {
-		scope = strings.Join(p.Islands, ", ")
-	}
-	fmt.Printf("Joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
-	// Confirm the connection now (bounded) so the teammate gets immediate
-	// feedback, but never block the dashboard on it: the profile is saved either
-	// way, and a transient failure shouldn't strand them. Probe the invite's own
-	// host directly rather than via resolveHost/Health, which can resolve a
-	// different target and mask an unreachable tailnet host as "verified".
-	if !tcpReachable(p.Host) {
-		if isTailscaleHost(p.Host) {
-			// A Tailscale-pinned daemon is unreachable until the teammate is on the
-			// tailnet — guide them there instead of the opaque timeout error.
-			printTailscaleJoinHelp(p.Host)
-		} else {
-			fmt.Printf("note: couldn't reach %s yet — the profile is saved; the dashboard will retry.\n", p.Host)
-		}
-	} else {
-		fmt.Println("Connection verified. Opening the dashboard.")
-	}
-	_ = writeDismissalMarker() // configured now — don't nag on the next run
-	return true, nil
 }
 
 // firstRunContext is the situation the no-args first-run prompt adapts to.
@@ -316,18 +203,11 @@ func detectFirstRunContext(ctx context.Context) firstRunContext {
 	if reachable {
 		return firstRunConfigured
 	}
-	// Not reachable — but if we HAVE a connection target (an explicit DEJIMA_HOST
-	// or `-p` flag, OR a saved active profile from `dejima join <invite>` / the TUI
-	// switcher), this machine is a CLIENT whose host is momentarily down, NOT a
-	// fresh host to provision. resolveTarget() consults the profile, so a
-	// just-joined teammate (no DEJIMA_HOST, no local daemon) lands on the
-	// troubleshoot-then-dashboard path instead of the "set up a server" question
-	// they were wrongly getting (#209).
-	if _, _, source := resolveTarget(); source != "local" {
+	if strings.TrimSpace(os.Getenv("DEJIMA_HOST")) != "" {
 		return firstRunClientUnreachable
 	}
-	// No reachable daemon and no connection target at all. On macOS with no daemon
-	// installed, this is the fresh-Mac-mini-host case the provisioning wizard targets.
+	// No reachable daemon and no host target. On macOS with no daemon installed,
+	// this is the fresh-Mac-mini-host case the provisioning wizard targets.
 	if runtime.GOOS == "darwin" {
 		if _, err := exec.LookPath("dejimad"); err != nil {
 			return firstRunFreshHost
@@ -380,53 +260,6 @@ func writeDismissalMarker() error {
 	return os.WriteFile(p, []byte("dismissed\n"), 0o600)
 }
 
-// errSetupIncomplete is returned by the explicit `dejima onboard` command when
-// the wizard finished but dejimad still isn't reachable — a non-zero exit so a
-// scripted `--provision-host --yes` / CI run sees the failure. The actionable
-// detail is printed by markSetupDoneIfHealthy first; this is just the footer.
-var errSetupIncomplete = errors.New("setup incomplete — dejimad is not reachable (see the steps above)")
-
-// daemonHealthy reports whether the daemon for the *current target* answers a
-// health check quickly. This is the single source of truth for "did setup
-// actually work?" — distinct from "the wizard printed all its steps."
-func daemonHealthy(ctx context.Context) bool {
-	c, err := client()
-	if err != nil {
-		return false
-	}
-	hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	return c.Health(hctx) == nil
-}
-
-// markSetupDoneIfHealthy is the honest end of every setup flow. It records the
-// run as done (writes the first-run dismissal marker) ONLY if dejimad is now
-// reachable. When it isn't, it leaves the marker UNWRITTEN — so the first-run
-// prompt returns next time rather than stranding the user on a cached half-setup
-// (the exact failure that bit the dejimaqa box) — and prints the concrete next
-// step. Returns whether setup is verified working.
-func markSetupDoneIfHealthy(ctx context.Context) bool {
-	if daemonHealthy(ctx) {
-		_ = writeDismissalMarker()
-		fmt.Println()
-		fmt.Println(bold("✅ Setup verified — dejimad is reachable."))
-		return true
-	}
-	if resolveHost() == "" {
-		// Local host: reuse the daemon-unreachable diagnosis, framed as "setup
-		// isn't finished" (probes the socket + service manager for the real cause).
-		reportSetupIncomplete()
-	} else {
-		host := resolveHost()
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, bold("Setup isn't finished — can't reach "+host+" yet."))
-		fmt.Fprintln(os.Stderr, "  Verify Tailscale is up here and the host exposes TCP, then re-run `dejima onboard`:")
-		fmt.Fprintln(os.Stderr, "    • on the HOST:  dejima service install --tcp :7273")
-		fmt.Fprintln(os.Stderr, "    • diagnose:     dejima doctor")
-	}
-	return false
-}
-
 // ---------------------------------------------------------------------------
 // The wizard
 // ---------------------------------------------------------------------------
@@ -446,10 +279,9 @@ func runOnboarding(ctx context.Context) error {
 	fmt.Println("  3) Both — server here AND use the CLI from here too")
 	fmt.Println("  4) Just exploring — show me the install options")
 	fmt.Println("  5) Make this host reachable from other devices (Tailscale SSH + remote Dejima)")
-	fmt.Println("  6) Set up a SEPARATE fresh Mac mini as a host (from here — I don't have one yet)")
 	fmt.Println()
 
-	switch readSingleKey("Choice [1/2/3/4/5/6]: ") {
+	switch readSingleKey("Choice [1/2/3/4/5]: ") {
 	case "1":
 		return printServerInstall(ctx, env, false)
 	case "2":
@@ -460,126 +292,10 @@ func runOnboarding(ctx context.Context) error {
 		return printOverview()
 	case "5":
 		return setupRemoteAccess(ctx, env)
-	case "6":
-		return runNewHostGuide(ctx)
 	default:
 		fmt.Println("No choice made. Re-run anytime with `dejima onboard`.")
 		return nil
 	}
-}
-
-// runNewHostGuide walks turning a SEPARATE fresh Mac mini into a Dejima host
-// from THIS machine — the "zero-to-host" steps that happen before
-// `onboard --provision-host` can even be reached: first boot + an account,
-// Remote Login, getting on the network (notably the headless Tailscale auth-key
-// route, since a headless mini has no browser to log in), then the handoff.
-//
-// The pre-SSH bits are inherently manual (the macOS Setup Assistant is GUI-only
-// on first boot); from SSH-reachable onward it hands off to --provision-host.
-// Driving that remote provision over SSH from here is a planned follow-up; for
-// now we print the exact remote commands (personalized if a host is given).
-func runNewHostGuide(ctx context.Context) error {
-	fmt.Println()
-	fmt.Println(bold("Set up a fresh Mac mini as a Dejima host (from this machine)"))
-	fmt.Println()
-	fmt.Println("A Mac mini's first boot is GUI-only, so the first steps are hands-on; once")
-	fmt.Println("you can SSH in, `dejima onboard --provision-host` does the rest.")
-	fmt.Println()
-
-	fmt.Println(bold("1. First boot") + " (on the mini, with a monitor + keyboard for setup)")
-	fmt.Println("   • Power on, complete the macOS Setup Assistant.")
-	fmt.Println("   • Create an admin account and NOTE its shortname + password — you SSH in as it.")
-	fmt.Println()
-
-	fmt.Println(bold("2. Enable Remote Login (SSH)") + " on the mini")
-	fmt.Println("   • System Settings → General → Sharing → Remote Login → ON")
-	fmt.Println("   • (or in a terminal on the mini: `sudo systemsetup -setremotelogin on`)")
-	fmt.Println()
-
-	fmt.Println(bold("3. Get the mini on your network"))
-	fmt.Println("   Recommended — Tailscale (reachable anywhere, no port-forwarding):")
-	fmt.Println("     • Install: `brew install --cask tailscale` (or https://tailscale.com/download)")
-	fmt.Println("     • HEADLESS mini (no browser to log in)? Use a pre-auth key — generate one at")
-	fmt.Println("       https://login.tailscale.com/admin/settings/keys, then on the mini:")
-	fmt.Println("         `sudo tailscale up --ssh --auth-key=tskey-auth-xxxxx`")
-	fmt.Println("       Its name becomes <hostname>.<tailnet>.ts.net.")
-	fmt.Println("   Or LAN only:")
-	fmt.Println("     • Find its IP on the mini: `ipconfig getifaddr en0` (Wi-Fi: `en1`)")
-	fmt.Println()
-
-	// Personalize the rest if the user can name the host + account now.
-	host := strings.TrimSpace(readSingleKey("The mini's Tailscale name or IP (blank to skip): "))
-	user := ""
-	if host != "" {
-		user = strings.TrimSpace(readSingleKey("The admin account shortname on the mini (blank to skip): "))
-	}
-	fmt.Println()
-
-	sshTarget := "<admin>@<mini-name-or-ip>"
-	if host != "" {
-		if user != "" {
-			sshTarget = user + "@" + host
-		} else {
-			sshTarget = host
-		}
-	}
-
-	fmt.Println(bold("4. Confirm you can reach it from here"))
-	fmt.Printf("   • `ssh %s`  (accept the host key on first connect)\n", sshTarget)
-	if host != "" {
-		if probeSSH(ctx, host) {
-			fmt.Println("   ✓ port 22 is open on the mini")
-		} else {
-			fmt.Println("   (couldn't confirm port 22 yet — finish steps 2–3 above, then retry)")
-		}
-	}
-	fmt.Println()
-
-	fmt.Println(bold("5. Install Dejima on the mini and provision it"))
-	fmt.Println("   On the mini (over SSH or at its keyboard):")
-	fmt.Println("     curl -fsSL https://dejima.tech/install.sh | bash")
-	fmt.Println("     dejima onboard --provision-host")
-	fmt.Println("   That handles never-sleep power settings, Homebrew/Docker/Tailscale, and")
-	fmt.Println("   installs the daemon as a boot service.")
-	fmt.Println()
-
-	fmt.Println(bold("6. Back here — point your CLI at it"))
-	if host != "" {
-		fmt.Printf("   export DEJIMA_HOST=%s:7273 && dejima ls\n", host)
-	} else {
-		fmt.Println("   export DEJIMA_HOST=<mini-name-or-ip>:7273 && dejima ls")
-	}
-	fmt.Println()
-	fmt.Println("(Coming soon: running step 5 for you over SSH from this machine.)")
-	return nil
-}
-
-// sshProbeHost normalizes a user-entered host to a bare host for probeSSH:
-// strips a trailing :port if one was appended (net.SplitHostPort), and leaves a
-// bare IPv6 literal or a plain name/IP untouched. Pure, so it's unit-tested in
-// place of the inherently environment-dependent network dial.
-func sshProbeHost(host string) string {
-	host = strings.TrimSpace(host)
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		return h // had a :port (or bracketed IPv6 + port) → bare host
-	}
-	return host // no port — a plain name/IP or bare IPv6 like ::1
-}
-
-// probeSSH best-effort reports whether port 22 is open on host, to give the
-// new-host guide immediate "yes you can reach it" feedback. Never fatal.
-func probeSSH(ctx context.Context, host string) bool {
-	h := sshProbeHost(host)
-	if h == "" {
-		return false
-	}
-	d := net.Dialer{Timeout: 3 * time.Second}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(h, "22"))
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
 }
 
 // ---------------------------------------------------------------------------

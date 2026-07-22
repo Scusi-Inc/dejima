@@ -1,15 +1,12 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/aoos/dejima/internal/api"
-	"github.com/aoos/dejima/internal/link"
 	"github.com/spf13/cobra"
 )
 
@@ -258,7 +255,7 @@ func newLinkActionCmd() *cobra.Command {
 }
 
 func newLinkApprovalsCmd() *cobra.Command {
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "approvals",
 		Short: "List cross-island action requests awaiting approval (operator).",
 		Args:  cobra.NoArgs,
@@ -276,53 +273,11 @@ func newLinkApprovalsCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "ID\tFROM\tTO\tACTION\tTIER\tTOPIC")
+			fmt.Fprintln(tw, "ID\tFROM\tTO\tACTION\tTOPIC")
 			for _, p := range pending {
-				fmt.Fprintf(tw, "%s\t%s/%s\t%s/%s\t%s\t%s\t%s\n", p.ID, p.From, agentDisplay(p.FromLabel, p.FromAgent), p.To, agentDisplay(p.ToLabel, p.ToAgent), p.Action, p.Tier, p.Topic)
+				fmt.Fprintf(tw, "%s\t%s/%s\t%s/%s\t%s\t%s\n", p.ID, p.From, p.FromAgent, p.To, p.ToAgent, p.Action, p.Topic)
 			}
 			return tw.Flush()
-		},
-	}
-	cmd.AddCommand(newLinkApprovalsWatchCmd())
-	return cmd
-}
-
-// newLinkApprovalsWatchCmd streams pending approvals as they arrive (SSE), for
-// an on-call operator or an external approval bot. Ctrl-C (ctx cancel) ends it
-// cleanly.
-func newLinkApprovalsWatchCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "watch",
-		Short: "Stream pending action approvals as they arrive (operator; Ctrl-C to stop).",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			rc, err := c.WatchActions(cmd.Context())
-			if err != nil {
-				return err
-			}
-			defer rc.Close()
-			sc := bufio.NewScanner(rc)
-			sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-			for sc.Scan() {
-				data, ok := strings.CutPrefix(sc.Text(), "data: ")
-				if !ok {
-					continue // keepalive comment / blank line
-				}
-				var p link.ActionRequest
-				if json.Unmarshal([]byte(data), &p) != nil {
-					continue
-				}
-				fmt.Printf("%s  %s/%s → %s/%s  [%s]  tier=%s  topic=%s\n",
-					p.ID, p.From, p.FromAgent, p.To, p.ToAgent, p.Action, p.Tier, p.Topic)
-			}
-			if err := sc.Err(); err != nil && cmd.Context().Err() == nil {
-				return err
-			}
-			return nil // ctx cancelled / stream closed = clean exit
 		},
 	}
 }
@@ -347,8 +302,7 @@ func newLinkApproveCmd() *cobra.Command {
 }
 
 func newLinkDenyCmd() *cobra.Command {
-	var reason string
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "deny <id>",
 		Short: "Deny a pending action (operator).",
 		Args:  cobra.ExactArgs(1),
@@ -357,13 +311,11 @@ func newLinkDenyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.DenyAction(cmd.Context(), args[0], reason); err != nil {
+			if err := c.DenyAction(cmd.Context(), args[0]); err != nil {
 				return err
 			}
 			fmt.Printf("denied %s\n", args[0])
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&reason, "reason", "", "optional reason recorded in the ledger")
-	return cmd
 }

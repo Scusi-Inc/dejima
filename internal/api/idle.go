@@ -62,13 +62,6 @@ func (s *Server) scanIdle(ctx context.Context, idleSince map[string]time.Time, t
 	seen := map[string]bool{}
 	for _, p := range projects {
 		seen[p.Name] = true
-		// Pinned-awake islands are exempt: never idle-hibernate them (a persistent
-		// ambient agent must survive its idle windows). Reset the clock so unpinning
-		// later starts the idle timer fresh rather than hibernating on the next tick.
-		if p.NoHibernate {
-			delete(idleSince, p.Name)
-			continue
-		}
 		status, _ := s.rt.Status(ctx, p.ContainerName())
 		if status != runtime.StatusRunning || !s.islandIdle(ctx, p) {
 			delete(idleSince, p.Name) // running+busy, or stopped: reset the idle clock

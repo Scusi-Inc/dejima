@@ -2,16 +2,12 @@
 # Dejima one-line installer.
 #
 # Usage:
-#   curl -fsSL https://dejima.tech/install.sh | bash
-#   # (raw fallback while DNS propagates:)
-#   curl -fsSL https://raw.githubusercontent.com/aoos/dejima/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/aoos/dejima/master/scripts/install.sh | bash
 #
 # What it does:
-#   1. Verifies prerequisites (git, curl, make; on macOS, Homebrew) — each with a
-#      named cause + fix if absent.
+#   1. Verifies prerequisites (git; on macOS, Homebrew).
 #   2. Installs Go if missing.
 #   3. Clones Dejima to ~/.dejima-src (or pulls latest if already there).
-#      Interrupt/retry-safe: a partial checkout from a Ctrl-C'd run is re-cloned.
 #   4. Hands off to `make setup`, which:
 #      - Detects Docker; offers to install Docker Desktop via brew if missing
 #      - Builds the `dejima` + `dejimad` binaries
@@ -37,12 +33,6 @@ OS=$(uname -s)
 bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
 info()  { printf '  %s\n' "$*"; }
 fail()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
-# A ref can be a branch, a tag, or a raw commit SHA. `git clone --branch` and a
-# refspec fetch only accept a branch/tag name — a bare SHA makes them fail with
-# "Remote branch <sha> not found". So when the ref looks like a commit hash we
-# clone the whole repo (all branches + tags) and check the commit out directly.
-# The launch gate pins a frozen SHA this way (e.g. DEJIMA_REF=99001ba…).
-is_commit_sha() { [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; }
 
 bold "Dejima installer"
 info "source:  $SRC_DIR (ref: $REF)"
@@ -50,13 +40,12 @@ info "binaries will be installed to ${PREFIX:-/usr/local}/bin"
 echo
 
 # --- Prereqs --------------------------------------------------------------
-command -v git >/dev/null 2>&1 || fail "git is required. On macOS run \`xcode-select --install\` (installs git); on Linux install it with your distro's package manager (e.g. \`sudo apt install git\`)."
-command -v curl >/dev/null 2>&1 || fail "curl is required to fetch dependencies (install it via your package manager and re-run)."
+command -v git >/dev/null 2>&1 || fail "git is required (install Xcode CLT on macOS, or your distro's git)"
 
 case "$OS" in
     Darwin)
         if ! command -v brew >/dev/null 2>&1; then
-            fail "Homebrew is required on macOS (Dejima installs Go/Docker through it). Install it from https://brew.sh and re-run."
+            fail "Homebrew is required on macOS. Install it from https://brew.sh and re-run."
         fi
         ;;
     Linux)
@@ -76,47 +65,16 @@ if ! command -v go >/dev/null 2>&1; then
 fi
 
 # --- Fetch source ---------------------------------------------------------
-# Idempotent + interrupt-safe: a re-run (or a retry after a Ctrl-C mid-clone)
-# must never brick. We treat the checkout as recoverable, never fatal:
-#   · a valid checkout      → fetch + checkout the ref (update in place)
-#   · a partial/non-git dir → discard and re-clone (an interrupted clone leaves
-#                             a non-empty, non-.git directory; a plain `git clone`
-#                             into it would fail with "destination already exists")
-# Tags are fetched (not a --depth 1 shallow clone): the build bakes its version
-# from `git describe --tags`, so the tags must be present or the install reports
-# a bare commit hash instead of a real release.
-if [[ -d "$SRC_DIR/.git" ]] && git -C "$SRC_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+if [[ -d "$SRC_DIR/.git" ]]; then
     info "Updating existing checkout at $SRC_DIR"
-    if is_commit_sha "$REF"; then
-        # A bare SHA can't be a fetch refspec — pull every branch so the commit
-        # is reachable locally, then detach onto it.
-        git -C "$SRC_DIR" fetch --quiet --tags origin || fail "couldn't fetch updates in $SRC_DIR — check your network, or remove it (\`rm -rf $SRC_DIR\`) and re-run."
-        git -C "$SRC_DIR" checkout --quiet "$REF" || fail "couldn't check out commit '$REF' in $SRC_DIR — remove it (\`rm -rf $SRC_DIR\`) and re-run."
-    else
-        git -C "$SRC_DIR" fetch --quiet --tags origin "$REF" || fail "couldn't fetch updates in $SRC_DIR — check your network, or remove it (\`rm -rf $SRC_DIR\`) and re-run."
-        git -C "$SRC_DIR" checkout --quiet "$REF" || fail "couldn't check out '$REF' in $SRC_DIR — remove it (\`rm -rf $SRC_DIR\`) and re-run."
-        git -C "$SRC_DIR" pull --quiet --ff-only origin "$REF" || true
-    fi
+    git -C "$SRC_DIR" fetch --quiet origin "$REF"
+    git -C "$SRC_DIR" checkout --quiet "$REF"
+    git -C "$SRC_DIR" pull --quiet --ff-only origin "$REF" || true
 else
-    if [[ -e "$SRC_DIR" ]]; then
-        info "Found a partial/incomplete checkout at $SRC_DIR (likely an interrupted run) — re-cloning"
-        rm -rf "$SRC_DIR"
-    fi
     info "Cloning Dejima to $SRC_DIR"
-    if is_commit_sha "$REF"; then
-        # `--branch` rejects a SHA; clone the repo (all branches + tags), then
-        # check the commit out directly.
-        git clone --quiet "$REPO_URL" "$SRC_DIR" \
-            || fail "git clone failed — check your network, then re-run."
-        git -C "$SRC_DIR" checkout --quiet "$REF" \
-            || fail "couldn't check out commit '$REF' — verify it exists on a pushed branch, then re-run."
-    else
-        git clone --quiet --branch "$REF" "$REPO_URL" "$SRC_DIR" \
-            || fail "git clone failed — check your network and that '$REF' exists, then re-run."
-    fi
+    git clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$SRC_DIR"
 fi
 
 # --- Hand off to make setup ----------------------------------------------
-command -v make >/dev/null 2>&1 || fail "make is required to build Dejima. On macOS run \`xcode-select --install\`; on Linux install build tools (e.g. \`sudo apt install make\`), then re-run."
 echo
 exec make -C "$SRC_DIR" setup

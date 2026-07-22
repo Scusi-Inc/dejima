@@ -44,7 +44,6 @@ const (
 type creatorModel struct {
 	client      *api.Client
 	daemonLocal bool
-	callerRole  string           // "owner"|"operator"|"viewer"|"" — gates how GitHub-connect guidance is phrased (adding an identity is owner-only)
 	existing    []api.IslandInfo // for name disambiguation + per-repo island counts
 
 	step creatorStep
@@ -87,16 +86,10 @@ type creatorModel struct {
 	// resolved selection
 	resolution   reposrc.Resolution
 	picker       agentPicker            // agent type (and headless command) chooser
-	keyGap       map[string]bool        // agent types needing an unconfigured LLM key (picker annotation)
 	agents       []api.AgentSpecRequest // seeded agents; element 0 is the primary
 	pickingExtra bool                   // true while the picker is adding a non-primary agent
 	nameInput    string
 	creating     bool
-	// imageMissing is true when the daemon has no island image yet, so this
-	// create will trigger a one-time multi-minute base-image build. Used to set
-	// that expectation up front instead of leaving the user staring at a silent
-	// "provisioning…". Only set when we positively know (overview loaded).
-	imageMissing bool
 }
 
 // --- messages -------------------------------------------------------------
@@ -131,27 +124,19 @@ type ghReposMsg struct {
 func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 	cfg, _ := clientcfg.Load()
 	c := &creatorModel{
-		client:       m.client,
-		daemonLocal:  resolveHost() == "",
-		callerRole:   m.callerRole,
-		existing:     m.islands,
-		statusCache:  map[string]reposrc.Status{},
-		imageMissing: m.overview != nil && !m.overview.IslandImagePresent,
-		keyGap:       m.agentKeyGap,
+		client:      m.client,
+		daemonLocal: resolveHost() == "",
+		existing:    m.islands,
+		statusCache: map[string]reposrc.Status{},
 	}
 	m.creator = c
 	if cfg.RepoRoot == "" {
 		pwd, _ := os.Getwd()
 		c.step = stepRoot
-		// GitHub is a first-class source here (not just after a local scan): a
-		// teammate driving a REMOTE daemon has no useful local repos to scan, so
-		// burying "Browse my GitHub repos" behind a scan hid the option they most
-		// needed. See viewPick — the same choice also lives there post-scan.
 		c.rootChoices = []string{
 			"Scan this directory (" + tildeify(pwd) + ")",
 			"Choose another directory…",
-			"Browse my GitHub repos…",
-			"Enter a repo URL or path manually",
+			"Skip — enter a repo URL or path manually",
 		}
 		return m, nil
 	}
@@ -310,8 +295,6 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 1:
 			c.rootTyping, c.rootInput = true, ""
 		case 2:
-			return m.creatorEnterGitHub()
-		case 3:
 			c.step = stepManual
 		}
 	}
@@ -470,20 +453,9 @@ func (m tuiModel) onGhIdentities(msg ghIdentitiesMsg) (tea.Model, tea.Cmd) {
 	c.ghIdentities = msg.identities
 	switch len(c.ghIdentities) {
 	case 0:
-		// Adding a GitHub identity is owner-only (PUT /v1/credentials/github/{name}
-		// is capOwner), so guide by role: an owner can connect one now; a teammate
-		// (operator/viewer) has to ask the host owner.
-		if c.callerRole == "operator" || c.callerRole == "viewer" {
-			c.ghHint = "No GitHub identity on the server yet — and connecting one is the owner's call.\n" +
-				"Ask the host owner to run `dejima auth push --github` (from a machine where\n" +
-				"`gh` is logged in). Once they do, your GitHub repos show up here.\n\n" +
-				"Meanwhile you can still start from a public git URL (back → “Enter a repo URL”)."
-		} else {
-			c.ghHint = "No GitHub identity on the server yet — let's connect one:\n" +
-				"On a machine where `gh` is logged in, run `dejima auth push --github` (it pushes\n" +
-				"your GitHub login to the daemon), or run `gh auth login` on the daemon host.\n" +
-				"Then come back here and your repos will be listed."
-		}
+		c.ghHint = "No GitHub identities on the daemon yet.\n" +
+			"Add one with `dejima auth push --github` (from a machine with gh),\n" +
+			"or run `gh auth login` on the daemon host — then come back."
 		return m, nil
 	case 1:
 		return m.creatorSelectIdentity(c.ghIdentities[0]) // no point making them pick
@@ -759,11 +731,7 @@ func (c *creatorModel) view(width int) string {
 		b.WriteString("\n\n")
 		b.WriteString(styleMuted.Render(c.resolution.Note))
 		b.WriteString("\n")
-		if c.imageMissing {
-			b.WriteString(styleMuted.Render("building the base image (first time, a few minutes), then cloning the repo\nand starting the agent; it opens when ready."))
-		} else {
-			b.WriteString(styleMuted.Render("cloning the repo and starting the agent; it opens when ready."))
-		}
+		b.WriteString(styleMuted.Render("cloning the repo and starting the agent; it opens when ready."))
 	}
 
 	if c.err != "" {
@@ -918,7 +886,7 @@ func (c *creatorModel) viewSource(b *strings.Builder) {
 func (c *creatorModel) viewAgent(b *strings.Builder) {
 	b.WriteString(styleMuted.Render(c.resolution.Note))
 	b.WriteString("\n\n")
-	c.picker.view(b, "Agent", c.keyGap)
+	c.picker.view(b, "Agent")
 }
 
 // viewAgents renders the seeded-agent roster: the primary plus any extras, with
@@ -926,10 +894,13 @@ func (c *creatorModel) viewAgent(b *strings.Builder) {
 func (c *creatorModel) viewAgents(b *strings.Builder) {
 	b.WriteString(styleMuted.Render(c.resolution.Note))
 	b.WriteString("\n\n")
-	b.WriteString(styleMuted.Render("Agents to seed (or none — you can shell in and add agents later):"))
+	b.WriteString(styleMuted.Render("Agents to seed (the first is primary — it backs `dejima connect`):"))
 	b.WriteString("\n\n")
 	for i, a := range c.agents {
-		role := fmt.Sprintf("agent %d", i+1)
+		role := "primary"
+		if i > 0 {
+			role = fmt.Sprintf("agent %d", i+1)
+		}
 		line := fmt.Sprintf("%-9s %s", role, a.Type)
 		if a.Cmd != "" {
 			line += "  — " + a.Cmd
@@ -950,9 +921,6 @@ func (c *creatorModel) viewName(b *strings.Builder) {
 	b.WriteString(styleMuted.Render(fmt.Sprintf("%s · %s", summary, c.resolution.Note)))
 	b.WriteString("\n\n")
 	b.WriteString("island name: " + styleAccent.Render(c.nameInput+"_"))
-	if c.imageMissing {
-		b.WriteString("\n\n" + styleWaiting.Render("ℹ first island — this also builds the base image (one-time, a few minutes)."))
-	}
 	b.WriteString("\n\n" + styleMuted.Render("[⏎] create & connect   [esc] back"))
 }
 

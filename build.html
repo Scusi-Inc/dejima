@@ -7,25 +7,10 @@
 <meta name="description" content="Build multi-agent dashboards, coding bots, web IDEs, and internal tools on one HTTP/WebSocket API: isolated containers, multi-attach sessions, lifecycle, credential injection, and agent-state events — instead of reinventing them.">
 <meta property="og:title" content="Build on Dejima">
 <meta property="og:description" content="One HTTP/WebSocket API for isolated, managed AI agents — containers, sessions, lifecycle, credential injection, and events.">
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://dejima.tech/build.html">
-<meta property="og:image" content="https://dejima.tech/assets/og-card.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://dejima.tech/assets/og-card.png">
 <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
 <link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
 <link rel="stylesheet" href="styles.css">
-<script type="application/ld+json">
-{"@context":"https://schema.org","@graph":[
-{"@type":"BreadcrumbList","itemListElement":[
-{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
-{"@type":"ListItem","position":2,"name":"Build","item":"https://dejima.tech/build.html"}]},
-{"@type":"WebPage","name":"Build on Dejima","url":"https://dejima.tech/build.html","description":"One HTTP and WebSocket API for isolated, managed AI agents: containers, multi-attach sessions, lifecycle, credential injection, and agent-state events, with Python and TypeScript SDKs.","isPartOf":{"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"}}
-]}
-</script>
 </head>
 <body>
 <main>
@@ -38,12 +23,10 @@
 <nav class="topnav" aria-label="Site">
   <a href="index.html">Home</a>
   <a href="quickstart.html">Quickstart</a>
-  <a href="guides/">Guides</a>
   <a href="teams.html">Teams</a>
   <a href="build.html" aria-current="page">Build</a>
   <a href="api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
 </nav>
 
 <section class="hero">
@@ -52,7 +35,7 @@
   <p class="lede">Your control plane on top, your compute underneath, isolation in between. Target one HTTP/WebSocket API from any language — the same one the CLI uses — instead of reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth.</p>
   <div class="hero-cta">
     <a class="btn-primary" href="api.html">Read the API reference →</a>
-    <a class="btn-ghost" href="https://github.com/aoos/dejima" target="_blank" rel="noopener">Source on GitHub</a>
+    <a class="btn-ghost" href="https://github.com/aoos/dejima">Source on GitHub</a>
   </div>
 </section>
 
@@ -79,7 +62,7 @@ POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 <p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and open source. Full surface at <a href="api.html">the API reference</a>.</p>
 
 <h2 id="sdks">SDKs</h2>
-<p>Official thin clients wrap the REST surface and the WebSocket PTY stream, so you don't hand-roll envelope framing. Both are <span class="pill">alpha</span> (0.x — fields may change until 1.0) and mirror <a href="https://github.com/aoos/dejima/blob/master/openapi.yaml" target="_blank" rel="noopener"><code>openapi.yaml</code></a>.</p>
+<p>Official thin clients wrap the REST surface and the WebSocket PTY stream, so you don't hand-roll envelope framing. Both are <span class="pill">alpha</span> (0.x — fields may change until 1.0) and mirror <a href="https://github.com/aoos/dejima/blob/master/openapi.yaml"><code>openapi.yaml</code></a>.</p>
 <div class="cards">
   <div class="card">
     <h3>Python</h3>
@@ -111,10 +94,10 @@ s.sendText("ls -la\n");
 s.onData(bytes =&gt; process.stdout.write(bytes));</code></pre>
   </div>
 </div>
-<p class="small">Source: <a href="https://github.com/aoos/dejima/tree/master/sdk/python" target="_blank" rel="noopener"><code>sdk/python</code></a> · <a href="https://github.com/aoos/dejima/tree/master/sdk/ts" target="_blank" rel="noopener"><code>sdk/ts</code></a>. Prefer another language? The whole surface is one HTTP/WebSocket API — generate a client from the spec.</p>
+<p class="small">Source: <a href="https://github.com/aoos/dejima/tree/master/sdk/python"><code>sdk/python</code></a> · <a href="https://github.com/aoos/dejima/tree/master/sdk/ts"><code>sdk/ts</code></a>. Prefer another language? The whole surface is one HTTP/WebSocket API — generate a client from the spec.</p>
 
 <h2>Webhooks</h2>
-<p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code>) emitted by the per-agent shims — Claude Code and Codex today, headless agents on their own via <code>POST /v1/internal/agent-event</code>. This is how mobile push, Slack notifications, and custom dashboards integrate. See <a href="https://github.com/aoos/dejima/blob/master/docs/agent-adapters.md" target="_blank" rel="noopener"><code>docs/agent-adapters.md</code></a> for adding your own.</p>
+<p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code>) emitted by the per-agent shims — Claude Code and Codex today, headless agents on their own via <code>POST /v1/internal/agent-event</code>. This is how mobile push, Slack notifications, and custom dashboards integrate. See <a href="https://github.com/aoos/dejima/blob/master/docs/agent-adapters.md"><code>docs/agent-adapters.md</code></a> for adding your own.</p>
 <pre><code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code></pre>
 
 <h2 id="architecture">Architecture</h2>
@@ -146,10 +129,9 @@ s.onData(bytes =&gt; process.stdout.write(bytes));</code></pre>
   <a href="quickstart.html">Quickstart</a>
   <a href="teams.html">Teams</a>
   <a href="api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
 </footer>
 
 </main>
-<script src="version.js" defer></script>
 </body>
 </html>

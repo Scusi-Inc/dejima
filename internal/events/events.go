@@ -31,18 +31,6 @@ const (
 	TypeAgentWaitingForInput Type = "agent.waiting-for-input"
 	TypeAgentTaskComplete    Type = "agent.task-complete"
 	TypeAgentError           Type = "agent.error"
-	// TypeAgentUsage carries an adapter's self-reported token usage (Dejima can't
-	// see the opaque LLM call). Payload: input_tokens / cache_creation_input_tokens
-	// / cache_read_input_tokens / output_tokens / model / source. Ingested into the
-	// per-agent usage snapshot surfaced on AgentInfo.Usage.
-	TypeAgentUsage Type = "agent.usage"
-	// Heartbeat monitor ("monitor the monitor"): an operator alert when a running
-	// island's agent goes SILENT (no fresh agent-state heartbeat past the grace —
-	// a stalled/crashed agent, or a skewed shim that can't POST). Edge-triggered:
-	// TypeAgentSilent on going silent, TypeAgentRecovered when the heartbeat
-	// returns. Pairs with the never_heard_from zero-heartbeat flag.
-	TypeAgentSilent    Type = "agent.silent"
-	TypeAgentRecovered Type = "agent.recovered"
 
 	// Inter-island action delegation (Lane 5, Phase 3): a cross-island action
 	// needs operator approval. Fires so an operator can approve/deny from a phone
@@ -65,8 +53,7 @@ var catalog = []Type{
 	TypeIslandAgentAdded, TypeIslandAgentRemoved,
 	TypeContainerCrashed, TypeDaemonStarted, TypePanicEngaged, TypePanicCleared,
 	TypeClientAttached, TypeClientDetached, TypeLastClientDetached,
-	TypeAgentWaitingForInput, TypeAgentTaskComplete, TypeAgentError, TypeAgentUsage,
-	TypeAgentSilent, TypeAgentRecovered,
+	TypeAgentWaitingForInput, TypeAgentTaskComplete, TypeAgentError,
 	TypeLinkActionPending,
 }
 
@@ -93,11 +80,7 @@ type Event struct {
 	Island string `json:"island,omitempty"`
 	// Agent is the agent within the island this event concerns (empty for
 	// island-level events or agents that don't identify themselves).
-	Agent string `json:"agent,omitempty"`
-	// AgentLabel is the agent's human name, daemon-resolved at emit time so every
-	// subscriber sees a name, not a bare id. Empty when Agent is empty or the
-	// agent has no resolvable label.
-	AgentLabel string         `json:"agent_label,omitempty"`
-	Timestamp  time.Time      `json:"timestamp"`
-	Payload    map[string]any `json:"payload,omitempty"`
+	Agent     string         `json:"agent,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
+	Payload   map[string]any `json:"payload,omitempty"`
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -181,24 +180,12 @@ func runDoctor(ctx context.Context) *doctorReport {
 	// --- Projects -------------------------------------------------------
 	c, err := client()
 	if err == nil {
-		// The running daemon's version is the reference for island version-skew.
-		// Empty if the daemon predates version reporting; diagnoseIslandSkew then
-		// skips the ordering and only the heartbeat flag can fire.
-		daemonVer := ""
-		if o, ovErr := c.Overview(ctx); ovErr == nil {
-			daemonVer = o.DaemonVersion
-		}
 		islands, lsErr := c.ListIslands(ctx)
 		if lsErr == nil {
 			if len(islands) == 0 {
 				r.add("Projects", "(none)", "INFO", "no islands yet; `dejima init --repo …` to create one", "")
 			}
 			for _, info := range islands {
-				// Version-skew + zero-heartbeat: a stale-image island (or one whose
-				// in-island hook never fired) flagged with the exact upgrade remedy.
-				if f := diagnoseIslandSkew(info, daemonVer); f.status != "" {
-					r.add("Projects", info.Name, f.status, f.detail, f.fix)
-				}
 				switch {
 				case info.State == "running" && info.Container != "running":
 					r.add("Projects", info.Name, "FAIL",
@@ -308,83 +295,13 @@ func checkSupervision(ctx context.Context, r *doctorReport) {
 }
 
 func checkDocker(ctx context.Context, r *doctorReport) {
-	// Probe the *server* version: this fails when the engine is down even if the
-	// docker CLI itself is fine — which lets us tell "not installed" from "not
-	// started" from "can't reach the socket", and give the right fix for each
-	// instead of always "go install Docker".
 	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Output()
-	if err == nil {
-		r.add("System", "docker", "OK", "server "+strings.TrimSpace(string(out)), "")
+	if err != nil {
+		r.add("System", "docker", "FAIL", "not reachable; install Docker Desktop (recommended), OrbStack, or colima",
+			"https://www.docker.com/products/docker-desktop/")
 		return
 	}
-
-	// 1. CLI not installed at all.
-	if _, lookErr := exec.LookPath("docker"); lookErr != nil {
-		r.add("System", "docker", "FAIL", "the docker CLI isn't installed — islands run on it",
-			dockerInstallHint())
-		return
-	}
-
-	// 2. Installed, but the socket refuses us (Linux: user not in the docker group).
-	if strings.Contains(strings.ToLower(dockerErrText(err)), "permission denied") {
-		r.add("System", "docker", "FAIL",
-			"docker is installed but this user can't reach its socket (permission denied)",
-			dockerPermHint())
-		return
-	}
-
-	// 3. Installed but the engine/daemon isn't answering → it's not started.
-	//    Name the actual runtime and how to bring it up.
-	switch {
-	case vmmem.ColimaAvailable():
-		// colima is the engine and it's stopped — this one we can safely self-heal.
-		r.addRepair("System", "docker", "FAIL",
-			"docker is installed but its engine (colima) isn't running",
-			"colima start",
-			func() (string, error) {
-				if o, e := exec.CommandContext(ctx, "colima", "start").CombinedOutput(); e != nil {
-					return "", fmt.Errorf("colima start: %v: %s", e, strings.TrimSpace(string(o)))
-				}
-				return "colima started — docker engine is up", nil
-			})
-	case runtime.GOOS == "darwin":
-		r.add("System", "docker", "FAIL", "docker is installed but its engine isn't running",
-			"start it: `open -a Docker` (or launch OrbStack), then wait for it to come up")
-	default: // Linux without colima → typically a systemd-managed dockerd
-		r.add("System", "docker", "FAIL", "docker is installed but the daemon isn't running",
-			"start it: `sudo systemctl start docker` (start on boot: `sudo systemctl enable --now docker`)")
-	}
-}
-
-// dockerInstallHint names the per-OS way to install a container engine.
-func dockerInstallHint() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "install one: `brew install --cask docker` — or colima: `brew install colima docker && colima start`"
-	case "linux":
-		return "install Docker engine (Debian/Ubuntu: `sudo apt install docker.io`; Fedora: `sudo dnf install docker`; Arch: `sudo pacman -S docker`), then `sudo systemctl enable --now docker`"
-	default:
-		return "https://www.docker.com/products/docker-desktop/"
-	}
-}
-
-// dockerPermHint covers the Linux not-in-the-docker-group case (the usual
-// "permission denied" on the socket).
-func dockerPermHint() string {
-	if runtime.GOOS == "linux" {
-		return "add yourself to the docker group: `sudo usermod -aG docker $USER`, then log out and back in (or `newgrp docker`)"
-	}
-	return "check the docker socket's ownership/permissions"
-}
-
-// dockerErrText returns the stderr of a failed `docker version`, where the
-// "Cannot connect to the Docker daemon" / "permission denied" message lives.
-func dockerErrText(err error) string {
-	var ee *exec.ExitError
-	if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-		return string(ee.Stderr)
-	}
-	return err.Error()
+	r.add("System", "docker", "OK", "server "+strings.TrimSpace(string(out)), "")
 }
 
 // checkVMMemory flags a container-runtime VM that's far smaller than the host —

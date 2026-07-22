@@ -67,7 +67,6 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .topnav a[aria-current="page"] { color: var(--hover); font-weight: 600; }
 .topnav a + a { margin-left: 1.1rem; }
 .topnav a + a::before { content: "·"; color: var(--border); margin-right: 1.1rem; }
-.nav-status { margin-left: auto; font-size: 0.8rem; color: var(--muted); }
 
 /* Hero + proof + safety --------------------------------------------- */
 .hero { margin: 1.6rem 0 1.4rem; }
@@ -75,33 +74,25 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .hero-h { font-size: 2.1rem; line-height: 1.15; letter-spacing: -0.02em;
   color: var(--hover); margin: 0 0 0.8rem; font-weight: 700; text-transform: none; }
 .hero-sub { font-size: 1.15rem; color: var(--fg); max-width: 38rem; margin: 0 0 1.4rem; }
-.hero-platforms { display: inline-block; color: var(--muted); font-size: 0.95rem;
-  margin-top: 0.4rem; letter-spacing: 0.02em; }
 .hero-cta { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
-.demo-shot { margin: 1.6rem 0; }
-.demo-shot img { display: block; width: 100%; height: auto;
-  border: 1px solid var(--border); border-radius: 8px; }
-.demo-shot figcaption { margin-top: 0.55rem; font-size: 0.85rem; color: var(--muted);
-  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-.ascii-fallback { margin-top: 0.5rem; }
-.ascii-fallback > summary { color: var(--muted); font-size: 0.85rem; cursor: pointer; }
-.ascii-fallback > summary:hover { color: var(--accent); }
-.ascii-fallback pre { margin-top: 0.7rem; }
 .btn-primary { background: var(--accent); color: var(--bg); text-decoration: none;
   padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
 .btn-primary:hover { background: var(--hover); color: var(--bg); }
 .btn-ghost { color: var(--accent); text-decoration: none; border: 1px solid var(--accent);
   padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
 .btn-ghost:hover { background: var(--hover); border-color: var(--hover); color: var(--bg); }
-.proof { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem;
+.proof { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem;
   margin: 1.5rem 0 2.2rem; }
 .proof-tile { border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem;
   background: transparent; }
 .proof-tile h3 { margin: 0 0 0.4rem; font-size: 1.0rem; color: var(--hover); }
 .proof-tile p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
-/* QoL "why it's nicer" band: the emotional hook, high on the homepage. 2x2. */
-.qol { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.8rem 0 1.1rem; }
-.qol-more { color: var(--muted); font-size: 0.9rem; margin: 0 0 2.6rem; }
+.safety { background: var(--card-hover-bg); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: 8px;
+  padding: 1.3rem 1.5rem; margin: 0 0 2.6rem; }
+.safety h2 { margin: 0 0 0.6rem; text-transform: none; letter-spacing: normal;
+  font-size: 1.25rem; color: var(--hover); }
+.safety p { margin: 0; color: var(--fg); }
 
 /* Generic cards (used by teams/build) -------------------------------- */
 .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.4rem 0; }
@@ -121,17 +112,9 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0.8rem 0; }
 .table-scroll table { margin: 0; }
 .compare { min-width: 640px; }
+.compare td:last-child { color: var(--fg); }
+.compare th:last-child { color: var(--accent); }
 .compare th:not(:first-child), .compare td:not(:first-child) { text-align: center; }
-/* Dejima is the first option column and is emphasised. */
-.compare td:nth-child(2) { color: var(--fg); }
-.compare th:nth-child(2) { color: var(--accent); }
-/* Pin the criteria + Dejima columns so they stay put while the
-   alternative columns scroll on narrow screens. */
-.compare th:first-child, .compare td:first-child {
-  position: sticky; left: 0; z-index: 1; background: var(--bg); min-width: 11rem; }
-.compare th:nth-child(2), .compare td:nth-child(2) {
-  position: sticky; left: 11rem; z-index: 1; background: var(--bg);
-  box-shadow: 1px 0 0 var(--border); }
 
 /* Deep-link buttons -------------------------------------------------- */
 .deeplink { background: transparent; color: var(--accent); border: 1px solid var(--accent);
@@ -202,113 +185,10 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .copy-btn:hover { opacity: 0.85; }
 .fit-hint { color: var(--muted); font-size: 0.85rem; }
 
-/* Quickstart scenarios: two dead-simple copy-paste paths ------------- */
-.scenario-jump { display: flex; gap: 0.7rem; flex-wrap: wrap; margin: 0.2rem 0 1.5rem; }
-.scenario-jump .btn-ghost { padding: 0.45rem 1rem; font-size: 0.9rem; }
-/* "Need help?" is a fallback, not a primary path — dim it: the section-border
-   navy outline + muted text, brightening only on hover. */
-.jump-help { color: var(--muted); border-color: var(--border); }
-.jump-help:hover { background: transparent; color: var(--accent); border-color: var(--accent); }
-.scenarios { display: grid; gap: 1.1rem; margin: 1.2rem 0 2.2rem; }
-.scenario { border: 1px solid var(--border); border-radius: 10px;
-  padding: 1.3rem 1.4rem; background: var(--code-bg);
-  scroll-margin-top: 1.5rem; min-width: 0; }
-/* Neither scenario is outlined by default (the "most common" tag already marks
-   the recommended one). Only the one you jump to gets the accent outline. */
-.scenario:target { border-color: var(--accent); }
-.scenario-head { display: flex; align-items: baseline; gap: 0.6rem;
-  flex-wrap: wrap; margin-bottom: 0.15rem; }
-.scenario-head h3 { margin: 0; font-size: 1.15rem; color: var(--hover); }
-.scenario-tag { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--bg); background: var(--accent); border-radius: 999px;
-  padding: 0.14rem 0.6rem; font-weight: 700; }
-.scenario-sub { color: var(--muted); font-size: 0.92rem; margin: 0.15rem 0 1.1rem; }
-.step { margin: 1rem 0; min-width: 0; }
-.step-label { color: var(--hover); font-weight: 600; font-size: 0.95rem; }
-.step-label .step-n { display: inline-flex; align-items: center; justify-content: center;
-  width: 1.35rem; height: 1.35rem; border-radius: 999px; background: var(--border);
-  color: var(--fg); font-size: 0.78rem; font-weight: 700; margin-right: 0.5rem; }
-.step .os { color: var(--muted); font-size: 0.82rem; margin: 0.5rem 0 0.15rem;
-  display: flex; align-items: center; }
-.os-ico { width: 0.95em; height: 0.95em; margin-right: 0.4em; fill: currentColor;
-  flex-shrink: 0; }
-/* command box with an inline copy button */
-.cmd { position: relative; margin: 0.3rem 0 0; min-width: 0; }
-.cmd pre { margin: 0; padding-right: 4.6rem; }
-.cmd-copy { position: absolute; top: 0.45rem; right: 0.45rem; background: var(--accent);
-  color: var(--bg); border: 0; border-radius: 6px; padding: 0.28rem 0.7rem;
-  font-weight: 600; cursor: pointer; font-size: 0.78rem; transition: opacity 0.12s; }
-.cmd-copy:hover { opacity: 0.85; }
-/* host + client side by side inside scenario 2 */
-/* Stacked full-width: "First" (server) over "Then" (your computer), so long
-   install commands get the whole column and don't need a horizontal scrollbar. */
-.hc-cols { display: grid; grid-template-columns: 1fr; gap: 1rem; margin-top: 0.4rem; }
-.hc { border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.1rem;
-  background: var(--bg); min-width: 0; }
-.hc-order { display: inline-block; font-size: 0.68rem; text-transform: uppercase;
-  letter-spacing: 0.07em; color: var(--accent); font-weight: 700; margin-bottom: 0.1rem; }
-.hc h4 { margin: 0 0 0.15rem; font-size: 1rem; color: var(--hover); }
-.hc .hc-sub { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.6rem; }
-
-/* Collapsible "Before you start" disclosures ------------------------- */
-.disclose { border: 1px solid var(--border); border-radius: 8px; margin: 0.6rem 0;
-  background: var(--code-bg); }
-.disclose > summary { cursor: pointer; padding: 0.8rem 2.4rem 0.8rem 1.1rem;
-  font-weight: 400; color: var(--hover); list-style: none; position: relative; }
-.disclose > summary::-webkit-details-marker { display: none; }
-.disclose > summary::after { content: "+"; position: absolute; right: 1.1rem;
-  color: var(--muted); font-weight: 400; font-size: 1.1rem; line-height: 1.2; }
-.disclose[open] > summary::after { content: "\2212"; }
-.disclose[open] > summary { border-bottom: 1px solid var(--border); }
-.disclose-body { padding: 0.2rem 1.1rem 1rem; }
-.disclose-body > *:first-child { margin-top: 0.7rem; }
-.disclose-body > pre { margin: 0.6rem 0 0; }
-
-/* Long-form guides & posts ------------------------------------------ */
-.post-meta { color: var(--muted); font-size: 0.8rem; margin: 1.4rem 0 0.3rem;
-  text-transform: uppercase; letter-spacing: 0.06em; }
-.post-h { font-size: 2rem; line-height: 1.15; letter-spacing: -0.02em;
-  color: var(--hover); margin: 0.2rem 0 0.7rem; font-weight: 700; }
-.post .lede { font-size: 1.2rem; line-height: 1.5; color: var(--fg); margin: 0 0 1.6rem; }
-/* In an article, headings read like headings — not the homepage micro-labels. */
-.post h2 { font-size: 1.4rem; text-transform: none; letter-spacing: -0.01em;
-  color: var(--hover); margin: 2.4rem 0 0.7rem; font-weight: 700; }
-.post h3 { font-size: 1.12rem; color: var(--hover); margin: 1.7rem 0 0.5rem; }
-.post p, .post li { font-size: 1.02rem; }
-.post .demo-shot { margin: 2rem 0 1.2rem; }
-.post figcaption { margin-top: 0.55rem; font-size: 0.85rem; color: var(--muted); }
-.callout { border: 1px solid var(--border); border-left: 3px solid var(--accent);
-  background: var(--code-bg); border-radius: 4px; padding: 0.9rem 1.1rem; margin: 1.6rem 0; }
-.callout p { margin: 0.3rem 0; }
-.walkthrough { margin: 2.6rem 0; }
-.walkthrough > p { color: var(--muted); font-size: 0.95rem; margin: 0.3rem 0 0.9rem; }
-
-/* FAQ (visible Q&A, mirrored by FAQPage JSON-LD) --------------------- */
-.faq { margin: 2.6rem 0; }
-.faq-item { border-top: 1px solid var(--border); padding: 1rem 0; }
-.faq-item:last-child { border-bottom: 1px solid var(--border); }
-.faq-item h3 { margin: 0 0 0.4rem; font-size: 1.05rem; color: var(--hover); }
-.faq-item p { margin: 0; color: var(--muted); }
-
-/* Guide index hub ---------------------------------------------------- */
-.guide-list { display: grid; grid-template-columns: 1fr; gap: 0.9rem; margin: 1.6rem 0; }
-.guide-card { border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem 1.3rem;
-  text-decoration: none; display: block; }
-.guide-card:hover { background: var(--card-hover-bg); }
-.guide-card h3 { margin: 0 0 0.3rem; font-size: 1.08rem; color: var(--hover); }
-.guide-card p { margin: 0; color: var(--muted); font-size: 0.9rem; }
-.guide-kicker { color: var(--muted); font-size: 0.74rem; text-transform: uppercase;
-  letter-spacing: 0.07em; margin: 2.2rem 0 0.2rem; }
-
-/* Prev/next between guides ------------------------------------------- */
-.post-more { border-top: 1px solid var(--border); margin-top: 3rem; padding-top: 1.4rem; }
-.post-more a { font-weight: 600; }
-
 @media (max-width: 720px) {
-  .proof, .cards, .hc-cols, .qol { grid-template-columns: 1fr; }
+  .proof, .cards { grid-template-columns: 1fr; }
   main { padding: 2.5rem 1.25rem 5rem; }
   .hero-h { font-size: 1.7rem; }
-  .post-h { font-size: 1.6rem; }
   .pick-label { min-width: 0; }
   .compare { font-size: 0.84rem; }
 }

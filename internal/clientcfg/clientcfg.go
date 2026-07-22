@@ -5,28 +5,17 @@ package clientcfg
 
 import (
 	"encoding/json"
-	"fmt"
-	"net"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/aoos/dejima/internal/invite"
 	"github.com/aoos/dejima/internal/paths"
 )
 
 // Profile is a saved connection target. Host is "" for the local Unix socket,
-// or "host:port" for a remote daemon reached over TCP. Token is the bearer
-// secret for that target — a team invite persists it here so the teammate
-// doesn't re-export DEJIMA_TOKEN every session; Role/Islands are the invite's
-// echo, kept for display only (the daemon enforces the real scope). The file is
-// written 0600 (see Save), matching the per-island token files' posture.
+// or "host:port" for a remote daemon reached over TCP.
 type Profile struct {
-	Name    string   `json:"name"`
-	Host    string   `json:"host,omitempty"`
-	Token   string   `json:"token,omitempty"`
-	Role    string   `json:"role,omitempty"`
-	Islands []string `json:"islands,omitempty"`
+	Name string `json:"name"`
+	Host string `json:"host,omitempty"`
 }
 
 // Config holds client-side preferences.
@@ -61,189 +50,6 @@ func (c Config) ActiveHost() (host string, ok bool) {
 		}
 	}
 	return "", false
-}
-
-// LookupProfile resolves a profile by name to its daemon host, reading nothing
-// but the in-memory config. The synthetic "local" name (and "") resolve to the
-// empty host (the local Unix socket). This is the *ephemeral* lookup behind the
-// `-p/--profile` launch flag: it never touches ActiveProfile, so selecting a
-// profile for one invocation can't stomp the persistent choice shared by
-// concurrent TUIs. An unknown name is an error (vs ActiveHost's silent
-// fall-back), because an explicit `-p typo` should fail loudly, not connect
-// somewhere unexpected.
-func (c Config) LookupProfile(name string) (host string, err error) {
-	if name == "" || name == "local" {
-		return "", nil
-	}
-	for _, p := range c.Profiles {
-		if p.Name == name {
-			return p.Host, nil
-		}
-	}
-	return "", fmt.Errorf("no profile named %q (use `dejima profile ls` to see saved profiles)", name)
-}
-
-// AddProfile saves a new connection target and persists it. It is the store
-// half of the TUI add-flow, factored out so the CLI (`dejima profile add`) and
-// the TUI share one code path. A duplicate name is rejected so two profiles
-// can't shadow each other in lookups.
-func AddProfile(name, host string) error {
-	if name == "" {
-		return fmt.Errorf("profile name is required")
-	}
-	if name == "local" {
-		return fmt.Errorf("%q is reserved for the local socket", name)
-	}
-	cfg, err := Load()
-	if err != nil {
-		return err
-	}
-	for _, p := range cfg.Profiles {
-		if p.Name == name {
-			return fmt.Errorf("a profile named %q already exists", name)
-		}
-	}
-	cfg.Profiles = append(cfg.Profiles, Profile{Name: name, Host: host})
-	return Save(cfg)
-}
-
-// SwitchProfile persists name as the active profile — the same write the TUI
-// switcher makes. Unlike LookupProfile (ephemeral), this *does* mutate
-// active_profile in client.json, which is the whole point of `switch` vs `-p`.
-// The synthetic "local" clears the active profile (back to the Unix socket).
-// An unknown name is rejected so `switch` can't leave a dangling reference.
-func SwitchProfile(name string) error {
-	cfg, err := Load()
-	if err != nil {
-		return err
-	}
-	if name == "" || name == "local" {
-		cfg.ActiveProfile = ""
-		return Save(cfg)
-	}
-	found := false
-	for _, p := range cfg.Profiles {
-		if p.Name == name {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("no profile named %q (use `dejima profile ls` to see saved profiles)", name)
-	}
-	cfg.ActiveProfile = name
-	return Save(cfg)
-}
-
-// RemoveProfile deletes a saved profile by name and persists. If it was the
-// active profile, ActiveProfile is cleared (back to the local socket) so no
-// dangling reference is left. It's the store half of both the TUI delete and the
-// CLI `dejima profile rm`, so the two share one code path. "local" can't be
-// removed (it's the synthetic socket target), and an unknown name errors loudly
-// rather than silently no-op'ing.
-func RemoveProfile(name string) error {
-	if name == "" || name == "local" {
-		return fmt.Errorf("%q is the local socket and can't be removed", name)
-	}
-	cfg, err := Load()
-	if err != nil {
-		return err
-	}
-	kept := cfg.Profiles[:0]
-	found := false
-	for _, p := range cfg.Profiles {
-		if p.Name == name {
-			found = true
-			continue
-		}
-		kept = append(kept, p)
-	}
-	if !found {
-		return fmt.Errorf("no profile named %q (use `dejima profile ls` to see saved profiles)", name)
-	}
-	cfg.Profiles = kept
-	if cfg.ActiveProfile == name {
-		cfg.ActiveProfile = ""
-	}
-	return Save(cfg)
-}
-
-// TokenForHost returns the bearer token saved for a connection host, preferring
-// the active profile when it matches (so two profiles on the same host don't
-// race). It is the no-env-token default behind the connection path: an explicit
-// DEJIMA_TOKEN still wins upstream. Empty when no saved profile carries a token
-// for that host (e.g. the local socket, or a host added without one).
-func (c Config) TokenForHost(host string) string {
-	host = strings.TrimSpace(host)
-	if host == "" {
-		return ""
-	}
-	if c.ActiveProfile != "" {
-		for _, p := range c.Profiles {
-			if p.Name == c.ActiveProfile && p.Host == host && p.Token != "" {
-				return p.Token
-			}
-		}
-	}
-	for _, p := range c.Profiles {
-		if p.Host == host && p.Token != "" {
-			return p.Token
-		}
-	}
-	return ""
-}
-
-// SaveInvite persists a decoded team invite as a connection profile and makes it
-// active, so the teammate is connected on the next command with no env vars. The
-// profile name defaults to the invite's Name, else the host's first DNS label; a
-// name clash updates that profile in place (re-joining rotates the saved token
-// rather than erroring). Returns the resolved profile name. The bearer secret
-// lands in client.json, which Save writes 0600.
-func SaveInvite(p invite.Payload) (string, error) {
-	name := strings.TrimSpace(p.Name)
-	if name == "" {
-		name = hostLabel(p.Host)
-	}
-	if name == "" {
-		return "", fmt.Errorf("invite has no name and no usable host to derive one")
-	}
-	if name == "local" {
-		return "", fmt.Errorf("%q is reserved for the local socket", name)
-	}
-	cfg, err := Load()
-	if err != nil {
-		return "", err
-	}
-	prof := Profile{Name: name, Host: strings.TrimSpace(p.Host), Token: p.Token, Role: p.Role, Islands: p.Islands}
-	updated := false
-	for i := range cfg.Profiles {
-		if cfg.Profiles[i].Name == name {
-			cfg.Profiles[i] = prof
-			updated = true
-			break
-		}
-	}
-	if !updated {
-		cfg.Profiles = append(cfg.Profiles, prof)
-	}
-	cfg.ActiveProfile = name
-	return name, Save(cfg)
-}
-
-// hostLabel derives a friendly profile name from a host:port — the first DNS
-// label (or the bare host/IP when there's no dot/port).
-func hostLabel(host string) string {
-	host = strings.TrimSpace(host)
-	if host == "" {
-		return ""
-	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	if i := strings.IndexByte(host, '.'); i > 0 {
-		return host[:i]
-	}
-	return host
 }
 
 func configPath() (string, error) {

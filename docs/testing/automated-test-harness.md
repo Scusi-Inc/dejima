@@ -40,19 +40,6 @@ Gating: Tiers 2–4 run on a **nightly schedule + `workflow_dispatch` + a `live`
   tokens; never touch real projects. The dedicated macOS test user keeps it off your main
   environment.
 
-## Structured reporting (Phase C)
-
-The live suites emit a **machine-readable per-feature summary** so the orchestrator
-reads results instead of scraping logs:
-
-- `scripts/lib/report.sh` provides `feature`/`pass`/`fail`/`report_summary`; setting
-  `DEJIMA_REPORT=<path>` writes a JSON `{suite, passed, failed, features:[…]}`.
-- The nightly `integration` job runs the full-feature suite with `DEJIMA_REPORT` set,
-  **uploads the JSON as a CI artifact** (`tier2-integration-report`), and runs
-  `scripts/report-to-issue.sh`, which **opens/updates a GitHub issue on failure** (deduped
-  by suite title, with the per-feature failing detail) and **closes it when green again**.
-- The job preserves the suite's real exit status (the reporter never masks a failure).
-
 ## Operator setup (what you create — needed for Phases B–C)
 
 - **A dedicated macOS test user** on the Mac mini; register a **GitHub Actions self-hosted

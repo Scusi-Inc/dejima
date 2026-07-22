@@ -11,35 +11,6 @@ PROJECT="${DEJIMA_PROJECT_NAME:-island}"
 REPO="${DEJIMA_REPO_URL:-}"
 AGENT="${DEJIMA_AGENT:-claude-code}"
 WORKSPACE="/workspace"
-# Where a failed clone leaves its classified reason, for `dejima logs` follow-up
-# and (later) a daemon-surfaced island event. The daemon reads this path.
-CLONE_STATUS_FILE="/home/dejima/.dejima/clone-status"
-
-# report_clone_failure turns a raw `git clone` error into actionable guidance and
-# records why, so a failed clone is a live container with a clear message instead
-# of a crashed one spewing a bare "fatal: Authentication failed". $1 is git's
-# combined output.
-report_clone_failure() {
-    local err="$1" reason hint
-    case "$err" in
-        *"Authentication failed"*|*"could not read Username"*|*"Permission denied"*|*"terminal prompts disabled"*|*"HTTP 403"*|*"403 Forbidden"*)
-            reason="auth"
-            hint="this island can't authenticate to the git remote. Check its GitHub identity (\`dejima auth status\`) and (re)push a token (\`dejima auth push --github\`), then recreate the island or re-clone." ;;
-        *"not found"*|*"Could not resolve host"*|*"does not exist"*)
-            reason="not-found"
-            hint="the remote couldn't be reached or found — check the repo URL, and that the identity can see it (private repos need a token with access)." ;;
-        *)
-            reason="error"
-            hint="git couldn't clone the repo; the full output is above (\`dejima logs\` shows it)." ;;
-    esac
-    mkdir -p "$(dirname "$CLONE_STATUS_FILE")"
-    printf '%s\n' "$reason" >"$CLONE_STATUS_FILE" 2>/dev/null || true
-    {
-        echo ""
-        echo "dejima: ✗ repo clone failed (${reason}) — ${hint}"
-        echo "dejima: the island is up; attach to fix git by hand, or recreate after fixing auth."
-    } >&2
-}
 # The daemon supplies the primary agent's tmux session name and launch command
 # (sourced from the handler registry) so they aren't duplicated here. Fallbacks
 # keep the image runnable on its own (e.g. `docker run` for debugging).
@@ -96,26 +67,15 @@ if [[ ! -d "${WORKSPACE}/.git" ]]; then
     TMP=$(mktemp -d)
     if [[ -n "$SEED" && -d "${SEED}/.git" ]]; then
         echo "seeding ${WORKSPACE} from local copy ${SEED}"
-        # `if ! var=$(...)` keeps the failure out of set -e's reach so we can
-        # report it instead of crashing the container.
-        if clone_err=$(git clone "$SEED" "$TMP/repo" 2>&1); then
-            if [[ -n "$REPO" ]]; then
-                git -C "$TMP/repo" remote set-url origin "$REPO"
-            else
-                git -C "$TMP/repo" remote remove origin 2>/dev/null || true
-            fi
+        git clone "$SEED" "$TMP/repo"
+        if [[ -n "$REPO" ]]; then
+            git -C "$TMP/repo" remote set-url origin "$REPO"
         else
-            echo "$clone_err" >&2
-            report_clone_failure "$clone_err"
+            git -C "$TMP/repo" remote remove origin 2>/dev/null || true
         fi
     elif [[ -n "$REPO" ]]; then
         echo "cloning ${REPO} into ${WORKSPACE}"
-        if clone_err=$(git clone "$REPO" "$TMP/repo" 2>&1); then
-            echo "$clone_err"
-        else
-            echo "$clone_err" >&2
-            report_clone_failure "$clone_err"
-        fi
+        git clone "$REPO" "$TMP/repo"
     elif [[ -n "$SEED" ]]; then
         # SEED was requested but has no .git — usually an empty or unshared
         # bind-mount (e.g. a macOS seed path Docker doesn't share). Don't fail
@@ -134,14 +94,6 @@ fi
 cd "$WORKSPACE"
 
 # --- launch the agent -----------------------------------------------------
-# Agent-less island: nothing to launch — just keep the container alive so the
-# operator can shell in (`dejima connect <name>`) or add agents later. Set by
-# the daemon when the island has no agents (all removed, or seeded with none).
-if [[ -n "${DEJIMA_AGENTLESS:-}" ]]; then
-    echo "dejima island '${PROJECT}' ready; no agents — shell in with 'dejima connect ${PROJECT}', or add one"
-    exec tail -f /dev/null
-fi
-
 # "headless" is the escape hatch: the agent is a user-supplied command
 # (DEJIMA_AGENT_CMD) run as the container's main process, with stdout/stderr
 # captured by Docker so `dejima logs` works — no tmux, no attach surface.

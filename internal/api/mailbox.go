@@ -29,45 +29,13 @@ type MailboxPollResponse struct {
 	Latest   int64             `json:"latest"`
 }
 
-// MailboxSendResponse is the body of POST /v1/islands/{name}/mailbox. The
-// delivered message is embedded inline, so the JSON stays byte-compatible with
-// the old (bare MailboxMessage) response — existing clients that decode a
-// mailbox.Message keep working. The added fields are additive + omitempty:
-//
-//   - UnknownRecipient is true when a DIRECTED send (`to` non-empty) named a
-//     recipient that matched NEITHER an id NOR a label in the island's CURRENT
-//     roster. Delivery STILL happened (the mailbox is intentionally permissive —
-//     you may address a handle that isn't a live agent yet, and the roster can be
-//     transiently empty on daemon restart, so a strict reject would false-fail
-//     legitimate sends). The CLI surfaces this as a sender-side warning.
-//   - Roster is the island's current agents at send time, returned so the CLI can
-//     render "delivered anyway, current roster: …" without re-deriving (and re-
-//     racing) the roster. Present only alongside UnknownRecipient.
-//
-// The signal is server-authoritative: the daemon checks against the same roster
-// it just resolved the recipient against, so a transient roster gap can't make
-// the CLI warn from a roster that disagrees with what was actually checked.
-type MailboxSendResponse struct {
-	mailbox.Message
-	UnknownRecipient bool          `json:"unknown_recipient,omitempty"`
-	Roster           []RosterAgent `json:"roster,omitempty"`
-}
-
-// RosterAgent is the minimal (id, label) view of a current agent carried in a
-// MailboxSendResponse so the sender can name the live agents in its warning.
-type RosterAgent struct {
-	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
-}
-
 // sendMailbox posts a message into an island's intra-island mailbox. Reachable
 // by the island's own in-island token (accessOwnIsland) and by the operator —
 // never by another island, so this stays within one trust domain (cross-island
 // exchange is the separate, brokered "link" layer).
 func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	proj, err := project.Load(name)
-	if err != nil {
+	if _, err := project.Load(name); err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
@@ -80,30 +48,6 @@ func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("payload is required"))
 		return
 	}
-	// A directed message may address the recipient by id OR by label (id wins);
-	// resolve a label to the concrete id so the recipient — who polls with its id
-	// — actually receives it. Resolved server-side because the mailbox `to` only
-	// travels in the request body, so there is no CLI-side API call to resolve
-	// against (no new route/role change). The mailbox is intentionally permissive
-	// about the target (you may address an id that isn't a live agent — e.g. one
-	// that will be added, or a stale handle), so a no-match passes THROUGH
-	// unchanged for back-compat; only a genuinely AMBIGUOUS label is rejected,
-	// since silently picking one recipient would mis-deliver.
-	var unknownRecipient bool
-	if to := strings.TrimSpace(req.To); to != "" {
-		if id, rerr := project.ResolveAgentRef(proj.Agents, to); rerr == nil {
-			req.To = id
-		} else if errors.Is(rerr, project.ErrAmbiguousAgent) {
-			writeError(w, http.StatusBadRequest, rerr)
-			return
-		} else {
-			// No id/label match: still deliver to the literal handle (permissive,
-			// see above), but flag it so the sender gets a warning listing the
-			// current roster. Server-authoritative — derived from the very roster
-			// we just resolved against.
-			unknownRecipient = true
-		}
-	}
 	// Belt-and-suspenders: cross-island provenance is the structured Origin field
 	// (set only by the daemon's DeliverExternal), but also reserve a "link:"
 	// sender prefix so a local agent can't dress an intra-island message up to
@@ -113,15 +57,7 @@ func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg := s.mailbox.Send(name, req.From, req.To, req.Topic, req.Payload)
-	msg = enrichMessageNames(proj.Agents, []mailbox.Message{msg})[0]
-	resp := MailboxSendResponse{Message: msg, UnknownRecipient: unknownRecipient}
-	if unknownRecipient {
-		resp.Roster = make([]RosterAgent, 0, len(proj.Agents))
-		for _, a := range proj.Agents {
-			resp.Roster = append(resp.Roster, RosterAgent{ID: a.ID, Label: a.Label})
-		}
-	}
-	writeJSON(w, http.StatusCreated, resp)
+	writeJSON(w, http.StatusCreated, msg)
 }
 
 // pollMailbox returns the messages in an island's mailbox visible to ?agent=
@@ -129,8 +65,7 @@ func (s *Server) sendMailbox(w http.ResponseWriter, r *http.Request) {
 // sendMailbox.
 func (s *Server) pollMailbox(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	proj, err := project.Load(name)
-	if err != nil {
+	if _, err := project.Load(name); err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
@@ -140,27 +75,7 @@ func (s *Server) pollMailbox(w http.ResponseWriter, r *http.Request) {
 		since, _ = strconv.ParseInt(v, 10, 64)
 	}
 	writeJSON(w, http.StatusOK, MailboxPollResponse{
-		Messages: enrichMessageNames(proj.Agents, s.mailbox.Poll(name, agent, since)),
+		Messages: s.mailbox.Poll(name, agent, since),
 		Latest:   s.mailbox.Latest(name),
 	})
-}
-
-// enrichMessageNames fills FromLabel/ToLabel on each message from the island
-// roster (current names, resolved at read time so a rename reflects). A handle
-// not in the local roster (a broadcast's empty To, a cross-island sender) keeps
-// the existing value — cross-island provenance already carries Origin.FromLabel.
-func enrichMessageNames(agents []project.AgentSpec, msgs []mailbox.Message) []mailbox.Message {
-	labelOf := make(map[string]string, len(agents))
-	for _, a := range agents {
-		labelOf[a.ID] = a.Label
-	}
-	for i := range msgs {
-		if msgs[i].FromLabel == "" {
-			msgs[i].FromLabel = labelOf[msgs[i].From]
-		}
-		if msgs[i].To != "" && msgs[i].ToLabel == "" {
-			msgs[i].ToLabel = labelOf[msgs[i].To]
-		}
-	}
-	return msgs
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/authtoken"
-	"github.com/aoos/dejima/internal/project"
 )
 
 // This file is the team-auth token-administration surface: issue, list, and
@@ -23,8 +22,7 @@ type TokenView struct {
 	ID        string    `json:"id"`
 	Label     string    `json:"label,omitempty"`
 	Role      string    `json:"role"`
-	Owner     string    `json:"owner,omitempty"`   // tenant this token acts as (multi-tenant ownership)
-	Islands   []string  `json:"islands,omitempty"` // scope; empty = all the owner's islands
+	Islands   []string  `json:"islands,omitempty"` // scope; empty = all islands
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -33,7 +31,6 @@ func tokenView(t authtoken.Token) TokenView {
 		ID:        t.ID,
 		Label:     t.Label,
 		Role:      string(t.Role),
-		Owner:     t.Owner,
 		Islands:   t.Islands,
 		CreatedAt: t.CreatedAt,
 	}
@@ -44,15 +41,8 @@ type CreateTokenRequest struct {
 	Label string `json:"label,omitempty"`
 	// Role is "owner", "operator", or "viewer".
 	Role string `json:"role"`
-	// Owner scopes the token to a tenant: an operator/viewer token sees + acts on
-	// only the islands that tenant owns (and islands it creates become the
-	// tenant's). Empty defaults to the host owner — i.e. an unscoped operator token
-	// behaves as before (full access to the host operator's fleet). A RoleOwner
-	// token is the host admin and sees all regardless. Owner-only to set (this
-	// whole surface is capOwner).
-	Owner string `json:"owner,omitempty"`
-	// Islands optionally further narrows the token to specific island names; empty
-	// grants it across all the owner's islands (still bounded by Role + Owner).
+	// Islands optionally scopes the token to specific island names; empty grants
+	// it across all islands (still bounded by Role).
 	Islands []string `json:"islands,omitempty"`
 }
 
@@ -92,14 +82,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 			errors.New(`role is required and must be one of "owner", "operator", or "viewer"`))
 		return
 	}
-	// Empty owner defaults to the host owner: an unscoped operator token then
-	// behaves as before (full access to the host operator's fleet). Scope a
-	// teammate by passing an explicit owner.
-	owner := strings.TrimSpace(req.Owner)
-	if owner == "" {
-		owner = project.HostOwner()
-	}
-	secret, tok, err := authtoken.Create(req.Label, role, req.Islands, owner)
+	secret, tok, err := authtoken.Create(req.Label, role, req.Islands)
 	if err != nil {
 		// A bad island name in the scope is the caller's mistake (400); anything
 		// else is a store failure (500).

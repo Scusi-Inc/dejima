@@ -2,8 +2,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -15,7 +13,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -27,7 +24,6 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/events"
-	"github.com/aoos/dejima/internal/pasteimg"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/reposrc"
@@ -52,24 +48,16 @@ func main() {
 	}
 }
 
-// maybeOfferConnectionHelp surfaces help when a command can't reach the daemon.
-// For a local-socket target it prints a direct diagnosis of why dejimad isn't up
-// and the steps to fix it. For a remote target (DEJIMA_HOST or an active
-// profile) it offers a one-time interactive troubleshooting walkthrough, firing
-// at most once (a marker file) so a host that's down doesn't nag every command.
+// maybeOfferConnectionHelp offers a one-time troubleshooting walkthrough the
+// first time a command can't reach the daemon AND DEJIMA_HOST is set (i.e. this
+// machine is a client pointed at a host that isn't answering). It fires at most
+// once (a marker file), so a host that's down doesn't nag on every command.
 func maybeOfferConnectionHelp(err error) {
 	if err == nil || !isConnectionError(err) {
 		return
 	}
-	// A client pointed at a remote host gets the interactive tailnet/TCP
-	// troubleshooter below. A local socket failure is a different problem —
-	// dejimad on *this* machine isn't up — so give a direct, actionable read of
-	// why and how to fix it (the steps are the answer, no prompt needed).
-	if resolveHost() == "" {
-		if term.IsTerminal(int(os.Stderr.Fd())) {
-			printLocalDaemonHelp(diagnoseLocalDaemon())
-		}
-		return
+	if strings.TrimSpace(os.Getenv("DEJIMA_HOST")) == "" {
+		return // only the client-pointed-at-a-host case; a local socket failure is different
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return
@@ -165,7 +153,6 @@ func runConnectionTroubleshooter(ctx context.Context) {
 }
 
 func newRootCmd() *cobra.Command {
-	var demoMode bool
 	cmd := &cobra.Command{
 		Use:   "dejima",
 		Short: "An island for agents to live on.",
@@ -193,19 +180,13 @@ func newRootCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "Try `dejima ls` for a scriptable view, or `dejima --help` for all verbs.")
 				return nil
 			}
-			return runTUI(cmd.Context(), demoMode)
+			return runTUI(cmd.Context())
 		},
 	}
-	cmd.Flags().BoolVar(&demoMode, "demo", false, "drive the dashboard from a synthetic fleet (for screen recordings; no daemon)")
-	cmd.PersistentFlags().BoolVar(&showIDs, "ids", os.Getenv("DEJIMA_SHOW_IDS") == "1",
-		"reveal agent ids alongside names (default: names only; or set DEJIMA_SHOW_IDS=1)")
-	registerProfileFlags(cmd)
 	cmd.AddCommand(
 		newInitCmd(),
-		newProfileCmd(),
 		newHomeCmd(),
 		newConnectCmd(),
-		newShellCmd(),
 		newLsCmd(),
 		newAgentCmd(),
 		newMsgCmd(),
@@ -213,26 +194,17 @@ func newRootCmd() *cobra.Command {
 		newStatusCmd(),
 		newHibernateCmd(),
 		newWakeCmd(),
-		newPinCmd(),
-		newUnpinCmd(),
-		newScheduleCmd(),
 		newResetCmd(),
 		newPurgeCmd(),
 		newPanicCmd(),
 		newUninstallCmd(),
 		newCloneCmd(),
-		newEjectCmd(),
 		newUpgradeCmd(),
 		newExecCmd(),
 		newCpCmd(),
-		newPasteCmd(),
-		newAttachCmd(),
 		newPortCmd(),
 		newCapCmd(),
 		newLinkCmd(),
-		newPolicyCmd(),
-		newEgressCmd(),
-		newSpawnCmd(),
 		newMCPCmd(),
 		newAuditCmd(),
 		newActivityCmd(),
@@ -243,17 +215,14 @@ func newRootCmd() *cobra.Command {
 		newWebhookCmd(),
 		newAuthCmd(),
 		newTokenCmd(),
-		newJoinCmd(),
 		newProviderCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),
 		newOverviewCmd(),
 		newDoctorCmd(),
 		newOnboardCmd(),
-		newAdoptCmd(),
 		newUpdateCmd(),
 		newTUICmd(),
-		newFeedbackCmd(),
 	)
 	return cmd
 }
@@ -440,10 +409,6 @@ func newLogsCmd() *cobra.Command {
 			}
 			c, err := client()
 			if err != nil {
-				return err
-			}
-			// A label is accepted anywhere an agent id is (id still wins).
-			if agent, err = resolveAgentRef(cmd.Context(), c, name, agent); err != nil {
 				return err
 			}
 			rc, err := c.StreamLogs(cmd.Context(), name, agent, follow)
@@ -825,82 +790,17 @@ func newHibernateCmd() *cobra.Command {
 	}
 }
 
-// --- pin / unpin (idle-hibernate exemption) -------------------------------
+// --- wake -----------------------------------------------------------------
 
-func newPinCmd() *cobra.Command {
+func newWakeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "pin <name>",
-		Short: "Pin an island awake (exempt it from idle auto-hibernate).",
-		Long: "Pin an island so the daemon's idle auto-hibernate never stops it — for a " +
-			"persistent ambient agent (a watchtower / monitor) that must keep running between " +
-			"bursts of work. It can still be hibernated manually with `dejima hibernate`. " +
-			"Release the pin with `dejima unpin <name>`. Takes effect immediately; no restart.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			info, err := c.SetIslandHibernation(cmd.Context(), args[0], true)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("pinned %s awake — exempt from idle auto-hibernate\n", info.Name)
-			return nil
-		},
-	}
-}
-
-func newUnpinCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "unpin <name>",
-		Short: "Release an island's pin (re-enable idle auto-hibernate).",
+		Use:   "wake <name>",
+		Short: "Start a hibernated island.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
 			if err != nil {
 				return err
-			}
-			info, err := c.SetIslandHibernation(cmd.Context(), args[0], false)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("unpinned %s — idle auto-hibernate re-enabled\n", info.Name)
-			return nil
-		},
-	}
-}
-
-// --- wake -----------------------------------------------------------------
-
-func newWakeCmd() *cobra.Command {
-	var at, every, task, agent string
-	cmd := &cobra.Command{
-		Use:   "wake <name>",
-		Short: "Start a hibernated island, now or on a schedule.",
-		Long: "With no flags, wakes the island immediately. With --at or --every it instead " +
-			"registers a durable SCHEDULED wake the daemon fires later (surviving daemon " +
-			"restart and `dejima upgrade`) — for an ambient agent that should hibernate " +
-			"between runs. --task injects a prompt into the agent on wake so it runs its work; " +
-			"--agent picks which agent (default: the primary). Inspect with `dejima schedule " +
-			"list <name>`.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			// Scheduling mode: --at (one-shot) or --every (recurring).
-			if at != "" || every != "" {
-				sc, err := c.CreateSchedule(cmd.Context(), args[0], api.CreateScheduleRequest{
-					Every: every, At: at, Task: task, Agent: agent,
-				})
-				if err != nil {
-					return err
-				}
-				fmt.Printf("scheduled wake %s on %s — next due %s\n",
-					sc.ID, args[0], sc.NextDue.Local().Format(time.RFC3339))
-				return nil
 			}
 			info, err := c.WakeIsland(cmd.Context(), args[0])
 			if err != nil {
@@ -910,70 +810,6 @@ func newWakeCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&at, "at", "", "schedule a one-shot wake at an RFC3339 time (e.g. 2026-07-01T09:00:00Z)")
-	cmd.Flags().StringVar(&every, "every", "", "schedule a recurring wake every Go duration (e.g. 720h)")
-	cmd.Flags().StringVar(&task, "task", "", "prompt to inject into the agent on a scheduled wake (so it runs its work)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent id/label to run --task (default: the island's primary)")
-	return cmd
-}
-
-// --- schedule (list / rm) -------------------------------------------------
-
-func newScheduleCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "schedule",
-		Short: "Inspect or cancel an island's scheduled wakes.",
-	}
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "list <name>",
-			Short: "List an island's scheduled wakes.",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				c, err := client()
-				if err != nil {
-					return err
-				}
-				schedules, err := c.ListSchedules(cmd.Context(), args[0])
-				if err != nil {
-					return err
-				}
-				if len(schedules) == 0 {
-					fmt.Printf("no scheduled wakes on %s\n", args[0])
-					return nil
-				}
-				for _, s := range schedules {
-					cadence := "at " + s.NextDue.Local().Format(time.RFC3339)
-					if s.Every != "" {
-						cadence = "every " + s.Every
-					}
-					line := fmt.Sprintf("%s\t%s\tnext %s", s.ID, cadence, s.NextDue.Local().Format(time.RFC3339))
-					if s.Task != "" {
-						line += fmt.Sprintf("\ttask=%q", s.Task)
-					}
-					fmt.Println(line)
-				}
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "rm <name> <schedule-id>",
-			Short: "Cancel a scheduled wake.",
-			Args:  cobra.ExactArgs(2),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				c, err := client()
-				if err != nil {
-					return err
-				}
-				if err := c.DeleteSchedule(cmd.Context(), args[0], args[1]); err != nil {
-					return err
-				}
-				fmt.Printf("removed schedule %s from %s\n", args[1], args[0])
-				return nil
-			},
-		},
-	)
-	return cmd
 }
 
 // --- reset ----------------------------------------------------------------
@@ -1061,12 +897,6 @@ func client() (*api.Client, error) {
 // source is one of "env", "profile", or "local" — where the target came from,
 // surfaced in the TUI header so a stale DEJIMA_HOST override is visible.
 func resolveTarget() (host, label, source string) {
-	// An explicit launch flag (`-p NAME` / `--host`) is the most deliberate
-	// expression of intent and is *ephemeral* — it overrides the saved profile
-	// and even DEJIMA_HOST for this process only, without persisting anything.
-	if h, label, ok := ephemeralTarget(); ok {
-		return h, label, "flag"
-	}
 	if h := strings.TrimSpace(os.Getenv("DEJIMA_HOST")); h != "" {
 		return h, h, "env"
 	}
@@ -1093,14 +923,6 @@ func resolveHost() string {
 func clientForHost(host string) (*api.Client, error) {
 	host = strings.TrimSpace(host)
 	if host == "" {
-		// The local unix socket is filesystem-trusted and runs as OWNER
-		// (exchange-down model). A token attenuates only the TCP/in-island path,
-		// so DEJIMA_TOKEN here is silently ignored — warn, so a viewer token set
-		// locally in the hope of reduced rights isn't mistaken for being in
-		// effect (it isn't; you act as owner). Set DEJIMA_HOST to use a token.
-		if strings.TrimSpace(os.Getenv("DEJIMA_TOKEN")) != "" {
-			fmt.Fprintln(os.Stderr, "warning: DEJIMA_TOKEN is ignored over the local socket — you act as the trusted owner. A token applies only to a remote/in-island target (set DEJIMA_HOST).")
-		}
 		return api.NewUnixClient()
 	}
 	// Guard the choke point: a host carrying a control character (e.g. a stray
@@ -1111,27 +933,10 @@ func clientForHost(host string) (*api.Client, error) {
 	if i := strings.IndexFunc(host, func(r rune) bool { return r < 0x20 || r == 0x7f }); i >= 0 {
 		return nil, fmt.Errorf("invalid host %q: contains a control character at position %d", host, i)
 	}
-	if token := tokenForHost(host); token != "" {
+	if token := strings.TrimSpace(os.Getenv("DEJIMA_TOKEN")); token != "" {
 		return api.NewTCPClientWithToken(host, token)
 	}
 	return api.NewTCPClient(host)
-}
-
-// tokenForHost resolves the bearer token for a remote connection target.
-// Precedence: an explicit DEJIMA_TOKEN env always wins (the in-island autonomy
-// path — the daemon injects it per-container — and scripted/CI use); otherwise
-// the token saved with a matching connection profile (what a team invite
-// persists, so a teammate doesn't re-export it each session). Empty → an
-// unauthenticated TCP client (the tailnet-pinned listener case).
-func tokenForHost(host string) string {
-	if token := strings.TrimSpace(os.Getenv("DEJIMA_TOKEN")); token != "" {
-		return token
-	}
-	cfg, err := clientcfg.Load()
-	if err != nil {
-		return ""
-	}
-	return cfg.TokenForHost(host)
 }
 
 // versionSkew compares the daemon's reported API version against this client's
@@ -1373,27 +1178,19 @@ func newInitCmd() *cobra.Command {
 
 func newConnectCmd() *cobra.Command {
 	var label, agentID string
-	var shell bool
 	cmd := &cobra.Command{
 		Use:   "connect <name>",
-		Short: "Attach to an island's agent (or shell).",
-		Long: "Open an interactive PTY into the island via the Dejima API. By default this " +
-			"attaches the island's AGENT — the thing you usually want: one agent attaches it, " +
-			"several let you pick. Target a specific one with --agent <id|label> or the " +
-			"`<name>/<agent>` shorthand. For the contained /workspace shell instead (the same " +
-			"place agents run), use --shell or `<name>/shell` (or `dejima shell <name>`). " +
+		Short: "Attach to an island's session.",
+		Long: "Open an interactive PTY into the island's tmux session via the Dejima API. " +
 			"Multiple clients can attach simultaneously (shared tmux). Disconnect with the " +
-			"normal tmux detach key (Ctrl-b then d).",
+			"normal tmux detach key (Ctrl-b then d).\n\n" +
+			"For islands with multiple agents, target one with --agent <id> or the " +
+			"`<name>/<agent>` shorthand; the bare name attaches to the primary agent.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, agent := splitIslandAgent(args[0])
 			if agentID != "" {
 				agent = agentID // explicit flag wins over the shorthand
-			}
-			// `<name>/shell` is the reserved selector for the workspace shell (so is
-			// --shell). Treat either as "no agent → shell".
-			if strings.EqualFold(agent, "shell") {
-				shell, agent = true, ""
 			}
 			if label == "" {
 				label = defaultLabel()
@@ -1401,22 +1198,6 @@ func newConnectCmd() *cobra.Command {
 			c, err := client()
 			if err != nil {
 				return err
-			}
-			// Resolve the attach target. --shell forces the workspace shell. A named
-			// agent (id or label; id wins) resolves directly. A bare `connect <name>`
-			// now defaults to the island's agent — pick it (1 → attach, N → choose,
-			// 0 → fall back to the workspace shell).
-			switch {
-			case shell:
-				agent = ""
-			case agent != "":
-				if agent, err = resolveAgentRef(cmd.Context(), c, name, agent); err != nil {
-					return err
-				}
-			default:
-				if agent, err = pickIslandAgent(cmd.Context(), c, name); err != nil {
-					return err
-				}
 			}
 			info, err := c.GetIsland(cmd.Context(), name)
 			if err != nil {
@@ -1431,53 +1212,11 @@ func newConnectCmd() *cobra.Command {
 			if info.Repo != "" {
 				waitForWorkspaceReady(cmd.Context(), c, name)
 			}
-			// No agent (explicit --shell, or an island with no agents) → a contained
-			// shell at /workspace. Otherwise attach the resolved agent.
-			if agent == "" {
-				return runInShellSession(cmd.Context(), c, name, label, false) // bare CLI — no dashboard to summon back to
-			}
 			return runSession(cmd.Context(), c, name, agent, label)
 		},
 	}
 	cmd.Flags().StringVar(&label, "as", "", "client label shown in presence (default: $HOSTNAME or 'cli')")
-	cmd.Flags().StringVar(&agentID, "agent", "", "agent id or label to attach to (default: the island's agent)")
-	cmd.Flags().BoolVar(&shell, "shell", false, "attach the contained /workspace shell instead of an agent")
-	return cmd
-}
-
-func newShellCmd() *cobra.Command {
-	var label string
-	cmd := &cobra.Command{
-		Use:   "shell <name>",
-		Short: "Open a shell at an island (contained, at /workspace).",
-		Long: "Attach an interactive bash shell INSIDE the island's container at /workspace — " +
-			"the same place its agents run, so git, installs, and the repo are all right there. " +
-			"It's a single shared, resumable tmux session per island (detach with Ctrl-b then d); " +
-			"it is not an agent. This is what the dashboard opens when you press Enter on an island.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if label == "" {
-				label = defaultLabel()
-			}
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			info, err := c.GetIsland(cmd.Context(), name)
-			if err != nil {
-				return err
-			}
-			if info.Container != "running" {
-				return fmt.Errorf("island %q is not running (container: %s); `dejima wake %s` first", name, info.Container, name)
-			}
-			if info.Repo != "" {
-				waitForWorkspaceReady(cmd.Context(), c, name)
-			}
-			return runInShellSession(cmd.Context(), c, name, label, false) // bare CLI — no dashboard to summon back to
-		},
-	}
-	cmd.Flags().StringVar(&label, "as", "", "client label shown in presence (default: $HOSTNAME or 'cli')")
+	cmd.Flags().StringVar(&agentID, "agent", "", "agent id to attach to (default: the island's primary agent)")
 	return cmd
 }
 
@@ -1488,92 +1227,6 @@ func splitIslandAgent(arg string) (island, agent string) {
 		return arg[:i], arg[i+1:]
 	}
 	return arg, ""
-}
-
-// resolveAgentRef turns a user-supplied agent reference (an id or a label) into a
-// concrete agent id by fetching the island's agent list and matching with the
-// shared project.ResolveAgentRef resolver: an exact id wins (ids always work), a
-// case-insensitive label resolves, an ambiguous label errors with the matches,
-// and an unknown ref errors. An empty ref passes straight through (it means "the
-// island's primary / a bare shell" to the callers and must not be resolved).
-//
-// This is the single CLI-side resolution point shared by exec/logs/connect/
-// rename/config/rm — every verb that targets a specific agent.
-func resolveAgentRef(ctx context.Context, c *api.Client, island, ref string) (string, error) {
-	if strings.TrimSpace(ref) == "" {
-		return ref, nil
-	}
-	agents, err := c.ListAgents(ctx, island)
-	if err != nil {
-		return "", err
-	}
-	return project.ResolveAgentRef(agents, ref)
-}
-
-// pickIslandAgent chooses which agent a bare `dejima connect <island>` attaches:
-// the island's agent is the obvious default (the recurring "why isn't connect the
-// Claude session?" surprise). Only ATTACHABLE agents count. Returns:
-//   - "" with no error when the island has no attachable agent → the caller opens
-//     the workspace shell (the old default, now the fallback rather than the norm),
-//   - the single attachable agent's id when there's exactly one,
-//   - an interactive pick when there are several (numbered prompt on a TTY; off a
-//     TTY, an error listing them so the operator re-runs with `<island>/<agent>`).
-func pickIslandAgent(ctx context.Context, c *api.Client, island string) (string, error) {
-	agents, err := c.ListAgents(ctx, island)
-	if err != nil {
-		return "", err
-	}
-	return selectAgentFromList(island, agents, os.Stdin, term.IsTerminal(int(os.Stdin.Fd())))
-}
-
-// selectAgentFromList applies the default-to-agent policy to an island's agent
-// list: filter to ATTACHABLE agents, then 0 → "" (caller opens the workspace
-// shell), 1 → that agent, several → an interactive choice. Split from
-// pickIslandAgent (which does the I/O) so the policy is unit-testable: `in` is the
-// choice source and `interactive` says whether we may prompt.
-func selectAgentFromList(island string, agents []api.AgentInfo, in io.Reader, interactive bool) (string, error) {
-	attachable := make([]api.AgentInfo, 0, len(agents))
-	for _, a := range agents {
-		if a.Attachable {
-			attachable = append(attachable, a)
-		}
-	}
-	switch len(attachable) {
-	case 0:
-		fmt.Fprintf(os.Stderr, "[dejima] no agent on %q — opening a /workspace shell (use `dejima shell %s` to skip this)\n", island, island)
-		return "", nil
-	case 1:
-		a := attachable[0]
-		fmt.Fprintf(os.Stderr, "[dejima] attaching agent %s\n", agentDisplay(a.Label, a.ID))
-		return a.ID, nil
-	default:
-		return chooseAgent(island, attachable, in, interactive)
-	}
-}
-
-// chooseAgent lists the candidates and, when interactive, reads a numbered choice
-// from `in` (bare Enter takes the first). Off a TTY it can't prompt, so it errors
-// with the list and the explicit shorthand to use. Runs in cooked mode, before any
-// raw-mode PTY.
-func chooseAgent(island string, agents []api.AgentInfo, in io.Reader, interactive bool) (string, error) {
-	fmt.Fprintf(os.Stderr, "Island %q has %d agents:\n", island, len(agents))
-	for i, a := range agents {
-		fmt.Fprintf(os.Stderr, "  %d) %s\n", i+1, agentDisplay(a.Label, a.ID))
-	}
-	if !interactive {
-		return "", fmt.Errorf("island %q has multiple agents — pick one with `%s/<agent>` (or `%s/shell` for a workspace shell)", island, island, island)
-	}
-	fmt.Fprint(os.Stderr, "Attach which? [1] ")
-	line, _ := bufio.NewReader(in).ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
-		line = "1" // bare Enter takes the first
-	}
-	n, err := strconv.Atoi(line)
-	if err != nil || n < 1 || n > len(agents) {
-		return "", fmt.Errorf("not a valid choice: %q (expected 1-%d)", line, len(agents))
-	}
-	return agents[n-1].ID, nil
 }
 
 // defaultLabel produces a client label for presence: $HOSTNAME or "cli".
@@ -1611,104 +1264,16 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) {
 
 // runSession is the websocket ↔ local-stdio bridge driving `dejima connect`.
 // An empty agentID attaches to the island's primary agent.
-// setTerminalTitle sets the local terminal tab/window title via an OSC sequence
-// (no-op for a non-TTY stdout, or an empty title used to clear on detach). It's
-// written to the local terminal — above any inner tmux — so it's the reliable
-// "what am I attached to" cue regardless of the container's tmux config. Control
-// bytes are stripped so a crafted name can't inject escape sequences.
-func setTerminalTitle(title string) {
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return
-	}
-	fmt.Fprintf(os.Stdout, "\033]0;%s\007", sanitizeTitle(title))
-}
-
-// sanitizeTitle strips control bytes (including ESC and BEL) from a title so a
-// crafted island/agent name can't inject its own terminal escape sequences.
-func sanitizeTitle(title string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, title)
-}
-
-// sessionTitle builds the tab title for an island/agent attach: "island/agent",
-// or just "island" when no specific agent is named.
-func sessionTitle(name, agentID string) string {
-	if agentID == "" {
-		return name
-	}
-	return name + "/" + agentID
-}
-
-// sessionPaste bundles the two client→agent image bridges for an island session:
-// drag-drop (a dropped local file) and clipboard paste (Ctrl-V/Alt-V image). Both
-// upload into the island and return the in-island path the session injects. nil
-// (host-terminal sessions, no island) disables interception entirely.
-type sessionPaste struct {
-	// drop uploads a dropped client-local file; returns the in-island path.
-	drop func(localPath string) (islandPath string, err error)
-	// clip captures the OS clipboard image and uploads it; ok=false when there's
-	// no image (so the keystroke is forwarded to the agent unchanged).
-	clip func() (islandPath string, ok bool, err error)
-}
-
-// islandPaste builds the drag-drop + clipboard handlers for an island session,
-// both uploading into the island's paste intake dir (agent-readable via the
-// write path). Host-terminal sessions pass nil instead.
-func islandPaste(ctx context.Context, c *api.Client, island string) *sessionPaste {
-	return &sessionPaste{
-		drop: func(localPath string) (string, error) {
-			return stageLocalFile(ctx, c, island, localPath)
-		},
-		clip: func() (string, bool, error) {
-			img, err := pasteimg.Capture()
-			if errors.Is(err, pasteimg.ErrNoImage) || errors.Is(err, pasteimg.ErrUnsupported) {
-				return "", false, nil // no image / can't capture → forward the keystroke
-			}
-			if err != nil {
-				return "", false, err
-			}
-			dest := fmt.Sprintf("%s/clip-%d.%s", pasteIntakeDir, time.Now().UnixNano(), img.Ext)
-			if err := c.WriteFile(ctx, island, dest, bytes.NewReader(img.Bytes)); err != nil {
-				return "", false, err
-			}
-			return dest, true, nil
-		},
-	}
-}
-
 func runSession(ctx context.Context, c *api.Client, name, agentID, label string) error {
-	return runSessionLoop(ctx, false, sessionTitle(name, agentID), islandPaste(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
-		return c.DialAgentSession(ctx, name, agentID, label)
-	})
-}
-
-// runSessionSummonable is runSession with the summon chord (Ctrl-\) enabled — used
-// when the attach was launched from the TUI, so the chord can return there.
-func runSessionSummonable(ctx context.Context, c *api.Client, name, agentID, label string) error {
-	return runSessionLoop(ctx, true, sessionTitle(name, agentID), islandPaste(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
+	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialAgentSession(ctx, name, agentID, label)
 	})
 }
 
 // runTerminalSession attaches the local terminal to a host terminal's session.
-// summonable enables the summon chord (true when launched from the TUI). No paste
-// bridge — a host terminal isn't an island, so there's nowhere to upload.
-func runTerminalSession(ctx context.Context, c *api.Client, id, label string, summonable bool) error {
-	return runSessionLoop(ctx, summonable, "host: "+id, nil, func(ctx context.Context) (*websocket.Conn, error) {
+func runTerminalSession(ctx context.Context, c *api.Client, id, label string) error {
+	return runSessionLoop(ctx, func(ctx context.Context) (*websocket.Conn, error) {
 		return c.DialTerminalSession(ctx, id, label)
-	})
-}
-
-// runInShellSession attaches the local terminal to an island's in-island shell —
-// a contained bash session at /workspace inside the container. summonable=true
-// when launched from the TUI so the Ctrl-\ chord returns to the dashboard.
-func runInShellSession(ctx context.Context, c *api.Client, name, label string, summonable bool) error {
-	return runSessionLoop(ctx, summonable, name+" — shell", islandPaste(ctx, c, name), func(ctx context.Context) (*websocket.Conn, error) {
-		return c.DialIslandShell(ctx, name, label)
 	})
 }
 
@@ -1720,60 +1285,7 @@ const (
 	sessExitClean                      // server closed cleanly (detach / agent exited / server error)
 	sessExitStdinEOF                   // local stdin closed (the terminal window went away)
 	sessExitCtx                        // the caller's context was cancelled (Ctrl-C)
-	sessExitSummon                     // the summon chord was pressed — break out to the dashboard
 )
-
-// Reconnect-loop backstop: a healthy session stays attached for a while, so a
-// transport blip (daemon restart, laptop sleep) reconnects and resumes. But a
-// connection that attaches and drops again almost immediately, over and over, is
-// not a recoverable blip — it's an unrecoverable server-side failure (a tmux that
-// can't open, a session that exits on attach). Spinning on it forever traps the
-// operator, so after maxImmediateReconnects such instant drops we stop loudly.
-const (
-	minHealthyUptime       = 2 * time.Second
-	maxImmediateReconnects = 4
-)
-
-// errSessionAborted is returned by reconnectSession when the user presses Ctrl-C
-// during the reconnect wait — in raw mode there's no SIGINT, so we watch the
-// keystroke stream for ETX and treat it as "stop trying".
-var errSessionAborted = errors.New("session aborted")
-
-// nextImmediateFailures folds the just-ended connection's uptime into the running
-// count of consecutive instant drops: a connection that stayed up at least
-// minHealthyUptime resets it (a real session happened), a near-instant drop
-// increments it. Pulled out so the give-up policy is unit-testable.
-func nextImmediateFailures(prev int, uptime time.Duration) int {
-	if uptime >= minHealthyUptime {
-		return 0
-	}
-	return prev + 1
-}
-
-// summonChord is the byte that breaks out of an attached session back into the
-// dashboard (with the host-terminal band open). Ctrl-\ (0x1c): tmux's prefix is
-// Ctrl-b and shells/vim don't bind it, so it's a safe in-session escape. Only
-// honored when the session was launched from the TUI (summonable); a bare
-// `dejima connect` forwards it like any other byte.
-const summonChord = 0x1c
-
-// errSummonBand signals that an attached session ended because the user pressed
-// the summon chord — runTUI re-enters the dashboard instead of exiting.
-var errSummonBand = errors.New("summon band")
-
-// splitOnSummon scans a stdin chunk for the summon chord. If present (and the
-// session is summonable), it returns the bytes before the chord and summon=true,
-// so the caller forwards the prefix and then breaks out. Otherwise summon=false
-// and the chunk is forwarded unchanged.
-func splitOnSummon(b []byte, summonable bool) (before []byte, summon bool) {
-	if !summonable {
-		return b, false
-	}
-	if i := bytes.IndexByte(b, summonChord); i >= 0 {
-		return b[:i], true
-	}
-	return b, false
-}
 
 // classifySessionClose decides, from a websocket read error, whether to exit or
 // reconnect. A clean server-initiated NormalClosure means we're done — that's a
@@ -1797,7 +1309,7 @@ func classifySessionClose(err error, ctx context.Context) sessReason {
 // so a daemon restart, the host sleeping, or a network blip no longer closes the
 // terminal out from under you when you next type. Stdin is read by one long-lived
 // goroutine that outlives individual connections; raw mode is entered once.
-func runSessionLoop(ctx context.Context, summonable bool, title string, paste *sessionPaste, dial func(context.Context) (*websocket.Conn, error)) error {
+func runSessionLoop(ctx context.Context, dial func(context.Context) (*websocket.Conn, error)) error {
 	// The first dial surfaces real errors (auth, no such island/agent) directly —
 	// no reconnect spinner on a connect that was never going to work.
 	conn, err := dial(ctx)
@@ -1807,33 +1319,14 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 
 	stdinFd := int(os.Stdin.Fd())
 	if term.IsTerminal(stdinFd) {
-		hint := "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. " +
-			"Session keeps running; this client auto-reconnects if the link drops."
-		if summonable {
-			hint += " Summon the dashboard: Ctrl-\\."
-		}
-		if paste != nil {
-			if lbl := attachKeyLabel(); lbl != "" {
-				hint += " Attach a file: " + lbl + "."
-			}
-		}
-		fmt.Fprintln(os.Stderr, hint)
+		fmt.Fprintln(os.Stderr, "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. "+
+			"Session keeps running; this client auto-reconnects if the link drops.")
 		oldState, rerr := term.MakeRaw(stdinFd)
 		if rerr != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			return fmt.Errorf("raw mode: %w", rerr)
 		}
 		defer func() { _ = term.Restore(stdinFd, oldState) }()
-		// Title the local tab to what we're attached to. Emitted to the local
-		// terminal (not into the websocket), so it sits above any inner tmux and
-		// works regardless of the container's tmux config. Cleared on detach.
-		// A TUI-spawned tab passes DEJIMA_TAB_TITLE (island/label, label preferred
-		// over id) so the OSC title matches the tab name instead of the bare id.
-		if t := os.Getenv("DEJIMA_TAB_TITLE"); t != "" {
-			title = t
-		}
-		setTerminalTitle(title)
-		defer setTerminalTitle("")
 	}
 
 	// One long-lived stdin reader → channel; it survives reconnects so keystrokes
@@ -1861,47 +1354,15 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 		}
 	}()
 
-	immediate := 0
 	for {
-		attached := time.Now()
-		switch runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone, summonable, paste) {
-		case sessReconnect:
-			// fall through to the reconnect path below
-		case sessExitSummon:
-			return errSummonBand
-		default:
+		if runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone) != sessReconnect {
 			return nil
 		}
-		// Give up if the session keeps dropping the instant it attaches — an
-		// unrecoverable open failure must fail once, loudly, not loop forever.
-		immediate = nextImmediateFailures(immediate, time.Since(attached))
-		if immediate >= maxImmediateReconnects {
-			if term.IsTerminal(stdinFd) {
-				fmt.Fprintf(os.Stderr, "\r\n[dejima] the session keeps closing the moment it opens "+
-					"(%d times) — giving up. The terminal couldn't start; check `dejima doctor` or the daemon logs.\r\n", immediate)
-			}
-			return fmt.Errorf("session repeatedly failed to stay open")
-		}
 		if term.IsTerminal(stdinFd) {
-			fmt.Fprint(os.Stderr, "\r\n[dejima] connection lost — reconnecting… (Ctrl-C to give up)\r\n")
+			fmt.Fprint(os.Stderr, "\r\n[dejima] connection lost — reconnecting…\r\n")
 		}
-		next, rerr := reconnectSession(ctx, dial, stdinDone, stdinCh)
+		next, rerr := reconnectSession(ctx, dial, stdinDone)
 		if rerr != nil {
-			// A positive session-gone signal — exit cleanly with a clear note,
-			// not a scary code-1.
-			if errors.Is(rerr, api.ErrSessionGone) {
-				if term.IsTerminal(stdinFd) {
-					fmt.Fprint(os.Stderr, "\r\n[dejima] this session is gone — the island was removed. Closing.\r\n")
-				}
-				return nil
-			}
-			// Ctrl-C during the reconnect wait — the user chose to stop. Clean exit.
-			if errors.Is(rerr, errSessionAborted) {
-				if term.IsTerminal(stdinFd) {
-					fmt.Fprint(os.Stderr, "\r\n[dejima] gave up reconnecting.\r\n")
-				}
-				return nil
-			}
 			return rerr
 		}
 		if next == nil {
@@ -1914,18 +1375,11 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 	}
 }
 
-// reconnectSession re-dials with capped exponential backoff until it succeeds.
-// The tmux session lives on the daemon, so a dropped client link (laptop sleep,
-// network/Tailscale blip, daemon restart) is recoverable — we retry as long as
-// the user keeps the terminal open rather than discarding a still-valid session
-// on a timer. Returns: the new connection on success; (nil, nil) if the caller
-// cancels or the local terminal closes; (nil, err wrapping api.ErrSessionGone)
-// only when the daemon positively reports the session/island is gone (404/410) —
-// the one case that will never recover; or (nil, errSessionAborted) if the user
-// presses Ctrl-C in the reconnect wait. stdinCh is the live keystroke stream:
-// while disconnected there's no session to forward to, so we only watch it for
-// Ctrl-C (raw mode delivers no SIGINT) and discard the rest.
-func reconnectSession(ctx context.Context, dial func(context.Context) (*websocket.Conn, error), stdinDone <-chan struct{}, stdinCh <-chan []byte) (*websocket.Conn, error) {
+// reconnectSession re-dials with capped exponential backoff for up to 5 minutes.
+// Returns the new connection, or (nil, nil) if the caller cancels / the local
+// terminal closes, or (nil, err) if the window is exceeded (e.g. island purged).
+func reconnectSession(ctx context.Context, dial func(context.Context) (*websocket.Conn, error), stdinDone <-chan struct{}) (*websocket.Conn, error) {
+	deadline := time.Now().Add(5 * time.Minute)
 	backoff := 250 * time.Millisecond
 	for {
 		select {
@@ -1933,21 +1387,13 @@ func reconnectSession(ctx context.Context, dial func(context.Context) (*websocke
 			return nil, nil
 		case <-stdinDone:
 			return nil, nil
-		case b := <-stdinCh:
-			if bytes.IndexByte(b, 0x03) >= 0 { // Ctrl-C (ETX) — give up
-				return nil, errSessionAborted
-			}
-			continue // typed while disconnected; nowhere to send — drop and retry now
 		case <-time.After(backoff):
 		}
-		conn, err := dial(ctx)
-		if err == nil {
+		if conn, err := dial(ctx); err == nil {
 			return conn, nil
 		}
-		// A purged island / gone session won't come back — stop now. Every other
-		// failure is transport-down (daemon unreachable); keep retrying.
-		if errors.Is(err, api.ErrSessionGone) {
-			return nil, err
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("could not reconnect after 5m — the session may be gone (check `dejima ls`)")
 		}
 		if backoff < 5*time.Second {
 			backoff *= 2
@@ -1958,22 +1404,10 @@ func reconnectSession(ctx context.Context, dial func(context.Context) (*websocke
 // runOneSessionConn pumps one connection until it ends, returning why. The
 // websocket is closed on return; stdin/resize are owned by the caller's
 // long-lived reader, so a reconnect resumes without re-reading the terminal.
-func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}, summonable bool, bridge *sessionPaste) sessReason {
+func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}) sessReason {
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	// Image bridge: when this is an island session on a real terminal, watch the
-	// keystroke stream for (P2a) a drag-dropped local file — a bracketed paste of
-	// an existing client-local path — and (P2b) a Ctrl-V/Alt-V clipboard image, and
-	// in either case upload + inject the in-island path so the agent can Read it.
-	// Everything else passes through BYTE-EXACT. nil bridge (host terminal) / non-
-	// TTY → no interception at all.
-	intercept := bridge != nil && term.IsTerminal(stdinFd)
-	var paste pasteScanner
-	if intercept {
-		paste.triggers = configuredPasteTriggers()
-	}
 
 	// Re-send the size on (re)attach so tmux opens/resumes at the right dimensions.
 	if rows, cols, err := terminalSize(stdinFd); err == nil {
@@ -1982,11 +1416,6 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 	watchTerminalResize(connCtx, stdinFd, func(rows, cols uint16) {
 		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
 	})
-
-	// altScreen tracks whether the agent is currently in a full-screen TUI, by
-	// watching its output for the alt-screen escapes. Gated notices below consult
-	// it so the client never writes into a TUI's screen (which corrupts its cursor).
-	var altScreen altScreenWatch
 
 	readReason := make(chan sessReason, 1)
 	go func() {
@@ -2007,117 +1436,15 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 				printPresence("now attached", env.Attached)
 			case "data":
 				if raw, derr := base64StdDecode(env.B64); derr == nil {
-					altScreen.observe(raw)
 					_, _ = os.Stdout.Write(raw)
 				}
 			case "error":
 				fmt.Fprintln(os.Stderr, "server error:", env.B64)
 				readReason <- sessExitClean // a real server error — don't loop on it
 				return
-			case "exit":
-				// The server signalled the bridged terminal ended (detach,
-				// intentional `exit`, or an instant open-failure). End cleanly —
-				// never reconnect — so an exited shell or a failed host terminal
-				// doesn't trap the operator in a respawn loop. Any preceding "data"
-				// (e.g. tmux's "open terminal failed …") has already been printed.
-				readReason <- sessExitClean
-				return
 			}
 		}
 	}()
-
-	// inject writes an in-island path into the agent's input as a BRACKETED PASTE
-	// (no Enter) so the agent treats it as a paste, not typed input: an adapter's
-	// paste-time file handling (Claude Code → image artifact, else a path it can
-	// Read) fires only on a paste event, not on streamed keystrokes. Shared by the
-	// attach-file minibuffer and the drag-drop/clipboard bridge below.
-	inject := func(islandPath string) {
-		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode([]byte(bracketedPaste(islandPath)))})
-	}
-
-	// sessionNotice prints an inline [dejima] status line to the user's terminal —
-	// but ONLY when the agent isn't in a full-screen TUI. Writing into a TUI's
-	// alt-screen collides with its own cursor/redraw (the notice parks the cursor
-	// on the injected token); the injected token/path is feedback enough there.
-	sessionNotice := func(format string, a ...any) {
-		if altScreen.active.Load() {
-			return
-		}
-		fmt.Fprintf(os.Stderr, format, a...)
-	}
-
-	// Attach-file minibuffer (island session on a TTY): the attach chord (default
-	// Ctrl-]; DEJIMA_ATTACH_KEY) opens a local path prompt; the typed/pasted path
-	// is uploaded and its in-island
-	// path injected. Terminal drag-drop is flaky over tmux+SSH, so typing a path is
-	// the robust route.
-	var attachKey []byte
-	if intercept {
-		attachKey = configuredAttachKey()
-	}
-	var attaching *attachState
-	// pendingUp holds a pasted file PATH awaiting the operator's upload confirm (in
-	// a plain shell). Nothing is ever silently uploaded — see resolveUpload.
-	var pendingUp *pendingUpload
-	finishAttach := func(p string) {
-		p = expandClientPath(p)
-		if p == "" {
-			fmt.Fprint(os.Stderr, "\r\n[dejima] attach cancelled (no path)\r\n")
-			return
-		}
-		if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
-			fmt.Fprintf(os.Stderr, "\r\n[dejima] attach failed: %s is not a readable file\r\n", p)
-			return
-		}
-		islandPath, err := bridge.drop(p)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\r\n[dejima] attach failed: %v\r\n", err)
-			return
-		}
-		inject(islandPath)
-		fmt.Fprintf(os.Stderr, "\r\n📎 attached: %s → %s\r\n", filepath.Base(p), islandPath)
-	}
-	// stepAttach feeds a chunk into the open minibuffer, resolving it on Enter/Esc.
-	stepAttach := func(b []byte) {
-		done, cancelled, p := attaching.feed(b)
-		switch {
-		case cancelled:
-			attaching = nil
-			fmt.Fprint(os.Stderr, "\r\n[dejima] attach cancelled\r\n")
-		case done:
-			attaching = nil
-			finishAttach(p)
-		}
-	}
-	// resolveUpload answers the file-upload confirm (plain shell): 'u'/'y' uploads
-	// the pending file; ANY other key forwards the pasted PATH as text (so a reflex
-	// Enter sends the path, never uploads) followed by the operator's keystrokes.
-	// Nothing is ever silently uploaded.
-	resolveUpload := func(b []byte) {
-		pu := pendingUp
-		pendingUp = nil
-		if len(b) == 0 {
-			return
-		}
-		switch b[0] {
-		case 'u', 'U', 'y', 'Y':
-			islandPath, err := bridge.drop(pu.path)
-			if err != nil {
-				sessionNotice("\r\n[dejima] upload failed: %v\r\n", err)
-			} else {
-				inject(islandPath)
-				sessionNotice("\r\n📎 uploaded → %s\r\n", filepath.Base(pu.path))
-			}
-			if rest := b[1:]; len(rest) > 0 {
-				_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(rest)})
-			}
-		default:
-			// Decline → send the path to the agent as pasted text, then the operator's
-			// keystroke(s) verbatim (never strip — an Esc byte could head an escape seq).
-			_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(pu.bracketed)})
-			_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(b)})
-		}
-	}
 
 	for {
 		select {
@@ -2128,90 +1455,11 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 		case r := <-readReason:
 			return r
 		case b := <-stdinCh:
-			// A pending upload-confirm owns the next keystroke: 'u'/'y' uploads,
-			// any other key sends the path as text. (Plain shell only — a TUI or
-			// the disable toggle never opens a confirm.)
-			if pendingUp != nil {
-				resolveUpload(b)
-				continue
-			}
-			// While the attach minibuffer is open it owns the keystroke stream:
-			// collect a path (not forwarded to the agent) until Enter or Esc.
-			if attaching != nil {
-				stepAttach(b)
-				continue
-			}
-			// The summon chord (Ctrl-\) breaks out to the dashboard: forward any
-			// keystrokes before it, then end the session with sessExitSummon. The
-			// deferred NormalClosure detaches cleanly — the tmux session lives on.
-			before, summon := splitOnSummon(b, summonable)
-			// Attach chord (default Ctrl-]): open the local-path prompt. Forward bytes before
-			// it; seed the buffer with anything typed/pasted after it in the same chunk.
-			if len(attachKey) > 0 {
-				pre, after, hit := splitOnAttach(before, attachKey)
-				if hit {
-					if len(pre) > 0 {
-						_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(pre)})
-					}
-					fmt.Fprint(os.Stderr, "\r\n[dejima] attach a file — type or paste a path · Enter to send · Esc to cancel\r\n> ")
-					attaching = &attachState{w: os.Stderr}
-					if len(after) > 0 {
-						stepAttach(after)
-					}
-					continue
-				}
-			}
-			// Intercept a dropped local file (P2a) or a Ctrl-V/Alt-V clipboard image
-			// (P2b): upload it and inject the in-island path. Byte-exact otherwise.
-			if intercept {
-				before = paste.process(before,
-					func(localPath string, bracketed []byte) bool { // pasted/dropped file path
-						switch pasteDropPolicy(altScreen.active.Load()) {
-						case pasteAsText:
-							// Disabled, or a full-screen TUI is attached: never silently
-							// upload — forward the path to the agent as plain text.
-							return false
-						default: // pasteConfirm (plain shell): ask before ingesting.
-							pendingUp = &pendingUpload{path: localPath, bracketed: bracketed}
-							fmt.Fprintf(os.Stderr, "\r\n📎 %s is a file on your computer — [u] upload it to the agent · any other key = paste the path as text\r\n",
-								filepath.Base(localPath))
-							return true
-						}
-					},
-					func() bool { // Ctrl-V / Alt-V clipboard image
-						if bridge.clip == nil {
-							return false
-						}
-						islandPath, ok, err := bridge.clip()
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "\r\n[dejima] clipboard paste failed: %v\r\n", err)
-							return false // forward the keystroke
-						}
-						if !ok {
-							return false // no image on the clipboard → forward the keystroke
-						}
-						inject(islandPath)
-						sessionNotice("\r\n[dejima] pasted image → %s\r\n", islandPath)
-						return true
-					})
-			}
-			if len(before) > 0 {
-				_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(before)})
-			}
-			if summon {
-				return sessExitSummon
-			}
+			// A write failure means this conn is dead; keep selecting — the read
+			// pump delivers the authoritative close reason momentarily.
+			_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "data", B64: base64StdEncode(b)})
 		}
 	}
-}
-
-// bracketedPaste wraps s in the terminal bracketed-paste markers (DEC 2004,
-// bpStart/bpEnd) so the receiving application treats it as pasted content rather
-// than typed keystrokes. The image-paste bridge uses this so an injected file
-// path triggers the agent's paste-time image auto-attach (→ image artifact)
-// instead of landing as a literal path/link.
-func bracketedPaste(s string) string {
-	return bpStart + s + bpEnd
 }
 
 func writeEnvelope(ctx context.Context, conn *websocket.Conn, env api.SessionEnvelope) error {
@@ -2264,39 +1512,21 @@ func newLsCmd() *cobra.Command {
 				fmt.Println("no islands yet — `dejima init --repo <url>` to create one")
 				return nil
 			}
-			// The daemon's version is the reference for the per-island skew note.
-			// Best-effort: an older daemon (no overview/version) just yields no note.
-			daemonVer := ""
-			if o, ovErr := c.Overview(cmd.Context()); ovErr == nil {
-				daemonVer = o.DaemonVersion
-			}
-			// Whether to render the NOTE column at all: only when at least one island
-			// has something to say, so the common all-healthy listing stays clean.
-			anyNote := false
-			for _, i := range items {
-				if islandSkewNote(i, daemonVer) != "" {
-					anyNote = true
-					break
-				}
-			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 			writeRow := func(i api.IslandInfo) {
 				agentCol := i.Agent
 				if len(i.Agents) > 1 {
 					agentCol = fmt.Sprintf("%d agents", len(i.Agents))
 				}
-				if anyNote {
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-						i.Name, agentCol, shortenRepo(i.Repo), i.State, i.Container, islandSkewNote(i, daemonVer))
-				} else {
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-						i.Name, agentCol, shortenRepo(i.Repo), i.State, i.Container)
-				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+					i.Name, agentCol, shortenRepo(i.Repo), i.State, i.Container)
 				if showAgents && len(i.Agents) > 1 {
 					for _, a := range i.Agents {
-						// Name-first: "label (id)" leads, type follows. Falls back to
-						// the bare id when an agent somehow has no label.
-						fmt.Fprintf(tw, "  └ %s\t%s\t%s\t%s\t\n", agentDisplay(a.Label, a.ID), a.Type, "", a.State)
+						label := a.Type
+						if a.Label != "" {
+							label = a.Label
+						}
+						fmt.Fprintf(tw, "  └ %s\t%s\t%s\t%s\t\n", a.ID, label, "", a.State)
 					}
 				}
 			}
@@ -2308,11 +1538,7 @@ func newLsCmd() *cobra.Command {
 					if gi > 0 {
 						fmt.Fprintln(tw)
 					}
-					tail := ""
-					if anyNote {
-						tail = "\t"
-					}
-					fmt.Fprintf(tw, "%s\t\t\t\t(%s)%s\n", shortenRepo(g.repo), countNoun(len(g.islands), "island"), tail)
+					fmt.Fprintf(tw, "%s\t\t\t\t(%s)\n", shortenRepo(g.repo), countNoun(len(g.islands), "island"))
 					for _, i := range g.islands {
 						writeRow(i)
 					}
@@ -2320,11 +1546,7 @@ func newLsCmd() *cobra.Command {
 				return tw.Flush()
 			}
 
-			header := "NAME\tAGENT\tREPO\tSTATE\tCONTAINER"
-			if anyNote {
-				header += "\tNOTE"
-			}
-			fmt.Fprintln(tw, header)
+			fmt.Fprintln(tw, "NAME\tAGENT\tREPO\tSTATE\tCONTAINER")
 			for _, i := range items {
 				writeRow(i)
 			}
@@ -2334,35 +1556,6 @@ func newLsCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&showAgents, "agents", "a", false, "expand each island's agents")
 	cmd.Flags().BoolVarP(&group, "group", "g", false, "group islands that share a repo (multi-agent projects read as one)")
 	return cmd
-}
-
-// daemonVersion fetches the running daemon's reported version (the reference for
-// island version-skew), or "" if it can't be determined (older daemon, transient
-// error) — in which case skew comparison degrades to a no-op.
-func daemonVersion(ctx context.Context, c *api.Client) string {
-	if o, err := c.Overview(ctx); err == nil {
-		return o.DaemonVersion
-	}
-	return ""
-}
-
-// islandSkewNote is the short `dejima ls` marker for an island that's behind the
-// daemon's version or whose heartbeat never fired — the compact form of the
-// doctor finding. Empty when the island is level/healthy or provenance is
-// unknown. The full remedy (`dejima upgrade <name>`) lives in `dejima doctor` and
-// `dejima status`; ls just flags which islands to look at.
-func islandSkewNote(i api.IslandInfo, daemonVer string) string {
-	stamp := i.UpgradedVersion
-	if stamp == "" {
-		stamp = i.BuiltVersion
-	}
-	if version.IsRelease(daemonVer) && version.IsRelease(stamp) && version.Compare(stamp, daemonVer) < 0 {
-		return fmt.Sprintf("stale image (%s < %s) — dejima upgrade %s", stamp, daemonVer, i.Name)
-	}
-	if i.NeverHeardFrom {
-		return "no heartbeat — dejima upgrade " + i.Name
-	}
-	return ""
 }
 
 // islandGroup is a set of islands sharing one repo, for the `dejima ls -g` view.
@@ -2399,7 +1592,7 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Manage the agents within an island.",
 	}
-	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRenameCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd())
+	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd())
 	return cmd
 }
 
@@ -2424,15 +1617,11 @@ func newAgentConfigCmd() *cobra.Command {
 			if cmd.Flags().Changed("model") {
 				req.Model = &model
 			}
-			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
+			resp, err := c.ConfigureAgent(cmd.Context(), args[0], args[1], req)
 			if err != nil {
 				return err
 			}
-			resp, err := c.ConfigureAgent(cmd.Context(), args[0], id, req)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("agent %s/%s → provider=%q model=%q\n", args[0], id, resp.Provider, resp.Model)
+			fmt.Printf("agent %s/%s → provider=%q model=%q\n", args[0], args[1], resp.Provider, resp.Model)
 			if resp.RestartRequired {
 				fmt.Printf("recreate the island to apply: dejima upgrade %s\n", args[0])
 			}
@@ -2496,30 +1685,14 @@ func newAgentLsCmd() *cobra.Command {
 				return err
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			// Name-first, names-only by default: the agent's label leads; the bare
-			// id column appears only under --ids/DEJIMA_SHOW_IDS. Matches the rest of
-			// the CLI and the TUI.
-			if showIDs {
-				fmt.Fprintln(tw, "NAME\tID\tTYPE\tSTATE\tBRANCH\tWORKTREE")
-			} else {
-				fmt.Fprintln(tw, "NAME\tTYPE\tSTATE\tBRANCH\tWORKTREE")
-			}
+			fmt.Fprintln(tw, "ID\tTYPE\tLABEL\tSTATE\tBRANCH\tWORKTREE")
 			for _, a := range agents {
 				state := a.State
 				if a.Error != "" {
 					state = "error"
 				}
-				name := a.Label
-				if name == "" {
-					name = a.ID
-				}
-				if showIDs {
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-						name, a.ID, a.Type, state, a.Branch, a.Worktree)
-				} else {
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-						name, a.Type, state, a.Branch, a.Worktree)
-				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					a.ID, a.Type, a.Label, state, a.Branch, a.Worktree)
 			}
 			if err := tw.Flush(); err != nil {
 				return err
@@ -2527,7 +1700,7 @@ func newAgentLsCmd() *cobra.Command {
 			// Print any orchestration errors in full below the table.
 			for _, a := range agents {
 				if a.Error != "" {
-					fmt.Printf("\n  %s: %s\n", agentDisplay(a.Label, a.ID), a.Error)
+					fmt.Printf("\n  %s: %s\n", a.ID, a.Error)
 				}
 			}
 			return nil
@@ -2536,63 +1709,24 @@ func newAgentLsCmd() *cobra.Command {
 }
 
 func newAgentAddCmd() *cobra.Command {
-	var typ, label, provider, model, spawnedBy string
-	var ephemeral bool
+	var typ, label, provider, model string
 	cmd := &cobra.Command{
 		Use:   "add <island>",
 		Short: "Add an agent to an island.",
-		Long: "Add an agent to an island.\n\n" +
-			"With --ephemeral the agent is a SPAWNED sub-agent: auto-reaped on exit / TTL /\n" +
-			"parent removal and counted against the island's spawn budget. An in-island agent\n" +
-			"(token caller) MUST pass --ephemeral and needs an operator spawn grant\n" +
-			"(`dejima spawn grant`); --spawned-by defaults to $DEJIMA_AGENT_ID so lineage is\n" +
-			"recorded automatically.",
-		Args: cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
 			if err != nil {
 				return err
 			}
-			// Lineage: an in-island agent spawning a sub-agent is the parent, so
-			// default --spawned-by to its own id (the daemon injects it as
-			// DEJIMA_AGENT_ID) — the agent needn't know or pass it. An operator add
-			// (no such env) leaves it empty.
-			sb := strings.TrimSpace(spawnedBy)
-			if sb == "" {
-				sb = strings.TrimSpace(os.Getenv("DEJIMA_AGENT_ID"))
-			}
 			a, err := c.AddAgent(cmd.Context(), args[0], api.AgentSpecRequest{
 				Type: typ, Label: label, Provider: provider, Model: model,
-				Ephemeral: ephemeral, SpawnedBy: sb,
 			})
 			if err != nil {
 				return err
 			}
-			// The daemon always assigns a non-blank, unique label: a requested
-			// "build" already in use comes back as "build-2", and an omitted label
-			// gets a Type-derived default ("claude", "claude-2", …). Surface what was
-			// assigned so neither the auto-increment nor the default is silent.
-			switch want := strings.TrimSpace(label); {
-			case want == "":
-				fmt.Printf("named it %q\n", a.Label)
-			case a.Label != want:
-				fmt.Printf("note: label %q was taken; named it %q\n", want, a.Label)
-			}
-			kind := "agent"
-			if a.Ephemeral {
-				kind = "ephemeral sub-agent"
-			}
-			fmt.Printf("added %s %s [%s] to %s — attach with `dejima connect %s/%s`\n",
-				kind, agentDisplay(a.Label, a.ID), a.Type, args[0], args[0], a.ID)
-			if a.Ephemeral {
-				fmt.Printf("note: auto-reaped on exit/TTL/parent-removal%s\n",
-					func() string {
-						if a.SpawnedBy != "" {
-							return " (spawned by " + a.SpawnedBy + ")"
-						}
-						return ""
-					}())
-			}
+			fmt.Printf("added agent %s (%s) to %s — attach with `dejima connect %s/%s`\n",
+				a.ID, a.Type, args[0], args[0], a.ID)
 			if a.AuthState == "missing-provider-auth" {
 				fmt.Printf("note: %s has no model key yet — set one with `dejima provider set %s`\n",
 					a.ID, a.Provider)
@@ -2600,49 +1734,11 @@ func newAgentAddCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&typ, "type", "", "agent type (default: same as the island's first agent)")
+	cmd.Flags().StringVar(&typ, "type", "", "agent type (default: same as the island's primary agent)")
 	cmd.Flags().StringVar(&label, "label", "", "optional label for the agent")
 	cmd.Flags().StringVar(&provider, "provider", "", "LLM provider for key-requiring agent types")
 	cmd.Flags().StringVar(&model, "model", "", "model string, e.g. anthropic/claude-sonnet-4-6")
-	cmd.Flags().BoolVar(&ephemeral, "ephemeral", false, "spawn an auto-reaped ephemeral sub-agent (in-island agents must set this; needs an operator spawn grant)")
-	cmd.Flags().StringVar(&spawnedBy, "spawned-by", "", "spawning agent id for lineage (default: $DEJIMA_AGENT_ID)")
 	return cmd
-}
-
-func newAgentRenameCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "rename <island> <agent-id> <label>",
-		Short: "Rename an agent (its label; an empty label clears it).",
-		Long: "Set an agent's cosmetic label. Labels are deduped within an island: " +
-			"renaming to a name another agent already holds auto-increments " +
-			"(\"build\" → \"build-2\"). Renaming an agent to its own current label is a no-op.",
-		Args: cobra.ExactArgs(3),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			want := strings.TrimSpace(args[2])
-			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
-			if err != nil {
-				return err
-			}
-			a, err := c.RelabelAgent(cmd.Context(), args[0], id, want)
-			if err != nil {
-				return err
-			}
-			// The daemon dedupes labels; surface the auto-increment if it happened.
-			if want != "" && a.Label != want {
-				fmt.Printf("note: label %q was taken; named it %q\n", want, a.Label)
-			}
-			if showIDs {
-				fmt.Printf("renamed agent %s to %q in %s\n", a.ID, a.Label, args[0])
-			} else {
-				fmt.Printf("renamed agent to %q in %s\n", a.Label, args[0])
-			}
-			return nil
-		},
-	}
 }
 
 func newAgentRmCmd() *cobra.Command {
@@ -2655,14 +1751,10 @@ func newAgentRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := resolveAgentRef(cmd.Context(), c, args[0], args[1])
-			if err != nil {
+			if err := c.RemoveAgent(cmd.Context(), args[0], args[1]); err != nil {
 				return err
 			}
-			if err := c.RemoveAgent(cmd.Context(), args[0], id); err != nil {
-				return err
-			}
-			fmt.Printf("removed agent %s from %s\n", id, args[0])
+			fmt.Printf("removed agent %s from %s\n", args[1], args[0])
 			return nil
 		},
 	}
@@ -2688,18 +1780,8 @@ func newStatusCmd() *cobra.Command {
 			fmt.Printf("repo:        %s\n", info.Repo)
 			fmt.Printf("agent:       %s\n", info.Agent)
 			fmt.Printf("image:       %s\n", info.Image)
-			if stamp := info.UpgradedVersion; stamp != "" {
-				fmt.Printf("built on:    %s (last upgrade)\n", stamp)
-			} else if info.BuiltVersion != "" {
-				fmt.Printf("built on:    %s\n", info.BuiltVersion)
-			}
 			fmt.Printf("state:       %s (desired)\n", info.State)
 			fmt.Printf("container:   %s\n", info.Container)
-			// Surface version-skew / dead-heartbeat right where the operator inspects
-			// an island, with the exact remedy inline.
-			if note := islandSkewNote(*info, daemonVersion(cmd.Context(), c)); note != "" {
-				fmt.Printf("skew:        %s\n", note)
-			}
 			if info.Owner != "" {
 				fmt.Printf("owner:       %s\n", info.Owner)
 			}
@@ -2800,19 +1882,6 @@ func humanBytes(b uint64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// humanCount abbreviates a plain count (e.g. token totals): 1234 → "1.2k",
-// 1500000 → "1.5M". Small values print as-is.
-func humanCount(n int) string {
-	switch {
-	case n < 1000:
-		return strconv.Itoa(n)
-	case n < 1_000_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	default:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	}
-}
-
 // --- purge ----------------------------------------------------------------
 
 func newPurgeCmd() *cobra.Command {
@@ -2866,33 +1935,6 @@ func parseTags(pairs []string) (map[string]string, error) {
 }
 
 // formatTags renders a tag map as "k=v k=v" in sorted key order (stable output).
-// agentDisplay renders an agent name-first as "label (id)" — the human-given
-// label leads, with the id kept in parentheses only to disambiguate. When the
-// label is blank (which Part 1 / #195 now makes rare: every agent gets a
-// non-blank, unique label), it degrades to the bare id. This is the SAME
-// convention the mailbox poll display shipped (#190: "backend (a1)"); reuse it
-// everywhere an agent is listed so the whole CLI reads consistently. The id
-// stays the addressing handle — this is presentation only.
-// showIDs reveals bare agent ids in human-facing output. Off by default — agents
-// are referred to by NAME; the stable id is an internal handle. Flipped on by the
-// persistent --ids flag or DEJIMA_SHOW_IDS=1 for when you need the id (scripting,
-// disambiguation, bug reports).
-var showIDs bool
-
-// agentDisplay renders an agent for humans: its name only, by default. The id is
-// appended ("name (id)") only when --ids/DEJIMA_SHOW_IDS reveals it. A nameless
-// agent falls back to the id so nothing ever renders blank.
-func agentDisplay(label, id string) string {
-	label = strings.TrimSpace(label)
-	if label == "" {
-		return id
-	}
-	if showIDs && id != "" {
-		return label + " (" + id + ")"
-	}
-	return label
-}
-
 func formatTags(tags map[string]string) string {
 	keys := make([]string, 0, len(tags))
 	for k := range tags {
@@ -2929,7 +1971,146 @@ func countNoun(n int, singular string) string {
 }
 
 // --- uninstall ------------------------------------------------------------
-// newUninstallCmd and islandAtRisk live in uninstall.go.
+
+// islandAtRisk mirrors the daemon's purge guard so `dejima uninstall` can
+// pre-flight the whole batch and refuse before purging anything. Returns a
+// human reason when the island has at-risk work (or can't be verified), or ""
+// when it's safe to purge.
+func islandAtRisk(ctx context.Context, c *api.Client, isl api.IslandInfo) string {
+	if isl.Container != "running" {
+		return "not running — unpushed work can't be verified"
+	}
+	d, err := c.GetIsland(ctx, isl.Name)
+	if err != nil || d.Git == nil {
+		return "" // no git info → nothing git-tracked to lose
+	}
+	var risks []string
+	if !d.Git.Clean && d.Git.DirtyFiles > 0 {
+		risks = append(risks, countNoun(d.Git.DirtyFiles, "uncommitted change"))
+	}
+	if d.Git.Ahead > 0 {
+		risks = append(risks, countNoun(d.Git.Ahead, "unpushed commit"))
+	}
+	return strings.Join(risks, " and ")
+}
+
+func newUninstallCmd() *cobra.Command {
+	var yes, force, systemSvc, keepData bool
+	cmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove Dejima entirely: purge all islands, uninstall the service, delete binaries + ~/.dejima.",
+		Long: "One-shot clean removal: purges every island (honoring the unpushed-work guard),\n" +
+			"uninstalls the dejimad service, removes the dejima/dejimad binaries, and deletes\n" +
+			"~/.dejima. Destructive and irreversible — confirms first unless --yes.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			islands, err := c.ListIslands(ctx)
+			if err != nil {
+				return fmt.Errorf("list islands: %w (is the daemon running?)", err)
+			}
+
+			// Pre-flight the unpushed-work guard across ALL islands first, so we
+			// never purge some and then abort on a guarded one (half-uninstall).
+			if !force {
+				var atRisk []string
+				for _, isl := range islands {
+					if reason := islandAtRisk(ctx, c, isl); reason != "" {
+						atRisk = append(atRisk, fmt.Sprintf("  %s — %s", isl.Name, reason))
+					}
+				}
+				if len(atRisk) > 0 {
+					return fmt.Errorf("refusing to uninstall — these islands have at-risk or unverifiable work:\n%s\n\ncommit/push (or `dejima wake` to verify), or re-run with --force",
+						strings.Join(atRisk, "\n"))
+				}
+			}
+
+			selfBin, _ := os.Executable()
+			daemonBin, _ := resolveDaemonBinary()
+			root, _ := paths.Root()
+
+			fmt.Println("This will permanently:")
+			fmt.Printf("  • purge %s (and all their volumes)\n", countNoun(len(islands), "island"))
+			fmt.Println("  • uninstall the dejimad service")
+			if daemonBin != "" {
+				fmt.Printf("  • remove %s\n", daemonBin)
+			}
+			if selfBin != "" {
+				fmt.Printf("  • remove %s\n", selfBin)
+			}
+			if !keepData && root != "" {
+				fmt.Printf("  • delete %s\n", root)
+			}
+			fmt.Println()
+
+			if !yes {
+				fmt.Print("Type 'uninstall' to confirm: ")
+				var in string
+				_, _ = fmt.Scanln(&in)
+				if strings.TrimSpace(in) != "uninstall" {
+					return fmt.Errorf("aborted")
+				}
+			}
+
+			// 1. Purge every island. The guard pre-flight already ran, so force.
+			for _, isl := range islands {
+				if err := c.DeleteIsland(ctx, isl.Name, true); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: purge %s: %v\n", isl.Name, err)
+				} else {
+					fmt.Printf("  purged %s\n", isl.Name)
+				}
+			}
+
+			// 2. Uninstall the service (stops the daemon).
+			if mgr, mErr := serviceMgr(systemSvc); mErr == nil {
+				if err := mgr.Uninstall(); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: service uninstall: %v\n", err)
+				} else {
+					fmt.Println("  service uninstalled")
+				}
+			}
+
+			// 3. Remove the binaries. A running binary can be unlinked on unix
+			// (the inode lives until the process exits).
+			for _, bin := range []string{daemonBin, selfBin} {
+				if bin == "" {
+					continue
+				}
+				switch err := os.Remove(bin); {
+				case err == nil:
+					fmt.Printf("  removed %s\n", bin)
+				case errors.Is(err, os.ErrNotExist):
+					// already gone
+				case errors.Is(err, os.ErrPermission):
+					fmt.Fprintf(os.Stderr, "  note: couldn't remove %s (permission) — `sudo rm %s`\n", bin, bin)
+				default:
+					fmt.Fprintf(os.Stderr, "  warning: remove %s: %v\n", bin, err)
+				}
+			}
+
+			// 4. Delete ~/.dejima.
+			if !keepData && root != "" {
+				if err := os.RemoveAll(root); err != nil {
+					fmt.Fprintf(os.Stderr, "  note: couldn't fully delete %s: %v (root-owned files? `sudo rm -rf %s`)\n", root, err, root)
+				} else {
+					fmt.Printf("  deleted %s\n", root)
+				}
+			}
+
+			fmt.Println("\nDejima uninstalled.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "bypass the unpushed-work guard (purge islands even with unpushed/uncommitted work)")
+	cmd.Flags().BoolVar(&systemSvc, "system", false, "uninstall the system-wide LaunchDaemon (macOS)")
+	cmd.Flags().BoolVar(&keepData, "keep-data", false, "keep ~/.dejima (config, GitHub identities, ledger)")
+	return cmd
+}
 
 // --- panic ----------------------------------------------------------------
 
@@ -2969,21 +2150,14 @@ func newPanicCmd() *cobra.Command {
 				}
 				return nil
 			case clear:
-				// Restart-all can take a while; bound it generously — the client now
-				// honors the context deadline rather than the 30s default.
-				lctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-				defer cancel()
-				st, err := c.ClearPanic(lctx)
+				st, err := c.ClearPanic(ctx)
 				if err != nil {
 					return err
 				}
 				fmt.Printf("panic cleared — restarted %s\n", countNoun(st.Affected, "island"))
 				return nil
 			default:
-				// Stop-all sweeps every island; allow more than the 30s default.
-				lctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-				defer cancel()
-				st, err := c.Panic(lctx, reason)
+				st, err := c.Panic(ctx, reason)
 				if err != nil {
 					return err
 				}

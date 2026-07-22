@@ -108,12 +108,8 @@ func (p *agentPicker) handleKey(msg tea.KeyMsg) pickerResult {
 	return pickerOngoing
 }
 
-// view renders the picker into b under the given section title. keyGap (agent
-// type → needs an LLM provider key that isn't configured) annotates the types a
-// missing key would silently break, so the operator sees it at pick time rather
-// than when the agent fails to authenticate after the island exists. A nil map
-// means "not checked yet" — no annotation.
-func (p agentPicker) view(b *strings.Builder, title string, keyGap map[string]bool) {
+// view renders the picker into b under the given section title.
+func (p agentPicker) view(b *strings.Builder, title string) {
 	b.WriteString(styleHeader.Render(title))
 	b.WriteString("\n")
 	if p.phase == pickCmd {
@@ -125,9 +121,6 @@ func (p agentPicker) view(b *strings.Builder, title string, keyGap map[string]bo
 	}
 	for i, opt := range agentTypeOptions {
 		line := fmt.Sprintf("%-12s %s", opt.typ, styleMuted.Render(opt.desc))
-		if keyGap[opt.typ] {
-			line += styleWaiting.Render("  ⚠ needs an LLM key (none set)")
-		}
 		if i == p.cursor {
 			b.WriteString(styleSelected.Render("▶ " + line))
 		} else {
@@ -135,11 +128,7 @@ func (p agentPicker) view(b *strings.Builder, title string, keyGap map[string]bo
 		}
 		b.WriteString("\n")
 	}
-	hint := "[↑/↓] move   [⏎] continue   [esc] back"
-	if keyGap[p.selected().typ] {
-		hint += "    set the key after create with `v`, or `dejima provider set`"
-	}
-	b.WriteString("\n" + styleMuted.Render(hint))
+	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] continue   [esc] back"))
 }
 
 // ---------------------------------------------------------------------------
@@ -164,8 +153,7 @@ type agentAdder struct {
 	label   string
 	adding  bool
 	err     string
-	memWarn string          // non-empty when the host is low on memory (OOM caution)
-	keyGap  map[string]bool // agent types needing an unconfigured LLM key (for the picker annotation)
+	memWarn string // non-empty when the host is low on memory (OOM caution)
 }
 
 // memPressureWarning returns an amber caution when the Docker host is low on
@@ -201,9 +189,8 @@ func memPressureWarning(isl api.IslandInfo, ov *api.OverviewResponse) string {
 type agentAddedMsg struct {
 	island     string
 	agentID    string // the new agent's id, for opening it in a new tab
-	agentLabel string // its FINAL label from the daemon (may be auto-incremented)
+	agentLabel string // its user-set label (the model list hasn't refreshed yet)
 	attachable bool   // interactive (connect) vs headless (logs)
-	notice     string // set when the requested label collided and was auto-renamed
 	err        error
 }
 
@@ -214,7 +201,7 @@ func (m tuiModel) openAgentAdder(island string) (tea.Model, tea.Cmd) {
 		m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it before adding an agent", island, isl.Container)
 		return m, nil
 	}
-	m.agentAdder = &agentAdder{island: island, picker: newAgentPicker(), keyGap: m.agentKeyGap}
+	m.agentAdder = &agentAdder{island: island, picker: newAgentPicker()}
 	if isl, ok := m.islandByName(island); ok {
 		m.agentAdder.memWarn = memPressureWarning(isl, m.overview)
 	}
@@ -272,7 +259,6 @@ func (m tuiModel) addAgentSpecCmd(name string, req api.AgentSpecRequest) tea.Cmd
 			agentID:    ag.ID,
 			agentLabel: ag.Label,
 			attachable: ag.Attachable,
-			notice:     renameNotice(req.Label, ag.Label), // daemon auto-increments collisions
 		}
 	}
 }
@@ -297,7 +283,7 @@ func (a *agentAdder) view() string {
 		b.WriteString("label: " + styleAccent.Render(a.label+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] add   [esc] back to type"))
 	} else {
-		a.picker.view(&b, "Agent type", a.keyGap)
+		a.picker.view(&b, "Agent type")
 	}
 	if a.err != "" {
 		b.WriteString("\n\n" + styleErrored.Render("✗ "+a.err))

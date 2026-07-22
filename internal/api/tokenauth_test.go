@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/aoos/dejima/internal/porttoken"
 	"github.com/aoos/dejima/internal/project"
@@ -121,15 +120,10 @@ func TestAuthorizeTokenMatrix(t *testing.T) {
 		{"list scopes own", "proj", "GET /v1/islands/{name}/port/scopes", "/v1/islands/proj/port/scopes", false},
 		{"read file own", "proj", "GET /v1/islands/{name}/files/{path...}", "/v1/islands/proj/files/x", false},
 		{"write file own", "proj", "PUT /v1/islands/{name}/files/{path...}", "/v1/islands/proj/files/x", false},
-		// Own-island agent roster (intra-island coordination P1): readable so a
-		// contained agent can discover its peers (reduced view in the handler).
-		{"agents own", "proj", "GET /v1/islands/{name}/agents", "/v1/islands/proj/agents", false},
 
 		// Cross-island: the crux. Same route, another island → denied.
 		{"intake other", "proj", "POST /v1/islands/{name}/port/intake", "/v1/islands/home/port/intake", true},
 		{"exec other", "proj", "POST /v1/islands/{name}/exec", "/v1/islands/home/exec", true},
-		// Containment: an island token must never enumerate another island's roster.
-		{"agents other", "proj", "GET /v1/islands/{name}/agents", "/v1/islands/home/agents", true},
 
 		// island.create gated on Home role.
 		{"create as home", "home", "POST /v1/islands", "/v1/islands", false},
@@ -180,40 +174,6 @@ func TestAuthorizeTokenMatrix(t *testing.T) {
 			t.Errorf("%s: authorizeToken(%q,%q,%q) err=%v, wantErr=%v",
 				c.name, c.island, c.pattern, c.path, err, c.wantErr)
 		}
-	}
-}
-
-// TestIslandPeerRoster verifies the reduced view an island token gets of its
-// co-resident peers: id/label/type/state/branch/worktree are preserved (the
-// addressing directory), and every config/credential/attach-surface field is
-// dropped — so a contained agent learns nothing beyond what's already on the
-// shared /workspace. See docs/intra-island-coordination-spec.md (P1).
-func TestIslandPeerRoster(t *testing.T) {
-	full := []AgentInfo{{
-		ID: "a2", Label: "TUI", Type: "claude-code", State: "running",
-		Branch: "feat/x", Worktree: "/workspace/.agents/a2",
-		// Everything below must be stripped:
-		Tmux: "agent-a2", Attachable: true, CreatedAt: time.Now(),
-		Attached: []PresenceEntry{{}},
-		Restarts: 3, Error: "boom", ErrorAt: time.Now(),
-		Provider: "anthropic", Model: "claude-opus-4-8", ProviderKeySet: true,
-		AuthState: "missing-provider-auth",
-	}}
-	got := islandPeerRoster(full)
-	if len(got) != 1 {
-		t.Fatalf("len=%d want 1", len(got))
-	}
-	g := got[0]
-	// Preserved (the directory fields).
-	if g.ID != "a2" || g.Label != "TUI" || g.Type != "claude-code" ||
-		g.State != "running" || g.Branch != "feat/x" || g.Worktree != "/workspace/.agents/a2" {
-		t.Errorf("directory fields not preserved: %+v", g)
-	}
-	// Dropped (config / credential / attach-surface).
-	if g.Tmux != "" || g.Attachable || !g.CreatedAt.IsZero() || g.Attached != nil ||
-		g.Restarts != 0 || g.Error != "" || !g.ErrorAt.IsZero() ||
-		g.Provider != "" || g.Model != "" || g.ProviderKeySet || g.AuthState != "" {
-		t.Errorf("a sensitive field leaked into the island peer view: %+v", g)
 	}
 }
 

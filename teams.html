@@ -7,25 +7,10 @@
 <meta name="description" content="Run AI coding agents on infrastructure you control, with brokered host access and a tamper-evident audit log. Private by default, audited by design — for NDA, regulated, and client-confidential work.">
 <meta property="og:title" content="Dejima for teams">
 <meta property="og:description" content="Run AI coding agents in your own perimeter, with brokered host access and a tamper-evident audit log. Private by default, audited by design.">
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://dejima.tech/teams.html">
-<meta property="og:image" content="https://dejima.tech/assets/og-card.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://dejima.tech/assets/og-card.png">
 <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
 <link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
 <link rel="stylesheet" href="styles.css">
-<script type="application/ld+json">
-{"@context":"https://schema.org","@graph":[
-{"@type":"BreadcrumbList","itemListElement":[
-{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
-{"@type":"ListItem","position":2,"name":"Teams","item":"https://dejima.tech/teams.html"}]},
-{"@type":"WebPage","name":"Dejima for teams","url":"https://dejima.tech/teams.html","description":"Run AI coding agents in your own perimeter, with brokered host access and a tamper-evident audit log. Private by default, audited by design, for NDA, regulated, and client-confidential work.","isPartOf":{"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"}}
-]}
-</script>
 </head>
 <body>
 <main>
@@ -38,12 +23,10 @@
 <nav class="topnav" aria-label="Site">
   <a href="index.html">Home</a>
   <a href="quickstart.html">Quickstart</a>
-  <a href="guides/">Guides</a>
   <a href="teams.html" aria-current="page">Teams</a>
   <a href="build.html">Build</a>
   <a href="api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/aoos/dejima">GitHub</a>
 </nav>
 
 <section class="hero">
@@ -52,12 +35,12 @@
   <p class="lede">Run AI coding agents on infrastructure your team controls, where every privileged action is brokered and recorded. Nothing — not your code, not your agents — leaves your boundary.</p>
 </section>
 
-<p class="small"><strong>Where this is today:</strong> the containment and audit foundations below are shipped and in use — and so are team roles, the activity feed, and audit export (see <a href="#team-controls">team controls</a>). What's still on the roadmap is compliance-reporting polish: configurable retention and audit dashboards. If you have a regulated or client-confidential use case, we'd like to hear it: <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">reach out on GitHub</a>.</p>
+<p class="small"><strong>Where this is today:</strong> the containment and audit foundations below are shipped and in use. The multi-user and compliance-reporting surface (roles, an audit viewer, SSO) is on the near-term roadmap — see <a href="#roadmap">what's coming</a>. If you have a regulated or client-confidential use case, we'd like to hear it: <a href="https://github.com/aoos/dejima">reach out on GitHub</a>.</p>
 
 <h2>Private by default</h2>
 <p>The agents' LLM calls go out — but <strong>your source, your files, and your credentials never leave your box</strong>. There's no managed cloud in the loop and no vendor account holding your work:</p>
 <ul>
-  <li><strong>Your hardware, your perimeter.</strong> Run it locally on a Mac mini, on an on-prem server, on a cloud VM in your own account, or on an air-gapped host — same Dejima either way. Egress policy is yours to set.</li>
+  <li><strong>Your hardware, your perimeter.</strong> Run it on a Mac mini, an on-prem server, a VPC, or an air-gapped host. Egress policy is yours to set.</li>
   <li><strong>Your identity, not a vendor's.</strong> Access is your Tailscale identity over your tailnet — not a third-party login.</li>
   <li><strong>Attenuated credentials.</strong> Each island gets a scoped, per-island token; your master GitHub and provider credentials are never handed to an agent.</li>
   <li><strong>Clean teardown.</strong> <code>dejima purge</code> destroys an island and its volumes when the engagement ends.</li>
@@ -84,37 +67,20 @@
   </div>
 </div>
 
-<h2 id="team-controls">Team access &amp; audit — shipped</h2>
-<p>Several people can share one daemon, each acting only within their authority, with a readable record of who did what:</p>
-<p class="small"><strong>Setting someone up?</strong> The step-by-step for both sides, and the single link you hand a teammate, is on <a href="connect/">connect to a server</a>.</p>
-<div class="cards">
-  <div class="card">
-    <h3>Roles &amp; scoped tokens</h3>
-    <p>Owner, operator, and viewer roles, minted as bearer tokens you can scope to specific islands: <code>dejima token create --role operator --island foo</code>. Operators run the fleet but can't purge; viewers only observe. No token grants more than the daemon already does. Prefer the dashboard? Press <kbd>I</kbd> in <code>dejima</code> for the owner-only Team panel, which mints an operator or viewer invite to copy.</p>
-  </div>
-  <div class="card">
-    <h3>Activity feed</h3>
-    <p>A curated timeline — who launched what, which agent did what — filterable by actor, island, and decision (<code>GET /v1/activity</code>). Built on the same ledger, readable by any viewer.</p>
-  </div>
-  <div class="card">
-    <h3>Audit viewer &amp; export</h3>
-    <p>Read, filter, and export the ledger as a compliance record — JSON, JSONL, or CSV — via <code>dejima audit</code>, the TUI audit pane (<kbd>A</kbd>), or <code>GET /v1/audit</code>. Whole-chain tamper-verification runs on every read.</p>
-  </div>
-</div>
-
 <h2 id="roadmap">On the roadmap <span class="coming">in progress</span></h2>
-<p>Roles, the activity feed, and audit export are shipped (above). What's still ahead is compliance-reporting polish:</p>
+<p>Dejima is in alpha. The single-operator foundations above are shipped; the team and compliance surface is what we're building toward next:</p>
 <ul>
-  <li><strong>Retention controls</strong> — configurable retention for the audit record.</li>
-  <li><strong>Audit dashboards &amp; multi-org rollups</strong> — compliance-grade reporting over the ledger, beyond read/export.</li>
-  <li><strong>SSO/SAML</strong> — integrates through your own control plane; today Dejima authenticates with your Tailscale identity plus scoped per-island tokens.</li>
+  <li><strong>Team access &amp; roles</strong> — several people on one daemon, with control over who can create, purge, and grant.</li>
+  <li><strong>Activity feed</strong> — who launched what, and which agent did what, across the team.</li>
+  <li><strong>Audit viewer &amp; export</strong> — read and export the ledger as a compliance-grade record, not just a CLI verify. (Lives in Dejima by design — a tamper-evident record has to.)</li>
+  <li><strong>Retention controls</strong> — configurable retention for the audit record. <span class="small">SSO/SAML integrates through your own control plane; Dejima authenticates with your Tailscale identity plus scoped per-island tokens.</span></li>
 </ul>
 <p class="small">Tracking the order of these against real use cases — if yours would move one up, tell us.</p>
 
 <section class="cta-band">
   <h2>Have a regulated or confidential use case?</h2>
   <p>Tell us what you're trying to run and what you need to prove. It shapes what ships next.</p>
-  <a class="btn-primary" href="https://github.com/aoos/dejima" target="_blank" rel="noopener">Reach out on GitHub →</a>
+  <a class="btn-primary" href="https://github.com/aoos/dejima">Reach out on GitHub →</a>
 </section>
 
 <footer class="footer">
@@ -123,10 +89,9 @@
   <a href="quickstart.html">Quickstart</a>
   <a href="build.html">Build</a>
   <a href="api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md" target="_blank" rel="noopener">Roadmap</a>
+  <a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md">Roadmap</a>
 </footer>
 
 </main>
-<script src="version.js" defer></script>
 </body>
 </html>

@@ -24,8 +24,6 @@ info() { printf '  %s\n' "$*"; }
 fail() { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
 bold "Dejima client installer"
-info "Installs the dejima CLI (~15 MB) and offers to set up Tailscale. ~1 minute."
-info "A couple of steps will pause to ASK you something — watch for the prompts below."
 
 # --- detect platform ------------------------------------------------------
 os=$(uname -s)
@@ -59,14 +57,7 @@ base="https://github.com/${REPO}/releases/download/${ver}"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 info "downloading $asset"
-# Show a progress bar (-#) instead of the silent -s: a multi-MB download over a
-# slow link is the longest single step, and a blank terminal reads as a hang.
-# Fall back to a quiet download if this isn't a terminal (piped/CI logs).
-if [[ -t 2 ]]; then
-  curl -fL --progress-bar "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
-else
-  curl -fsSL "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
-fi
+curl -fsSL "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
 
 if curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" 2>/dev/null; then
   want=$(grep " $asset\$" "$tmp/SHA256SUMS" | awk '{print $1}')
@@ -83,8 +74,7 @@ else
   info "warning: SHA256SUMS not found; skipping checksum verification"
 fi
 
-tar -xzf "$tmp/$asset" -C "$tmp" || fail "couldn't unpack $asset (corrupt download?) — re-run to retry."
-[[ -f "$tmp/dejima" ]] || fail "the downloaded archive didn't contain a 'dejima' binary — re-run to retry, or report this at https://github.com/${REPO}/issues."
+tar -xzf "$tmp/$asset" -C "$tmp"
 
 # --- install (client only) ------------------------------------------------
 install_bin() {
@@ -120,7 +110,7 @@ ts_prompt_yn() {
         return 0
     fi
     local reply
-    read -r -p "▸ $1 [Y/n] " reply </dev/tty 2>/dev/null || return 0
+    read -r -p "$1 [Y/n] " reply </dev/tty 2>/dev/null || return 0
     reply=${reply:-y}
     [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
@@ -151,9 +141,8 @@ if command -v tailscale >/dev/null 2>&1; then
     if ! tailscale status >/dev/null 2>&1; then
         warn "Tailscale not signed in"
         if [[ -t 0 || -e /dev/tty ]]; then
-            info "▸ Next: 'sudo tailscale up' — this may ask for your password, then opens a"
-            info "  browser tab for sign-in. Sign in to the SAME tailnet as your Dejima server."
-            info "  (Ctrl-C to skip; sign in later with 'sudo tailscale up'.)"
+            info "Running 'sudo tailscale up' — a browser tab opens for sign-in."
+            info "(Ctrl-C to skip; sign in later with 'sudo tailscale up'.)"
             sudo tailscale up </dev/tty 2>/dev/tty || warn "'tailscale up' didn't complete"
         else
             info "Non-interactive run — sign in later with: sudo tailscale up"
@@ -169,16 +158,13 @@ fi
 # ---------------------------------------------------------------------------
 printf '\n'
 bold "Server address"
-info "If a teammate sent you a 'dejima-invite:' code, you can SKIP this — just press"
-info "Enter, then run 'dejima join <invite>' afterwards (it carries the address + token)."
-info "Otherwise: on the SERVER (mac mini / linux box), run 'tailscale ip -4' for its address."
+info "On the SERVER (mac mini / linux box), run 'tailscale ip -4' to find its address."
 info "Example: 100.84.12.7"
 
 server_host=""
 if [[ -e /dev/tty && -z "${DEJIMA_HOST_PREFILL:-}" ]]; then
-    # Default port assumed below; user types IP or hostname only. The '▸' marks
-    # this as an input prompt so it doesn't read as a blank/hung line.
-    read -r -p "▸ Enter your server's tailnet IP or hostname (or press Enter to skip): " server_host </dev/tty 2>/dev/null || true
+    # Default port assumed below; user types IP or hostname only.
+    read -r -p "Enter your server's tailnet IP or hostname (blank to skip): " server_host </dev/tty 2>/dev/null || true
 elif [[ -n "${DEJIMA_HOST_PREFILL:-}" ]]; then
     server_host="$DEJIMA_HOST_PREFILL"
 fi

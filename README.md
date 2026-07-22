@@ -114,7 +114,7 @@ npm install -g dejima
 
 Both pull the prebuilt binary from the latest [GitHub Release](https://github.com/aoos/dejima/releases) and checksum-verify it against `SHA256SUMS`. On a **host**, you still build the island image + register the daemon (`make image && dejima service install`); the `npm` package is the **client CLI** only.
 
-> Both are **live** as of `v0.7.1` (npm `dejima`, the `aoos/homebrew-dejima` tap) and are kept current automatically by the release workflow on every tag. `brew install --HEAD aoos/dejima/dejima` builds from source off `master`. Full checklist in [`docs/distribution.md`](docs/distribution.md).
+> These two go live after the one-time distribution setup: the `aoos/homebrew-dejima` tap repo (brew) and an `NPM_TOKEN` CI secret (npm) — both are then kept current automatically by the release workflow. Until then, use the curl one-liners above, or `brew install --HEAD aoos/dejima/dejima` to build from source off `master`. Full checklist in [`docs/distribution.md`](docs/distribution.md).
 
 > v1 targets macOS (Mac mini priority) and Linux as **hosts** (the machines running `dejimad` + Docker). The `dejima` **client** CLI builds and runs on macOS, Linux, and **Windows** — see *Install (client only)* below.
 >
@@ -225,7 +225,7 @@ cd ~/.dejima-src
 make setup        # detect Docker → build → install → image → service → doctor
 ```
 
-`make setup` itself is just `scripts/setup.sh`; the one-liner is `install.sh` (repo root, served at `dejima.tech/install.sh`) which adds the prereq-bootstrap + checkout step in front of it. Either is fine.
+`make setup` itself is just `scripts/setup.sh`; the one-liner is `scripts/install.sh` which adds the prereq-bootstrap + checkout step in front of it. Either is fine.
 
 ## Future install paths (roadmap)
 

@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "Python client for the Dejima API — run a fleet of AI coding agents on hardware you own."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 authors = [{ name = "Dejima" }]
 keywords = ["dejima", "ai-agents", "claude-code", "codex", "sandbox", "self-hosted"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: Software Development :: Libraries :: Python Modules",

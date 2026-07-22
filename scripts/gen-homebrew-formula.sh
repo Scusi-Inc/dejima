@@ -38,7 +38,7 @@ class Dejima < Formula
   desc "Substrate for multi-device AI agent workflows"
   homepage "https://dejima.tech"
   version "${ver}"
-  license "Apache-2.0"
+  license "Pre-public-release" # TODO(user): set the real SPDX license before going public
 
   on_macos do
     on_arm do

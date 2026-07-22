@@ -9,8 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/api"
-	"github.com/aoos/dejima/internal/clientcfg"
-	"github.com/aoos/dejima/internal/invite"
 )
 
 // newTokenCmd is the team-auth token surface: issue, list, and revoke the
@@ -31,12 +29,12 @@ func newTokenCmd() *cobra.Command {
 			"up from DEJIMA_TOKEN. The secret is shown once at creation and never stored\n" +
 			"in the clear — only its hash is kept, so a lost secret means minting anew.",
 	}
-	cmd.AddCommand(newTokenCreateCmd(), newTokenInviteCmd(), newTokenLsCmd(), newTokenRevokeCmd())
+	cmd.AddCommand(newTokenCreateCmd(), newTokenLsCmd(), newTokenRevokeCmd())
 	return cmd
 }
 
 func newTokenCreateCmd() *cobra.Command {
-	var role, label, owner string
+	var role, label string
 	var islands []string
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -53,7 +51,6 @@ func newTokenCreateCmd() *cobra.Command {
 			resp, err := c.CreateToken(cmd.Context(), api.CreateTokenRequest{
 				Label:   label,
 				Role:    role,
-				Owner:   owner,
 				Islands: islands,
 			})
 			if err != nil {
@@ -63,11 +60,7 @@ func newTokenCreateCmd() *cobra.Command {
 			if len(resp.Token.Islands) > 0 {
 				scope = strings.Join(resp.Token.Islands, ", ")
 			}
-			tenant := resp.Token.Owner
-			if tenant == "" {
-				tenant = "host owner"
-			}
-			fmt.Printf("created token %s (role: %s; owner: %s; scope: %s)\n", resp.Token.ID, resp.Token.Role, tenant, scope)
+			fmt.Printf("created token %s (role: %s; scope: %s)\n", resp.Token.ID, resp.Token.Role, scope)
 			fmt.Println()
 			fmt.Println("  bearer secret (shown once — store it now):")
 			fmt.Printf("    %s\n", resp.Secret)
@@ -80,140 +73,7 @@ func newTokenCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&role, "role", "", "owner, operator, or viewer (required)")
 	cmd.Flags().StringVar(&label, "label", "", "human label for the token (e.g. scusi-prod, phone)")
-	cmd.Flags().StringVar(&owner, "owner", "", "tenant this token acts as — an operator/viewer token then sees + creates only that tenant's islands (default: the host owner, i.e. full access)")
-	cmd.Flags().StringArrayVar(&islands, "island", nil, "limit the token to this island (repeatable); default: all the owner's islands")
-	return cmd
-}
-
-// newTokenInviteCmd mints a token and emits a single paste-safe invite blob
-// (host + secret + role/scope) for a teammate to `dejima join`. It's the
-// CLI twin of the TUI Team view's "invite" action — both call invite.Encode at
-// mint time (the secret is only returned once).
-func newTokenInviteCmd() *cobra.Command {
-	var role, label, host, name, owner string
-	var islands []string
-	cmd := &cobra.Command{
-		Use:   "invite",
-		Short: "Mint a token and print a paste-safe invite blob for a teammate to `dejima join`.",
-		Long: "Issue a team invite: mints a bearer token (owner/operator/viewer + optional island\n" +
-			"scope) and bundles it with the daemon host into ONE paste-safe line. The teammate\n" +
-			"runs `dejima join <blob>` to connect — no env vars.\n\n" +
-			"The blob CONTAINS the bearer secret (encoded, not encrypted) — treat it like a\n" +
-			"password, send it over a trusted channel, and `dejima token revoke` to kill a leak.\n\n" +
-			"--host is the daemon address the teammate will dial (e.g. a tailnet name or LAN\n" +
-			"ip:port); the daemon can't know its own external address, so you supply it.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			role = strings.TrimSpace(role)
-			if role == "" {
-				return fmt.Errorf("--role is required (owner, operator, or viewer)")
-			}
-			host = strings.TrimSpace(host)
-			if host == "" {
-				// Default to the address a teammate dials: the daemon's own tailnet
-				// address when minting on the host, or the address THIS client dials
-				// the daemon at when connected remotely — upgraded from a raw tailnet
-				// IP to the daemon's MagicDNS name (stable across tailnets) when we can
-				// resolve it. See inviteHostFor.
-				if h, _, ok := inviteHostFor(resolveHost()); ok {
-					host = h
-					fmt.Fprintf(os.Stderr, "note: --host not given; using the daemon's address %s\n", host)
-				} else {
-					return fmt.Errorf("--host is required (the daemon host:port the teammate will dial, e.g. a MagicDNS name minion.tailXXXX.ts.net:%s or ip:port)", defaultDaemonTCPPort)
-				}
-			}
-			if isRawTailscaleIP(host) {
-				fmt.Fprintf(os.Stderr, "warning: --host %s is a raw tailnet IP. If you reach teammates via node-sharing,\n"+
-					"         their Tailscale may re-address this node to a different 100.x IP and the invite\n"+
-					"         will time out. Prefer this host's MagicDNS name (*.ts.net) — enable MagicDNS if off.\n", hostOnly(host))
-			}
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			resp, err := c.CreateToken(cmd.Context(), api.CreateTokenRequest{Label: label, Role: role, Owner: owner, Islands: islands})
-			if err != nil {
-				return err
-			}
-			blob, err := invite.Encode(invite.Payload{
-				Host:    host,
-				Token:   resp.Secret,
-				Role:    resp.Token.Role,
-				Islands: resp.Token.Islands,
-				Name:    strings.TrimSpace(name),
-				Label:   resp.Token.Label,
-			})
-			if err != nil {
-				// The token was minted but the invite couldn't be built — tell the
-				// operator so they can revoke the now-orphaned token.
-				return fmt.Errorf("token %s minted but encoding the invite failed: %w (revoke it with `dejima token revoke %s`)", resp.Token.ID, err, resp.Token.ID)
-			}
-			scope := "all islands"
-			if len(resp.Token.Islands) > 0 {
-				scope = strings.Join(resp.Token.Islands, ", ")
-			}
-			fmt.Printf("invite for token %s (role: %s; scope: %s)\n\n", resp.Token.ID, resp.Token.Role, scope)
-			fmt.Println("  send this to your teammate (it carries the secret — treat like a password):")
-			fmt.Printf("    %s\n\n", blob)
-			fmt.Println("  they run:")
-			fmt.Println("    dejima join <blob>")
-			fmt.Printf("\n  revoke anytime: dejima token revoke %s\n", resp.Token.ID)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&role, "role", "", "owner, operator, or viewer (required)")
-	cmd.Flags().StringVar(&host, "host", "", "daemon host:port the teammate dials (default: this host's MagicDNS name / tailnet IP when run on the host)")
-	cmd.Flags().StringVar(&owner, "owner", "", "tenant the teammate acts as — they see + create only this tenant's islands (default: the host owner, i.e. full access)")
-	cmd.Flags().StringVar(&label, "label", "", "human label for the token (e.g. amanda, phone)")
-	cmd.Flags().StringVar(&name, "name", "", "suggested profile name for the teammate (default: host's first label)")
-	cmd.Flags().StringArrayVar(&islands, "island", nil, "limit the invite to this island (repeatable); default: all islands")
-	return cmd
-}
-
-// newJoinCmd is the teammate side: decode an invite blob and persist it as the
-// active connection profile (host + token), so subsequent commands Just Work
-// with no env vars. Twin of the TUI Team view's paste-to-join.
-func newJoinCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "join <invite>",
-		Short: "Connect using a team invite blob (saves the host + token as the active profile).",
-		Long: "Accept a `dejima token invite` blob: decodes it, saves a connection profile\n" +
-			"carrying the daemon host + bearer token, and makes it active. After joining,\n" +
-			"`dejima ls`, `dejima status`, etc. connect to that daemon with no env vars.\n\n" +
-			"The token is stored in ~/.dejima/client.json (0600). Revoke access from the\n" +
-			"issuing side with `dejima token revoke`.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := invite.Decode(args[0])
-			if err != nil {
-				return err
-			}
-			name, err := clientcfg.SaveInvite(p)
-			if err != nil {
-				return err
-			}
-			scope := "all islands"
-			if len(p.Islands) > 0 {
-				scope = strings.Join(p.Islands, ", ")
-			}
-			fmt.Printf("joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
-			// Preflight the connection so a Tailscale-pinned daemon doesn't leave the
-			// teammate to hit an opaque "context deadline exceeded" on the next
-			// command. Probe the invite's OWN host directly (tcpReachable) rather than
-			// going through resolveHost/Health — the latter can resolve a different
-			// target and mask an unreachable tailnet host as "fine". The profile is
-			// saved regardless, so a retry after they get on the tailnet Just Works.
-			if !tcpReachable(p.Host) {
-				if isTailscaleHost(p.Host) {
-					printTailscaleJoinHelp(p.Host)
-					return nil
-				}
-				fmt.Printf("note: couldn't reach %s yet — the profile is saved; retry with `dejima ls` or `dejima`.\n", p.Host)
-				return nil
-			}
-			fmt.Println("next: `dejima ls` to see islands, or `dejima` for the TUI.")
-			return nil
-		},
-	}
+	cmd.Flags().StringArrayVar(&islands, "island", nil, "limit the token to this island (repeatable); default: all islands")
 	return cmd
 }
 

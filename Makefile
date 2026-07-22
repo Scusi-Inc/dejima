@@ -18,7 +18,7 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration test-tier3-safe test-tier3-system test-tier3-action-gate test-tier3-reconnect test-tier3-tui-claude test-tier3-onboard-selftest test-tier4 lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
@@ -120,66 +120,14 @@ dejimad:
 test:
 	$(GO) test ./...
 
-# test-integration runs the DETERMINISTIC FULL-FEATURE Tier-2 suite against a
-# LIVE Docker host — one dispatch exercises every feature once with per-feature
-# pass/fail: lifecycle, Port, MCP, multi-agent, clone, inter-island, the purge
-# guard, capability brokering, provider creds, token roles, webhooks, activity,
-# panic, and doctor. Set DEJIMA_REPORT=<path> to also emit the JSON summary
-# (pass/fail per feature) for the CI artifact + issue-on-failure step. Requires
-# docker (running), go, git. Runs in a throwaway $HOME; purges islands + daemon.
+# test-integration runs the full Tier-2 end-to-end suite against a LIVE Docker
+# host: lifecycle (ls/status/exec/hibernate/wake/upgrade/clone) + the purge
+# unpushed-work guard, Port (intake/export/traversal/ledger), MCP (grant/call/
+# ledger/revoke), audit (record/verify/export), and inter-island (deny-all/grant/
+# message/action/approve/deny). Requires docker (running), go, and git. It runs
+# in a throwaway $HOME and purges its test islands + daemon on exit.
 test-integration:
 	./scripts/integration.sh
-
-# Tier-3 macOS-host suite — run as the `dejimaqa` test user on the Mac-mini
-# self-hosted runner (its OWN dejimad + colima, never the operator's). The safe
-# target mutates nothing on the host (Keychain secret storage, idle hibernate,
-# terminal reconnect, SSH-façade plumbing). The system target installs a
-# system-wide LaunchDaemon / runs onboard --provision-host and is OPT-IN only —
-# it no-ops unless DEJIMA_RUN_SYSTEM=1 (and never reboots unless DEJIMA_RUN_REBOOT=1).
-# See docs/testing/dejimaqa-runner-setup.md.
-test-tier3-safe:
-	./scripts/tier3/safe.sh
-
-test-tier3-system:
-	./scripts/tier3/system.sh
-
-# Tier-3 ACTION-GATE — live, end-to-end proof of the cross-island action gate's
-# POLICY DELTA against a real daemon + two real islands (deny-all, exposed→queue,
-# counted auto-approve within budget then re-queue, destructive-always-queues,
-# policy.add/remove + auto link.approve ledgered, queue dropped on restart). Safe
-# (throwaway $HOME/daemon, never aoos's); island-backed so it SKIPS cleanly when
-# colima/Docker is unreachable. See scripts/tier3/action-gate.sh.
-test-tier3-action-gate:
-	./scripts/tier3/action-gate.sh
-
-# Tier-3 RECONNECT-RESILIENCE — the live proof of #129: an attached `dejima shell`
-# session SURVIVES a daemon restart with no code-1 exit and resumes the same
-# in-container tmux session, a clean stdin close exits 0, and a genuinely-gone
-# target gives up fast with a clear message. Safe (throwaway $HOME/daemon, never
-# aoos's); island-backed so it SKIPS cleanly without colima. See
-# scripts/tier3/reconnect.sh.
-test-tier3-reconnect:
-	./scripts/tier3/reconnect.sh
-
-# Phase-C2 live UX checks (Mac-mini runner). Both SKIP cleanly without their
-# gates so they never red a partially-provisioned runner.
-# - tui-claude: walks the real TUI in tmux and has Claude judge each frame.
-#   Needs TEST_AGENT_KEY (+ tmux). See scripts/tier3/tui-claude.sh.
-# - onboard-selftest: times `onboard --provision-host --yes` (asserts < 5 min,
-#   idempotent) and has Claude critique the setup UX. Mutating, so gated behind
-#   DEJIMA_RUN_SYSTEM=1; the Claude critique needs TEST_AGENT_KEY.
-test-tier3-tui-claude:
-	./scripts/tier3/tui-claude.sh
-
-test-tier3-onboard-selftest:
-	./scripts/tier3/onboard-selftest.sh
-
-# Tier-4 real-agent smoke — launches a REAL agent and asserts it ran / produced
-# a commit (never exact LLM output). Secret-gated: no-ops with a notice unless
-# TEST_AGENT_KEY is set; pushes to the bot repo when TEST_GH_TOKEN/TEST_GH_OWNER
-# /TEST_GH_REPO are present.
-test-tier4:
-	./scripts/tier4/agent-smoke.sh
 
 lint:
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed; skipping"; exit 0; }

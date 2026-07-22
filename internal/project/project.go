@@ -76,19 +76,8 @@ type AgentSpec struct {
 	// Model is the "provider/model" string handed to the framework (via the
 	// DEJIMA_MODEL env the per-agent shim translates). Empty → unset (the user
 	// picks explicitly; there is no baked-in default).
-	Model string `toml:"model,omitempty"`
-	// Ephemeral marks an agent-spawned sub-agent (orchestrator pattern): it's
-	// reaped automatically (on exit/TTL/parent-removal/revoke) and counts against
-	// the island's spawn budget. SpawnedBy is the id of the agent that spawned it
-	// (lineage; "" for operator-created agents). Co-located sub-agents share this
-	// island's sandbox — they are NOT isolated from the parent.
-	Ephemeral bool   `toml:"ephemeral,omitempty"`
-	SpawnedBy string `toml:"spawned_by,omitempty"`
-	// CreatedAt has no omitempty: go-toml/v2 omits a non-zero time.Time under
-	// omitempty, which silently dropped this field on every save — so it must be
-	// written unconditionally. The spawn reaper's TTL check depends on it surviving
-	// a daemon reload.
-	CreatedAt time.Time `toml:"created_at"`
+	Model     string    `toml:"model,omitempty"`
+	CreatedAt time.Time `toml:"created_at,omitempty"`
 }
 
 // Project is the persisted record for a single island.
@@ -113,15 +102,6 @@ type Project struct {
 	LastUsedAt   time.Time   `toml:"last_used_at"`
 	DesiredState State       `toml:"state"`
 	Agents       []AgentSpec `toml:"agents,omitempty"`
-	// NoHibernate pins the island awake: when true it is exempt from idle
-	// auto-hibernate (it can still be hibernated manually). For a persistent
-	// ambient agent — a watchtower / monitor that must keep running between bursts
-	// of work — so an idle window doesn't shut it off. Default false.
-	NoHibernate bool `toml:"no_hibernate,omitempty"`
-	// Schedules are durable per-island scheduled wakes (see schedule.go). The
-	// daemon's scheduler fires each when due, waking the island (and optionally
-	// running a task) — surviving restart and `dejima upgrade`.
-	Schedules []WakeSchedule `toml:"schedules,omitempty"`
 	// Role is the island's purpose: "" (a work island) or "home" (a Home Island
 	// hosting an assistant brain). Empty for islands created before roles existed.
 	Role string `toml:"role,omitempty"`
@@ -149,45 +129,6 @@ type Project struct {
 	// Tags are free-form key=value labels (e.g. team=web, env=staging) for
 	// grouping and per-team rollups in wrapper tooling. Empty when untagged.
 	Tags map[string]string `toml:"tags,omitempty"`
-	// BuiltVersion is the daemon version (version.Version) this island's container
-	// was first created against, and UpgradedVersion is the version of the most
-	// recent `dejima upgrade` recreate. They are the version-skew stamp: an island
-	// whose UpgradedVersion (falling back to BuiltVersion) is behind the running
-	// daemon was built from an older image and may carry stale /opt shims (the
-	// socket→TCP heartbeat-break class of bug). The api layer sets these from
-	// version.Version at create/upgrade; project stays a pure data struct. Empty
-	// for islands created before this stamp existed ("unknown" provenance).
-	BuiltVersion    string `toml:"built_version,omitempty"`
-	UpgradedVersion string `toml:"upgraded_version,omitempty"`
-	// Identity is the operator-chosen visual identity (color + glyph) override for
-	// this island, persisted in config.toml. Nil/zero means no override — the TUI
-	// then falls back to its deterministic per-name default. Set/cleared by the
-	// operator via PUT/DELETE /v1/islands/{name}/identity. Cosmetic only.
-	Identity Identity `toml:"identity,omitempty"`
-}
-
-// Identity is a per-island visual override: a hex color (#rgb or #rrggbb) and a
-// single-rune glyph. The zero value (both empty) means unset. Validation lives in
-// the api layer (PUT /v1/islands/{name}/identity); project stays a pure data struct.
-type Identity struct {
-	Color string `toml:"color,omitempty"`
-	Glyph string `toml:"glyph,omitempty"`
-}
-
-// IsSet reports whether this island carries a visual-identity override (both
-// color and glyph present).
-func (i Identity) IsSet() bool {
-	return i.Color != "" && i.Glyph != ""
-}
-
-// StampVersion returns the most authoritative version this island was last built
-// or upgraded against: the upgrade stamp if present, else the build stamp. Empty
-// when the island predates version stamping (provenance unknown).
-func (p *Project) StampVersion() string {
-	if p.UpgradedVersion != "" {
-		return p.UpgradedVersion
-	}
-	return p.BuiltVersion
 }
 
 // IsHome reports whether this island is a Home Island (hosts an assistant brain).
@@ -246,135 +187,6 @@ func (p *Project) NextAgentID() string {
 		}
 	}
 	return fmt.Sprintf("%s%d", agentIDPrefix(p.Name), max+1)
-}
-
-// UniqueAgentLabel returns a label not in use by any existing agent in this
-// island, deduping case-insensitively on the trimmed value. If desired is empty
-// (or all whitespace) it is returned as-is — empty labels are allowed and never
-// deduped. Otherwise, on a collision it appends "-2", "-3", … skipping any
-// variant already taken ("build" → "build-2" → "build-3"), mirroring the spirit
-// of NextAgentID. exclude lets a rename ignore the agent being renamed so
-// renaming to its own current label is a no-op (not "build-2"); pass "" at
-// create time when there is nothing to exclude.
-func (p *Project) UniqueAgentLabel(desired, excludeID string) string {
-	trimmed := strings.TrimSpace(desired)
-	if trimmed == "" {
-		return desired
-	}
-	taken := func(candidate string) bool {
-		for i := range p.Agents {
-			if p.Agents[i].ID == excludeID {
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(p.Agents[i].Label), candidate) {
-				return true
-			}
-		}
-		return false
-	}
-	if !taken(trimmed) {
-		return trimmed
-	}
-	for n := 2; ; n++ {
-		candidate := fmt.Sprintf("%s-%d", trimmed, n)
-		if !taken(candidate) {
-			return candidate
-		}
-	}
-}
-
-// genericAgentLabelBase is the default readable base used when an agent's Type
-// is empty or yields no nicer name. It's the floor: DefaultAgentLabel never
-// returns blank, so the worst case is "agent", "agent-2", …
-const genericAgentLabelBase = "agent"
-
-// agentLabelBase maps a known agent Type to a short, human-readable label base.
-// It's intentionally small and self-contained (the data layer doesn't depend on
-// the handlers registry) — the goal is a friendly stem like "claude" rather than
-// the wire type "claude-code". A Type with no entry falls back to its own first
-// path/word segment (see agentLabelBaseFor), and a blank/unknown Type to the
-// generic base. Keep these lowercase, alnum, and collision-free with each other.
-var agentLabelBase = map[string]string{
-	"claude-code": "claude",
-	"codex":       "codex",
-	"shell":       "shell",
-	"openclaw":    "openclaw",
-	"letta":       "letta",
-	"hermes":      "hermes",
-	"goose":       "goose",
-	"headless":    "agent",
-}
-
-// agentLabelBaseFor derives a readable label stem from an agent Type without any
-// uniqueness handling. Known types use the curated agentLabelBase; an unknown
-// (custom) type is reduced to a clean lowercase stem of its own string (the part
-// before the first space or '/', alnum/'-' only); anything that reduces to empty
-// falls back to the generic base. Never returns blank.
-func agentLabelBaseFor(agentType string) string {
-	t := strings.ToLower(strings.TrimSpace(agentType))
-	if t == "" {
-		return genericAgentLabelBase
-	}
-	if base, ok := agentLabelBase[t]; ok {
-		return base
-	}
-	// Unknown/custom type (e.g. a bare command run as a generic agent): take the
-	// leading word/path segment and keep it readable.
-	if i := strings.IndexAny(t, " /\t"); i >= 0 {
-		t = t[:i]
-	}
-	var b strings.Builder
-	for _, r := range t {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
-			b.WriteRune(r)
-		}
-	}
-	stem := strings.Trim(b.String(), "-")
-	if stem == "" {
-		return genericAgentLabelBase
-	}
-	return stem
-}
-
-// DefaultAgentLabel derives the unique, non-blank label an agent should get when
-// it is created (or backfilled) WITHOUT an explicit label. It maps the agent's
-// Type to a readable base (e.g. "claude-code" → "claude", unknown → "agent") and
-// runs that base through UniqueAgentLabel so the stored default never collides
-// with an existing agent ("claude", "claude-2", …). It NEVER returns blank.
-// exclude lets a caller ignore one agent (e.g. the one being (re)labeled) when
-// checking for collisions; pass "" at create time.
-func (p *Project) DefaultAgentLabel(spec AgentSpec, excludeID string) string {
-	return p.UniqueAgentLabel(agentLabelBaseFor(spec.Type), excludeID)
-}
-
-// BackfillAgentLabels assigns a derived default label to every agent whose Label
-// is blank (empty or all-whitespace), so islands created before default labels
-// existed get readable names with no manual step. It is:
-//   - idempotent: agents that already have a label are left untouched, so a second
-//     run is a no-op (it never re-derives or appends "-2" to a settled label);
-//   - order-stable: it walks Agents in slice order and derives each label against
-//     the labels already present (including ones it just assigned), so the same
-//     island always yields the same names; and
-//   - collision-safe within the island: two blank "claude-code" agents become
-//     "claude" and "claude-2", never two "claude".
-//
-// It mutates in place and returns whether it changed anything, so callers can
-// persist (Save) only when needed and avoid a write storm on already-backfilled
-// islands.
-func (p *Project) BackfillAgentLabels() (changed bool) {
-	for i := range p.Agents {
-		if strings.TrimSpace(p.Agents[i].Label) != "" {
-			continue
-		}
-		// Derive against the current state of the list (earlier agents already
-		// have labels, later blank ones get theirs on subsequent iterations), so
-		// the result is unique and order-stable. excludeID is the agent's own id so
-		// its (blank) slot doesn't shadow the lookup.
-		p.Agents[i].Label = p.DefaultAgentLabel(p.Agents[i], p.Agents[i].ID)
-		changed = true
-	}
-	return changed
 }
 
 // agentIDPrefix is the per-island letter that leads its agent ids: the first
@@ -448,39 +260,6 @@ func (p *Project) RemoveAgent(id string) bool {
 		}
 	}
 	return false
-}
-
-// MoveAgent shifts the agent with the given id by delta positions within the
-// list (negative = toward the front), clamping to the ends. Reports whether the
-// agent was found and actually moved. Order is cosmetic — the dashboard and CLI
-// no longer key off position — except that Agents[0] still seeds the container
-// entrypoint on the next recreate (see docs/island-pid1-unification.md).
-func (p *Project) MoveAgent(id string, delta int) bool {
-	from := -1
-	for i := range p.Agents {
-		if p.Agents[i].ID == id {
-			from = i
-			break
-		}
-	}
-	if from < 0 {
-		return false
-	}
-	to := from + delta
-	if to < 0 {
-		to = 0
-	}
-	if to > len(p.Agents)-1 {
-		to = len(p.Agents) - 1
-	}
-	if to == from {
-		return false
-	}
-	a := p.Agents[from]
-	p.Agents = append(p.Agents[:from], p.Agents[from+1:]...)
-	// Re-insert at the clamped target.
-	p.Agents = append(p.Agents[:to], append([]AgentSpec{a}, p.Agents[to:]...)...)
-	return true
 }
 
 // DisplayName is the user-facing name: the Title if set, else the Name slug.
@@ -587,34 +366,7 @@ func Load(name string) (*Project, error) {
 		return nil, fmt.Errorf("unmarshal project %q: %w", name, err)
 	}
 	p.EnsureAgents()
-	// This is the single load-time choke point every Project flows through, so
-	// one-time migrations live here — idempotent, persisted only on an actual
-	// change, so steady-state Loads do no extra writes.
-	changed := p.BackfillAgentLabels() // agents predating default-labeling get a name
-	// Multi-tenant ownership migration: an island with no owner predates ownership
-	// (or an older daemon) — attribute it to the host owner so it stays managed by
-	// the operator and private from teammates.
-	if strings.TrimSpace(p.Owner) == "" {
-		p.Owner = HostOwner()
-		changed = true
-	}
-	if changed {
-		if err := p.Save(); err != nil {
-			return nil, fmt.Errorf("migrate project %q on load: %w", name, err)
-		}
-	}
 	return &p, nil
-}
-
-// HostOwner is the tenant id attributed to the host operator: the owner of
-// islands created via the trusted local socket or a RoleOwner token, and the
-// backfill value for islands that predate ownership. Configurable via
-// DEJIMA_HOST_OWNER; defaults to "aoos".
-func HostOwner() string {
-	if v := strings.TrimSpace(os.Getenv("DEJIMA_HOST_OWNER")); v != "" {
-		return v
-	}
-	return "aoos"
 }
 
 // Delete removes the project's on-host config directory.

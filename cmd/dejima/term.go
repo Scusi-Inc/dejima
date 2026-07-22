@@ -116,8 +116,7 @@ func newTermAttachCmd() *cobra.Command {
 			if label == "" {
 				label = defaultLabel()
 			}
-			// Bare CLI attach — no dashboard to summon back to.
-			return runTerminalSession(cmd.Context(), c, args[0], label, false)
+			return runTerminalSession(cmd.Context(), c, args[0], label)
 		},
 	}
 	cmd.Flags().StringVar(&label, "as", "", "client label shown in presence (default: $HOSTNAME or 'cli')")

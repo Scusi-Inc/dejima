@@ -1,6 +1,6 @@
 # Dejima Roadmap
 
-**Last updated:** 2026-06-28
+**Last updated:** 2026-06-20
 
 This is the living roadmap for Dejima. Items are grouped by phase and sized roughly. Status legend: `[x]` = built, `[~]` = in progress, `[ ]` = pending.
 
@@ -47,59 +47,22 @@ after the **Release testing & verification** checklist passes on a live host (Mi
 
 The things only you can do (on Minion / as owner), in priority order:
 
-1. **Inter-island live-verify (catch-up — it's already shipping).** Follow
-   [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md): deny-all →
-   grant → cross-island message → action approve/deny → fail-closed → **wake-on-message (does
-   Claude Code actually wake from the tmux nudge / from hibernation?)**. NB: the inter-island
-   flow has shipped *unverified on a live host* since 0.5.1, so this is risk-reduction on live
-   code, **not a release gate**. Optional after: cut **`0.6.0`** as a cosmetic semver marker
-   (binary is identical to 0.5.3).
-2. **First Phase-B live test run.** `workflow_dispatch` the **nightly** workflow on the
-   `macos-mini` runner with defaults → expect Tier-2 + Tier-3-safe green, Tier-4 green-or-skip.
-   Add input `run_system_tests=true` for the service-install/onboard checks; `run_reboot_test=true`
-   (recovery access only) for reboot survival. See [`lanes/lane-6-phase-b.md`](lanes/lane-6-phase-b.md).
-3. **Runner boot-persistence** (next week / physical access). FileVault is off, so enable
-   auto-login for `dejimaqa` (fix the `sysadminctl` error-22 via the manual `kcpassword` method)
-   + `svc.sh install`; until then the runner survives disconnects via `run.sh`-in-tmux (not
-   reboots). See [`testing/dejimaqa-runner-setup.md`](testing/dejimaqa-runner-setup.md).
-4. **Clear the standing Minion backlog** (onboarding wizard, terminal auto-reconnect, Keychain
-   secrets, idle auto-hibernate, viewer-token scope) — see the Release-testing checklist below +
-   the Operator verification queue. **Phase-B automates most of these once it's been run.**
-5. ✅ **SDK publish — DONE (2026-06-29).** v0.7.0 + v0.7.1 published to **npm** + **PyPI** +
-   the Homebrew tap; the `dejima` name is claimed, `PYPI_API_TOKEN`/`NPM_TOKEN` are live, and
-   the tag→publish pipeline ran green.
-6. **Housekeeping:** prune stray `.agents/*` / `.claude/worktrees/*` worktrees (see Housekeeping
-   below) — confirm each is finished before removing (some may be active agents).
-7. **Stand up the competitive drift-checker watchtower** (when you want it live — it's
-   built, but agents can't self-spawn). A watchtower is a **Home Island** (headless), so create
-   it with `dejima home create --name watchtower --repo <drift-checker config repo> --agent
-   headless --cmd "<self-rearming drift loop>"` (NOT `--island` / `--agent claude-code` — home
-   islands are headless). **Wrinkle:** the drift-checker is authored as a Claude Code *SKILL*, so
-   it must be driven by that headless `--cmd` loop (or an openclaw brain), not run as the SKILL
-   as-is. Then grant a per-island GitHub identity (site repo only), an LLM provider key, and an
-   egress allow-list (the cited competitor domains + github.com). It then self-schedules a monthly
-   drift-check that opens **draft** PRs for a3 to verify. Tooling: `tools/drift-checker/`;
-   design: [`drift-checker-design.md`](drift-checker-design.md). Dry run already validated it
-   (caught a real E2B drift + a Rivet rename, both since fixed).
-8. **Full clean-Mac gate (brew + npm channels) — later, and ⚠️ ONLY on a throwaway box.**
-   The **curl** channel is already verified GREEN (21/21 — the v0.7.0 install verdict). To add
-   brew/npm coverage, run `scripts/clean-mac/proof-loop.sh` on a **disposable macOS VM or spare
-   machine that has NO Dejima daemon installed and is NOT a production host.**
-   **🚫 NEVER run it on Minion (or any host running a live operator daemon).** The gate's
-   teardown does `dejima uninstall --purge-all` and binds the operator daemon ports
-   (`:7273`/`:7274`); run co-resident with a live daemon it will take that daemon **offline**
-   (this happened on 2026-06-29 — recovered, no data lost). The **co-residency guard now ships**
-   (`refuse_if_live_daemon`, PR #238): the gate hard-refuses if it detects a loaded
-   `dev.dejima.dejimad` system LaunchDaemon, a process bound to `:7273`/`:7274`, or a `dejimad`
-   owned by another user — so an accidental run on Minion now aborts instead of taking the daemon
-   down. Further hardening still open: per-run port/`DEJIMA_HOME` isolation + teardown-on-failure.
-   The operating rule is unchanged regardless: **run only on a throwaway box** (the guard is a
-   backstop, not a licence to run it on a live host).
-
-*(✅ Done this session — the test-harness operator setup: a dedicated macOS `dejimaqa` user,
-a caged self-hosted runner, its own colima Docker, the bot GitHub account +
-`TEST_GH_TOKEN`/`TEST_GH_OWNER` + `TEST_AGENT_KEY`. Lane 6 Phase A + B are authored + merged;
-only the live dispatch run (#2) remains to exercise them.)*
+1. **Live-verify the inter-island wave → then cut `v0.6.0`.** Follow
+   [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md):
+   deny-all → grant → cross-island message → action approve/deny → fail-closed →
+   **wake-on-message (does Claude Code actually wake from the tmux nudge + from
+   hibernation?)**. All pass → tag `v0.6.0`.
+2. **Clear the standing Minion backlog** (onboarding wizard, terminal auto-reconnect,
+   Keychain secrets, idle auto-hibernate, viewer-token scope) — see the Release-testing
+   checklist below + the Operator verification queue.
+3. **SDK publish:** claim the `dejima` name on **PyPI** + **npm**, add repo secrets
+   `PYPI_API_TOKEN` / `NPM_TOKEN`, then push a `v*` tag (or `workflow_dispatch`).
+4. **Housekeeping:** remove the stray `.agents/d7` worktree (see Housekeeping below).
+5. **Automated test harness (only when you want the live tiers):** create the test
+   accounts/keys in [`testing/automated-test-harness.md`](testing/automated-test-harness.md)
+   → "Operator setup" — a dedicated macOS test user + a GitHub Actions self-hosted runner,
+   a throwaway GitHub account/PAT/test repo, and a throwaway agent key. **Phase A (the
+   per-PR CI tests) needs none of this** and can start immediately.
 
 ---
 
@@ -219,29 +182,6 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
-- **Native multi-agent tiled/split live view in the TUI** *(post-v1, consider)* — today,
-  seeing several agents' *live* terminals at once needs either a terminal with a "new-window
-  backend" (iTerm2 / Windows Terminal, which `openAgents` drives) or manually splitting your
-  own tmux and running `dejima connect <island> --agent <id>` in each pane. A raw `Ctrl-b`
-  split just opens a plain shell — tmux has no notion of Dejima agents. For a "run a fleet"
-  product the multi-agent view should be one keystroke: select N agents in the TUI → tiled /
-  split live panes in a single window, no manual connect-per-pane, no dependence on the
-  terminal's new-window support. Pairs with the QoL-positioning push (if we put "run many
-  agents" on the homepage, seeing the fleet at once shouldn't be manual). Options to weigh:
-  an embedded multiplexer in the TUI vs. driving tmux splits for the user vs. a richer
-  new-window fan-out. Motivated 2026-07-03. Owner: TUI. (days)
-- **colima memory sizing in onboarding** — `dejima onboard --provision-host` installs
-  Homebrew/Docker/colima but doesn't *size* the VM, so a fresh install gets colima's
-  default: island-heavy hosts OOM (see [OOM incident #23]), big hosts under-use their RAM.
-  Add a step that detects host RAM (`sysctl hw.memsize`) and sets `colima start --memory <N>`
-  with a sane default (≈half RAM, leaving macOS headroom), promptable/overridable; surface
-  the current size in `dejima doctor` and offer a resize path so it's adjustable later
-  (a resize needs a colima stop/start → bounces islands, so warn). Extra credit: **multi-VM
-  awareness** — a *second* per-user colima on the same host (e.g. a teammate's per-account
-  fleet) must split RAM, not each grab half; the common single-VM case is the immediate win.
-  Motivated 2026-07-02 standing up a teammate's per-account fleet on a shared 24GB mini
-  (had to hand-run `colima start --memory 8` and manually keep the primary VM smaller to
-  leave room). Small, self-contained backend/CLI task. (hours)
 - **Ambient / monitoring agents** — scheduled, long-running monitor/assistant agents (repo
   watch, email/feedback triage, competition + news/industry digests), run under the owner's
   real identity (not the `dejimaqa` test account), with **brokered + audited** access to
@@ -250,54 +190,6 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   Code, which is for coding). The enabling new primitive is a **scheduler** (cron-wake
   islands, the time-driven twin of wake-on-message); actions route through Lane 5's
   action-delegation gate. Design + phasing: [`ambient-agents-design.md`](ambient-agents-design.md).
-  **First built instance:** the competitive **drift-checker watchtower** (`tools/drift-checker/`),
-  a self-scheduling Claude Code agent that re-verifies the comparison pages' cited facts and
-  opens **draft** PRs on drift (design: [`drift-checker-design.md`](drift-checker-design.md)).
-  It validates the pattern today by self-re-arming a short harness wakeup (the harness cron
-  expires ~7d and `ScheduleWakeup` is clamped ≤1h, so it re-arms each cycle). The durable
-  **scheduler primitive** it wants — daemon-level `dejima wake --at/--every`, symmetric to
-  idle-hibernate and covering headless agents too — is spec'd in
-  [`scheduled-wake-spec.md`](scheduled-wake-spec.md) (filed with backend); once it lands the
-  watchtower hibernates between runs instead of staying resident.
-- **Randomized soak / combination "backbone"** — the stress layer above the deterministic
-  full-feature suite: run *valid* lifecycle/agent/Port/link op-sequences in random orders +
-  combinations, repeatedly, with invariant checks after each (no orphan containers/worktrees,
-  daemon healthy, ledger verifies, no zombies). Catches state bugs the happy-path suite
-  misses. Build after the deterministic suite ([`testing/full-suite-design.md`](testing/full-suite-design.md)).
-- **Island PID-1 unification — retire "primary" entirely** *(target pre-1.0)* — the TUI/CLI
-  no longer has a privileged "primary" agent (Enter on an island opens a contained shell;
-  agents are explicit), but the container entrypoint still is: a *headless-first* island runs
-  its first agent as PID 1, so that one agent can't be freely removed and the island can't be
-  agent-less. Fix: always use the keepalive (`tail -f /dev/null`) entrypoint and launch every
-  agent — interactive *and* headless — through the supervised `docker exec` path that already
-  exists for non-primary agents, so no agent is ever special. Feasible (it deletes a special
-  case rather than adding capability) but touches the island lifecycle (provision/wake/
-  entrypoint/logs), so it wants live verification. Migration is lazy-on-recreate (interactive
-  islands convert for free; headless-first need a recreate to avoid double-launch). Full
-  design + migration plan: [`island-pid1-unification.md`](island-pid1-unification.md).
-- **Multi-host / distributed (discuss later)** — running agents across *multiple* hosts
-  (several Mac minis / servers / cloud). Today Dejima manages one host, so a fleet-of-hosts
-  is a wrapper-app concern. Open question worth a deliberate decision: should the substrate
-  natively **federate hosts** (a "fleet of hosts" alongside the "fleet of agents on one
-  host"), or stay single-host and leave cross-host orchestration to a control plane above?
-  Relates to inter-island exchange (cross-host would extend it). Park for a design talk.
-- **Resume the agent session on wake (don't cold-start)** — today hibernate stops the
-  container, killing the tmux server + agent process; only the workspace volume persists, so
-  wake recreates the container and `start.sh` launches a *fresh* agent — work resumes but the
-  agent's conversation/context is lost. Fix = a **per-adapter resume-on-wake seam**: on wake,
-  restart terminal agents with their resume flag (Claude Code `--continue`/`--resume`, Codex
-  equivalent) so the agent reattaches its prior context (a new tmux is fine). Pragmatic over
-  `docker pause` (doesn't free RAM) / CRIU (fragile). Matters for interactive/terminal agents;
-  headless/stateless ones (e.g. the watchtower) cold-start fine. Pairs with the scheduled-wake
-  primitive above.
-- **Per-user daemons on one host (shared-fate consideration)** — one host runs **one** system
-  daemon (`1 dejima = 1 server`), so separate OS accounts on the same machine still *share* it:
-  the operator's `update`/`restart`/crash blips every user on that host (felt during the
-  2026-06-29 incident). For a team this is fine — teammates **join the fleet** with island-scoped
-  tokens. The thesis line is **one operator per host**; for true independence the honest answer is
-  a **separate host/VM**, not a second daemon (which collides on `:7273`/`:7274`). Per-user-port
-  daemons are buildable but arguably off-thesis (containment favors separate hosts for separate
-  operators) — park unless demand is real. Relates to the multi-host question above.
 
 ---
 
@@ -319,11 +211,6 @@ git -C <dejima checkout> worktree prune
 These shipped to `master` with unit/security review but can't be exercised from the
 build island (no live Docker/macOS host here). Run them on Minion and feed findings back.
 
-- [ ] **TUI verify pass v0.6.1 → v0.6.9 (consolidated)** → [`operator-tests/v0.6.9-verify.md`](operator-tests/v0.6.9-verify.md).
-  One eyeball pass covering agents-by-name, usage signals + near-cap flags, the
-  name-collision notice, wake-on-message, tab titles, visual-identity/keys, and
-  the `used`-counter `link ls` question. Ping a2 with results (a2 relays to
-  d5/the owner + closes the counter with a1). Supersedes the stale v0.6.1 doc.
 - [ ] **Inter-island exchange (Lane 5, Phases 1–3.5) — full live-verify** → gates `v0.6.0`.
   Run [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md) on Minion:
   deny-all default, grant + cross-island delivery (tagged + ledgered), action-gate approve/deny

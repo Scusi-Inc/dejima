@@ -155,82 +155,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/UpdateResourcesResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /v1/islands/{name}/identity:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
-    put:
-      tags: [islands]
-      summary: Set the island's visual identity (color + glyph) override
-      operationId: setIslandIdentity
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/IslandIdentity" }
-      responses:
-        "200":
-          description: OK — the updated island
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/IslandInfo" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "404": { $ref: "#/components/responses/NotFound" }
-    delete:
-      tags: [islands]
-      summary: Clear the island's visual identity override (revert to the default)
-      operationId: clearIslandIdentity
-      responses:
-        "200":
-          description: OK — the updated island
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/IslandInfo" }
-        "404": { $ref: "#/components/responses/NotFound" }
-  /v1/islands/{name}/schedules:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
-    get:
-      tags: [islands]
-      summary: List the island's durable scheduled wakes
-      operationId: listSchedules
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/ScheduleInfo" }
-        "404": { $ref: "#/components/responses/NotFound" }
-    post:
-      tags: [islands]
-      summary: Add a durable scheduled wake (one-shot --at or recurring --every)
-      operationId: createSchedule
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CreateScheduleRequest" }
-      responses:
-        "201":
-          description: Created — the new schedule
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ScheduleInfo" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "404": { $ref: "#/components/responses/NotFound" }
-  /v1/islands/{name}/schedules/{id}:
-    parameters:
-      - { $ref: "#/components/parameters/Name" }
-      - name: id
-        in: path
-        required: true
-        schema: { type: string }
-    delete:
-      tags: [islands]
-      summary: Cancel a scheduled wake
-      operationId: deleteSchedule
-      responses:
-        "204": { description: No Content — the schedule was removed }
-        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/hibernate:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     post:
@@ -321,80 +245,6 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Event" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /v1/islands/{name}/egress:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
-    get:
-      tags: [islands]
-      summary: The island's recent outbound connections, as observed by the egress proxy (Phase 1, observe-only)
-      operationId: islandEgress
-      responses:
-        "200":
-          description: OK (empty when the egress proxy is disabled or the island hasn't connected out)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/EgressEventsResponse" }
-  /v1/islands/{name}/egress/policy:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
-    get:
-      tags: [islands]
-      summary: The island's egress policy (Phase 2). Reports the effective default (observe) when none is set.
-      operationId: getEgressPolicy
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/EgressPolicy" }
-    patch:
-      tags: [islands]
-      summary: Set the island's egress policy — mode + add/remove allow/deny hosts (operator-only; ledgered)
-      operationId: patchEgressPolicy
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/EgressPolicyPatch" }
-      responses:
-        "200":
-          description: OK — the resulting policy
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/EgressPolicy" }
-        "503": { description: egress proxy not enabled on this daemon }
-  /v1/islands/{name}/spawn-grant:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
-    get:
-      tags: [islands]
-      summary: The island's ephemeral-sub-agent spawn grant (Granted=false when none — the deny default)
-      operationId: getSpawnGrant
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SpawnGrantResponse" }
-    post:
-      tags: [islands]
-      summary: Grant/update an island's spawn budget (operator-only; ledgered). In-island tokens can never reach this.
-      operationId: setSpawnGrant
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/SpawnGrantRequest" }
-      responses:
-        "200":
-          description: OK — the resulting grant
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SpawnGrantResponse" }
-    delete:
-      tags: [islands]
-      summary: Revoke an island's spawn grant (operator-only; ledgered)
-      operationId: revokeSpawnGrant
-      responses:
-        "204": { description: revoked }
-        "404": { description: no spawn grant for this island }
   /v1/islands/{name}/agents:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -460,38 +310,16 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [agents]
-      summary: Remove an agent (any agent; islands may have zero)
+      summary: Remove an agent (non-primary; not the last one)
       operationId: removeAgent
       responses:
         "204": { description: Removed }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Refused — the agent is the container's PID 1 (a headless first agent); hibernate or purge instead
+          description: Cannot remove the primary or the last agent
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
-  /v1/islands/{name}/agents/{id}/move:
-    parameters:
-      - $ref: "#/components/parameters/Name"
-      - $ref: "#/components/parameters/AgentID"
-    post:
-      tags: [agents]
-      summary: Reorder an agent within its island (cosmetic; delta positions, clamped)
-      operationId: moveAgent
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties: { delta: { type: integer, description: "positions to shift; negative = toward the front" } }
-      responses:
-        "200":
-          description: OK — the island's agents in new order
-          content:
-            application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/AgentInfo" } }
-        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/agents/{id}/config:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -534,15 +362,6 @@ paths:
       tags: [agents]
       summary: "Per-agent WebSocket PTY stream. NOTE: WebSocket upgrade — see SessionEnvelope."
       operationId: agentSessionWS
-      x-websocket: true
-      responses:
-        "101": { description: Switching Protocols (WebSocket) }
-  /v1/islands/{name}/shell/session:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
-    get:
-      tags: [agents]
-      summary: "WebSocket PTY stream for the island's contained shell at /workspace (shared, resumable; not an agent). NOTE: WebSocket upgrade — see SessionEnvelope."
-      operationId: islandShellWS
       x-websocket: true
       responses:
         "101": { description: Switching Protocols (WebSocket) }
@@ -600,7 +419,7 @@ paths:
           description: Created
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MailboxSendResponse" }
+              schema: { $ref: "#/components/schemas/MailboxMessage" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/files/{path}:
@@ -973,22 +792,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LinkPendingResponse" }
-  /v1/link/actions/watch:
-    get:
-      tags: [link]
-      summary: Stream pending action approvals as Server-Sent Events (operator/viewer)
-      description: >
-        text/event-stream of `data: <ActionRequest JSON>` frames, one per new
-        pending request, with a `: keepalive` comment on idle ticks. For an
-        on-call operator or an external approval bot. The stream ends on client
-        disconnect.
-      operationId: watchActions
-      responses:
-        "200":
-          description: An SSE stream
-          content:
-            text/event-stream:
-              schema: { type: string }
   /v1/link/actions/{id}/approve:
     parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
     post:
@@ -1009,53 +812,9 @@ paths:
       tags: [link]
       summary: Deny a pending action (operator; owner/operator only)
       operationId: denyAction
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/DenyActionRequest" }
       responses:
         "204": { description: Denied }
         "404": { description: Unknown or expired }
-  /v1/policy:
-    get:
-      tags: [link]
-      summary: List active auto-approve rules (operator)
-      operationId: listPolicy
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/PolicyListResponse" }
-    post:
-      tags: [link]
-      summary: Add a scoped auto-approve rule (operator; ledgered). Destructive actions are never auto-approved.
-      operationId: addPolicy
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/PolicyAddRequest" }
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/PolicyRule" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "404": { $ref: "#/components/responses/NotFound" }
-    delete:
-      tags: [link]
-      summary: Remove an auto-approve rule (operator; ledgered)
-      operationId: removePolicy
-      parameters:
-        - { name: from, in: query, required: true, schema: { type: string } }
-        - { name: to, in: query, required: true, schema: { type: string } }
-        - { name: action, in: query, required: true, schema: { type: string } }
-      responses:
-        "204": { description: Removed }
-        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/mcp/grants:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -1132,24 +891,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
-  /v1/islands/{name}/grants:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
-    get:
-      tags: [grants]
-      summary: All grant types for one island in a single shape (deny-all by default)
-      description: >
-        The unified per-island grants view: Port host-folder scopes, host
-        capability targets, MCP servers, and the inter-island link channels that
-        touch this island — in one operator-readable call instead of four. A
-        fresh island returns empty arrays across all four (deny-all is genuine).
-      operationId: listIslandGrants
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/IslandGrantsResponse" }
-        "404": { $ref: "#/components/responses/NotFound" }
   /v1/credentials/claude:
     get:
       tags: [credentials]
@@ -1524,18 +1265,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OverviewResponse" }
-  /v1/aggregate:
-    get:
-      tags: [daemon]
-      summary: Privacy-preserving host-wide rollup (counts + total mem/cpu/disk, NO names)
-      description: Cross-tenant utilization visible to any authenticated caller — counts + totals across ALL islands, never names/repos/owners/per-island rows. Complements the owner-scoped /v1/overview.
-      operationId: aggregate
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AggregateResponse" }
   /v1/healthz:
     get:
       tags: [daemon]
@@ -1815,34 +1544,8 @@ components:
               description: only present on a token-authenticated (Home-Island spawn) create
     UpdateIslandRequest:
       type: object
-      description: >
-        Cosmetic, in-place-editable island fields. Each property is optional and
-        applied only when present, so updating one never clobbers the other.
       properties:
         title: { type: string }
-        no_hibernate:
-          type: boolean
-          description: Pin the island awake — exempt it from idle auto-hibernate.
-    CreateScheduleRequest:
-      type: object
-      description: >
-        A durable scheduled wake. Exactly one of `every` (recurring) or `at`
-        (one-shot) is required.
-      properties:
-        every: { type: string, description: "Recurring cadence as a Go duration, e.g. 720h" }
-        at: { type: string, format: date-time, description: "One-shot wake time (RFC3339)" }
-        task: { type: string, description: "Prompt injected into the agent on wake" }
-        agent: { type: string, description: "Agent id/label to run the task; empty = primary" }
-    ScheduleInfo:
-      type: object
-      properties:
-        id: { type: string }
-        every: { type: string }
-        task: { type: string }
-        agent: { type: string }
-        next_due: { type: string, format: date-time }
-        last_run: { type: string, format: date-time }
-        created_at: { type: string, format: date-time }
     CloneIslandRequest:
       type: object
       required: [new_name]
@@ -1856,8 +1559,6 @@ components:
         cmd: { type: string, description: required for a generic headless type }
         provider: { type: string, description: names a daemon provider credential }
         model: { type: string, description: "\"provider/model\" string" }
-        ephemeral: { type: boolean, description: "agent-initiated spawn: an in-island token MUST set this (it may only create ephemeral sub-agents, within the operator spawn grant)" }
-        spawned_by: { type: string, description: spawning agent's id (lineage / depth-cap input) }
     AgentConfigRequest:
       type: object
       description: Pointer-style — omit a field to leave it unchanged; "" clears it.
@@ -1913,9 +1614,7 @@ components:
         seq: { type: integer, format: int64 }
         island: { type: string }
         from: { type: string }
-        from_label: { type: string, description: Sender agent's human name (daemon-resolved at read time); empty for an unknown/cross-island handle or unlabeled agent }
         to: { type: string }
-        to_label: { type: string, description: Recipient agent's human name; empty for a broadcast or unlabeled agent }
         topic: { type: string }
         payload: { type: string }
         time: { type: string, format: date-time }
@@ -1923,32 +1622,6 @@ components:
           $ref: "#/components/schemas/MailboxOrigin"
         action:
           $ref: "#/components/schemas/MailboxAction"
-    MailboxSendResponse:
-      description: >
-        Response to a mailbox send. The delivered message is embedded inline, so
-        the JSON stays byte-compatible with the bare MailboxMessage older clients
-        decode. The additive fields are present only when a DIRECTED `to` matched
-        NEITHER an id NOR a label in the island's current roster: delivery still
-        happens (the mailbox is permissive), but the sender is warned. The signal
-        is server-authoritative — derived from the same roster the daemon resolved
-        the recipient against.
-      allOf:
-        - $ref: "#/components/schemas/MailboxMessage"
-        - type: object
-          properties:
-            unknown_recipient:
-              type: boolean
-              description: True when the directed recipient matched no agent in the roster (still delivered).
-            roster:
-              type: array
-              description: The island's current agents at send time, so the sender can name a valid recipient. Present only with unknown_recipient.
-              items: { $ref: "#/components/schemas/RosterAgent" }
-    RosterAgent:
-      type: object
-      description: Minimal (id, label) view of a current agent, carried in a MailboxSendResponse.
-      properties:
-        id: { type: string }
-        label: { type: string }
     MailboxAction:
       type: object
       description: >
@@ -1968,7 +1641,6 @@ components:
       properties:
         source_island: { type: string }
         cross_island: { type: boolean }
-        from_label: { type: string, description: "sender's display label, daemon-stamped from the source island's roster at send time (display-only; absent → fall back to the message's from id)" }
     MailboxPollResponse:
       type: object
       properties:
@@ -1994,35 +1666,6 @@ components:
       type: object
       properties:
         grants: { type: array, items: { $ref: "#/components/schemas/LinkGrant" } }
-    PolicyRule:
-      type: object
-      description: A scoped auto-approve rule for the action gate. Topic-agnostic (the link grant gates the channel); destructive actions are never auto-approved regardless.
-      properties:
-        from: { type: string }
-        to: { type: string }
-        action: { type: string }
-        max_count: { type: integer, description: "0 = unlimited within the TTL window" }
-        used: { type: integer }
-        expires_at: { type: string, format: date-time, description: "omitted = no expiry" }
-        created_at: { type: string, format: date-time }
-        created_by: { type: string }
-    PolicyAddRequest:
-      type: object
-      required: [from, to, action]
-      properties:
-        from: { type: string }
-        to: { type: string }
-        action: { type: string, description: Named action type to auto-approve over from→to }
-        max_count: { type: integer, description: "0 = unlimited within the TTL" }
-        ttl: { type: string, description: "Go duration (e.g. 1h, 30m); empty = no expiry" }
-    PolicyListResponse:
-      type: object
-      properties:
-        rules: { type: array, items: { $ref: "#/components/schemas/PolicyRule" } }
-    DenyActionRequest:
-      type: object
-      properties:
-        reason: { type: string, description: "Optional human-readable reason, recorded in the ledger" }
     LinkSendRequest:
       type: object
       required: [to, to_agent, topic, payload]
@@ -2058,13 +1701,10 @@ components:
         id: { type: string }
         from: { type: string }
         from_agent: { type: string }
-        from_label: { type: string, description: "sender display label, daemon-stamped from the source roster at send time (display-only; absent → fall back to from_agent)" }
         to: { type: string }
         to_agent: { type: string }
-        to_label: { type: string, description: "recipient display label, daemon-stamped from the destination roster (display-only; absent → fall back to to_agent)" }
         topic: { type: string }
         action: { type: string }
-        tier: { type: string, enum: [benign, mutating, destructive] }
         params: { type: string }
         created_at: { type: string, format: date-time }
     LinkPendingResponse:
@@ -2090,32 +1730,15 @@ components:
         attached:
           type: array
           items: { $ref: "#/components/schemas/PresenceEntry" }
-        stats:
-          allOf: [ { $ref: "#/components/schemas/IslandStats" } ]
-          description: cached container resource usage (running islands); on both list and detail
+        stats: { $ref: "#/components/schemas/IslandStats" }
         agent_state: { $ref: "#/components/schemas/AgentStateInfo" }
         git: { $ref: "#/components/schemas/GitInfo" }
-        health:
-          allOf: [ { $ref: "#/components/schemas/IslandHealth" } ]
-          description: container crash health (oom/restart/exit); detail endpoint only
-        disk:
-          allOf: [ { $ref: "#/components/schemas/IslandDisk" } ]
-          description: on-disk volume usage; detail endpoint only
-        resources:
-          allOf: [ { $ref: "#/components/schemas/Resources" } ]
-          description: configured caps + OOM priority; on both list and detail (pairs with stats to compute % of cap)
+        health: { $ref: "#/components/schemas/IslandHealth" }
+        disk: { $ref: "#/components/schemas/IslandDisk" }
+        resources: { $ref: "#/components/schemas/Resources" }
         agents:
           type: array
           items: { $ref: "#/components/schemas/AgentInfo" }
-        identity:
-          allOf: [ { $ref: "#/components/schemas/IslandIdentity" } ]
-          description: operator-set visual color+glyph override; omitted when unset
-    IslandIdentity:
-      type: object
-      required: [color, glyph]
-      properties:
-        color: { type: string, description: "hex color: #rgb or #rrggbb" }
-        glyph: { type: string, description: exactly one rune }
     AgentInfo:
       type: object
       properties:
@@ -2139,23 +1762,6 @@ components:
         model: { type: string }
         provider_key_set: { type: boolean }
         auth_state: { type: string, description: "\"missing-provider-auth\" or \"\" (ready)" }
-        usage: { $ref: "#/components/schemas/AgentUsage" }
-        ephemeral: { type: boolean, description: an agent-spawned sub-agent (auto-reaped; counts against the spawn budget) }
-        spawned_by: { type: string, description: id of the agent that spawned this one (lineage; empty for operator-created) }
-        spawned_by_label: { type: string, description: human name of the spawning agent (so lineage renders as a name) }
-    AgentUsage:
-      type: object
-      description: >-
-        Adapter-reported token/cost for the agent's session (Claude Code today),
-        ingested from the agent's own usage hook over the in-island token path.
-        Omitted entirely for adapters that don't report (clients render "n/a").
-      properties:
-        input_tokens: { type: integer, description: "all input-side tokens (fresh + cached), so input + output == total" }
-        output_tokens: { type: integer }
-        total_tokens: { type: integer }
-        cost_usd: { type: number, description: "omitted when the model isn't priced (cost renders n/a; tokens still show)" }
-        source: { type: string, description: "reporting adapter, e.g. claude-code" }
-        as_of: { type: string, format: date-time }
     PresenceEntry:
       type: object
       properties:
@@ -2198,69 +1804,8 @@ components:
         type: { type: string, description: "e.g. island.created, agent.task-complete" }
         island: { type: string }
         agent: { type: string }
-        agent_label: { type: string, description: the agent's human name (daemon-resolved at emit time); empty for island-level events or unlabeled agents }
         timestamp: { type: string, format: date-time }
         payload: { type: object, additionalProperties: true }
-    EgressEvent:
-      type: object
-      description: One outbound connection from an island observed by the egress proxy. Destination host only (no payload/path) — egress observability is "who did it talk to," not content.
-      properties:
-        island: { type: string }
-        host: { type: string, description: destination hostname }
-        port: { type: string }
-        method: { type: string, description: "\"CONNECT\" (HTTPS tunnel) or the HTTP verb" }
-        decision: { type: string, enum: [allow, deny] }
-        time: { type: string, format: date-time }
-    EgressEventsResponse:
-      type: object
-      properties:
-        events:
-          type: array
-          items: { $ref: "#/components/schemas/EgressEvent" }
-    EgressPolicy:
-      type: object
-      description: One island's egress policy. Host matching is exact-or-subdomain (a rule "github.com" covers "api.github.com").
-      properties:
-        mode: { type: string, enum: [observe, enforce], description: "observe = allow all + log (default); enforce = deny-all except allow" }
-        allow: { type: array, items: { type: string }, description: hosts permitted in enforce mode }
-        deny: { type: array, items: { type: string }, description: hosts always blocked (even in observe mode) }
-    EgressPolicyPatch:
-      type: object
-      description: Incremental change to an island's egress policy. Empty mode leaves it unchanged; add/remove lists are applied as sets.
-      properties:
-        mode: { type: string, enum: [observe, enforce] }
-        add_allow: { type: array, items: { type: string } }
-        remove_allow: { type: array, items: { type: string } }
-        add_deny: { type: array, items: { type: string } }
-        remove_deny: { type: array, items: { type: string } }
-    SpawnGrant:
-      type: object
-      description: An island's operator-granted budget for ephemeral sub-agents. Co-located sub-agents SHARE the parent island's sandbox (not isolated from it).
-      properties:
-        island: { type: string }
-        max_concurrent: { type: integer, description: max live sub-agents at once }
-        max_total: { type: integer, description: max lifetime spawns (0 = unlimited within the grant) }
-        types: { type: array, items: { type: string }, description: allowed agent types (empty = any spawnable) }
-        ttl: { type: integer, format: int64, description: per-sub-agent max lifetime in nanoseconds (0 = no time cap) }
-        per_agent_memory: { type: string, description: "per-sub-agent memory cap, e.g. 512m" }
-        per_agent_cpus: { type: string, description: "per-sub-agent cpu cap, e.g. 1.0" }
-        created_at: { type: string, format: date-time }
-        created_by: { type: string }
-    SpawnGrantRequest:
-      type: object
-      required: [max_concurrent]
-      properties:
-        max_concurrent: { type: integer }
-        max_total: { type: integer }
-        types: { type: array, items: { type: string } }
-        ttl: { type: string, description: "per-sub-agent lifetime, e.g. \"1h\"" }
-        per_agent_memory: { type: string }
-        per_agent_cpus: { type: string }
-    SpawnGrantResponse:
-      type: object
-      properties:
-        granted: { type: boolean }
-        grant: { $ref: "#/components/schemas/SpawnGrant" }
     PortScopeRequest:
       type: object
       required: [host_path]
@@ -2368,26 +1913,6 @@ components:
         grants:
           type: array
           items: { $ref: "#/components/schemas/MCPGrantView" }
-    IslandGrantsResponse:
-      type: object
-      description: >
-        Every grant type an island holds, in one shape. Each field mirrors the
-        element type of the corresponding per-resource list endpoint; links are
-        filtered to channels touching this island. All arrays are non-null
-        (empty for a deny-all island).
-      properties:
-        port:
-          type: array
-          items: { $ref: "#/components/schemas/PortScopeView" }
-        capability:
-          type: array
-          items: { $ref: "#/components/schemas/CapabilityGrantView" }
-        mcp:
-          type: array
-          items: { $ref: "#/components/schemas/MCPGrantView" }
-        links:
-          type: array
-          items: { $ref: "#/components/schemas/LinkGrant" }
     MCPCallRequest:
       type: object
       required: [server, method]
@@ -2409,8 +1934,7 @@ components:
         id: { type: string }
         label: { type: string }
         role: { type: string, enum: [owner, operator, viewer] }
-        owner: { type: string, description: "tenant this token acts as (multi-tenant ownership); empty = the host owner" }
-        islands: { type: array, items: { type: string }, description: "scope; empty = all the owner's islands" }
+        islands: { type: array, items: { type: string }, description: "scope; empty = all islands" }
         created_at: { type: string, format: date-time }
     CreateTokenRequest:
       type: object
@@ -2418,8 +1942,7 @@ components:
       properties:
         label: { type: string }
         role: { type: string, enum: [owner, operator, viewer] }
-        owner: { type: string, description: "tenant this token acts as; an operator/viewer token then sees + creates only that tenant's islands. Empty defaults to the host owner (full access). RoleOwner sees all regardless." }
-        islands: { type: array, items: { type: string }, description: "further narrow to these islands; empty = all the owner's islands" }
+        islands: { type: array, items: { type: string }, description: "scope to these islands; empty = all" }
     CreateTokenResponse:
       type: object
       properties:
@@ -2691,19 +2214,6 @@ components:
         host_memory_bytes: { type: integer }
         vm_memory_bytes: { type: integer }
         vm_recommended_bytes: { type: integer }
-        owner: { type: string, description: "the authenticated caller's own tenant (multi-tenant who-am-i); empty when no identity" }
-        role: { type: string, description: "the authenticated caller's role (owner|operator|viewer); empty when no identity" }
-    AggregateResponse:
-      type: object
-      description: "Host-wide rollup across ALL islands (counts + totals only, NO names/repos/owners). Any authenticated caller."
-      properties:
-        total_islands: { type: integer }
-        running: { type: integer }
-        hibernated: { type: integer }
-        memory_usage_bytes: { type: integer }
-        memory_limit_bytes: { type: integer }
-        cpu_percent: { type: number }
-        disk_total_bytes: { type: integer }
     SessionEnvelope:
       type: object
       description: >

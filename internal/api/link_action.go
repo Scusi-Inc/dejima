@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/link"
-	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/project"
 )
 
@@ -45,12 +43,6 @@ type LinkExposedResponse struct {
 // LinkPendingResponse is the queued action approvals (operator view).
 type LinkPendingResponse struct {
 	Pending []link.ActionRequest `json:"pending"`
-}
-
-// DenyActionRequest is the optional body of POST .../deny: a human-readable
-// reason recorded in the ledger.
-type DenyActionRequest struct {
-	Reason string `json:"reason,omitempty"`
 }
 
 // exposeAction adds a named action type to an island's exposed set (operator).
@@ -135,16 +127,7 @@ func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("to, to_agent, topic, and action are required"))
 		return
 	}
-	fromAgent := strings.TrimSpace(req.FromAgent)
-	// Daemon-stamp display labels at request (send) time from each island's
-	// roster — the receiving island can't resolve the sender's roster, and the
-	// send-time label is the correct one to record. Empty when unset → consumers
-	// fall back to the id.
-	ar := link.ActionRequest{
-		From: from, FromAgent: fromAgent, FromLabel: s.agentLabel(from, fromAgent),
-		To: to, ToAgent: toAgent, ToLabel: s.agentLabel(to, toAgent),
-		Topic: topic, Action: action, Tier: link.ClassifyTier(action), Params: req.Params,
-	}
+	ar := link.ActionRequest{From: from, FromAgent: strings.TrimSpace(req.FromAgent), To: to, ToAgent: toAgent, Topic: topic, Action: action, Params: req.Params}
 	grant, allowed, exposed, agentOK, err := s.linkActionGate(ar)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -166,17 +149,9 @@ func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("island %q does not expose action %q", to, action))
 		return
 	}
-	// Pre-authorized in the grant's static allowlist → execute immediately.
+	// Pre-authorized in the grant's allowlist → execute immediately.
 	if actionInList(action, grant.Actions) {
 		s.executeLinkAction(ar, "")
-		writeJSON(w, http.StatusCreated, LinkActionResponse{Status: "executed"})
-		return
-	}
-	// A scoped, counted, expiring auto-approve rule (operator opt-in) covers this
-	// link+action → execute and spend one unit of its budget. Consume never
-	// matches a destructive action, so this can't become a wipe-the-drive bypass.
-	if _, ok, perr := policy.Consume(ar); perr == nil && ok {
-		s.executeLinkAction(ar, "policy") // ledgers link.approve (Actor=policy) → an auto record
 		writeJSON(w, http.StatusCreated, LinkActionResponse{Status: "executed"})
 		return
 	}
@@ -187,8 +162,7 @@ func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
 		Island: from,
 		Agent:  ar.FromAgent,
 		Payload: map[string]any{
-			"id": pending.ID, "to": to, "to_agent": toAgent, "topic": topic,
-			"action": action, "tier": string(pending.Tier),
+			"id": pending.ID, "to": to, "to_agent": toAgent, "topic": topic, "action": action,
 		},
 	})
 	s.ledgerAppend(ledger.Entry{
@@ -216,25 +190,6 @@ func (s *Server) linkActionGate(ar link.ActionRequest) (grant link.Grant, allowe
 	return grant, allowed, exposed, agentOK, nil
 }
 
-// agentLabel resolves an agent's display label from its island roster, for
-// daemon-stamped cross-island provenance (a receiving island can't resolve
-// another island's roster — containment). Returns "" when the island/agent is
-// gone or has no label set, so callers degrade to the bare id.
-func (s *Server) agentLabel(island, agentID string) string {
-	if island == "" || agentID == "" {
-		return ""
-	}
-	p, err := project.Load(island)
-	if err != nil {
-		return ""
-	}
-	p.EnsureAgents()
-	if a, ok := p.AgentByID(agentID); ok {
-		return a.Label
-	}
-	return ""
-}
-
 // executeLinkAction delivers the named action into the destination agent's
 // mailbox (typed Action, cross-island Origin) and ledgers link.action. When
 // approvedBy is non-empty it also writes the approval record (who, when).
@@ -245,7 +200,7 @@ func (s *Server) executeLinkAction(ar link.ActionRequest, approvedBy string) {
 			Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "]", Actor: approvedBy, Decision: "allowed",
 		})
 	}
-	s.mailbox.DeliverAction(ar.To, ar.From, ar.FromAgent, ar.FromLabel, ar.ToAgent, ar.Topic, ar.Action, ar.Params)
+	s.mailbox.DeliverAction(ar.To, ar.From, ar.FromAgent, ar.ToAgent, ar.Topic, ar.Action, ar.Params)
 	s.ledgerAppend(ledger.Entry{
 		Type: "link.action", Island: ar.From, Scope: ar.Topic,
 		Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "]", Decision: "allowed",
@@ -262,66 +217,6 @@ func (s *Server) ledgerLinkDeny(ar link.ActionRequest, reason string) {
 // listPendingActions returns the queued action approvals (operator).
 func (s *Server) listPendingActions(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, LinkPendingResponse{Pending: s.linkQueue.List()})
-}
-
-// watchActions streams pending action approvals as Server-Sent Events: each new
-// pending request is emitted once as a `data: <ActionRequest JSON>` frame, so an
-// on-call operator or an external approval bot can react without polling. Backed
-// by a short poll of the in-memory queue (no extra pub/sub); a keepalive comment
-// each idle tick keeps proxies open and surfaces a dead client (write error →
-// return). The stream ends when the client disconnects.
-func (s *Server) watchActions(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, errors.New("streaming unsupported"))
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher.Flush() // commit headers so the client sees the stream open
-
-	seen := map[string]bool{}
-	emit := func() bool {
-		wrote := false
-		for _, ar := range s.linkQueue.List() {
-			if seen[ar.ID] {
-				continue
-			}
-			seen[ar.ID] = true
-			b, err := json.Marshal(ar)
-			if err != nil {
-				continue
-			}
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
-				return false
-			}
-			wrote = true
-		}
-		if !wrote {
-			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
-				return false
-			}
-		}
-		flusher.Flush()
-		return true
-	}
-
-	if !emit() {
-		return
-	}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			if !emit() {
-				return
-			}
-		}
-	}
 }
 
 // approveAction approves a pending action and executes it (operator role only —
@@ -353,25 +248,19 @@ func (s *Server) approveAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // denyAction denies a pending action (operator role only); fail-closed, ledgered.
-// An optional {reason} body is recorded in the ledger.
 func (s *Server) denyAction(w http.ResponseWriter, r *http.Request) {
 	ar, ok := s.linkQueue.Take(r.PathValue("id"))
 	if !ok {
 		writeError(w, http.StatusNotFound, errors.New("no such pending action (unknown or expired)"))
 		return
 	}
-	var req DenyActionRequest
-	_ = json.NewDecoder(r.Body).Decode(&req) // body optional
 	denier := "operator"
 	if id, ok := IdentityFromContext(r.Context()); ok && id.Subject != "" {
 		denier = id.Subject
 	}
-	detail := "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "] operator-denied"
-	if reason := strings.TrimSpace(req.Reason); reason != "" {
-		detail += ": " + reason
-	}
 	s.ledgerAppend(ledger.Entry{
-		Type: "link.deny", Island: ar.From, Scope: ar.Topic, Detail: detail, Actor: denier, Decision: "denied",
+		Type: "link.deny", Island: ar.From, Scope: ar.Topic,
+		Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "] operator-denied", Actor: denier, Decision: "denied",
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

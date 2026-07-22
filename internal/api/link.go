@@ -169,10 +169,8 @@ func (s *Server) sendLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Deliver into the recipient agent's ordinary mailbox with daemon-stamped
-	// provenance (Origin.SourceIsland = the token-pinned sender island, FromLabel
-	// = the sender's display label resolved from the source roster at send time).
-	fromAgent := strings.TrimSpace(req.FromAgent)
-	msg := s.mailbox.DeliverExternal(to, from, fromAgent, s.agentLabel(from, fromAgent), toAgent, topic, req.Payload)
+	// provenance (Origin.SourceIsland = the token-pinned sender island).
+	msg := s.mailbox.DeliverExternal(to, from, strings.TrimSpace(req.FromAgent), toAgent, topic, req.Payload)
 	s.ledgerAppend(ledger.Entry{
 		Type: "link.message", Island: from, Scope: topic, Detail: "→ " + to + "/" + toAgent, Decision: "allowed",
 	})

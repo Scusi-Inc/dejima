@@ -22,56 +22,25 @@ type IslandInfo struct {
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
-	Role      string            `json:"role,omitempty"`
-	Owner     string            `json:"owner,omitempty"`
-	Tags      map[string]string `json:"tags,omitempty"`
-	State     string            `json:"state"`     // desired state from config
-	Container string            `json:"container"` // observed status from runtime
-	// NoHibernate is true when the island is pinned awake (exempt from idle
-	// auto-hibernate). Set via PATCH /v1/islands/{name} (dejima pin/unpin).
-	NoHibernate bool            `json:"no_hibernate,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	LastUsedAt  time.Time       `json:"last_used_at"`
-	Attached    []PresenceEntry `json:"attached,omitempty"`
-	Stats       *IslandStats    `json:"stats,omitempty"`
-	AgentState  *AgentStateInfo `json:"agent_state,omitempty"`
-	Git         *GitInfo        `json:"git,omitempty"`
-	Health      *IslandHealth   `json:"health,omitempty"`
-	Disk        *IslandDisk     `json:"disk,omitempty"`
+	Role       string            `json:"role,omitempty"`
+	Owner      string            `json:"owner,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	State      string            `json:"state"`     // desired state from config
+	Container  string            `json:"container"` // observed status from runtime
+	CreatedAt  time.Time         `json:"created_at"`
+	LastUsedAt time.Time         `json:"last_used_at"`
+	Attached   []PresenceEntry   `json:"attached,omitempty"`
+	Stats      *IslandStats      `json:"stats,omitempty"`
+	AgentState *AgentStateInfo   `json:"agent_state,omitempty"`
+	Git        *GitInfo          `json:"git,omitempty"`
+	Health     *IslandHealth     `json:"health,omitempty"`
+	Disk       *IslandDisk       `json:"disk,omitempty"`
 	// Resources are the island's configured caps + OOM priority (nil OOMPriority
-	// means the smart default applies). Present on both the list and detail
-	// endpoints — cheap (read from island config) and needed alongside Stats so a
-	// client can compute usage as a "% of cap".
+	// means the smart default applies). Detail endpoint only.
 	Resources *Resources `json:"resources,omitempty"`
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
-	// BuiltVersion / UpgradedVersion are the version-skew stamp: the daemon build
-	// the island's container was first created against, and the build of its most
-	// recent `dejima upgrade` recreate. A stamp behind the running daemon means the
-	// island was built from an older image and may carry stale /opt shims. Both
-	// empty for islands created before version stamping (provenance unknown).
-	BuiltVersion    string `json:"built_version,omitempty"`
-	UpgradedVersion string `json:"upgraded_version,omitempty"`
-	// NeverHeardFrom is the zero-heartbeat liveness flag: true when the island's
-	// container is running yet NO agent has emitted a single agent-state event
-	// since boot, and the island is past a short grace window (so a just-started
-	// island isn't falsely flagged). This is the direct broken-shim signal — a
-	// stale socket→TCP notify hook silently no-ops, so the heartbeat never fires
-	// and mail-nudges / idle-hibernate / the idle metric all go dark with no error.
-	NeverHeardFrom bool `json:"never_heard_from,omitempty"`
-	// Identity is the operator-set visual identity (color + glyph) for the island.
-	// Omitted when unset — the TUI then falls back to its deterministic per-name
-	// default (islandIdentity). Set/cleared via PUT /v1/islands/{name}/identity.
-	// (Backend populate + the PUT route are d5's; this field is the shared seam.)
-	Identity *IslandIdentity `json:"identity,omitempty"`
-}
-
-// IslandIdentity is an operator-chosen color + glyph override for an island.
-// Color is a hex string (#rgb or #rrggbb); Glyph is exactly one rune.
-type IslandIdentity struct {
-	Color string `json:"color"`
-	Glyph string `json:"glyph"`
 }
 
 // AgentInfo is the public view of one agent within an island.
@@ -113,38 +82,6 @@ type AgentInfo struct {
 	// when a key-requiring agent has no resolvable key (it will fail at first
 	// task), else "" (ready, or the agent needs no provider key).
 	AuthState string `json:"auth_state,omitempty"`
-	// Usage is the agent's adapter-REPORTED token/cost (Claude Code today).
-	// OMITTED entirely for adapters that don't report — clients render "n/a"
-	// rather than a fake zero. Detail endpoint only.
-	Usage *AgentUsage `json:"usage,omitempty"`
-	// Ephemeral / SpawnedBy surface an agent-spawned sub-agent and its lineage
-	// (the spawning agent's id). Empty/false for operator-created agents.
-	// SpawnedByLabel is the spawner's human name, so lineage renders as a name.
-	Ephemeral      bool   `json:"ephemeral,omitempty"`
-	SpawnedBy      string `json:"spawned_by,omitempty"`
-	SpawnedByLabel string `json:"spawned_by_label,omitempty"`
-}
-
-// RefID / RefLabel let an AgentInfo satisfy project.AgentRef, so the CLI can
-// resolve a user-supplied agent ref (id or label) against the island's agent
-// list with the same shared resolver the daemon uses.
-func (a AgentInfo) RefID() string    { return a.ID }
-func (a AgentInfo) RefLabel() string { return a.Label }
-
-// AgentUsage is an agent's self-reported token/cost for its session, ingested
-// from the agent's own usage hook over the in-island token path. Dejima can't
-// observe the (opaque, outbound) LLM call, so these numbers come FROM the agent;
-// an adapter that doesn't report leaves AgentInfo.Usage nil → "n/a" (we never
-// fake uniform coverage). InputTokens aggregates fresh + cached input so
-// InputTokens + OutputTokens == TotalTokens. CostUSD is nil when the model
-// isn't in the price table (tokens still show; cost renders n/a).
-type AgentUsage struct {
-	InputTokens  int       `json:"input_tokens"`
-	OutputTokens int       `json:"output_tokens"`
-	TotalTokens  int       `json:"total_tokens"`
-	CostUSD      *float64  `json:"cost_usd,omitempty"`
-	Source       string    `json:"source"` // reporting adapter, e.g. "claude-code"
-	AsOf         time.Time `json:"as_of"`
 }
 
 // IslandHealth surfaces crash-relevant facts that a remote client can't observe
@@ -222,29 +159,6 @@ type OverviewResponse struct {
 	HostMemoryBytes    uint64 `json:"host_memory_bytes,omitempty"`
 	VMMemoryBytes      uint64 `json:"vm_memory_bytes,omitempty"`
 	VMRecommendedBytes uint64 `json:"vm_recommended_bytes,omitempty"`
-	// Owner / Role identify the AUTHENTICATED caller (multi-tenant "who am I"), so
-	// a client can drive the own-vs-all lens: the host owner (role "owner") sees
-	// all islands and can filter to Owner; a teammate is already server-filtered.
-	// Empty on callers without a resolved identity.
-	Owner string `json:"owner,omitempty"`
-	Role  string `json:"role,omitempty"`
-}
-
-// AggregateResponse is the privacy-preserving host-wide rollup returned by GET
-// /v1/aggregate (multi-tenant design, capRead + any authenticated caller). It
-// carries counts + totals across ALL islands and NEVER any names, repos, owners,
-// or per-island rows — so a teammate can see shared-host utilization without
-// seeing what's running. Field tags are the locked contract between the client
-// (this type, a2) and the server handler (a1's P3). Memory fields are uint64 to
-// match OverviewResponse; disk is int64 to match disk.total_bytes.
-type AggregateResponse struct {
-	TotalIslands     int     `json:"total_islands"`
-	Running          int     `json:"running"`
-	Hibernated       int     `json:"hibernated"`
-	MemoryUsageBytes uint64  `json:"memory_usage_bytes"`
-	MemoryLimitBytes uint64  `json:"memory_limit_bytes"`
-	CPUPercent       float64 `json:"cpu_percent"`
-	DiskTotalBytes   int64   `json:"disk_total_bytes"`
 }
 
 // AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the
@@ -345,35 +259,8 @@ type CreateIslandResponse struct {
 
 // UpdateIslandRequest is the body of PATCH /v1/islands/{name}. Only cosmetic,
 // in-place-editable fields live here (Name and infra identity are immutable).
-// Fields are pointers so a request applies ONLY what it sends — a no_hibernate
-// update doesn't clobber the title, and vice-versa.
 type UpdateIslandRequest struct {
-	Title *string `json:"title,omitempty"`
-	// NoHibernate pins the island awake (exempt from idle auto-hibernate). nil
-	// leaves the current setting unchanged.
-	NoHibernate *bool `json:"no_hibernate,omitempty"`
-}
-
-// CreateScheduleRequest is the body of POST /v1/islands/{name}/schedules. Exactly
-// one of Every (recurring Go duration, e.g. "720h") or At (one-shot RFC3339 time)
-// is required. Task is an optional prompt injected into Agent (id/label; ""=the
-// primary) once the island wakes.
-type CreateScheduleRequest struct {
-	Every string `json:"every,omitempty"`
-	At    string `json:"at,omitempty"`
-	Task  string `json:"task,omitempty"`
-	Agent string `json:"agent,omitempty"`
-}
-
-// ScheduleInfo is the public view of a wake schedule.
-type ScheduleInfo struct {
-	ID        string    `json:"id"`
-	Every     string    `json:"every,omitempty"`
-	Task      string    `json:"task,omitempty"`
-	Agent     string    `json:"agent,omitempty"`
-	NextDue   time.Time `json:"next_due"`
-	LastRun   time.Time `json:"last_run,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Title string `json:"title"`
 }
 
 // AgentSpecRequest describes one agent to create — either as an element of
@@ -388,12 +275,6 @@ type AgentSpecRequest struct {
 	// RequiresProviderKey.
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
-	// Ephemeral requests an auto-reaped sub-agent. An in-island token (an
-	// agent-initiated spawn) MUST set this — a token may only create ephemeral
-	// sub-agents within the operator's spawn grant, never persistent agents.
-	// SpawnedBy is the spawning agent's id (lineage / depth-cap input).
-	Ephemeral bool   `json:"ephemeral,omitempty"`
-	SpawnedBy string `json:"spawned_by,omitempty"`
 }
 
 // Resources mirrors project.Resources for API transport.

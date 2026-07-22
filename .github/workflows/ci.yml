@@ -1,28 +1,19 @@
 name: ci
 
-# Tier-1 of the automated test harness (docs/testing/automated-test-harness.md):
-# unit + API (httptest) + CLI-vs-in-proc-daemon + TUI (teatest). All run with no
-# Docker on GitHub-hosted runners, so this fires on every push + PR. The Tier-2
-# Docker matrix and the Tier-3 macOS-host suite run on a schedule from
-# nightly.yml (a disabled scaffold today — see that file).
-
 on:
   push:
     branches: [master, main]
   pull_request:
 
 jobs:
-  # build runs the full Tier-1 suite (build + vet + `go test ./...`, which now
-  # includes the teatest TUI tests, the CLI table tests, and the httptest API
-  # handler tests — none of which need Docker) on both Linux and macOS.
   build:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: stable
       - run: go build ./...
@@ -32,8 +23,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: stable
       # action v7 drives golangci-lint v2 (v6 drove v1). The version is PINNED, not
@@ -43,30 +34,3 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
-
-  # shellcheck keeps the live test suites (the Tier-2 integration suite plus the
-  # Tier-3/Tier-4 scripts run on the Mac-mini runner) lint-clean on every PR even
-  # though CI can't execute them — a broken edit is caught here, not later on the
-  # runner. The tier3/tier4 scripts `source` lib.sh, so point shellcheck at it.
-  shellcheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: shellcheck the live test suites
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y shellcheck
-          shellcheck scripts/integration.sh \
-            scripts/install-channels-check.sh \
-            scripts/metrics/install-totals.sh \
-            scripts/lib/report.sh \
-            scripts/report-to-issue.sh \
-            scripts/tier3/lib.sh \
-            scripts/tier3/safe.sh \
-            scripts/tier3/system.sh \
-            scripts/tier3/tui-claude.sh \
-            scripts/tier3/onboard-selftest.sh \
-            scripts/tier4/agent-smoke.sh \
-            scripts/clean-mac/lib.sh \
-            scripts/clean-mac/proof-loop.sh \
-            scripts/clean-mac/teardown.sh

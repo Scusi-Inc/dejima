@@ -5,15 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dejima API reference</title>
 <meta name="description" content="HTTP + websocket API for the Dejima daemon. Target this surface to build mobile apps, chat integrations, multi-agent dashboards, or any other product on top of Dejima.">
-<meta property="og:title" content="Dejima API reference">
-<meta property="og:description" content="HTTP + websocket API for the Dejima daemon — build mobile apps, chat integrations, multi-agent dashboards, or any product on top of Dejima.">
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://dejima.tech/api.html">
-<meta property="og:image" content="https://dejima.tech/assets/og-card.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://dejima.tech/assets/og-card.png">
 <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
 <link rel="icon" type="image/png" sizes="256x256" href="assets/favicon-256.png">
 <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
@@ -93,14 +84,6 @@
     .toc ul { columns: 1; }
   }
 </style>
-<script type="application/ld+json">
-{"@context":"https://schema.org","@graph":[
-{"@type":"BreadcrumbList","itemListElement":[
-{"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
-{"@type":"ListItem","position":2,"name":"API reference","item":"https://dejima.tech/api.html"}]},
-{"@type":"WebPage","name":"Dejima API reference","url":"https://dejima.tech/api.html","description":"The HTTP and WebSocket control API for Dejima: islands, sessions, lifecycle, agents, brokered host files and MCP, audit, and events.","isPartOf":{"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"}}
-]}
-</script>
 </head>
 <body>
 <main>
@@ -134,7 +117,6 @@
     <li><a href="#credentials">Credentials &amp; GitHub identities</a></li>
     <li><a href="#port">Brokered host files (Port)</a></li>
     <li><a href="#capabilities">Capability brokering</a></li>
-    <li><a href="#mcp">MCP brokering</a></li>
     <li><a href="#terminals">Host terminals</a></li>
     <li><a href="#safety">Safety switch (panic)</a></li>
     <li><a href="#admin">Operator: self-update</a></li>
@@ -188,7 +170,7 @@ curl http://mac-mini.tailnet.ts.net:7273/v1/healthz</code></pre>
 <!-- ============================================================ -->
 <h2 id="sdks">SDKs (Python &amp; TypeScript)</h2>
 
-<p>Official thin clients wrap every endpoint below plus the websocket PTY stream — you get the REST surface and <code>attach()</code> without hand-rolling the <a href="#sessions">envelope framing</a>. Both read <code>DEJIMA_HOST</code> / <code>DEJIMA_TOKEN</code> from the environment, raise a typed error on non-2xx, and are generated against <a href="https://github.com/aoos/dejima/blob/master/openapi.yaml" target="_blank" rel="noopener"><code>openapi.yaml</code></a>. <span class="pill">alpha</span> — 0.x, fields may change until 1.0.</p>
+<p>Official thin clients wrap every endpoint below plus the websocket PTY stream — you get the REST surface and <code>attach()</code> without hand-rolling the <a href="#sessions">envelope framing</a>. Both read <code>DEJIMA_HOST</code> / <code>DEJIMA_TOKEN</code> from the environment, raise a typed error on non-2xx, and are generated against <a href="https://github.com/aoos/dejima/blob/master/openapi.yaml"><code>openapi.yaml</code></a>. <span class="pill">alpha</span> — 0.x, fields may change until 1.0.</p>
 
 <h3>Python — <code>pip install dejima-sdk</code></h3>
 <pre><code>pip install dejima-sdk            # REST client
@@ -219,7 +201,7 @@ const s = await dj.attach(isl.name);  // websocket PTY, multi-attach
 s.sendText("ls -la\n");
 s.onData(bytes =&gt; process.stdout.write(bytes));</code></pre>
 
-<p class="small">Source &amp; full coverage list: <a href="https://github.com/aoos/dejima/tree/master/sdk/python" target="_blank" rel="noopener"><code>sdk/python</code></a> · <a href="https://github.com/aoos/dejima/tree/master/sdk/ts" target="_blank" rel="noopener"><code>sdk/ts</code></a>. Another language? Everything below is one HTTP/WebSocket API — generate a client from the spec and hand-write only the PTY helper.</p>
+<p class="small">Source &amp; full coverage list: <a href="https://github.com/aoos/dejima/tree/master/sdk/python"><code>sdk/python</code></a> · <a href="https://github.com/aoos/dejima/tree/master/sdk/ts"><code>sdk/ts</code></a>. Another language? Everything below is one HTTP/WebSocket API — generate a client from the spec and hand-write only the PTY helper.</p>
 
 <!-- ============================================================ -->
 <h2 id="auth">Authentication</h2>
@@ -437,19 +419,6 @@ POST { "type": "headless", "cmd": "python loop.py" } // supervised process
 <div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/capabilities/execute</span><span class="desc">Run a granted capability (in-island token)</span></div>
 <pre><code>POST { "target": "send-imessage", "args": { "to": "...", "body": "..." } }</code></pre>
 <p>Reachable by an island's own token only, against a granted target; deny-all and ledgered. No shell, no free-form commands.</p>
-
-<!-- ============================================================ -->
-<h2 id="mcp">MCP brokering</h2>
-<p>The same deny-all, ledgered pattern for <strong>Model Context Protocol servers</strong>. The operator curates host-side MCP servers; an island can call one only once it's been granted, and only through a fixed method allow-list (<code>tools/list</code>, <code>tools/call</code>, <code>resources/*</code>, <code>prompts/*</code>). The broker execs the registered server with fixed argv — never via a shell — speaks JSON-RPC over stdio, and records every grant, revoke, call, and denial in the <code>mcp.*</code> ledger (params SHA-256-hashed). CLI: <code>dejima mcp grant|revoke|list|call</code>.</p>
-
-<div class="endpoint"><span class="method m-get">GET</span><span class="path">/v1/islands/{name}/mcp/grants</span><span class="desc">List an island's granted MCP servers</span></div>
-<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/islands/{name}/mcp/grants</span><span class="desc">Grant a server (operator)</span></div>
-<div class="endpoint"><span class="method m-delete">DELETE</span><span class="path">/v1/islands/{name}/mcp/grants/{server}</span><span class="desc">Revoke a grant</span></div>
-<div class="endpoint"><span class="method m-post">POST</span><span class="path">/v1/mcp/call</span><span class="desc">One brokered JSON-RPC call against a granted server</span></div>
-<pre><code>POST { "island": "web", "server": "files", "method": "tools/call",
-       "params": { "name": "fetch", "arguments": { "url": "..." } } }
-// → { "ok": true, "is_error": false, "result": {...}, "ledger_seq": 1024 }</code></pre>
-<p>Grants are the operator's act; an in-island token can spend a grant but never widen it. Disallowed methods, oversized payloads, and ungranted servers are rejected (<code>400</code>/<code>403</code>) and the denial is ledgered.</p>
 
 <!-- ============================================================ -->
 <h2 id="terminals">Host terminals</h2>
@@ -702,9 +671,9 @@ ws.send({ type: "data", b64: base64("Yes, proceed with the refactor.\n") })</cod
 <h2>Links</h2>
 <ul>
   <li><a href="index.html">Dejima landing page</a></li>
-  <li><a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">Source on GitHub</a></li>
-  <li><a href="https://github.com/aoos/dejima/blob/master/docs/v1-spec.md" target="_blank" rel="noopener">v1 specification</a></li>
-  <li><a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md" target="_blank" rel="noopener">Roadmap</a></li>
+  <li><a href="https://github.com/aoos/dejima">Source on GitHub</a></li>
+  <li><a href="https://github.com/aoos/dejima/blob/master/docs/v1-spec.md">v1 specification</a></li>
+  <li><a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md">Roadmap</a></li>
 </ul>
 
 </main>

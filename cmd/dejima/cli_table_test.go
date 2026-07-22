@@ -200,40 +200,6 @@ func TestCLIMsg(t *testing.T) {
 	}
 }
 
-// TestCLIMsgUnknownRecipientWarning: a directed `--to` that names no agent in
-// the roster is still delivered (the "sent #" line prints), but the CLI emits a
-// roster-listing warning to stderr. A known recipient and a broadcast do not.
-func TestCLIMsgUnknownRecipientWarning(t *testing.T) {
-	_, c := cliEnv(t)
-	seedIsland(t, c, "proj")
-
-	out, err := runCLI(t, "msg", "send", "hi ghost", "--island", "proj", "--from", "p2", "--to", "ghost")
-	if err != nil {
-		t.Fatalf("msg send: %v", err)
-	}
-	if !strings.Contains(out, "sent #") {
-		t.Errorf("unknown recipient should still deliver: %q", out)
-	}
-	if !strings.Contains(out, `warning: no agent "ghost" in island roster`) ||
-		!strings.Contains(out, "delivered anyway") {
-		t.Errorf("expected roster warning for unknown recipient, got: %q", out)
-	}
-
-	// Known recipient (the primary id p1) → no warning.
-	if out, err := runCLI(t, "msg", "send", "hi p1", "--island", "proj", "--from", "p2", "--to", "p1"); err != nil {
-		t.Fatalf("msg send to known: %v", err)
-	} else if strings.Contains(out, "warning:") {
-		t.Errorf("known recipient should not warn: %q", out)
-	}
-
-	// Broadcast → no warning.
-	if out, err := runCLI(t, "msg", "send", "hi all", "--island", "proj", "--from", "p2"); err != nil {
-		t.Fatalf("msg broadcast: %v", err)
-	} else if strings.Contains(out, "warning:") {
-		t.Errorf("broadcast should not warn: %q", out)
-	}
-}
-
 // TestCLIAudit: a brokered op (port grant) is ledgered, then `dejima audit`
 // prints it, --verify exits 0 on the intact chain, and --export jsonl emits
 // JSON lines.

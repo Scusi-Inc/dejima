@@ -186,13 +186,11 @@ type fakeRuntime struct {
 	lastMemoryUpdate [2]string // {container, memory} from UpdateResources
 	status           runtime.ContainerStatus
 	health           runtime.Health
-	statsByName      map[string]runtime.Stats // returned by StatsAll
 	volumeSizes      map[string]int64
 	volumeCopies     [][2]string
 	startCalls       int
 	stopCalls        int
-	lastCopyMode     os.FileMode // mode of the source file last handed to CopyToContainer
-	failNewSession   bool        // when true, `tmux new-session` exits non-zero
+	failNewSession   bool // when true, `tmux new-session` exits non-zero
 	// execHook, when set, can intercept an Exec call and return a canned
 	// (stdout, stderr, exitCode); returning handled=false falls through to the
 	// default behavior. Lets a test drive e.g. git-status output.
@@ -243,12 +241,7 @@ func (f *fakeRuntime) Stats(context.Context, string) (runtime.Stats, error) {
 	return runtime.Stats{}, nil
 }
 func (f *fakeRuntime) StatsAll(context.Context) (map[string]runtime.Stats, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.statsByName == nil {
-		return map[string]runtime.Stats{}, nil
-	}
-	return f.statsByName, nil
+	return map[string]runtime.Stats{}, nil
 }
 func (f *fakeRuntime) VolumeSizes(context.Context) (map[string]int64, error) {
 	f.mu.Lock()
@@ -302,14 +295,7 @@ func (f *fakeRuntime) ExecStream(_ context.Context, _ string, cmd []string) (io.
 func (f *fakeRuntime) BuildImage(context.Context, string, string, string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
-func (f *fakeRuntime) CopyToContainer(_ context.Context, _, hostPath, _ string) error {
-	if fi, err := os.Stat(hostPath); err == nil {
-		f.mu.Lock()
-		f.lastCopyMode = fi.Mode().Perm()
-		f.mu.Unlock()
-	}
-	return nil
-}
+func (f *fakeRuntime) CopyToContainer(context.Context, string, string, string) error   { return nil }
 func (f *fakeRuntime) CopyFromContainer(context.Context, string, string, string) error { return nil }
 func (f *fakeRuntime) Logs(context.Context, string, bool) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("container logs\n")), nil
@@ -461,20 +447,6 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	if !execContains(calls, "tmux", "new-session", "agent-p2", "DEJIMA_AGENT_ID=p2", "claude") {
 		t.Errorf("expected a tmux new-session running claude for p2; execs=%v", calls)
 	}
-	// Stamp p2's identity into the tmux SESSION environment so a shell later
-	// spawned in the pane (e.g. a hand-run `claude --resume`) inherits p2's
-	// DEJIMA_AGENT_ID, not the container-wide PRIMARY id — the mailbox-scoping
-	// clobber we hit live.
-	if !execContains(calls, "tmux", "set-environment", "agent-p2", "DEJIMA_AGENT_ID", "p2") {
-		t.Errorf("expected the tmux session env to be stamped with p2's DEJIMA_AGENT_ID; execs=%v", calls)
-	}
-	// The co-located agent must get its per-type shim run (installs the
-	// agent-state hook into the shared ~/.claude) before launch — start.sh only
-	// runs the primary's. Without this, p2 has no heartbeat → wake-on-message,
-	// idle-hibernate, and the idle metric are silently dead for it.
-	if !execContains(calls, "/opt/dejima/agents/claude-code/init.sh", "DEJIMA_AGENT_ID=p2") {
-		t.Errorf("expected p2's per-type shim (init.sh) to run before launch; execs=%v", calls)
-	}
 
 	// List shows both agents.
 	rr = do(t, h, http.MethodGet, "/v1/islands/proj/agents", "")
@@ -581,27 +553,10 @@ func TestMultiAgentLifecycle(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Any agent is removable now — including the (interactive) first agent. An
-	// island may have zero agents: its tail -f keepalive (PID 1) outlives them,
-	// and you shell in. No privileged "primary".
+	// The primary agent cannot be removed.
 	rr = do(t, h, http.MethodDelete, "/v1/islands/proj/agents/p1", "")
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("remove interactive first agent: got %d, want 204", rr.Code)
-	}
-}
-
-// TestRemoveHeadlessFirstAgentRefused: a headless first agent IS the container's
-// PID 1 (start.sh runs it as the main process), so removing it would stop the
-// island — the daemon refuses with 409 and points to hibernate/purge.
-func TestRemoveHeadlessFirstAgentRefused(t *testing.T) {
-	h, _ := newTestServer(t)
-	if rr := do(t, h, http.MethodPost, "/v1/islands", `{"repo":"r","name":"hl","agent":"headless","cmd":"sleep infinity"}`); rr.Code != http.StatusCreated {
-		t.Fatalf("create headless island: %d %s", rr.Code, rr.Body.String())
-	}
-	// "hl" → agent id prefix "h" → first agent "h1".
-	rr := do(t, h, http.MethodDelete, "/v1/islands/hl/agents/h1", "")
 	if rr.Code != http.StatusConflict {
-		t.Errorf("remove headless PID-1 agent: got %d, want 409 (body: %s)", rr.Code, rr.Body.String())
+		t.Errorf("remove primary: got %d, want 409", rr.Code)
 	}
 }
 

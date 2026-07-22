@@ -307,34 +307,6 @@ func TestAuditLifecycleGating(t *testing.T) {
 	}
 }
 
-// TestAuditLifecycleAgentLabel: the agent-added lifecycle record carries the
-// agent's human label (for name-first display) alongside the id, which stays the
-// keyed lookup handle. When the emitter includes no label, AgentLabel is blank.
-func TestAuditLifecycleAgentLabel(t *testing.T) {
-	s := newAuditServer(t)
-	s.EnableAudit(AuditOptions{})
-
-	s.emit(events.Event{
-		Type: events.TypeIslandAgentAdded, Island: "x", Agent: "a2",
-		Payload: map[string]any{"type": "claude-code", "label": "backend"},
-	})
-	s.emit(events.Event{
-		Type: events.TypeIslandAgentRemoved, Island: "x", Agent: "a2",
-		// No label in the payload → AgentLabel stays empty, Agent is intact.
-	})
-
-	es := readLedger(t)
-	if len(es) != 2 {
-		t.Fatalf("expected 2 records, got %d: %+v", len(es), es)
-	}
-	if es[0].Agent != "a2" || es[0].AgentLabel != "backend" {
-		t.Errorf("added record should carry id a2 + label backend: %+v", es[0])
-	}
-	if es[1].Agent != "a2" || es[1].AgentLabel != "" {
-		t.Errorf("removed record (no label) should keep id a2, blank label: %+v", es[1])
-	}
-}
-
 func TestAuditLifecycleDisabled(t *testing.T) {
 	s := newAuditServer(t) // audit off
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: "x"})

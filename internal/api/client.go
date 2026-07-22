@@ -17,14 +17,12 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/aoos/dejima/internal/egress"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
-	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/providercreds"
 )
 
@@ -103,29 +101,6 @@ func (c *Client) DaemonHost() string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
-	return c.doVia(ctx, c.httpc, method, path, in, out)
-}
-
-// doLong is do() for operations whose legitimate duration can exceed the 30s
-// default client timeout: island clone (copies two volumes via throwaway
-// containers) and panic engage/clear (stops or restarts EVERY island in turn).
-// http.Client.Timeout is a HARD cap that overrides the request context — so
-// those callers' generous contexts (clone passes 5m) were silently truncated to
-// 30s and the op failed mid-flight on a real host. This path uses a
-// no-fixed-timeout client so the caller's context deadline is the only bound.
-// Callers MUST pass a ctx that carries a deadline.
-func (c *Client) doLong(ctx context.Context, method, path string, in, out any) error {
-	return c.doVia(ctx, c.longHTTPClient(), method, path, in, out)
-}
-
-// longHTTPClient shares the transport (so the unix-socket dialer + connection
-// pooling still apply) but carries NO fixed Timeout, leaving the request context
-// as the sole deadline. See doLong.
-func (c *Client) longHTTPClient() *http.Client {
-	return &http.Client{Transport: c.httpc.Transport}
-}
-
-func (c *Client) doVia(ctx context.Context, hc *http.Client, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		buf, err := json.Marshal(in)
@@ -144,7 +119,7 @@ func (c *Client) doVia(ctx context.Context, hc *http.Client, method, path string
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	resp, err := hc.Do(req)
+	resp, err := c.httpc.Do(req)
 	if err != nil {
 		return fmt.Errorf("daemon unreachable: %w (is dejimad running?)", err)
 	}
@@ -259,63 +234,9 @@ func (c *Client) ConfigureAgent(ctx context.Context, island, id string, req Agen
 	return &out, nil
 }
 
-// GetEgress returns an island's recent observed outbound connections.
-func (c *Client) GetEgress(ctx context.Context, island string) (*EgressEventsResponse, error) {
-	var out EgressEventsResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+url.PathEscape(island)+"/egress", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// GetEgressPolicy returns an island's egress policy (effective default = observe).
-func (c *Client) GetEgressPolicy(ctx context.Context, island string) (*egress.IslandPolicy, error) {
-	var out egress.IslandPolicy
-	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+url.PathEscape(island)+"/egress/policy", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// PatchEgressPolicy applies an incremental change to an island's egress policy
-// (set mode, add/remove allow/deny hosts) and returns the resulting policy.
-func (c *Client) PatchEgressPolicy(ctx context.Context, island string, patch egress.PolicyPatch) (*egress.IslandPolicy, error) {
-	var out egress.IslandPolicy
-	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+url.PathEscape(island)+"/egress/policy", patch, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// GetSpawnGrant returns an island's ephemeral-sub-agent spawn grant (or Granted=false).
-func (c *Client) GetSpawnGrant(ctx context.Context, island string) (*SpawnGrantResponse, error) {
-	var out SpawnGrantResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+url.PathEscape(island)+"/spawn-grant", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// SetSpawnGrant grants (or updates) an island's spawn budget (operator-only).
-func (c *Client) SetSpawnGrant(ctx context.Context, island string, req SpawnGrantRequest) (*SpawnGrantResponse, error) {
-	var out SpawnGrantResponse
-	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(island)+"/spawn-grant", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// RevokeSpawnGrant removes an island's spawn grant (operator-only).
-func (c *Client) RevokeSpawnGrant(ctx context.Context, island string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/islands/"+url.PathEscape(island)+"/spawn-grant", nil, nil)
-}
-
-// SendMailbox posts a message into an island's intra-island mailbox. The
-// response embeds the delivered mailbox.Message (so existing callers read
-// .Seq/.To unchanged) plus the additive UnknownRecipient/Roster signal the CLI
-// uses to warn when a directed `--to` matched no agent in the roster.
-func (c *Client) SendMailbox(ctx context.Context, island string, req MailboxSendRequest) (*MailboxSendResponse, error) {
-	var out MailboxSendResponse
+// SendMailbox posts a message into an island's intra-island mailbox.
+func (c *Client) SendMailbox(ctx context.Context, island string, req MailboxSendRequest) (*mailbox.Message, error) {
+	var out mailbox.Message
 	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(island)+"/mailbox", req, &out); err != nil {
 		return nil, err
 	}
@@ -426,46 +347,9 @@ func (c *Client) ApproveAction(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/approve", nil, nil)
 }
 
-// DenyAction denies a pending action (operator). An optional reason is recorded
-// in the ledger.
-func (c *Client) DenyAction(ctx context.Context, id, reason string) error {
-	var body any
-	if reason != "" {
-		body = DenyActionRequest{Reason: reason}
-	}
-	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/deny", body, nil)
-}
-
-// WatchActions opens an SSE stream of pending action approvals (`data: <JSON>`
-// frames). The caller owns the returned reader and must Close it; cancel ctx to
-// stop. Uses the timeout-free stream path so the long-lived stream isn't cut at
-// the 30s default.
-func (c *Client) WatchActions(ctx context.Context) (io.ReadCloser, error) {
-	return c.stream(ctx, http.MethodGet, "/v1/link/actions/watch")
-}
-
-// ListPolicy returns the active auto-approve rules (operator).
-func (c *Client) ListPolicy(ctx context.Context) ([]policy.Rule, error) {
-	var out PolicyListResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/policy", nil, &out); err != nil {
-		return nil, err
-	}
-	return out.Rules, nil
-}
-
-// AddPolicy creates (or replaces) an auto-approve rule (operator).
-func (c *Client) AddPolicy(ctx context.Context, req PolicyAddRequest) (*policy.Rule, error) {
-	var out policy.Rule
-	if err := c.do(ctx, http.MethodPost, "/v1/policy", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// RemovePolicy deletes an auto-approve rule by link+action (operator).
-func (c *Client) RemovePolicy(ctx context.Context, from, to, action string) error {
-	q := url.Values{"from": {from}, "to": {to}, "action": {action}}
-	return c.do(ctx, http.MethodDelete, "/v1/policy?"+q.Encode(), nil, nil)
+// DenyAction denies a pending action (operator).
+func (c *Client) DenyAction(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/link/actions/"+url.PathEscape(id)+"/deny", nil, nil)
 }
 
 // ListGitHubRepos lists repositories the identity can access, fetched daemon-side
@@ -745,8 +629,7 @@ func (c *Client) DeleteIsland(ctx context.Context, name string, force bool) erro
 // PANIC flag is written so the daemon won't auto-start them on restart.
 func (c *Client) Panic(ctx context.Context, reason string) (*PanicResponse, error) {
 	var out PanicResponse
-	// doLong: panic stops every island in turn, which can exceed the 30s default.
-	if err := c.doLong(ctx, http.MethodPost, "/v1/panic", PanicRequest{Reason: reason}, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/panic", PanicRequest{Reason: reason}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -756,8 +639,7 @@ func (c *Client) Panic(ctx context.Context, reason string) (*PanicResponse, erro
 // running.
 func (c *Client) ClearPanic(ctx context.Context) (*PanicResponse, error) {
 	var out PanicResponse
-	// doLong: clearing restarts every running island in turn — same slow class.
-	if err := c.doLong(ctx, http.MethodDelete, "/v1/panic", nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodDelete, "/v1/panic", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -776,8 +658,7 @@ func (c *Client) PanicStatus(ctx context.Context) (*PanicResponse, error) {
 // volumes (credentials and git history come along).
 func (c *Client) CloneIsland(ctx context.Context, name, newName string) (*IslandInfo, error) {
 	var out IslandInfo
-	// doLong: copies two volumes via throwaway containers — routinely > 30s.
-	if err := c.doLong(ctx, http.MethodPost, "/v1/islands/"+name+"/clone", CloneIslandRequest{NewName: newName}, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/clone", CloneIslandRequest{NewName: newName}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -876,43 +757,10 @@ func (c *Client) ResetIsland(ctx context.Context, name string) (*IslandInfo, err
 // SetIslandTitle sets an island's cosmetic display title (empty clears it).
 func (c *Client) SetIslandTitle(ctx context.Context, name, title string) (*IslandInfo, error) {
 	var out IslandInfo
-	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+name, UpdateIslandRequest{Title: &title}, &out); err != nil {
+	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+name, UpdateIslandRequest{Title: title}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
-}
-
-// SetIslandHibernation pins an island awake (noHibernate=true) or releases it
-// back to idle auto-hibernate (false). Leaves the title untouched.
-func (c *Client) SetIslandHibernation(ctx context.Context, name string, noHibernate bool) (*IslandInfo, error) {
-	var out IslandInfo
-	if err := c.do(ctx, http.MethodPatch, "/v1/islands/"+name, UpdateIslandRequest{NoHibernate: &noHibernate}, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// CreateSchedule adds a durable scheduled wake to an island.
-func (c *Client) CreateSchedule(ctx context.Context, name string, req CreateScheduleRequest) (*ScheduleInfo, error) {
-	var out ScheduleInfo
-	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/schedules", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// ListSchedules returns an island's scheduled wakes.
-func (c *Client) ListSchedules(ctx context.Context, name string) ([]ScheduleInfo, error) {
-	var out []ScheduleInfo
-	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+name+"/schedules", nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// DeleteSchedule removes a scheduled wake by id.
-func (c *Client) DeleteSchedule(ctx context.Context, name, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/schedules/"+id, nil, nil)
 }
 
 // ExecInIsland runs a one-shot command inside an island and returns its output.
@@ -1038,20 +886,6 @@ func (c *Client) Overview(ctx context.Context) (*OverviewResponse, error) {
 	return &out, nil
 }
 
-// Aggregate returns the privacy-preserving, host-wide utilization rollup: counts
-// and totals across ALL islands, with no names/repos/owners/per-island rows —
-// so a teammate can see shared-host load without seeing what's running (the
-// multi-tenant design's aggregate; readable by any authenticated caller). The
-// GET /v1/aggregate handler is a1's P3; this client type is the shared contract
-// (field tags locked with a1).
-func (c *Client) Aggregate(ctx context.Context) (*AggregateResponse, error) {
-	var out AggregateResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/aggregate", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // AuthorizeAccountKey enrolls a public key fleet-wide via the daemon (which
 // performs the write). Lets any operator device self-enroll without copying its
 // key to the daemon host. Returns the key's fingerprint.
@@ -1096,28 +930,6 @@ func (c *Client) UpdateIslandResources(ctx context.Context, name string, req Upd
 	return &out, nil
 }
 
-// SetIslandIdentity sets an island's operator-chosen visual identity (color +
-// glyph) override and returns the updated island info. Color must be a hex
-// string (#rgb or #rrggbb); glyph must be exactly one rune.
-func (c *Client) SetIslandIdentity(ctx context.Context, name, color, glyph string) (*IslandInfo, error) {
-	var out IslandInfo
-	req := SetIslandIdentityRequest{Color: color, Glyph: glyph}
-	if err := c.do(ctx, http.MethodPut, "/v1/islands/"+name+"/identity", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// ClearIslandIdentity removes an island's visual-identity override and returns
-// the updated island info (Identity then omitted).
-func (c *Client) ClearIslandIdentity(ctx context.Context, name string) (*IslandInfo, error) {
-	var out IslandInfo
-	if err := c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/identity", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // IslandEvents returns the recent event log for one island.
 func (c *Client) IslandEvents(ctx context.Context, name string) ([]events.Event, error) {
 	var out []events.Event
@@ -1128,26 +940,6 @@ func (c *Client) IslandEvents(ctx context.Context, name string) ([]events.Event,
 }
 
 // DialSession opens a websocket against the island's primary-agent session.
-// ErrSessionGone tags a websocket-attach failure where the daemon positively
-// reported the session/island is gone (a 404/410 handshake response), as opposed
-// to a transient transport failure (daemon unreachable: laptop sleep, network
-// drop, daemon restart). The reconnect loop uses it to stop retrying promptly —
-// a gone session never comes back — while retrying transport failures for as
-// long as the user keeps the terminal open, since the tmux session survives on
-// the daemon.
-var ErrSessionGone = errors.New("session gone")
-
-// dialErr wraps a websocket.Dial failure. When the handshake got a positive
-// gone response (404/410), the error wraps ErrSessionGone; otherwise it's a
-// transport failure and the original error passes through. resp may be nil
-// (pure transport error — no handshake response at all).
-func dialErr(what string, resp *http.Response, err error) error {
-	if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone) {
-		return fmt.Errorf("%s: %w (http %d)", what, ErrSessionGone, resp.StatusCode)
-	}
-	return fmt.Errorf("%s: %w", what, err)
-}
-
 func (c *Client) DialSession(ctx context.Context, name, label string) (*websocket.Conn, error) {
 	return c.DialAgentSession(ctx, name, "", label)
 }
@@ -1173,32 +965,9 @@ func (c *Client) DialAgentSession(ctx context.Context, name, agentID, label stri
 	if encoded := q.Encode(); encoded != "" {
 		wsURL += "?" + encoded
 	}
-	conn, resp, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
-	if err != nil {
-		return nil, dialErr("dial session", resp, err)
-	}
-	return conn, nil
-}
-
-// DialIslandShell opens a websocket against an island's in-island shell — a
-// contained interactive bash session at /workspace inside the container. Shared
-// and resumable; not tied to an agent.
-func (c *Client) DialIslandShell(ctx context.Context, name, label string) (*websocket.Conn, error) {
-	q := url.Values{}
-	if label != "" {
-		q.Set("label", label)
-	}
-	wsBase := c.base
-	if len(wsBase) > 4 && wsBase[:4] == "http" {
-		wsBase = "ws" + wsBase[4:]
-	}
-	wsURL := wsBase + "/v1/islands/" + name + "/shell/session"
-	if encoded := q.Encode(); encoded != "" {
-		wsURL += "?" + encoded
-	}
 	conn, _, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
 	if err != nil {
-		return nil, fmt.Errorf("dial island shell: %w", err)
+		return nil, fmt.Errorf("dial session: %w", err)
 	}
 	return conn, nil
 }
@@ -1263,9 +1032,9 @@ func (c *Client) DialTerminalSession(ctx context.Context, id, label string) (*we
 	if encoded := q.Encode(); encoded != "" {
 		wsURL += "?" + encoded
 	}
-	conn, resp, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
+	conn, _, err := websocket.Dial(ctx, wsURL, c.wsDialOptions())
 	if err != nil {
-		return nil, dialErr("dial terminal session", resp, err)
+		return nil, fmt.Errorf("dial terminal session: %w", err)
 	}
 	return conn, nil
 }
@@ -1277,12 +1046,6 @@ func (c *Client) ListAgents(ctx context.Context, name string) ([]AgentInfo, erro
 		return nil, err
 	}
 	return out, nil
-}
-
-// MoveAgent reorders an agent within its island by delta positions (negative =
-// toward the front), clamped to the ends. Order is cosmetic.
-func (c *Client) MoveAgent(ctx context.Context, name, id string, delta int) error {
-	return c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(name)+"/agents/"+url.PathEscape(id)+"/move", MoveAgentRequest{Delta: delta}, nil)
 }
 
 // AddAgent adds an agent to an island.

@@ -23,9 +23,9 @@ over the token path) or use a blank island. Keeping that wall is the point.
 A host terminal is an **uncontained shell on the daemon host**, so it is treated
 as the most sensitive thing Dejima exposes:
 
-- **On by default** (operator convenience; islands still can't reach them — see
-  below). Disable with `dejimad --host-terminals=false` (or
-  `DEJIMAD_HOST_TERMINALS=0`). The daemon logs a warning at startup when it's on.
+- **Off by default.** Start the daemon with `dejimad --host-terminals` (or
+  `DEJIMAD_HOST_TERMINALS=1`) to enable it. The daemon logs a warning at startup
+  when it's on.
 - **Operator-only, never island-reachable.** The `/v1/terminals*` routes are
   absent from the token-auth allow-list (`internal/api/tokenauth.go`), so an
   in-island token is denied them by default — locked in by test. They live on

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/aoos/dejima/internal/authtoken"
-	"github.com/aoos/dejima/internal/project"
 )
 
 // This file is the team-auth boundary for the *operator* API surface — the unix
@@ -80,7 +79,6 @@ var roleRouteCap = map[string]roleCap{
 	"GET /v1/islands/{name}/port/scopes":       capRead,
 	"GET /v1/islands/{name}/capability/grants": capRead,
 	"GET /v1/islands/{name}/mcp/grants":        capRead,
-	"GET /v1/islands/{name}/grants":            capRead, // unified per-island grants view (Lane C)
 	"GET /v1/credentials/claude":               capRead, // status only, no secret
 	"GET /v1/credentials/github":               capRead, // identities, no tokens
 	"GET /v1/credentials/github/{name}/repos":  capRead,
@@ -89,19 +87,13 @@ var roleRouteCap = map[string]roleCap{
 	"GET /v1/events/subscriptions":             capRead,
 	"GET /v1/clients":                          capRead,
 	"GET /v1/overview":                         capRead,
-	"GET /v1/aggregate":                        capRead, // host-wide rollup (no names); any authed caller
 	"GET /v1/audit":                            capRead,
 	"GET /v1/activity":                         capRead, // team activity feed (curated audit view)
 	"GET /v1/panic":                            capRead, // status (engage/clear are owner)
 
 	// --- island lifecycle + interaction (operator and up; never purge) ---
 	"POST /v1/islands":                                     capOperate, // create (scoped tokens denied — no {name})
-	"PATCH /v1/islands/{name}":                             capOperate, // title / no_hibernate
-	"POST /v1/islands/{name}/schedules":                    capOperate, // add a scheduled wake
-	"GET /v1/islands/{name}/schedules":                     capOperate, // list scheduled wakes
-	"DELETE /v1/islands/{name}/schedules/{id}":             capOperate, // remove a scheduled wake
-	"PUT /v1/islands/{name}/identity":                      capOperate, // visual color+glyph override
-	"DELETE /v1/islands/{name}/identity":                   capOperate,
+	"PATCH /v1/islands/{name}":                             capOperate, // title
 	"PUT /v1/islands/{name}/resources":                     capOperate,
 	"POST /v1/islands/{name}/hibernate":                    capOperate,
 	"POST /v1/islands/{name}/wake":                         capOperate,
@@ -111,14 +103,8 @@ var roleRouteCap = map[string]roleCap{
 	"POST /v1/islands/{name}/agents":                       capOperate,
 	"DELETE /v1/islands/{name}/agents/{id}":                capOperate,
 	"PATCH /v1/islands/{name}/agents/{id}":                 capOperate,
-	"POST /v1/islands/{name}/agents/{id}/move":             capOperate,
 	"PATCH /v1/islands/{name}/agents/{id}/config":          capOperate,
-	"PATCH /v1/islands/{name}/egress/policy":               capOperate, // set island egress allow/deny (operator)
-	"GET /v1/islands/{name}/spawn-grant":                   capRead,    // read the spawn budget (operator/viewer)
-	"POST /v1/islands/{name}/spawn-grant":                  capOperate, // grant ephemeral-sub-agent spawn budget (operator-only; never an in-island token)
-	"DELETE /v1/islands/{name}/spawn-grant":                capOperate, // revoke spawn grant (operator)
 	"GET /v1/islands/{name}/session":                       capOperate, // interactive attach (control)
-	"GET /v1/islands/{name}/shell/session":                 capOperate, // in-island contained shell at /workspace
 	"GET /v1/islands/{name}/agents/{id}/session":           capOperate,
 	"POST /v1/islands/{name}/exec":                         capOperate,
 	"GET /v1/islands/{name}/files/{path...}":               capOperate, // reading workspace files is beyond "observe"
@@ -178,14 +164,8 @@ var roleRouteCap = map[string]roleCap{
 	"DELETE /v1/islands/{name}/link/actions/{action}": capOperate,
 	"POST /v1/islands/{name}/link/action":             capOperate,
 	"GET /v1/link/actions":                            capRead,
-	"GET /v1/link/actions/watch":                      capRead, // stream the queue (viewer may watch, not approve)
 	"POST /v1/link/actions/{id}/approve":              capOperate,
 	"POST /v1/link/actions/{id}/deny":                 capOperate,
-	// Auto-approve policy is operator-managed end to end — even listing rules is
-	// privileged (a rule is a standing bypass; adding/removing one is sensitive).
-	"GET /v1/policy":    capOperate,
-	"POST /v1/policy":   capOperate,
-	"DELETE /v1/policy": capOperate,
 }
 
 // identityKey carries the resolved Identity down to handlers and to Lane 1's
@@ -210,32 +190,7 @@ func IdentityFromContext(ctx context.Context) (authtoken.Identity, bool) {
 // caller the unix socket / tailnet pinning already vouches for, running with
 // full authority. Distinct from a minted owner token only by Subject + empty id.
 func trustedOwner() authtoken.Identity {
-	// The trusted local caller acts AS the host owner tenant, so islands it creates
-	// are attributed to HostOwner (and it sees all via OwnsAll regardless).
-	return authtoken.Identity{Subject: "local", Role: authtoken.RoleOwner, Owner: project.HostOwner()}
-}
-
-// ownerOf resolves an island's owner tenant for the authorization layer. The
-// bool is false when the island can't be loaded (unknown/malformed) — the owner
-// gate then defers to the handler (which 404s), rather than leaking existence.
-func (s *Server) ownerOf(island string) (string, bool) {
-	p, err := project.Load(island)
-	if err != nil {
-		return "", false
-	}
-	return p.Owner, true
-}
-
-// visibleTo reports whether an island belongs in the request caller's own-fleet
-// view (private visibility, P2). The host owner — RoleOwner, or a no-identity
-// caller on the trusted surface — sees all; a teammate sees only islands its
-// tenant owns. Used to filter listIslands + the overview aggregate.
-func (s *Server) visibleTo(ctx context.Context, p *project.Project) bool {
-	id, ok := IdentityFromContext(ctx)
-	if !ok || id.OwnsAll() {
-		return true
-	}
-	return p.Owner == id.Owner
+	return authtoken.Identity{Subject: "local", Role: authtoken.RoleOwner}
 }
 
 // RequireToken makes the operator surface reject anonymous (no-token) requests
@@ -283,7 +238,7 @@ func (s *Server) roleAuth(mux *http.ServeMux, next http.Handler) http.Handler {
 		// *escaped* path so an encoded slash in {name} can't be parsed as a
 		// different island than the router binds (see islandFromPath).
 		if _, pattern := mux.Handler(r); pattern != "" {
-			if err := authorizeRole(id, pattern, r.URL.EscapedPath(), s.ownerOf); err != nil {
+			if err := authorizeRole(id, pattern, r.URL.EscapedPath()); err != nil {
 				s.log.Warn("role request denied",
 					"subject", id.Subject, "role", id.Role,
 					"method", r.Method, "path", r.URL.Path, "reason", err)
@@ -304,48 +259,35 @@ func (s *Server) roleAuth(mux *http.ServeMux, next http.Handler) http.Handler {
 // authorizeRole decides whether identity id may take the request matched to
 // pattern (escapedPath is r.URL.EscapedPath()). Default-deny via the capOwner
 // zero value for unlisted routes.
-// authorizeRole decides whether an identity may take a request. Two orthogonal
-// dimensions compose: (1) the role capability + optional static --island scope
-// (unchanged), and (2) multi-tenant OWNER scope — a non-owner may only touch
-// islands it owns. ownerOf resolves an island's owner ("" + false when unknown);
-// it's injected so the policy stays a pure, testable function.
-func authorizeRole(id authtoken.Identity, pattern, escapedPath string, ownerOf func(string) (string, bool)) error {
+func authorizeRole(id authtoken.Identity, pattern, escapedPath string) error {
 	need := roleRouteCap[pattern]
 	if !roleAllows(id.Role, need) {
 		return fmt.Errorf("role %q may not access this route (requires %s)", id.Role, need)
 	}
-	islandScoped := strings.Contains(pattern, "/{name}")
-
-	// (1) Static island scope. A token with an explicit --island list may act only
-	// on those islands ({name} routes) and never mutate/administer globally. A
-	// token WITHOUT a static list (the owner-scoped teammate case) is unrestricted
-	// here — its access is bounded by (2) instead, which is what lets it CREATE.
-	if id.Scoped() {
-		if islandScoped {
-			name, ok := islandFromPath(escapedPath)
-			if !ok {
-				return errors.New("invalid or unparseable target island for a scoped token")
-			}
-			if !id.MayTouch(name) {
-				return fmt.Errorf("token is scoped to islands %v; %q is out of scope", id.Islands, name)
-			}
-		} else if need != capRead {
-			return errors.New("token is island-scoped and cannot perform global operations")
-		}
+	if !id.Scoped() {
+		return nil
 	}
-
-	// (2) Owner scope. The host owner (RoleOwner) sees/does all. A non-owner may
-	// only touch an island it owns; create + other global routes are not gated
-	// here (create is allowed and the new island is stamped to the caller — see
-	// createIsland — and other globals are role/scope-bounded above).
-	if !id.OwnsAll() && islandScoped {
+	// Island-scoped tokens may act only on islands in their scope. Decide on the
+	// route *pattern*, not the capability: a pattern pinned to an island ({name})
+	// must resolve to an in-scope island, and a malformed/encoded-slash segment
+	// that islandFromPath can't parse is denied outright — fail-closed at the auth
+	// layer rather than relying on the handler to re-validate (this covers the
+	// read routes too, which the capability check below would otherwise wave
+	// through). A pattern with no {name} (create, overview, list, daemon admin) is
+	// a global route: permitted only when it is read-only, so a scoped token can
+	// observe the fleet but never mutate or administer it globally.
+	if strings.Contains(pattern, "/{name}") {
 		name, ok := islandFromPath(escapedPath)
 		if !ok {
-			return errors.New("invalid or unparseable target island")
+			return errors.New("invalid or unparseable target island for a scoped token")
 		}
-		if owner, known := ownerOf(name); known && owner != id.Owner {
-			return fmt.Errorf("island %q is not yours", name)
+		if !id.MayTouch(name) {
+			return fmt.Errorf("token is scoped to islands %v; %q is out of scope", id.Islands, name)
 		}
+		return nil
+	}
+	if need != capRead {
+		return errors.New("token is island-scoped and cannot perform global operations")
 	}
 	return nil
 }

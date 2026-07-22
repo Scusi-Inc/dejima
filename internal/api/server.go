@@ -17,12 +17,10 @@ import (
 
 	"github.com/aoos/dejima/internal/agentcreds"
 	"github.com/aoos/dejima/internal/capability"
-	"github.com/aoos/dejima/internal/egress"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/islandimage"
-	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
@@ -30,9 +28,6 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/runtime"
-	"github.com/aoos/dejima/internal/spawn"
-	"github.com/aoos/dejima/internal/usage"
-	"github.com/aoos/dejima/internal/version"
 )
 
 const (
@@ -78,11 +73,6 @@ type Server struct {
 	agentStateMu sync.Mutex
 	agentStates  map[string]AgentStateInfo
 
-	// Per-(island,agent) latest adapter-reported token/cost usage, derived from
-	// agent.usage hooks (Claude Code today). Surfaced on AgentInfo.Usage.
-	agentUsageMu sync.Mutex
-	agentUsage   map[string]AgentUsage
-
 	// Per-(island,agent) last orchestration error (failed worktree/session
 	// setup), surfaced in AgentInfo so failures aren't silent.
 	agentErrMu  sync.Mutex
@@ -117,18 +107,6 @@ type Server struct {
 	// DEJIMA_HOST plus its own per-island DEJIMA_TOKEN so the in-island CLI can
 	// authenticate. Empty on the Linux/unix-socket path.
 	autonomyDial string
-
-	// egressDial / egressLog gate the island egress proxy (Phase 1, observe-
-	// first). When egressDial is non-empty (the host:port islands dial to reach
-	// the daemon's egress proxy, e.g. "host.docker.internal:7280"), every new
-	// container gets HTTPS_PROXY pointed at it and the proxy records each
-	// destination into egressLog (served by GET /v1/islands/{name}/egress). Both
-	// zero when the proxy is disabled (the default) — islands then have direct
-	// egress, unchanged. Set via EnableEgress; the listener is owned by
-	// dejimad/main.
-	egressDial   string
-	egressLog    *egress.Log
-	egressPolicy *egress.PolicyStore // Phase 2: per-island allow/deny policy (operator-set; the proxy enforces it)
 
 	// sshAddr is the SSH-façade listen addr, recorded via EnableSSH purely so
 	// /v1/overview can report it to clients. Empty unless dejimad has --ssh.
@@ -194,17 +172,6 @@ func (s *Server) HostTerminalsEnabled() bool { return s.hostTerminals }
 // empty dial is a no-op.
 func (s *Server) EnableAutonomy(dial string) { s.autonomyDial = dial }
 
-// EnableEgress wires the island egress proxy: dial is the host:port islands
-// reach the proxy at (injected as HTTPS_PROXY into new containers), log is where
-// the proxy records destinations and the read API serves from, and policy is the
-// per-island allow/deny store the operator mutates via the API (the same store
-// the proxy enforces). Off by default; dejimad/main owns the proxy listener.
-func (s *Server) EnableEgress(dial string, log *egress.Log, policy *egress.PolicyStore) {
-	s.egressDial = dial
-	s.egressLog = log
-	s.egressPolicy = policy
-}
-
 // EnableSSH records the SSH-façade listen addr so clients (the TUI,
 // `dejima ssh config/info`) can surface the connection target. Reporting only —
 // the listener itself is owned by dejimad/main; this never opens a port.
@@ -246,22 +213,6 @@ func (s *Server) volumeSizes(ctx context.Context) map[string]int64 {
 }
 
 // NewServer constructs a server backed by the given runtime.
-// openMailbox returns the intra-island mailbox store, persisted to
-// ~/.dejima/mailbox.json so undelivered messages + the seq cursor survive a
-// daemon restart (self-update, crash, colima resize). If the state dir can't be
-// resolved it degrades to an in-memory store — messaging still works, just not
-// across a restart.
-func openMailbox(log *slog.Logger) *mailbox.Store {
-	root, err := paths.Root()
-	if err != nil {
-		if log != nil {
-			log.Warn("mailbox: no state dir; messages won't survive a daemon restart", "err", err)
-		}
-		return mailbox.NewStore(256)
-	}
-	return mailbox.Open(filepath.Join(root, "mailbox.json"), 256, log)
-}
-
 func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server {
 	s := &Server{
 		rt:          rt,
@@ -269,13 +220,12 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		locks:       map[string]*sync.Mutex{},
 		presence:    map[string]*presenceTracker{},
 		events:      ev,
-		mailbox:     openMailbox(log),
+		mailbox:     mailbox.NewStore(256),
 		linkQueue:   link.NewQueue(15 * time.Minute),
 		wakeEnabled: true, // default soft-notify on, so it works with no wrapper
 		wakeNudges:  newWakeNotifier(),
 		historyCap:  200,
 		agentStates: map[string]AgentStateInfo{},
-		agentUsage:  map[string]AgentUsage{},
 		agentErrors: map[string]agentErrInfo{},
 		events_:     map[string][]events.Event{},
 		eventsCap:   50,
@@ -338,15 +288,8 @@ func (s *Server) emit(e events.Event) {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
 	}
-	// Carry the agent's human name on every event so subscribers (webhooks, the
-	// TUI, the SDK) render a name, not a bare id. Resolved once here — the single
-	// emit choke point — rather than at each of the ~10 emit call sites.
-	if e.Agent != "" && e.AgentLabel == "" && e.Island != "" {
-		e.AgentLabel = s.agentLabel(e.Island, e.Agent)
-	}
 	s.recordEvent(e)
 	s.maybeUpdateAgentState(e)
-	s.maybeUpdateAgentUsage(e)
 	s.auditLifecycle(e) // append governance-relevant lifecycle events to the ledger (opt-in)
 	if s.events != nil {
 		s.events.Emit(e)
@@ -413,104 +356,6 @@ func (s *Server) agentStateOf(island, agentID string) *AgentStateInfo {
 		return &st
 	}
 	return nil
-}
-
-// maybeUpdateAgentUsage ingests an agent.usage event (token counts an adapter
-// reported over the in-island token path) into the per-(island,agent) usage
-// snapshot. Cost is derived here from the model + token breakdown; Dejima can't
-// see the LLM call so the counts must come from the agent itself.
-func (s *Server) maybeUpdateAgentUsage(e events.Event) {
-	if e.Island == "" || e.Type != events.TypeAgentUsage {
-		return
-	}
-	u, ok := agentUsageFromPayload(e.Payload, e.Timestamp)
-	if !ok {
-		return
-	}
-	s.agentUsageMu.Lock()
-	s.agentUsage[agentStateKey(e.Island, e.Agent)] = u
-	s.agentUsageMu.Unlock()
-}
-
-// agentUsageFromPayload builds an AgentUsage from an agent.usage event payload.
-// Expected keys (all numbers; absent → 0): input_tokens,
-// cache_creation_input_tokens, cache_read_input_tokens, output_tokens; plus
-// model + source strings. Returns ok=false when there are no tokens at all (a
-// malformed/empty report shouldn't overwrite a real snapshot with zeros).
-func agentUsageFromPayload(p map[string]any, ts time.Time) (AgentUsage, bool) {
-	if p == nil {
-		return AgentUsage{}, false
-	}
-	in := payloadInt(p, "input_tokens")
-	cacheCreate := payloadInt(p, "cache_creation_input_tokens")
-	cacheRead := payloadInt(p, "cache_read_input_tokens")
-	out := payloadInt(p, "output_tokens")
-	if in == 0 && cacheCreate == 0 && cacheRead == 0 && out == 0 {
-		return AgentUsage{}, false
-	}
-	// Surface all input-side tokens (fresh + cached) as InputTokens so that
-	// InputTokens + OutputTokens == TotalTokens for the UI; cost below still
-	// prices the cache tiers separately for accuracy.
-	inputAll := in + cacheCreate + cacheRead
-	model := payloadString(p, "model")
-	source := payloadString(p, "source")
-	if source == "" {
-		source = "agent"
-	}
-	u := AgentUsage{
-		InputTokens:  inputAll,
-		OutputTokens: out,
-		TotalTokens:  inputAll + out,
-		Source:       source,
-		AsOf:         ts,
-	}
-	if cost, ok := usage.CostUSD(model, usage.Tokens{
-		Input: in, CacheCreation: cacheCreate, CacheRead: cacheRead, Output: out,
-	}); ok {
-		u.CostUSD = &cost
-	}
-	return u, true
-}
-
-// agentUsageOf returns the latest usage snapshot for one agent, or nil.
-func (s *Server) agentUsageOf(island, agentID string) *AgentUsage {
-	s.agentUsageMu.Lock()
-	defer s.agentUsageMu.Unlock()
-	if u, ok := s.agentUsage[agentStateKey(island, agentID)]; ok {
-		return &u
-	}
-	return nil
-}
-
-// payloadInt reads a non-negative integer from an event payload value. JSON
-// decoding yields float64 (or json.Number); both are handled. Missing/invalid
-// or negative → 0.
-func payloadInt(p map[string]any, key string) int {
-	switch v := p[key].(type) {
-	case float64:
-		if v < 0 {
-			return 0
-		}
-		return int(v)
-	case int:
-		if v < 0 {
-			return 0
-		}
-		return v
-	case json.Number:
-		if n, err := v.Int64(); err == nil && n >= 0 {
-			return int(n)
-		}
-	}
-	return 0
-}
-
-// payloadString reads a string from an event payload value (missing → "").
-func payloadString(p map[string]any, key string) string {
-	if s, ok := p[key].(string); ok {
-		return s
-	}
-	return ""
 }
 
 // agentErrInfo is a captured orchestration failure for one agent.
@@ -596,9 +441,6 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/islands/{name}/workspace-ready", s.workspaceReady)
 	mux.HandleFunc("DELETE /v1/islands/{name}", s.deleteIsland)
 	mux.HandleFunc("PATCH /v1/islands/{name}", s.updateIsland)
-	mux.HandleFunc("POST /v1/islands/{name}/schedules", s.createSchedule)
-	mux.HandleFunc("GET /v1/islands/{name}/schedules", s.listSchedules)
-	mux.HandleFunc("DELETE /v1/islands/{name}/schedules/{id}", s.deleteSchedule)
 	mux.HandleFunc("PUT /v1/islands/{name}/resources", s.updateIslandResources)
 	mux.HandleFunc("POST /v1/islands/{name}/hibernate", s.hibernateIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/wake", s.wakeIsland)
@@ -613,13 +455,11 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/ssh/account-keys", s.handleAuthorizeAccountKey)
 	mux.HandleFunc("GET /v1/ssh/account-keys", s.handleListAccountKeys)
 	mux.HandleFunc("GET /v1/islands/{name}/session", s.sessionWS)
-	mux.HandleFunc("GET /v1/islands/{name}/shell/session", s.islandShellWS)
 	mux.HandleFunc("GET /v1/islands/{name}/agents", s.listAgents)
 	mux.HandleFunc("POST /v1/islands/{name}/agents", s.addAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}", s.getAgent)
 	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
-	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/move", s.moveAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
 	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
@@ -632,11 +472,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /v1/islands/{name}/link/actions/{action}", s.exposeAction)
 	mux.HandleFunc("DELETE /v1/islands/{name}/link/actions/{action}", s.unexposeAction)
 	mux.HandleFunc("POST /v1/islands/{name}/link/action", s.requestAction)
-	mux.HandleFunc("GET /v1/policy", s.listPolicy)
-	mux.HandleFunc("POST /v1/policy", s.addPolicy)
-	mux.HandleFunc("DELETE /v1/policy", s.removePolicy)
 	mux.HandleFunc("GET /v1/link/actions", s.listPendingActions)
-	mux.HandleFunc("GET /v1/link/actions/watch", s.watchActions)
 	mux.HandleFunc("POST /v1/link/actions/{id}/approve", s.approveAction)
 	mux.HandleFunc("POST /v1/link/actions/{id}/deny", s.denyAction)
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
@@ -659,7 +495,6 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/sessions/revoke", s.handleRevokeSessions)
 	mux.HandleFunc("GET /v1/clients", s.handleClientHistory)
 	mux.HandleFunc("GET /v1/overview", s.handleOverview)
-	mux.HandleFunc("GET /v1/aggregate", s.handleAggregate)
 	// Host terminals (operator-only, gated; never in tokenauth's allow-list).
 	mux.HandleFunc("GET /v1/terminals", s.handleListTerminals)
 	mux.HandleFunc("POST /v1/terminals", s.handleCreateTerminal)
@@ -667,12 +502,6 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PATCH /v1/terminals/{id}", s.handleRelabelTerminal)
 	mux.HandleFunc("GET /v1/terminals/{id}/session", s.terminalSessionWS)
 	mux.HandleFunc("GET /v1/islands/{name}/events", s.handleIslandEvents)
-	mux.HandleFunc("GET /v1/islands/{name}/egress", s.handleIslandEgress)
-	mux.HandleFunc("GET /v1/islands/{name}/egress/policy", s.handleGetEgressPolicy)
-	mux.HandleFunc("PATCH /v1/islands/{name}/egress/policy", s.handlePatchEgressPolicy)
-	mux.HandleFunc("GET /v1/islands/{name}/spawn-grant", s.getSpawnGrant)
-	mux.HandleFunc("POST /v1/islands/{name}/spawn-grant", s.setSpawnGrant)
-	mux.HandleFunc("DELETE /v1/islands/{name}/spawn-grant", s.revokeSpawnGrant)
 	mux.HandleFunc("POST /v1/islands/{name}/exec", s.handleExec)
 	mux.HandleFunc("GET /v1/islands/{name}/files/{path...}", s.handleReadFile)
 	mux.HandleFunc("PUT /v1/islands/{name}/files/{path...}", s.handleWriteFile)
@@ -698,21 +527,12 @@ func (s *Server) routes() *http.ServeMux {
 	// ledgered call path. Grant routes are operator-only (absent from
 	// tokenRouteAccess). See internal/api/mcp.go + docs/mcp-broker-spec.md.
 	s.RegisterMCP(mux)
-	// Unified per-island grants view — every grant type (Port, capability, MCP,
-	// links) in one operator-readable call. Aggregates the four list endpoints
-	// above; owns no store. See internal/api/grants.go.
-	mux.HandleFunc("GET /v1/islands/{name}/grants", s.handleListGrants)
 	// Team-auth: token issuance/list/revoke (owner-only; see roleauth.go +
 	// tokens.go). Registered as one append-only line per the lane seam contract.
 	s.RegisterAuth(mux)
 	// Team activity feed — the curated, owner-enriched view over the audit ledger
 	// (viewer-readable; see activity.go). One append-only line per the seam contract.
 	s.RegisterActivity(mux)
-	// Per-island visual identity — operator-only color+glyph override (absent from
-	// tokenRouteAccess, so a contained island can never set its own identity). The
-	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
-	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
-	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
 	return mux
 }
 
@@ -927,9 +747,6 @@ func (s *Server) listIslands(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]IslandInfo, 0, len(projects))
 	for _, p := range projects {
-		if !s.visibleTo(r.Context(), p) {
-			continue // private visibility (P2): a teammate sees only its own islands
-		}
 		out = append(out, s.toInfo(r.Context(), p))
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -951,7 +768,13 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	info := s.toInfo(ctx, p)
 	// Per-agent session liveness is detail-only (one exec per agent).
 	info.Agents = s.agentInfos(ctx, p, info.Container == string(runtime.StatusRunning))
-	// (Resource caps are populated in toInfo() — present on both list and detail.)
+	// Configured resource caps + OOM priority (detail-only).
+	info.Resources = &Resources{
+		Memory:      p.Resources.Memory,
+		CPUs:        p.Resources.CPUs,
+		Disk:        p.Resources.Disk,
+		OOMPriority: p.Resources.OOMPriority,
+	}
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
 	info.Git = s.gitStatusOf(ctx, p.ContainerName())
@@ -1008,37 +831,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	infos := s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p))
-	// An island token reaching its OWN roster (allowlisted accessOwnIsland) gets a
-	// reduced peer view — the discovery/addressing directory only. Operator and
-	// team tokens (TokenIslandFromContext == "") keep the full AgentInfo.
-	if TokenIslandFromContext(r.Context()) != "" {
-		infos = islandPeerRoster(infos)
-	}
-	writeJSON(w, http.StatusOK, infos)
-}
-
-// islandPeerRoster projects AgentInfos to the reduced view an island token may
-// see of its co-resident peers. It keeps id/label/type/state/branch/worktree —
-// data a peer can already read directly off the shared /workspace (peer worktrees
-// live at /workspace/.agents/<id>) — and drops everything that is config,
-// credential, or attach-surface (provider, model, key status, tmux, attachable,
-// restarts, error, presence, agent-state, created-at). The contained agent thus
-// learns nothing it couldn't already see, just ergonomically. See
-// docs/intra-island-coordination-spec.md (P1).
-func islandPeerRoster(infos []AgentInfo) []AgentInfo {
-	out := make([]AgentInfo, len(infos))
-	for i, ai := range infos {
-		out[i] = AgentInfo{
-			ID:       ai.ID,
-			Label:    ai.Label,
-			Type:     ai.Type,
-			State:    ai.State,
-			Branch:   ai.Branch,
-			Worktree: ai.Worktree,
-		}
-	}
-	return out
+	writeJSON(w, http.StatusOK, s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)))
 }
 
 func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
@@ -1090,28 +883,14 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 	spec := project.AgentSpec{
 		ID:        id,
 		Type:      typ,
+		Label:     strings.TrimSpace(req.Label),
 		Cmd:       cmd,
 		Tmux:      "agent-" + id,
 		Branch:    "agent/" + id,
 		Worktree:  agentsWorktreeRoot + "/" + id,
 		Provider:  strings.TrimSpace(req.Provider),
 		Model:     normalizeModel(req.Provider, req.Model),
-		Ephemeral: req.Ephemeral,
-		SpawnedBy: strings.TrimSpace(req.SpawnedBy),
 		CreatedAt: time.Now().UTC(),
-	}
-	// Assign the agent's label. Root cause of "Dejima shows raw ids everywhere":
-	// agents used to default to a blank label, so every surface fell back to the
-	// bare id. Now an agent always gets a meaningful, unique, non-blank label:
-	//   - no label requested → derive a readable default from the Type
-	//     ("claude-code" → "claude", unknown → "agent"), deduped to "claude-2", …;
-	//   - a label requested → keep it, deduped against existing agents ("build" →
-	//     "build-2" if taken). Empty labels never reach the spec.
-	// The returned AgentInfo carries the final label so the CLI/TUI can surface it.
-	if strings.TrimSpace(req.Label) == "" {
-		spec.Label = p.DefaultAgentLabel(spec, "")
-	} else {
-		spec.Label = p.UniqueAgentLabel(req.Label, "")
 	}
 	// A plain terminal pokes at the island's workspace directly — no isolated
 	// worktree/branch, just a shell on /workspace.
@@ -1120,10 +899,8 @@ func (s *Server) newAgentSpec(p *project.Project, req AgentSpecRequest) (project
 		spec.Worktree = "/workspace"
 	}
 	// Co-located headless agents self-restart by default so a crash doesn't end
-	// the agent silently — EXCEPT ephemeral sub-agents, which are run-once: they
-	// must exit when done so the reaper can free their budget slot (a restarting
-	// ephemeral agent would never exit).
-	if !handlers.Attachable(typ) && !spec.Ephemeral {
+	// the agent silently.
+	if !handlers.Attachable(typ) {
 		spec.Restart = true
 	}
 	return spec, nil
@@ -1150,37 +927,12 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	// Spawn gate: an in-island token caller is an agent-INITIATED spawn — governed
-	// by the operator's spawn grant (deny by default). Enforced here, under the
-	// per-island projectLock held above, so the budget check is ATOMIC with the
-	// create (no TOCTOU on a concurrent spawn burst). Operator callers
-	// (TokenIslandFromContext == "") are unaffected.
-	isSpawn := TokenIslandFromContext(r.Context()) != ""
-	if isSpawn {
-		if err := s.authorizeSpawn(p, spec); err != nil {
-			s.ledgerAppend(ledger.Entry{
-				Type: "spawn.deny", Island: name, Scope: spec.Type,
-				Detail: err.Error(), Actor: "agent:" + spec.SpawnedBy, Decision: "denied",
-			})
-			writeError(w, http.StatusForbidden, err)
-			return
-		}
-	}
 	id := spec.ID
 	typ := spec.Type
 	p.AddAgent(spec)
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
-	}
-	if isSpawn {
-		// Reserve a lifetime-budget slot (max_total) atomically — still under the
-		// projectLock — and ledger the spawn with its lineage.
-		_, _ = spawn.Update(func(st *spawn.Store) error { st.Consume(name); return nil })
-		s.ledgerAppend(ledger.Entry{
-			Type: "spawn.create", Island: name, Scope: spec.Type,
-			Detail: "sub-agent " + id + " spawned by " + spec.SpawnedBy, Actor: "agent:" + spec.SpawnedBy, Decision: "allowed",
-		})
 	}
 	if s.agentsLive(r.Context(), p) {
 		if err := s.ensureAgentSession(r.Context(), p, &p.Agents[len(p.Agents)-1]); err != nil {
@@ -1194,7 +946,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		Type:    events.TypeIslandAgentAdded,
 		Island:  name,
 		Agent:   id,
-		Payload: map[string]any{"type": typ, "label": spec.Label},
+		Payload: map[string]any{"type": typ},
 	})
 	for _, ai := range s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)) {
 		if ai.ID == id {
@@ -1223,31 +975,12 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
 		return
 	}
-	// Agent self-reap (#64): an in-island token caller may DELETE an agent ONLY
-	// when it's an EPHEMERAL spawned sub-agent — so a contained agent can tear
-	// down the sub-agents it spawned (explicit teardown alongside the auto-reaper)
-	// without the operator becoming the GC. accessOwnIsland already pins {name} to
-	// the token's island; this adds the ephemeral+lineage constraint. The primary,
-	// a non-ephemeral peer, and any other island stay denied for a token caller.
-	// Within one island all agents share the token = one trust domain (no
-	// per-agent boundary), so any agent in the island may reap that island's
-	// ephemeral sub-agents; cross-island is structurally impossible. Operator
-	// callers (no token island) are unaffected.
-	isTokenReap := TokenIslandFromContext(r.Context()) != ""
-	if isTokenReap && (!a.Ephemeral || a.SpawnedBy == "") {
-		writeError(w, http.StatusForbidden, errors.New(
-			"an island token may only remove ephemeral sub-agents (this agent is not an ephemeral spawned sub-agent)"))
+	if len(p.Agents) <= 1 {
+		writeError(w, http.StatusConflict, errors.New("cannot remove the last agent; purge the island instead"))
 		return
 	}
-	// Any agent can be removed — an island with no agents is valid (you shell into
-	// it, or add agents later); the container's tail -f keepalive outlives them.
-	// The one exception: a headless FIRST agent IS the container's PID 1
-	// (image/start.sh runs it as the main process), so removing it would stop the
-	// island. Direct the user to hibernate/purge instead. (Path B removes this
-	// coupling; see docs/island-pid1-unification.md.)
-	if len(p.Agents) > 0 && p.Agents[0].ID == id && !handlers.Attachable(p.Agents[0].Type) {
-		writeError(w, http.StatusConflict, errors.New(
-			"this agent is the island's main process (PID 1) — hibernate or purge the island instead"))
+	if pa := p.PrimaryAgent(); pa != nil && pa.ID == id {
+		writeError(w, http.StatusConflict, errors.New("cannot remove the primary agent"))
 		return
 	}
 	// Persist the removal first (the source of truth), then clean up the agent's
@@ -1271,20 +1004,10 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 			s.removeAgentSession(ctx, p, &agentCopy)
 		}()
 	}
-	if isTokenReap {
-		// Ledger the agent-initiated teardown (a privileged crossing), matching the
-		// auto-reaper's spawn.reap shape so audit sees both paths uniformly.
-		s.ledgerAppend(ledger.Entry{
-			Type: "spawn.reap", Island: name,
-			Detail:   "self-reaped sub-agent " + id + " (spawned by " + agentCopy.SpawnedBy + ")",
-			Decision: "allowed",
-		})
-	}
 	s.emit(events.Event{
-		Type:    events.TypeIslandAgentRemoved,
-		Island:  name,
-		Agent:   id,
-		Payload: map[string]any{"label": agentCopy.Label},
+		Type:   events.TypeIslandAgentRemoved,
+		Island: name,
+		Agent:  id,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1307,14 +1030,7 @@ func (s *Server) updateIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
-	// Apply only the fields the request actually sent (pointers) so updating one
-	// can't clobber the other.
-	if req.Title != nil {
-		p.Title = strings.TrimSpace(*req.Title) // empty clears it
-	}
-	if req.NoHibernate != nil {
-		p.NoHibernate = *req.NoHibernate
-	}
+	p.Title = strings.TrimSpace(req.Title) // empty clears it
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -1380,46 +1096,6 @@ func (s *Server) updateIslandResources(w http.ResponseWriter, r *http.Request) {
 // updateAgent changes an agent's cosmetic label. Everything else (id, type,
 // worktree, session) is immutable — the id is the stable handle, the label is
 // the renamable display name, mirroring the island Name / agent Label split.
-// MoveAgentRequest reorders an agent within its island's list. Delta is the
-// number of positions to shift (negative = toward the front); it's clamped to
-// the ends.
-type MoveAgentRequest struct {
-	Delta int `json:"delta"`
-}
-
-// moveAgent reorders an agent within its island. Order is cosmetic (the
-// dashboard/CLI no longer key off position), except Agents[0] still seeds the
-// container entrypoint on the next recreate — moving a headless first agent off
-// slot 0 only matters then; see docs/island-pid1-unification.md.
-func (s *Server) moveAgent(w http.ResponseWriter, r *http.Request) {
-	name, id := r.PathValue("name"), r.PathValue("id")
-	lock := s.projectLock(name)
-	lock.Lock()
-	defer lock.Unlock()
-
-	p, err := project.Load(name)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	if _, ok := p.AgentByID(id); !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
-		return
-	}
-	var req MoveAgentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
-		return
-	}
-	if p.MoveAgent(id, req.Delta) {
-		if err := p.Save(); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, s.agentInfos(r.Context(), p, false))
-}
-
 func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	name, id := r.PathValue("name"), r.PathValue("id")
 	lock := s.projectLock(name)
@@ -1441,11 +1117,7 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
-	// Dedupe against other agents (excluding this one, so renaming to its own
-	// current label is a no-op, not "-2"). Empty clears the label and passes
-	// through unchanged. The returned AgentInfo carries the assigned label, so a
-	// collision-driven "build" → "build-2" is discoverable by request/response diff.
-	a.Label = p.UniqueAgentLabel(req.Label, id)
+	a.Label = strings.TrimSpace(req.Label) // empty clears the label
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -1499,15 +1171,7 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	defer lock.Unlock()
 
 	if project.Exists(name) {
-		// Names are globally unique (they key the container/volume/network). To a
-		// non-owner, a taken name must not reveal WHOSE island it is (or even that
-		// it's someone else's) — return a generic "unavailable". The host owner,
-		// who can see the fleet anyway, gets the actionable message.
-		if id, ok := IdentityFromContext(r.Context()); ok && !id.OwnsAll() {
-			writeError(w, http.StatusConflict, fmt.Errorf("island name %q is unavailable; choose another (or pass --name)", name))
-		} else {
-			writeError(w, http.StatusConflict, fmt.Errorf("island %q already exists; use --name to disambiguate", name))
-		}
+		writeError(w, http.StatusConflict, fmt.Errorf("island %q already exists; use --name to disambiguate", name))
 		return
 	}
 
@@ -1595,21 +1259,14 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Stamp ownership from the AUTHENTICATED caller (server-authoritative — never
-	// req.Owner, which a teammate could forge). The island belongs to the caller's
-	// tenant; the host owner (local socket / RoleOwner) attributes to HostOwner.
-	// This is what makes create work for an owner-scoped teammate AND keeps the new
-	// island private to them.
-	owner := project.HostOwner()
-	if id, ok := IdentityFromContext(r.Context()); ok && strings.TrimSpace(id.Owner) != "" {
-		owner = strings.TrimSpace(id.Owner)
-	}
-	p.Owner = owner
-	if len(req.Tags) > 0 {
+	// Attach ownership metadata (informational; no auth model). Set after a
+	// successful provision so it doesn't complicate provision's signature.
+	if owner := strings.TrimSpace(req.Owner); owner != "" || len(req.Tags) > 0 {
+		p.Owner = owner
 		p.Tags = sanitizeTags(req.Tags)
-	}
-	if err := p.Save(); err != nil {
-		s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
+		if err := p.Save(); err != nil {
+			s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
+		}
 	}
 
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: p.Name})
@@ -1948,10 +1605,6 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		DesiredState: project.StateRunning,
 		CreatedAt:    now,
 		LastUsedAt:   now,
-		// Version-skew stamp: the daemon build this island's container is created
-		// against. Compared later (doctor / ls / detail) to the running daemon to
-		// flag an island built from a stale image whose /opt shims may be old.
-		BuiltVersion: version.Version,
 	}
 	p.EnsureAgents()                             // mirror the scalar agent into Agents[0] for new islands
 	p.SetPrimaryID(project.PrimaryAgentID(name)) // fresh island: island-letter primary id (p1), not the legacy a1 back-fill
@@ -1974,10 +1627,6 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 			p.AddAgent(spec)
 		}
 	}
-	// Give every agent (primary included) a meaningful, unique default label when
-	// none was provided, so no surface falls back to the bare id. Idempotent and
-	// only touches blank labels, so any seed-provided names above are preserved.
-	p.BackfillAgentLabels()
 	if err := project.EnsureProjectSubdirs(name); err != nil {
 		return p, err
 	}
@@ -2037,15 +1686,6 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 		env["DEJIMA_HOST"] = s.autonomyDial
 		env["DEJIMA_TOKEN"] = tok
 	}
-	// Egress proxy (Phase 1, observe-first): route the island's outbound HTTP(S)
-	// through the daemon's proxy so destinations are visible. Attribution is the
-	// island name (the proxy username); NO_PROXY exempts the autonomy/telemetry
-	// path + loopback. Off (no env) unless EnableEgress was called.
-	if s.egressDial != "" {
-		for k, v := range egress.ProxyEnv(p.Name, s.egressDial) {
-			env[k] = v
-		}
-	}
 	// Everything the entrypoint needs about the primary agent flows via env, so
 	// the launch command lives in one place (the handler registry) rather than
 	// being duplicated in start.sh. Non-primary agents are launched by the daemon
@@ -2077,11 +1717,6 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 				}
 			}
 		}
-	} else {
-		// No agents (all removed, or seeded with none): the entrypoint just keeps
-		// the container alive so you can shell in or add agents later, instead of
-		// erroring on a missing launch command. See image/start.sh.
-		env["DEJIMA_AGENTLESS"] = "1"
 	}
 	env["DEJIMA_AGENT"] = agentType
 	if seedPath != "" {
@@ -2101,10 +1736,7 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	// listener needs host.docker.internal to resolve: built in on Docker Desktop /
 	// colima; add-host wires it on engines that don't provide it.
 	var extraHosts []string
-	if s.autonomyDial != "" || s.egressDial != "" {
-		// Both the autonomy path and the egress proxy are reached via
-		// host.docker.internal; ensure it resolves on engines that don't provide
-		// it. (Added once even when both are set.)
+	if s.autonomyDial != "" {
 		extraHosts = append(extraHosts, "host.docker.internal:host-gateway")
 	}
 
@@ -2217,15 +1849,6 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	if ok, _ := s.tmuxHasSession(ctx, p, a.Tmux); ok {
 		return nil
 	}
-	// Install this co-located agent's per-type shim BEFORE launching it. start.sh
-	// runs the shim only for the PRIMARY agent, so an agent whose type's init.sh
-	// never ran — a different type than the primary, or any agent added after boot
-	// — would otherwise launch with no agent-state hook wired into the shared
-	// ~/.claude. A missing heartbeat silently disables wake-on-message, idle
-	// auto-hibernate, and the idle metric for that agent (the recipient never sees
-	// a delivered cross-island message). The shim is idempotent, so re-running it
-	// is safe.
-	s.runAgentShim(ctx, p, a)
 	// Both interactive and headless agents run inside a tmux session (the host
 	// process), scoped to DEJIMA_AGENT_ID via sh so we don't depend on a specific
 	// tmux version's `new-session -e`. Headless agents are marked non-attachable,
@@ -2240,49 +1863,7 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	if code != 0 {
 		return fmt.Errorf("tmux new-session for %q: %s", a.ID, strings.TrimSpace(stderr))
 	}
-	// Stamp this agent's identity into the tmux SESSION environment so ANY shell
-	// later spawned in the pane — most importantly a human running `claude --resume`
-	// by hand — inherits the correct per-agent DEJIMA_AGENT_ID, not the container-
-	// wide PRIMARY id (server.go sets DEJIMA_AGENT_ID globally to the primary; the
-	// inline `DEJIMA_AGENT_ID=X exec …` in agentLaunchScript only scopes the launch
-	// process itself). Without this, a manual resume in a non-primary pane polls the
-	// primary's mailbox — the id clobber we hit live. `set-environment` is the
-	// version-portable equivalent of `new-session -e`; best-effort (a failure just
-	// leaves the inline-scoped launch as-is).
-	s.setSessionAgentEnv(ctx, p, a)
 	return nil
-}
-
-// setSessionAgentEnv records the per-agent DEJIMA_AGENT_ID / DEJIMA_TMUX in the
-// agent's tmux session environment so shells spawned in its pane resolve the
-// right agent. Best-effort and idempotent.
-func (s *Server) setSessionAgentEnv(ctx context.Context, p *project.Project, a *project.AgentSpec) {
-	for _, kv := range [][2]string{{"DEJIMA_AGENT_ID", a.ID}, {"DEJIMA_TMUX", a.Tmux}} {
-		_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
-			[]string{"tmux", "set-environment", "-t", a.Tmux, kv[0], kv[1]})
-		if err != nil || code != 0 {
-			s.log.Debug("set tmux session env", "island", p.Name, "agent", a.ID,
-				"key", kv[0], "code", code, "err", err, "stderr", strings.TrimSpace(stderr))
-		}
-	}
-}
-
-// runAgentShim runs a co-located agent's per-type init.sh inside the container —
-// the same shim start.sh runs for the primary — so the agent's hooks/creds/
-// template land in the shared ~/.claude before it launches. DEJIMA_AGENT_ID is
-// scoped to this agent so any per-agent shim logic targets it. Best-effort: a
-// type with no shim is a clean no-op, and a shim failure is logged but must not
-// block the launch (the agent still runs; it just may lack the heartbeat hook).
-func (s *Server) runAgentShim(ctx context.Context, p *project.Project, a *project.AgentSpec) {
-	shim := "/opt/dejima/agents/" + a.Type + "/init.sh"
-	// `[ -x ] || exit 0` keeps a missing shim (unknown type / stale image) silent.
-	cmd := "[ -x " + shim + " ] || exit 0; exec " + shim
-	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
-		[]string{"sh", "-c", "DEJIMA_AGENT_ID=" + a.ID + " " + cmd})
-	if err != nil || code != 0 {
-		s.log.Warn("agent shim", "island", p.Name, "agent", a.ID, "type", a.Type,
-			"code", code, "err", err, "stderr", strings.TrimSpace(stderr))
-	}
 }
 
 // headlessLogPath is the per-agent log file for a co-located headless agent.
@@ -2618,14 +2199,6 @@ func (s *Server) upgradeIsland(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p.LastUsedAt = time.Now().UTC()
-	// Re-stamp the version skew marker: the container was just recreated against
-	// the current image, so the island is now level with this daemon build (and
-	// its /opt shims are fresh). Back-fill BuiltVersion too for islands created
-	// before the stamp existed, so provenance is no longer "unknown" after upgrade.
-	p.UpgradedVersion = version.Version
-	if p.BuiltVersion == "" {
-		p.BuiltVersion = version.Version
-	}
 	if err := p.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -2692,19 +2265,18 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		agentType, cmd = pa.Type, pa.Cmd
 	}
 	info := IslandInfo{
-		Name:        p.Name,
-		Title:       p.Title,
-		Repo:        p.RepoURL,
-		Agent:       agentType,
-		Image:       p.Image,
-		Cmd:         cmd,
-		Role:        p.Role,
-		Owner:       p.Owner,
-		Tags:        p.Tags,
-		State:       string(p.DesiredState),
-		NoHibernate: p.NoHibernate,
-		CreatedAt:   p.CreatedAt,
-		LastUsedAt:  p.LastUsedAt,
+		Name:       p.Name,
+		Title:      p.Title,
+		Repo:       p.RepoURL,
+		Agent:      agentType,
+		Image:      p.Image,
+		Cmd:        cmd,
+		Role:       p.Role,
+		Owner:      p.Owner,
+		Tags:       p.Tags,
+		State:      string(p.DesiredState),
+		CreatedAt:  p.CreatedAt,
+		LastUsedAt: p.LastUsedAt,
 	}
 	if status, err := s.rt.Status(ctx, p.ContainerName()); err == nil {
 		info.Container = string(status)
@@ -2720,53 +2292,10 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	} else {
 		info.Container = string(runtime.StatusErrored)
 	}
-	// Configured resource caps + OOM priority. Cheap (read from the island's
-	// config, no container probe), so surfaced on both the list and detail views
-	// — the consumer needs the caps to compute "% of cap" client-side from the
-	// cached usage stats above.
-	info.Resources = &Resources{
-		Memory:      p.Resources.Memory,
-		CPUs:        p.Resources.CPUs,
-		Disk:        p.Resources.Disk,
-		OOMPriority: p.Resources.OOMPriority,
-	}
 	info.Attached = s.islandPresence(p.Name)
 	info.AgentState = s.islandAgentState(p.Name)
 	info.Agents = s.agentInfos(ctx, p, false)
-	info.BuiltVersion = p.BuiltVersion
-	info.UpgradedVersion = p.UpgradedVersion
-	// Zero-heartbeat liveness: a running island that has never emitted a single
-	// agent-state event, past a short grace window, is the direct broken-shim
-	// signal (a stale socket→TCP notify hook no-ops silently). We use the rollup
-	// AgentState (any agent suffices); LastUsedAt is the most recent
-	// boot/recreate/upgrade time available without a per-container engine probe.
-	running := info.Container == string(runtime.StatusRunning)
-	info.NeverHeardFrom = neverHeardFrom(running, info.AgentState, p.LastUsedAt, time.Now())
-	// Operator-set visual identity override (color + glyph). Omitted from the
-	// payload when unset, so the TUI falls back to its deterministic per-name
-	// default. Set/cleared via PUT/DELETE /v1/islands/{name}/identity (identity.go).
-	if p.Identity.IsSet() {
-		info.Identity = &IslandIdentity{Color: p.Identity.Color, Glyph: p.Identity.Glyph}
-	}
 	return info
-}
-
-// heartbeatGrace is how long a freshly (re)started island is given to emit its
-// first agent-state heartbeat before a continued silence is treated as a broken
-// shim. Generous enough to cover a slow clone + agent warm-up, short relative to
-// the 18h the motivating incident went unnoticed.
-const heartbeatGrace = 10 * time.Minute
-
-// neverHeardFrom decides the zero-heartbeat liveness flag: a running island that
-// has emitted NO agent-state event (agentState nil) and whose last
-// boot/recreate (sinceTime, from LastUsedAt) is older than heartbeatGrace. A
-// just-started island, a hibernated one, or one with a zero reference time is
-// never flagged. Pure, so the grace logic is unit-tested without a runtime.
-func neverHeardFrom(running bool, agentState *AgentStateInfo, sinceTime, now time.Time) bool {
-	if !running || agentState != nil || sinceTime.IsZero() {
-		return false
-	}
-	return now.Sub(sinceTime) > heartbeatGrace
 }
 
 // agentInfos builds the per-agent public view. When live is true, each agent's
@@ -2785,15 +2314,6 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 			Worktree:   a.Worktree,
 			Attachable: handlers.Attachable(a.Type),
 			CreatedAt:  a.CreatedAt,
-			Ephemeral:  a.Ephemeral,
-			SpawnedBy:  a.SpawnedBy,
-		}
-		// Resolve the spawner's name from the same roster so lineage renders as a
-		// name, not a bare id.
-		if a.SpawnedBy != "" {
-			if parent, ok := p.AgentByID(a.SpawnedBy); ok {
-				ai.SpawnedByLabel = parent.Label
-			}
 		}
 		if live && a.Tmux != "" {
 			ai.State = s.agentLiveness(ctx, p, a)
@@ -2803,14 +2323,9 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 		}
 		ai.Attached = s.presenceSnapshot(p.Name, a.ID)
 		ai.AgentState = s.agentStateOf(p.Name, a.ID)
-		ai.Usage = s.agentUsageOf(p.Name, a.ID)
 		if ai.AgentState == nil && i == 0 {
 			// Surface legacy agent-less events (no DEJIMA_AGENT_ID) on the primary.
 			ai.AgentState = s.agentStateOf(p.Name, "")
-		}
-		if ai.Usage == nil && i == 0 {
-			// Same legacy fallback: usage reported with no DEJIMA_AGENT_ID.
-			ai.Usage = s.agentUsageOf(p.Name, "")
 		}
 		if msg, at, ok := s.agentErrorOf(p.Name, a.ID); ok {
 			ai.Error, ai.ErrorAt = msg, at
