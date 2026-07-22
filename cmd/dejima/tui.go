@@ -27,6 +27,7 @@ import (
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
 	"github.com/aoos/dejima/internal/voicein"
+	"path/filepath"
 )
 
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
@@ -153,6 +154,7 @@ type tuiModel struct {
 	sshPort        string // resolved SSH-façade port
 	sshResolvedFor string // the SSHAddr we last resolved, so we don't re-exec tailscale each frame
 	latestRelease  string // newest published release tag (from GitHub; "" until fetched)
+	selfStamp      string // on-disk identity of this executable at startup
 	updateCheckErr string // why the last release check failed ("" = it succeeded)
 	clientUpdate   bool   // this CLI build is behind latestRelease
 	daemonUpdate   bool   // the connected daemon is behind latestRelease
@@ -294,6 +296,10 @@ func initialTUIModel(c *api.Client) tuiModel {
 		activeLabel:  label,
 		activeSource: source,
 		editor:       cfg.Editor,
+		// Remember which copy of the binary we started from, so an out-of-band
+		// replacement (make install, a package manager, another terminal) can be
+		// noticed and reported as "restart" rather than as an available update.
+		selfStamp: selfBinaryStamp(),
 	}
 	// One-time, gentle nudge for Apple Terminal users (no agent tabs, no OSC 52
 	// clipboard). macTermNudge persists a marker the first time it fires, so this
@@ -393,7 +399,7 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openTeamView()
 			case 4: // Check for updates (re-poll GitHub) — stays open; line refreshes
 				m.lastNotice = "checking for updates…"
-				return m, tea.Batch(fetchLatestReleaseCmd(), m.fetchOverviewCmd())
+				return m, tea.Batch(fetchLatestReleaseCmd(), checkSelfBinaryCmd(m.selfStamp), m.fetchOverviewCmd())
 			case 5: // Update — same flow as 'u'/'U': client first, then the daemon (the
 				// daemon update goes through the fleet-wide-restart warning + gate).
 				m.settings = nil
@@ -697,6 +703,45 @@ func fetchLatestReleaseCmd() tea.Cmd {
 	}
 }
 
+// selfBinaryStamp identifies the on-disk copy of the running executable, so a
+// replacement underneath us is detectable. Empty when it can't be read.
+func selfBinaryStamp() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	fi, err := os.Stat(exe)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d-%d", fi.Size(), fi.ModTime().UnixNano())
+}
+
+// selfBinaryChangedMsg reports that the executable on disk is no longer the one
+// this process was started from.
+type selfBinaryChangedMsg struct{}
+
+// checkSelfBinaryCmd compares the on-disk executable against the stamp taken at
+// startup. A running process keeps its compiled-in version forever, so after an
+// out-of-band update (make install, a package manager, another terminal) the TUI
+// would go on reporting the OLD version and offering to "update" a client that
+// is already current — and re-download it. Noticing the swap lets it say
+// "restart" instead, which is the only thing that actually helps.
+func checkSelfBinaryCmd(startStamp string) tea.Cmd {
+	return func() tea.Msg {
+		if startStamp == "" {
+			return nil
+		}
+		if now := selfBinaryStamp(); now != "" && now != startStamp {
+			return selfBinaryChangedMsg{}
+		}
+		return nil
+	}
+}
+
 // daemonUpdateAvailable reports whether the connected daemon is behind latest.
 func daemonUpdateAvailable(latest string, o *api.OverviewResponse) bool {
 	if latest == "" || o == nil || o.DaemonVersion == "" {
@@ -801,7 +846,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-poll GitHub and re-arm the slow ticker. The result (latestReleaseMsg)
 		// recomputes clientUpdate/daemonUpdate, so a release that dropped mid-
 		// session lights up the announcement bar without an R or a relaunch.
-		return m, tea.Batch(releaseTickCmd(), fetchLatestReleaseCmd())
+		return m, tea.Batch(releaseTickCmd(), fetchLatestReleaseCmd(), checkSelfBinaryCmd(m.selfStamp))
 
 	case terminalsMsg:
 		m.terminals = msg
@@ -877,6 +922,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupChecked = true
 		m.claudeSeeded = msg.claudeSeeded
 		m.agentKeyGap = msg.keyGap
+		return m, nil
+
+	case selfBinaryChangedMsg:
+		// The binary was replaced out of band; this process is now the stale one.
+		// Offering another update would re-download what is already installed.
+		m.clientUpdate = false
+		m.restartPending = "a newer dejima is installed on disk — restart dejima to apply it"
 		return m, nil
 
 	case latestReleaseMsg:
