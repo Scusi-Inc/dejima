@@ -28,6 +28,9 @@ report_clone_failure() {
         *"not found"*|*"Could not resolve host"*|*"does not exist"*)
             reason="not-found"
             hint="the remote couldn't be reached or found — check the repo URL, and that the identity can see it (private repos need a token with access)." ;;
+        *"dejima: clone timed out"*)
+            reason="timeout"
+            hint="the clone made no progress and was stopped. Usually the remote is unreachable, or it asked for credentials this island doesn't have — check \`dejima auth status\`." ;;
         *)
             reason="error"
             hint="git couldn't clone the repo; the full output is above (\`dejima logs\` shows it)." ;;
@@ -84,6 +87,34 @@ if [[ -x "${SHIM_DIR}/init.sh" ]]; then
     "${SHIM_DIR}/init.sh"
 fi
 
+# run_clone wraps `git clone` so it can only ever end in one of two states:
+# succeeded, or failed with a reason on disk. Two guards make that true.
+#
+#   * Non-interactive git. Without GIT_TERMINAL_PROMPT=0 a clone of a private
+#     repo with no usable credential blocks on git's "Username for
+#     'https://github.com':" prompt FOREVER. stdin is not a TTY, nothing ever
+#     answers, so /workspace/.git never appears and no failure is ever recorded
+#     — the island simply hangs mid-provision with no error anywhere. Forcing
+#     the prompt off converts that infinite wait into an immediate, classified
+#     auth failure.
+#   * A wall-clock timeout, for the cases prompts don't cover (a remote that
+#     accepts the connection and then stalls). Better a reported timeout than a
+#     container that looks alive but never finishes provisioning.
+#
+# Deliberately scoped to the clone only, not exported: an operator who opens a
+# shell later should still get normal interactive git.
+CLONE_TIMEOUT="${DEJIMA_CLONE_TIMEOUT:-10m}"
+run_clone() {
+    timeout --foreground "$CLONE_TIMEOUT" \
+        env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/true GCM_INTERACTIVE=never \
+        git clone "$@" 2>&1
+    local rc=$?
+    if [[ $rc -eq 124 ]]; then
+        echo "dejima: clone timed out after ${CLONE_TIMEOUT}"
+    fi
+    return $rc
+}
+
 # --- clone the repo (idempotent) ------------------------------------------
 # Two sources, in priority order:
 #   * DEJIMA_SEED — a read-only host repo mounted at /opt/host/seed. We clone
@@ -93,12 +124,15 @@ fi
 #   * REPO — a remote URL cloned directly (origin is correct out of the box).
 SEED="${DEJIMA_SEED:-}"
 if [[ ! -d "${WORKSPACE}/.git" ]]; then
+    # The home volume persists, so a clone-status from an earlier failed boot
+    # would otherwise be reported against this attempt. Start each attempt clean.
+    rm -f "$CLONE_STATUS_FILE" 2>/dev/null || true
     TMP=$(mktemp -d)
     if [[ -n "$SEED" && -d "${SEED}/.git" ]]; then
         echo "seeding ${WORKSPACE} from local copy ${SEED}"
         # `if ! var=$(...)` keeps the failure out of set -e's reach so we can
         # report it instead of crashing the container.
-        if clone_err=$(git clone "$SEED" "$TMP/repo" 2>&1); then
+        if clone_err=$(run_clone "$SEED" "$TMP/repo"); then
             if [[ -n "$REPO" ]]; then
                 git -C "$TMP/repo" remote set-url origin "$REPO"
             else
@@ -110,7 +144,7 @@ if [[ ! -d "${WORKSPACE}/.git" ]]; then
         fi
     elif [[ -n "$REPO" ]]; then
         echo "cloning ${REPO} into ${WORKSPACE}"
-        if clone_err=$(git clone "$REPO" "$TMP/repo" 2>&1); then
+        if clone_err=$(run_clone "$REPO" "$TMP/repo"); then
             echo "$clone_err"
         else
             echo "$clone_err" >&2

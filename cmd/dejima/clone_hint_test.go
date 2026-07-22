@@ -13,6 +13,11 @@ func TestCloneFailureHint(t *testing.T) {
 		{"auth", "authenticate to the git remote"},
 		{"not-found", "token with access"},
 		{"error", "couldn't clone the repo"},
+		{"timeout", "made no progress"},
+		// "stalled" is client-side, not from start.sh: the deadline expired with
+		// no repo AND no recorded failure. It must still produce a real message —
+		// attaching silently is what made this bug cost days.
+		{"stalled", "never finished provisioning"},
 		{"some-future-reason", "clone failed (some-future-reason)"}, // unknown → generic, not empty
 	}
 	for _, tc := range cases {

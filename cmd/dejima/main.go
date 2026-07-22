@@ -1657,18 +1657,29 @@ func defaultLabel() string {
 // caller can surface it and stop instead of waiting the full window then dropping
 // the operator into a repo-less island.
 func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) (cloneFailed bool, reason string) {
-	deadline := time.Now().Add(2 * time.Minute)
+	const budget = 2 * time.Minute
+	start := time.Now()
+	deadline := start.Add(budget)
 	notified := false
 	for {
 		st, err := c.WorkspaceReady(ctx, name)
-		if err != nil || st.Ready || time.Now().After(deadline) {
+		if err != nil || st.Ready {
 			return false, ""
 		}
 		if st.CloneFailed {
 			return true, st.CloneReason
 		}
+		if time.Now().After(deadline) {
+			// Out of patience with nothing to show for it: no /workspace/.git and
+			// no recorded failure. Attaching now would drop the caller into a tmux
+			// session the entrypoint never got far enough to create, which reads as
+			// a silent hang. Report the stall instead — the whole cost of this bug
+			// was that nothing ever said anything.
+			return true, "stalled"
+		}
 		if !notified {
 			fmt.Printf("waiting for workspace to finish provisioning (cloning)…\n")
+			fmt.Printf("  (giving it up to %s; `dejima logs %s` shows the clone as it runs)\n", budget, name)
 			notified = true
 		}
 		select {
@@ -1691,6 +1702,14 @@ func cloneFailureHint(name, reason string) string {
 	case "not-found":
 		return fmt.Sprintf("clone failed (not-found) — the repo couldn't be reached or found. "+
 			"Check the URL and that the island's identity can see it (private repos need a token with access), then `dejima upgrade %s`.", name)
+	case "timeout":
+		return fmt.Sprintf("clone timed out — the repo made no progress and was stopped. The remote may be unreachable, "+
+			"or it asked for credentials this island doesn't have. Check `dejima auth status`, then `dejima upgrade %s` to retry.", name)
+	case "stalled":
+		return fmt.Sprintf("the workspace never finished provisioning — no repo appeared and no clone error was recorded.\n"+
+			"  See what the container is doing:  dejima logs %s\n"+
+			"  Open a shell to look around:      dejima shell %s\n"+
+			"  If the repo is private, the clone may be waiting on credentials: dejima auth status", name, name)
 	case "error":
 		return fmt.Sprintf("clone failed — git couldn't clone the repo. See `dejima logs %s` for the full output.", name)
 	default:
