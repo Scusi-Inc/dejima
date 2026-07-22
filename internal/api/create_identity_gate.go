@@ -46,9 +46,15 @@ func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) 
 	if isGitRemoteURL(repo) && s.anonCloneFn(ctx, repo) {
 		return nil // public / anonymously reachable — no identity needed
 	}
-	return fmt.Errorf("%q needs a GitHub identity to clone (it isn't anonymously reachable) but none is "+
-		"configured — run `dejima auth push --github` from a machine where gh can access it, then retry; "+
-		"or pass --force to create anyway and authenticate later", repo)
+	// Phrased as steps, not prose: this is the first wall a new operator hits,
+	// and the old single-sentence version buried the actual command. The client
+	// matches on "needs a GitHub identity to clone" to upgrade this into the
+	// guided TUI step — keep that substring intact.
+	return fmt.Errorf("%q needs a GitHub identity to clone (it isn't anonymously reachable), and none is configured.\n"+
+		"  1. On a machine where the gh CLI can see the repo, sign in:  gh auth login\n"+
+		"  2. Connect it to this daemon:                                dejima github connect\n"+
+		"  3. Retry creating the island.\n"+
+		"Or pass --force to create it now and authenticate later.", repo)
 }
 
 // islandWillHaveGitHubIdentity reports whether the island has SOME identity to

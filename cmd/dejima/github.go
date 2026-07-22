@@ -35,8 +35,8 @@ func newGithubConnectCmd() *cobra.Command {
 			"github.com/login/device, and the daemon captures the token into your own\n" +
 			"identity — nothing is pasted. [name] is the identity name to store it under\n" +
 			"(default: \"github\").\n\n" +
-			"If guided sign-in isn't configured on the daemon, use `dejima auth push --github`\n" +
-			"with a fine-grained token instead.",
+			"If guided sign-in isn't configured on the daemon (the default for a self-hosted\n" +
+			"install), this falls back to your local `gh` session automatically — same result.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
@@ -45,14 +45,20 @@ func newGithubConnectCmd() *cobra.Command {
 			}
 			ctx := cmd.Context()
 
-			start, err := c.GitHubDeviceStart(ctx)
-			if err != nil {
-				return err // 501 message already points at `dejima auth push --github`
-			}
-
 			name := "github"
 			if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
 				name = strings.TrimSpace(args[0])
+			}
+
+			start, err := c.GitHubDeviceStart(ctx)
+			if err != nil {
+				// A self-hosted daemon has no OAuth app, so guided sign-in is dark
+				// by default. Don't dead-end on the command the operator was just
+				// told to run — complete the job over the token path instead.
+				if deviceFlowUnconfigured(err) {
+					return connectGitHubViaToken(ctx, c, name, makeDefault, shared)
+				}
+				return err
 			}
 
 			fmt.Println()

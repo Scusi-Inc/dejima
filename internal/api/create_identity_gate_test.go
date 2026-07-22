@@ -38,8 +38,16 @@ func TestBlockDoomedClone(t *testing.T) {
 			if probed != c.wantProbed {
 				t.Errorf("probe called = %v, want %v", probed, c.wantProbed)
 			}
-			if err != nil && !strings.Contains(err.Error(), "auth push --github") {
-				t.Errorf("gate error should carry the remedy; got %q", err.Error())
+			// The gate is the first wall a new operator hits, so the message must
+			// carry a runnable remedy — and the client matches the leading phrase
+			// to upgrade it into the guided TUI step.
+			if err != nil {
+				if !strings.Contains(err.Error(), "github connect") {
+					t.Errorf("gate error should carry the remedy; got %q", err.Error())
+				}
+				if !strings.Contains(err.Error(), "needs a GitHub identity to clone") {
+					t.Errorf("gate error lost the phrase the TUI matches on; got %q", err.Error())
+				}
 			}
 		})
 	}
@@ -97,7 +105,7 @@ func TestCreateIslandIdentityGate(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("gated create = %d, want 400", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "auth push --github") {
+	if !strings.Contains(rr.Body.String(), "github connect") {
 		t.Errorf("gate response missing the remedy: %s", rr.Body.String())
 	}
 
