@@ -204,7 +204,12 @@ func (c *creatorModel) buildRequest() api.CreateIslandRequest {
 		GitHubIdentity:  c.ghIdentity,      // "" unless sourced via the GitHub browser
 		AllowNoIdentity: c.forceNoIdentity, // set by the guided-gate "create anyway" path
 	}
-	if len(c.agents) > 1 {
+	// Always send the roster when there is one — not just for multi-agent
+	// islands. The scalar Agent/Cmd fields above cannot carry a Label, so
+	// gating on len>1 silently dropped the name for a single agent, which is
+	// the common case: the island came up labelled by type ("claude") and the
+	// name the operator typed was lost between the form and the request.
+	if len(c.agents) > 0 {
 		req.Agents = c.agents
 	}
 	return req

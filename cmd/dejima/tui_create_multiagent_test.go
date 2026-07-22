@@ -104,3 +104,28 @@ func TestExtraPickBackDiscards(t *testing.T) {
 		t.Fatalf("after back: step=%v agents=%+v pickingExtra=%v", c.step, c.agents, c.pickingExtra)
 	}
 }
+
+// A SINGLE named agent must carry its label to the daemon. buildRequest used to
+// send the Agents roster only when len>1, falling back to the scalar
+// Agent/Cmd fields — which have no Label — so the name typed at creation was
+// silently dropped and the island came up labelled by type ("claude"). One
+// agent is the common case, so this was the default experience.
+func TestSingleAgentKeepsItsLabel(t *testing.T) {
+	c := &creatorModel{
+		nameInput:  "wildfire",
+		resolution: reposrc.Resolution{Repo: "https://github.com/aoos/wildfire.git"},
+		agents:     []api.AgentSpecRequest{{Type: "claude-code", Label: "ridgeops"}},
+	}
+	req := c.buildRequest()
+
+	if len(req.Agents) != 1 {
+		t.Fatalf("Agents = %+v, want the roster sent even for one agent", req.Agents)
+	}
+	if req.Agents[0].Label != "ridgeops" {
+		t.Errorf("label = %q, want %q — the name typed at creation was dropped", req.Agents[0].Label, "ridgeops")
+	}
+	// The scalar fields stay populated for back-compat with older daemons.
+	if req.Agent != "claude-code" {
+		t.Errorf("scalar Agent = %q, want claude-code", req.Agent)
+	}
+}

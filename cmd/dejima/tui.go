@@ -1884,7 +1884,38 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			return m, m.updateDaemonCmd(c.force)
 		}
 	}
+	// Nothing above acted, which means the typed answer didn't satisfy the gate.
+	// Say so. A confirmation that silently closes is indistinguishable from one
+	// that worked — which is exactly how "delete does nothing, no error" went
+	// unexplained: the operation was never attempted and nothing said why.
+	if want := confirmExpectation(c); want != "" {
+		typed := strings.TrimSpace(c.answer)
+		if typed == "" {
+			m.lastError = fmt.Sprintf("%s cancelled — %s", c.verb, want)
+		} else {
+			m.lastError = fmt.Sprintf("%s not confirmed — %s (you typed %q)", c.verb, want, typed)
+		}
+	}
 	return m, nil
+}
+
+// confirmExpectation describes what a typed confirmation needed, for the
+// message shown when it didn't match. Mirrors the gates in runConfirmed —
+// a verb missing here degrades to silence, so keep the two together.
+func confirmExpectation(c confirmPrompt) string {
+	switch c.verb {
+	case "purge":
+		return fmt.Sprintf("type the island name %q exactly", c.island)
+	case "remove-agent":
+		return fmt.Sprintf("type the agent id %q exactly", c.agent)
+	case "reset", "upgrade", "recreate-island", "build-image", "force-purge",
+		"remove-terminal", "approve-action", "open-all-agents", "setup-ssh",
+		"update-client", "update-daemon":
+		return `type "y" to confirm`
+	}
+	// relabel-agent / rename-island / deny-action always act; approve-rule
+	// depends on the action still being pending, not on the typed text.
+	return ""
 }
 
 // setupAccountSSH authorizes this machine's default SSH key fleet-wide and
