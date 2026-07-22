@@ -19,10 +19,15 @@ func feedCreator(m tuiModel, keys ...string) tuiModel {
 func TestBuildRequestSingleVsMulti(t *testing.T) {
 	c := &creatorModel{nameInput: "isle", resolution: reposrc.Resolution{Repo: "git@x:y.git"}}
 
+	// The roster is sent even for one agent — it is the only field that can
+	// carry a Label. The scalar Agent/Cmd stay populated for older daemons.
 	c.agents = []api.AgentSpecRequest{{Type: "shell"}}
 	req := c.buildRequest()
-	if req.Agent != "shell" || req.Cmd != "" || req.Agents != nil {
-		t.Fatalf("single-agent request = %+v; want scalar shell, nil Agents", req)
+	if req.Agent != "shell" || req.Cmd != "" {
+		t.Fatalf("single-agent scalars = %+v; want scalar shell", req)
+	}
+	if len(req.Agents) != 1 || req.Agents[0].Type != "shell" {
+		t.Fatalf("single-agent Agents = %+v; want the roster sent so a label can ride along", req.Agents)
 	}
 
 	c.agents = []api.AgentSpecRequest{
