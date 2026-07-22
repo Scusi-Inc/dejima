@@ -44,33 +44,12 @@ func checkEgressProxy(r *doctorReport) {
 
 	addr := net.JoinHostPort("127.0.0.1", defaultEgressProxyPort)
 	c, err := net.DialTimeout("tcp", addr, 3*time.Second)
-	switch {
-	case err == nil:
+	if c != nil {
 		_ = c.Close()
-		r.add("Egress", "proxy listener", "OK", addr+" — accepting connections", "")
-	case errors.Is(err, syscall.EADDRNOTAVAIL):
-		// Not the daemon's fault and not fixed by restarting it: the host has
-		// no ephemeral port left to originate the connection from. Say so,
-		// because "can't assign requested address" reads like a bind error.
-		r.add("Egress", "proxy listener", "FAIL",
-			addr+" — cannot allocate a local port to reach the proxy; the host is out of ephemeral ports",
-			"see host sockets below — this is host socket exhaustion, not a dead daemon; restarting dejimad will not clear it")
-	case isTimeout(err):
-		// The distinguishing symptom: the TCP handshake never completes. Either
-		// the accept backlog is not being drained or the host has no ephemeral
-		// ports left to complete a connection with.
-		r.add("Egress", "proxy listener", "FAIL",
-			addr+" — connection timed out (SYN sent, never accepted); island egress is down",
-			"check host socket pressure below; restart the daemon, or start it with --no-egress-proxy to bypass the proxy entirely")
-	case errors.Is(err, syscall.ECONNREFUSED):
-		r.add("Egress", "proxy listener", "FAIL",
-			addr+" — connection refused (nothing listening)",
-			"is dejimad running? if the proxy is intentionally off (--no-egress-proxy) this is expected")
-	default:
-		r.add("Egress", "proxy listener", "FAIL",
-			fmt.Sprintf("%s — %v", addr, err),
-			"is dejimad running? if the proxy is disabled this is expected (--no-egress-proxy)")
 	}
+	disabled, known := egressProxyDisabled()
+	level, detail, fix := egressListenerStatus(addr, err, disabled, known)
+	r.add("Egress", "proxy listener", level, detail, fix)
 
 	checkHostSocketPressure(r)
 }
@@ -163,4 +142,77 @@ func sysctlInt(key string) (int, bool) {
 func isTimeout(err error) bool {
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// egressProxyDisabled reports whether the running daemon was started with
+// --no-egress-proxy, and whether that could be determined at all.
+//
+// There is no API for this, and reading the service file only covers one
+// install mode — so inspect the live process's arguments, which is true for
+// however the daemon was started (launchd, systemd, or by hand). When the
+// answer is unknown the caller must not report a hard failure: a deliberate
+// bypass and a dead proxy look identical from the outside.
+func egressProxyDisabled() (disabled, known bool) {
+	out, err := exec.Command("pgrep", "-x", "dejimad").Output()
+	if err != nil {
+		return false, false
+	}
+	pid := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	if pid == "" {
+		return false, false
+	}
+	args, err := exec.Command("ps", "-o", "command=", "-p", pid).Output()
+	if err != nil {
+		return false, false
+	}
+	return strings.Contains(string(args), "--no-egress-proxy"), true
+}
+
+// egressListenerStatus classifies a dial at the egress proxy into a doctor
+// verdict. Pure so the decision table can be tested directly — the first cut of
+// this check reported FAIL for a host deliberately running --no-egress-proxy,
+// making doctor exit non-zero on a correctly configured machine.
+//
+// disabled/known come from the running daemon's arguments; when the intent is
+// unknown, "refused" is ambiguous and must not be a hard failure.
+func egressListenerStatus(addr string, err error, disabled, known bool) (level, detail, fix string) {
+	switch {
+	case err == nil && disabled:
+		// Something holds the port that the running daemon should not have opened.
+		return "WARN",
+			addr + " — something is listening even though the daemon runs with --no-egress-proxy",
+			"another dejimad or an unrelated process may hold the port"
+	case err == nil:
+		return "OK", addr + " — accepting connections", ""
+	case disabled:
+		// Deliberately off: not a failure. Doctor must not exit non-zero for a
+		// correctly configured host — but name the trade-off, since the proxy is
+		// where egress observability and allow/deny come from.
+		return "INFO",
+			"disabled — the daemon runs with --no-egress-proxy; island egress bypasses the proxy",
+			"island outbound is unobserved and `dejima egress allow/deny` is unavailable; re-enable by reinstalling the service without --no-egress-proxy"
+	case errors.Is(err, syscall.EADDRNOTAVAIL):
+		// Not the daemon's fault and not fixed by restarting it: the host has no
+		// ephemeral port left to originate from. Say so, because "can't assign
+		// requested address" reads like a bind error.
+		return "FAIL",
+			addr + " — cannot allocate a local port to reach the proxy; the host is out of ephemeral ports",
+			"see host sockets below — this is host socket exhaustion, not a dead daemon; restarting dejimad will not clear it"
+	case isTimeout(err):
+		// The outage signature: the handshake never completes, because the accept
+		// backlog is not being drained or no ports remain to complete it.
+		return "FAIL",
+			addr + " — connection timed out (SYN sent, never accepted); island egress is down",
+			"check host socket pressure below; restart the daemon, or reinstall the service with --no-egress-proxy to bypass the proxy"
+	case errors.Is(err, syscall.ECONNREFUSED) && !known:
+		return "WARN",
+			addr + " — connection refused (nothing listening); could not determine whether the proxy is intentionally off",
+			"if the daemon runs with --no-egress-proxy this is expected; otherwise check that dejimad is running"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "FAIL",
+			addr + " — connection refused; the daemon should be running the proxy but nothing is listening",
+			"restart the daemon: `dejima service restart --system`"
+	default:
+		return "FAIL", fmt.Sprintf("%s — %v", addr, err), "is dejimad running?"
+	}
 }
