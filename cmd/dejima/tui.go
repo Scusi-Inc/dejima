@@ -2762,7 +2762,7 @@ var (
 
 func (m tuiModel) View() string {
 	if m.width == 0 {
-		return "loading…"
+		return styleAccent.Render("loading…")
 	}
 
 	header := m.renderHeader()
@@ -3101,8 +3101,12 @@ func (m tuiModel) renderHeader() string {
 		topLine,
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
-		styleMuted.Render("Each island is a repo in its own container — agents keep running."),
+		// The static "each island is a repo in its own container" line explained
+		// the product to someone already looking at it, every single frame. The
+		// rotating tip earns that row instead; a blank line keeps it separated
+		// from the key legend below.
 		tipLine,
+		"",
 		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open agent(s)  ·  ") + styleAccent.Render(">") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("s") + styleMuted.Render(" settings  ·  ") + styleAccent.Render("?") + styleMuted.Render(" help"),
 		serverLine,
 	}, "\n")
@@ -3266,8 +3270,11 @@ func (m tuiModel) renderList(width int) (string, int) {
 		// (visibleRows always ends with it), so Enter creates one — but say so,
 		// since a bare empty pane gave no hint that the TUI itself can set one up
 		// (people were told to quit and use the CLI). Make it an obvious prompt.
-		body := styleAccent.Render("+ Set up your first island") + "\n\n" +
-			styleMuted.Render("Press Enter to start — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
+		// Render it as a SELECTED row, not a heading. The row genuinely is
+		// selected — Enter already worked — but with no ▶ and no highlight it
+		// read as decoration, so people didn't know it was the thing to press.
+		body := styleSelected.Render("▶ + Set up your first island") + "\n\n" +
+			styleAccent.Render("Press ⏎ to start") + styleMuted.Render(" — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
 		// Nudge missing Claude creds before the first island, so claude-code/codex
 		// agents don't start unauthenticated and fail at first attach.
 		if m.setupChecked && !m.claudeSeeded {
@@ -3724,7 +3731,7 @@ func (m tuiModel) renderDetail(_ int) string {
 	}
 	if m.detail == nil {
 		if name := m.selectedName(); name != "" {
-			return styleMuted.Render("loading " + name + "…")
+			return styleAccent.Render("⏳ loading " + name + "…")
 		}
 		return styleMuted.Render("select an island")
 	}
@@ -4022,7 +4029,9 @@ func (m tuiModel) renderFooterLeft() string {
 	}
 	o := m.overview
 	if o == nil {
-		return styleMuted.Render("loading…")
+		// Muted grey reads as "nothing here", which is exactly wrong while the
+		// daemon is being queried — the accent says something is happening.
+		return styleAccent.Render("⏳ loading…")
 	}
 	dockerGlyph := healthGlyph(o.DockerReachable)
 	imagePart := healthGlyph(o.IslandImagePresent) + " " + styleMuted.Render("image")

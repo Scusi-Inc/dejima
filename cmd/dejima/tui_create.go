@@ -913,7 +913,7 @@ func (c *creatorModel) viewPick(b *strings.Builder) {
 	c.writeHeader(b, "Use a local repo — "+tildeify(c.root))
 	switch {
 	case c.scanning:
-		b.WriteString(styleMuted.Render("  scanning…") + "\n")
+		b.WriteString(styleAccent.Render("  ⏳ scanning…") + "\n")
 	case len(c.repos) == 0:
 		b.WriteString(styleMuted.Render("  no git repos found here") + "\n")
 	default:
@@ -927,7 +927,7 @@ func (c *creatorModel) viewPick(b *strings.Builder) {
 
 func (c *creatorModel) viewGitHub(b *strings.Builder) {
 	if c.ghLoading {
-		b.WriteString(styleMuted.Render("loading from the daemon…"))
+		b.WriteString(styleAccent.Render("⏳ loading from the daemon…"))
 		return
 	}
 	if c.ghHint != "" {
