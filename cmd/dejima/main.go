@@ -504,6 +504,7 @@ func newServiceCmd() *cobra.Command {
 	var skipTCPPrompt bool
 	var tokenTCPAddr, sshAddr, autonomyDial string
 	var auditOn, auditReads bool
+	var noEgressProxy bool
 	var auditHMACKeyFile string
 	installCmd := &cobra.Command{
 		Use:   "install",
@@ -554,6 +555,14 @@ func newServiceCmd() *cobra.Command {
 			}
 			if autonomyDial != "" {
 				svcArgs = append(svcArgs, "--autonomy-dial", autonomyDial)
+			}
+			// Same reasoning as --audit below: the egress proxy is default-ON, so
+			// turning it off is only possible by baking the flag into the
+			// supervised daemon's args. Without this there is no supported way to
+			// persist the bypass — a hand-run `dejimad --no-egress-proxy` is
+			// replaced by the service manager on the next restart or reboot.
+			if noEgressProxy {
+				svcArgs = append(svcArgs, "--no-egress-proxy")
 			}
 			// Audit must be baked into the supervised daemon's args — a flag on a
 			// hand-run dejimad doesn't reach the launchd/systemd-managed process,
@@ -644,6 +653,7 @@ func newServiceCmd() *cobra.Command {
 	installCmd.Flags().BoolVar(&skipTCPPrompt, "no-tcp-prompt", false, "skip the interactive remote-access prompt")
 	installCmd.Flags().StringVar(&tokenTCPAddr, "token-tcp", "", "host-internal addr for the in-island autonomy path (#8), e.g. 127.0.0.1:7274; empty disables")
 	installCmd.Flags().StringVar(&sshAddr, "ssh", "", "SSH-façade listen addr (#9), e.g. :2222 or a tailnet IP; empty disables")
+	installCmd.Flags().BoolVar(&noEgressProxy, "no-egress-proxy", false, "bake --no-egress-proxy into the service: disable the always-on island egress proxy, so island outbound traffic does not route through a host-loopback proxy (unobserved; `dejima egress allow/deny` unavailable)")
 	installCmd.Flags().StringVar(&autonomyDial, "autonomy-dial", "", "host:port an in-island brain dials to reach --token-tcp (default host.docker.internal:<token-tcp port>)")
 	installCmd.Flags().StringVar(&notifyURL, "notify", "", "auto-subscribe this webhook URL after install")
 	installCmd.Flags().StringVar(&notifySecret, "notify-secret", "", "HMAC secret for the auto-subscribed webhook")
