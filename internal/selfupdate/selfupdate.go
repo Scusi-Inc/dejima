@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/version"
+	"strconv"
 )
 
 // githubToken returns a GitHub token from the environment, if any, used to lift
@@ -80,10 +81,14 @@ func LatestRelease(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("query latest release: %w", err)
 	}
 	defer resp.Body.Close()
-	// 403/429 from the GitHub API is almost always the unauthenticated rate limit
-	// (60/hr) — surface that plainly + the remedy, rather than a bare HTTP code.
+	// 403/429 from the GitHub API is usually the unauthenticated rate limit
+	// (60/hr, shared per source IP), but not always — a bad GITHUB_TOKEN also
+	// 403s, and telling that operator to "retry shortly" sends them to wait for
+	// a limit that was never the problem. Distinguish on the header GitHub sets
+	// specifically for exhaustion, and say when it clears so "shortly" isn't a
+	// guess.
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return "", fmt.Errorf("github API rate-limited (HTTP %d) — retry shortly, or set GITHUB_TOKEN to raise the limit", resp.StatusCode)
+		return "", rateLimitError(resp)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
@@ -98,6 +103,40 @@ func LatestRelease(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("no tag in latest release")
 	}
 	return body.TagName, nil
+}
+
+// rateLimitError turns a 403/429 into a message that says which of the two
+// causes it was, and — when the limit really is exhausted — how long until it
+// resets, so the caller isn't left guessing at "shortly".
+func rateLimitError(resp *http.Response) error {
+	remaining := strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining"))
+	if remaining != "" && remaining != "0" {
+		// Quota left, so exhaustion is not the cause — most likely a token that
+		// is invalid, expired, or lacks access.
+		if githubToken() != "" {
+			return fmt.Errorf("github API refused the update check (HTTP %d) — your GITHUB_TOKEN looks invalid or expired; unset it to fall back to anonymous checks", resp.StatusCode)
+		}
+		return fmt.Errorf("github API refused the update check (HTTP %d)", resp.StatusCode)
+	}
+
+	wait := ""
+	if reset := strings.TrimSpace(resp.Header.Get("X-RateLimit-Reset")); reset != "" {
+		if epoch, err := strconv.ParseInt(reset, 10, 64); err == nil {
+			if d := time.Until(time.Unix(epoch, 0)); d > 0 {
+				wait = fmt.Sprintf(" — resets in %s", d.Round(time.Minute))
+			}
+		}
+	}
+	if wait == "" {
+		wait = " — retry shortly"
+	}
+	if githubToken() != "" {
+		return fmt.Errorf("github API rate limit reached%s", wait)
+	}
+	// The anonymous limit is small and shared per source IP, so a busy network
+	// can exhaust it without this machine doing anything unusual.
+	return fmt.Errorf("github API rate limit reached for this network's IP address%s. "+
+		"The daemon is fine; only the update CHECK is blocked. Set GITHUB_TOKEN to raise the limit", wait)
 }
 
 // Status is the result of an update check.
