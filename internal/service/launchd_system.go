@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 )
 
@@ -93,9 +92,8 @@ func (m *launchdSystemManager) Install(binaryPath string, args []string) error {
 		_ = os.Chown(logDir, uid, gid)
 	}
 
-	tmpl := template.Must(template.New("plist").Parse(launchdTemplate))
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, map[string]any{
+	if err := renderPlist(&buf, map[string]any{
 		"Label":            launchdLabel,
 		"ProgramArguments": append([]string{binaryPath}, args...),
 		"WorkingDir":       u.HomeDir,

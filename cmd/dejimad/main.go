@@ -26,6 +26,7 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/egress"
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/fdlimit"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/runtime"
@@ -144,6 +145,18 @@ const defaultTokenAddr = "127.0.0.1:7274"
 const defaultEgressProxy = "127.0.0.1:7280"
 
 func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressDial string, egressExplicit bool, sshAddr string, hostTerminals, requireToken bool, audit auditConfig, idleHibernate time.Duration, wakeNotify bool, wakeFlush time.Duration) error {
+	// Headroom before any listener exists. Under launchd the inherited soft
+	// limit is 256, which a handful of concurrent egress tunnels exhausts; the
+	// failure mode is silent (hung accepts, not an error), so raise first and
+	// say so in the log. Best-effort — less headroom still beats not starting.
+	if res, lerr := fdlimit.Raise(); lerr != nil {
+		log.Warn("could not raise open-file limit; egress may stall under load", "limit", res, "err", lerr)
+	} else if res.Raised {
+		log.Info("raised open-file limit", "limit", res)
+	} else {
+		log.Debug("open-file limit already sufficient", "limit", res)
+	}
+
 	socketPath, err := paths.SocketPath()
 	if err != nil {
 		return err
@@ -280,6 +293,10 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 			egressLn = nil
 		} else {
 			defer egressLn.Close()
+			// The proxy is the heaviest fd consumer (two per tunnel), so it's
+			// where exhaustion shows up first — and where a silent hang is
+			// least acceptable.
+			egressLn = fdlimit.Guard(egressLn, log.Error)
 			eDial := egressDial
 			if eDial == "" {
 				_, port, splitErr := net.SplitHostPort(egressAddr)

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -109,14 +110,48 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request, island str
 	}
 	defer client.Close()
 	defer target.Close()
+	// A tunnel costs two descriptors for as long as it lives, and the island
+	// side can vanish without a FIN (container killed, host slept) — leaving a
+	// half-open tunnel pinning both until something notices. The dialer sets
+	// keepalive on the target conn; the client conn arrives via Hijack and has
+	// none, so set it here. Without this, dead tunnels accumulate until accept
+	// starts failing with EMFILE, which presents as a hang rather than an error.
+	if tc, ok := client.(*net.TCPConn); ok {
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(30 * time.Second)
+	}
 	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
 		return
 	}
-	// Bidirectional copy; either direction ending tears down the tunnel.
-	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(target, client); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(client, target); done <- struct{}{} }()
-	<-done
+	// Bidirectional copy. Each direction ends by half-closing the far side
+	// rather than tearing down the whole tunnel, and we wait for BOTH.
+	//
+	// Tearing down on the first EOF is wrong and expensive here: a peer that has
+	// finished sending (a client that half-closes after its request, an upstream
+	// that has sent its last byte) still expects the other direction to drain.
+	// Killing it early truncates the response and the island simply reconnects —
+	// and on this deployment every reconnect is another host-loopback connection
+	// through the Lima port-forwarder, left in TIME_WAIT. Enough of that churn
+	// exhausts the host's ephemeral ports, at which point new island
+	// connections stall in SYN_SENT and egress dies host-wide. So the cheapest
+	// fix for the outage is to not create the churn in the first place.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _, _ = io.Copy(target, client); halfClose(target) }()
+	go func() { defer wg.Done(); _, _ = io.Copy(client, target); halfClose(client) }()
+	wg.Wait()
+}
+
+// halfClose shuts down the write side of c, signalling EOF to the peer while
+// still allowing the other direction to drain. Falls back to a full close for
+// conns that don't support it, which is the old all-or-nothing behaviour.
+func halfClose(c net.Conn) {
+	type closeWriter interface{ CloseWrite() error }
+	if cw, ok := c.(closeWriter); ok {
+		_ = cw.CloseWrite()
+		return
+	}
+	_ = c.Close()
 }
 
 // handleHTTP serves a plain-HTTP proxy request (absolute-URI form): record, and
