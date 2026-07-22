@@ -65,3 +65,25 @@ type timeoutErr struct{}
 func (timeoutErr) Error() string   { return "i/o timeout" }
 func (timeoutErr) Timeout() bool   { return true }
 func (timeoutErr) Temporary() bool { return true }
+
+// A healthy host reports zero sockets in TIME_WAIT. The check must still print
+// that number: hiding the line at zero makes a healthy host look identical to a
+// check that never ran, and this is the metric an operator watches over days to
+// catch churn coming back.
+func TestHostSocketPressureReportsZero(t *testing.T) {
+	r := &doctorReport{}
+	checkHostSocketPressure(r)
+
+	var found bool
+	for _, row := range r.rows {
+		if row.check == "host sockets" {
+			found = true
+			if row.status == "FAIL" {
+				t.Errorf("healthy host reported FAIL: %s", row.detail)
+			}
+		}
+	}
+	if !found {
+		t.Error("no `host sockets` row emitted — the check disappears instead of reporting")
+	}
+}

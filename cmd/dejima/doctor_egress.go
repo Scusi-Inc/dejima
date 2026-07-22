@@ -113,7 +113,12 @@ func timeWaitCounts() (total, toProxy int, ok bool) {
 			}
 		}
 	}
-	return total, toProxy, total > 0
+	// ok reflects whether netstat ran, NOT whether it found anything. Zero
+	// sockets in TIME_WAIT is the healthiest possible reading — treating it as
+	// "no data" would hide the line precisely when the host is fine, and make a
+	// healthy host indistinguishable from a check that never ran. This is the
+	// number an operator watches over days to see churn returning.
+	return total, toProxy, true
 }
 
 // ephemeralPortSpan returns how many ephemeral ports the host can hand out.
