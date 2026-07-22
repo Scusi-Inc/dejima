@@ -94,6 +94,13 @@ func newUninstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Refuse before touching anything if this shell is inside the daemon
+			// we're about to tear down — that combination deadlocks (see
+			// preflightNotInsideDaemon), and it deadlocks AFTER the sudo prompt
+			// and after islands have been deleted, which is the worst moment.
+			if err := preflightNotInsideDaemon(force); err != nil {
+				return err
+			}
 			if keepData {
 				fmt.Fprintln(os.Stderr, "note: --keep-data is deprecated; it now means --keep-islands (keeps volumes + config so a reinstall re-adopts).")
 			}
@@ -199,12 +206,12 @@ func newUninstallCmd() *cobra.Command {
 
 			// 2. Uninstall the service (stops the daemon).
 			if mgr, mErr := serviceMgr(systemSvc); mErr == nil {
-				fmt.Print("  uninstalling the dejimad service… ")
+				fmt.Println("  uninstalling the dejimad service…")
 				if err := mgr.Uninstall(); err != nil {
-					fmt.Println("failed")
+					fmt.Println("  service uninstall: failed")
 					fmt.Fprintf(os.Stderr, "  warning: service uninstall: %v\n", err)
 				} else {
-					fmt.Println("done")
+					fmt.Println("  service uninstall: done")
 				}
 			}
 

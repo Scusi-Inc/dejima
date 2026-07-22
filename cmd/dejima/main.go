@@ -610,10 +610,13 @@ func newServiceCmd() *cobra.Command {
 			// install, and whether it's a system service (restart domain).
 			meta := selfupdate.InstallMeta{System: systemSvc}
 			if selfupdate.DetectMode() == selfupdate.ModeSource {
-				if cwd, werr := os.Getwd(); werr == nil {
-					if dir, ferr := selfupdate.FindCheckout(cwd); ferr == nil {
-						meta.SourceDir = dir
-					}
+				meta.SourceDir = selfupdate.ResolveSourceDir()
+				if meta.SourceDir == "" {
+					// Say so. Silently recording nothing is what left operators
+					// with a daemon that refuses to self-update, discovered only
+					// much later when the TUI's [U] failed.
+					fmt.Fprintln(os.Stderr, "warning: couldn't locate your dejima checkout, so daemon self-update isn't wired up.")
+					fmt.Fprintln(os.Stderr, "         re-run this from inside your checkout to record it.")
 				}
 			}
 			if err := selfupdate.SaveInstallMeta(meta); err != nil {

@@ -153,3 +153,34 @@ func gitClean(ctx context.Context, dir string) (bool, error) {
 // ErrReleaseApplyUnsupported marks the not-yet-built release download path, so
 // the command can print manual steps instead of failing opaquely.
 var ErrReleaseApplyUnsupported = errors.New("automatic apply for release installs isn't supported yet")
+
+// ResolveSourceDir locates the git checkout a source install was built from,
+// for recording in InstallMeta. Returns "" when it genuinely cannot be found.
+//
+// Tries three things in order, because the single cwd-derived lookup this
+// replaces was the reason `service install` could silently DESTROY a working
+// record: the meta is written whole, so a run from outside the checkout (say
+// `sudo dejima service install --system` typed from $HOME) resolved nothing,
+// wrote SourceDir:"" over a good value, and left the daemon unable to update
+// itself. Preserving a previously recorded checkout is the important part.
+func ResolveSourceDir() string {
+	if cwd, err := os.Getwd(); err == nil {
+		if dir, err := FindCheckout(cwd); err == nil {
+			return dir
+		}
+	}
+	// Keep what we already knew rather than erasing it.
+	if prev, err := LoadInstallMeta(); err == nil && prev.SourceDir != "" {
+		if _, err := os.Stat(filepath.Join(prev.SourceDir, "go.mod")); err == nil {
+			return prev.SourceDir
+		}
+	}
+	// The path install.sh clones to, which is where a scripted install lives.
+	if home, err := os.UserHomeDir(); err == nil {
+		candidate := filepath.Join(home, ".dejima-src")
+		if _, err := os.Stat(filepath.Join(candidate, "go.mod")); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}

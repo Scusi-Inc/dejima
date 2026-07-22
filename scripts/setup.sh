@@ -331,13 +331,16 @@ if ! command -v go >/dev/null 2>&1; then
     exit 1
 fi
 ok "Go: $(go version | awk '{print $3}')"
-make build
-ok "built bin/dejima, bin/dejimad"
+# NB: no `make build` here. The install target below depends on build, and the
+# build targets are .PHONY with no file prerequisites, so make re-runs them
+# unconditionally — calling both meant four `go build` invocations per install
+# and the user watching the "Build binaries" work repeat under "Install".
+ok "Go toolchain ready"
 
 # ---------------------------------------------------------------------------
 # 3. Install to /usr/local/bin (or $PREFIX)
 # ---------------------------------------------------------------------------
-bold "4. Install binaries"
+bold "4. Build & install binaries"
 make install
 ok "installed dejima + dejimad"
 
