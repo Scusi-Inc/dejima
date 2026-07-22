@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/aoos/dejima/internal/service"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,19 +17,55 @@ func withDejimaHome(t *testing.T) string {
 	return filepath.Join(home, ".dejima")
 }
 
-func TestDiagnoseLocalDaemon_SocketMissing(t *testing.T) {
-	withDejimaHome(t) // no ~/.dejima/dejimad.sock created
+// The missing-socket remedy forks on how the daemon is supervised, so drive
+// diagnosisNotRunning directly with each supervision state.
+//
+// Testing it through diagnoseLocalDaemon() instead made the result depend on
+// whether the machine RUNNING the tests happens to have dejimad installed:
+// service.Detect() is a real probe, so on a developer's own host it reported
+// "managed" and the test failed against a correct implementation. Setting HOME
+// to a temp dir isolates the socket path but not the system service.
+func TestDiagnoseNotRunning(t *testing.T) {
+	const sock = "/tmp/dejima-test/dejimad.sock"
 
-	d := diagnoseLocalDaemon()
-	if !strings.Contains(d.Cause, "doesn't exist yet") {
-		t.Fatalf("missing-socket cause should say the socket doesn't exist; got %q", d.Cause)
-	}
-	if !hasStepContaining(d.Steps, "dejimad --foreground") {
-		t.Errorf("missing-socket steps should offer a foreground start; got %v", d.Steps)
-	}
-	if !hasStepContaining(d.Steps, "dejima service install") {
-		t.Errorf("missing-socket steps should offer install; got %v", d.Steps)
-	}
+	t.Run("nothing installed", func(t *testing.T) {
+		d := diagnosisNotRunning(service.Supervision{Mode: "none"}, sock)
+		if !strings.Contains(d.Cause, "doesn't exist yet") {
+			t.Fatalf("cause should say the socket doesn't exist; got %q", d.Cause)
+		}
+		if !hasStepContaining(d.Steps, "dejimad --foreground") {
+			t.Errorf("should offer a foreground start; got %v", d.Steps)
+		}
+		if !hasStepContaining(d.Steps, "dejima service install") {
+			t.Errorf("should offer install; got %v", d.Steps)
+		}
+	})
+
+	t.Run("managed but no socket", func(t *testing.T) {
+		// Registered with a service manager yet no socket: it is crash-looping,
+		// so the remedy is logs, not install.
+		d := diagnosisNotRunning(service.Supervision{Managed: true, Mode: "launchd-system"}, sock)
+		if !strings.Contains(d.Cause, "failing to start") {
+			t.Errorf("cause should say it's failing to start; got %q", d.Cause)
+		}
+		if !hasStepContaining(d.Steps, "dejima logs") && !hasStepContaining(d.Steps, "log") {
+			t.Errorf("should point at logs; got %v", d.Steps)
+		}
+	})
+
+	t.Run("installed but not loaded", func(t *testing.T) {
+		// Detect() writes the exact remediation into Concern; it must survive.
+		const concern = "sudo dejima service restart --system"
+		d := diagnosisNotRunning(service.Supervision{
+			Mode: "launchd-system", Summary: "system LaunchDaemon present", Concern: concern,
+		}, sock)
+		if !strings.Contains(d.Cause, "installed but not loaded") {
+			t.Errorf("cause should say installed-but-not-loaded; got %q", d.Cause)
+		}
+		if !hasStepContaining(d.Steps, concern) {
+			t.Errorf("should carry Detect()'s remediation %q; got %v", concern, d.Steps)
+		}
+	})
 }
 
 func TestDiagnoseLocalDaemon_SocketStale(t *testing.T) {
