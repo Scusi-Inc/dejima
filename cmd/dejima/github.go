@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/api"
+	"io"
+	"os"
 )
 
 // newGithubCmd is the self-serve GitHub identity group: a team member connects
@@ -27,7 +29,8 @@ func newGithubCmd() *cobra.Command {
 // No token is ever pasted or handled client-side. If the daemon has no OAuth app
 // configured, start returns an error whose message points at the PAT path.
 func newGithubConnectCmd() *cobra.Command {
-	var makeDefault, shared, noOpen bool
+	var makeDefault, shared, noOpen, tokenStdin bool
+	var token string
 	cmd := &cobra.Command{
 		Use:   "connect [name]",
 		Short: "Connect your GitHub via a guided sign-in (device flow — no token to paste).",
@@ -50,13 +53,26 @@ func newGithubConnectCmd() *cobra.Command {
 				name = strings.TrimSpace(args[0])
 			}
 
+			if tokenStdin {
+				b, rerr := io.ReadAll(os.Stdin)
+				if rerr != nil {
+					return fmt.Errorf("read token from stdin: %w", rerr)
+				}
+				token = strings.TrimSpace(string(b))
+			}
+			// An explicitly supplied token means "use this", so don't start a
+			// device flow the operator has already opted out of.
+			if strings.TrimSpace(token) != "" {
+				return connectGitHubViaToken(ctx, c, name, token, makeDefault, shared)
+			}
+
 			start, err := c.GitHubDeviceStart(ctx)
 			if err != nil {
 				// A self-hosted daemon has no OAuth app, so guided sign-in is dark
 				// by default. Don't dead-end on the command the operator was just
 				// told to run — complete the job over the token path instead.
 				if deviceFlowUnconfigured(err) {
-					return connectGitHubViaToken(ctx, c, name, makeDefault, shared)
+					return connectGitHubViaToken(ctx, c, name, token, makeDefault, shared)
 				}
 				return err
 			}
@@ -116,6 +132,8 @@ func newGithubConnectCmd() *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().StringVar(&token, "token", "", "connect with this GitHub token instead of a guided sign-in (for daemons with no OAuth app and no gh CLI)")
+	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read the GitHub token from stdin (keeps it out of your shell history and the process list)")
 	cmd.Flags().BoolVar(&makeDefault, "default", false, "make this the daemon's default identity (host owner only)")
 	cmd.Flags().BoolVar(&shared, "shared", false, "let every tenant's islands use this identity (host owner only)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "don't auto-open the browser (just print the URL + code)")

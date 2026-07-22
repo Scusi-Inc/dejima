@@ -30,3 +30,16 @@ func TestDeviceFlowUnconfiguredDetection(t *testing.T) {
 		}
 	}
 }
+
+// The token ladder must not require the gh CLI. A self-hosted daemon has no
+// OAuth app, so guided sign-in is dark; if the only remaining route also needs
+// gh, a host without it cannot connect GitHub at all — which is exactly where
+// an operator landed: a window that exited 1 saying "gh CLI not found".
+func TestConnectCommandExposesTokenFlags(t *testing.T) {
+	connect := newGithubConnectCmd()
+	for _, name := range []string{"token", "token-stdin"} {
+		if connect.Flags().Lookup(name) == nil {
+			t.Errorf("`github connect` is missing --%s; a host without gh has no way to supply a token", name)
+		}
+	}
+}

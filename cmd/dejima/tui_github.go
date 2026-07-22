@@ -137,6 +137,6 @@ func (m tuiModel) renderGithubView() string {
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(styleMuted.Render("  [c] connect GitHub (guided sign-in)   [r] reload   [esc] back"))
+	b.WriteString(styleMuted.Render("  [c] connect GitHub   [r] reload   [esc] back"))
 	return b.String()
 }

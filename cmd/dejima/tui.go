@@ -3118,11 +3118,16 @@ func (m tuiModel) renderHeader() string {
 		"",
 		// The static "each island is a repo in its own container" line explained
 		// the product to someone already looking at it, every single frame. The
-		// rotating tip earns that row instead; a blank line keeps it separated
-		// from the key legend below.
+		// rotating tip earns that row instead.
+		//
+		// Tip sits directly ON the key legend deliberately: both answer "what can
+		// I do here", so they read as one block. The spare row goes below them
+		// instead, separating that guidance from the server line, which is status
+		// rather than something to act on. Floating the tip between two blanks
+		// left it looking orphaned. Still exactly 7 rows, to match the logo.
 		tipLine,
-		"",
 		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open agent(s)  ·  ") + styleAccent.Render(">") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("s") + styleMuted.Render(" settings  ·  ") + styleAccent.Render("?") + styleMuted.Render(" help"),
+		"",
 		serverLine,
 	}, "\n")
 	info = lipgloss.NewStyle().MaxWidth(infoW).Render(info)

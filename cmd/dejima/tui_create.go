@@ -873,7 +873,11 @@ func (c *creatorModel) view(width int) string {
 		b.WriteString("\n")
 		b.WriteString(styleMuted.Render("  Connect once and every island you create can clone your private repos."))
 		b.WriteString("\n\n")
-		b.WriteString("  " + styleAccent.Render("[c]") + " Connect your GitHub (guided sign-in)\n")
+		// Not necessarily "guided": on a self-hosted daemon (no OAuth app) the
+		// command falls back to the gh CLI, and failing that prompts for a token.
+		// Promising a guided sign-in that can't happen is what sent operators to
+		// a window that exited 1.
+		b.WriteString("  " + styleAccent.Render("[c]") + " Connect your GitHub\n")
 		b.WriteString("  " + styleAccent.Render("[Enter]") + " I've connected — retry the clone\n")
 		b.WriteString("  " + styleMuted.Render("[f] Create anyway, authenticate later   ·   [esc] Cancel"))
 	}
