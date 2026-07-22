@@ -1,18 +1,10 @@
 package fdlimit
 
 import (
-	"errors"
 	"net"
 	"sync"
-	"syscall"
 	"time"
 )
-
-// exhausted reports whether an accept error is descriptor exhaustion — this
-// process is out (EMFILE) or the whole system is (ENFILE).
-func exhausted(err error) bool {
-	return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE)
-}
 
 // Guard wraps ln so that descriptor exhaustion is reported instead of endured.
 //
@@ -61,11 +53,6 @@ func (g *guard) report(err error) {
 	g.lastAt = now
 	g.mu.Unlock()
 
-	soft := uint64(0)
-	var lim syscall.Rlimit
-	if syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim) == nil {
-		soft = uint64(lim.Cur)
-	}
 	g.warn("out of file descriptors accepting connections — new connections will hang or be refused until this clears",
-		"addr", g.Listener.Addr().String(), "soft_limit", soft, "failures", n, "err", err)
+		"addr", g.Listener.Addr().String(), "soft_limit", softLimit(), "failures", n, "err", err)
 }
