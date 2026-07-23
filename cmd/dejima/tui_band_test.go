@@ -82,7 +82,7 @@ func TestBandFooterAndHelpUseSlash(t *testing.T) {
 		t.Errorf("footer should advertise [/] host terminal when enabled:\n%s", got)
 	}
 	help := plain((tuiModel{width: 100}).renderHelp())
-	if !strings.Contains(help, "host terminals") {
+	if !strings.Contains(strings.ToLower(help), "host terminals") {
 		t.Errorf("help should document the host-terminals key")
 	}
 	if strings.Contains(help, "new host terminal — an uncontained shell") {

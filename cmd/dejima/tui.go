@@ -4275,6 +4275,22 @@ func (m tuiModel) renderFooterLeft() string {
 // renderHelp draws the help overlay: every key, grouped into flat, always-visible
 // sections (Island / Team / Server / TUI) — nothing hidden behind a toggle, so a
 // control like [I] invite is discoverable straight from `?`.
+// capitalizeFirst upper-cases the first letter of a help description so the line
+// leads with a capital for skimming, leaving symbol-first rows (⏎, ↑/↓) alone.
+func capitalizeFirst(s string) string {
+	for i, r := range s {
+		if r >= 'a' && r <= 'z' {
+			return s[:i] + string(r-32) + s[i+1:]
+		}
+		if r >= 'A' && r <= 'Z' {
+			return s // already capitalized
+		}
+		// A leading symbol/space: don't force a capital onto it.
+		break
+	}
+	return s
+}
+
 func (m tuiModel) renderHelp() string {
 	var b strings.Builder
 	b.WriteString(styleTitle.Render("Dejima — how to use it"))
@@ -4296,7 +4312,7 @@ func (m tuiModel) renderHelp() string {
 		for _, kv := range rows {
 			key := runewidth.FillRight(kv[0], 9)          // display-width padding (bytes ≠ cols for ⏎/↑↓)
 			prefixW := 2 + runewidth.StringWidth(key) + 2 // "  " + key + "  "
-			desc := truncateDisplay(kv[1], contentW-prefixW)
+			desc := truncateDisplay(capitalizeFirst(kv[1]), contentW-prefixW)
 			b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(key), styleMuted.Render(desc)))
 		}
 		b.WriteString("\n")
@@ -4346,9 +4362,18 @@ func (m tuiModel) renderHelp() string {
 		{"PgUp/PgDn", "scroll the detail panel (events, agents) — Ctrl-u/Ctrl-d also work"},
 		{"p", "group the island list by repo — multi-agent projects read as one"},
 		{"#", "reveal / hide agent ids (names only by default)"},
-		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
-		{"Ctrl-\\", "from inside a session: summon this dashboard — the session stays alive"},
 		{"?", "this help   ·   q quit the dashboard"},
+	})
+
+	// Chords that work WHILE attached to an agent — intercepted by `dejima
+	// connect` before the agent sees them, so they don't collide with the agent's
+	// own keys. Documented here because they're otherwise invisible.
+	sec("In an agent session", [][2]string{
+		{"Ctrl-V", "paste a clipboard image to the agent (Alt-V too; DEJIMA_PASTE_KEY)"},
+		{"Ctrl-]", "attach a local file — type/paste its path, it uploads (DEJIMA_ATTACH_KEY)"},
+		{"Ctrl-\\", "summon this dashboard — the session stays alive (when launched from here)"},
+		{"Ctrl-b d", "detach — the agent keeps running inside"},
+		{"voice", "dictate into an agent: `dejima voice <island>` (no in-session key yet)"},
 	})
 
 	// Everything above is keybindings — always visible. The rest is REFERENCE
