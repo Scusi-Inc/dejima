@@ -2110,6 +2110,7 @@ const (
 	rowIsland      rowKind = iota // an island header (also the primary, when collapsed)
 	rowAgent                      // an agent under an expanded island
 	rowAddAgent                   // the "+ add agent" affordance under an expanded island
+	rowSecrets                    // the island's secrets line, below its agents
 	rowNewIsland                  // the trailing "+ new island" affordance
 	rowTerminal                   // a host terminal (uncontained shell) in the Host section
 	rowNewTerminal                // the "+ new terminal" affordance
@@ -2193,6 +2194,10 @@ func (m tuiModel) visibleRows() []treeRow {
 				rows = append(rows, treeRow{kind: rowAgent, island: isl.Name, agentID: a.ID, depth: depth[i]})
 			}
 			rows = append(rows, treeRow{kind: rowAddAgent, island: isl.Name})
+			// Secrets sit BELOW the agents: they're island-scoped configuration,
+			// not another thing that runs. Always present, so an operator learns
+			// the feature exists without having to go looking for a keybinding.
+			rows = append(rows, treeRow{kind: rowSecrets, island: isl.Name})
 		}
 	}
 	rows = append(rows, treeRow{kind: rowNewIsland})
@@ -2378,6 +2383,9 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		}})
 		items = append(items, actionMenuItem{label: "Sub-agent budget… (spawn grant)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openSpawnGrantEditor(islandName)
+		}})
+		items = append(items, actionMenuItem{label: "Secrets… (tokens this island's tools use)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openSecretsView(islandName)
 		}})
 		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openScopeView(islandName)
@@ -2710,6 +2718,8 @@ func (m tuiModel) renderResourceEditor() string {
 func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 	row := m.currentRow()
 	switch row.kind {
+	case rowSecrets:
+		return m.openSecretsView(row.island)
 	case rowNewIsland:
 		return m.openCreator()
 	case rowAddAgent:
@@ -3474,8 +3484,18 @@ func (m tuiModel) renderList(width int) (string, int) {
 		case rowNewIsland:
 			line = styleAccent.Render("+ new island")
 		case rowAddAgent:
-			// Caps the island's child group (└); agent rows above it branch (├).
-			line = "   " + styleMuted.Render("└ + add agent")
+			// Agent rows above branch (├); the secrets row below now caps the group.
+			line = "   " + styleMuted.Render("├ + add agent")
+		case rowSecrets:
+			// Caps the island's child group (└). Always shown, so the feature is
+			// discoverable without knowing a keybinding — the count tells an
+			// operator at a glance whether this island has any.
+			isl := byName[row.island]
+			label := "🔒 secrets"
+			if n := isl.SecretsCount; n > 0 {
+				label = fmt.Sprintf("🔒 secrets (%d)", n)
+			}
+			line = "   " + styleMuted.Render("└ "+label)
 		case rowAgent:
 			isl := byName[row.island]
 			a := agentByID(isl, row.agentID)
@@ -3886,6 +3906,15 @@ func (m tuiModel) renderDetail(_ int) string {
 	if m.currentRow().kind == rowNewIsland {
 		return styleTitle.Render("+ New island") + "\n\n" +
 			styleMuted.Render("Press ⏎ to pick a repo and an agent, then launch.")
+	}
+	if r := m.currentRow(); r.kind == rowSecrets {
+		body := styleTitle.Render("🔒 Secrets") + "\n\n" +
+			styleMuted.Render("Tokens this island's tools read from the environment —\nEXPO_TOKEN, NPM_TOKEN, API keys.") + "\n\n" +
+			styleMuted.Render("Press ⏎ to view, add, or rotate. Values are never shown.") + "\n\n"
+		// The caveat belongs where someone decides what to put in, not only in
+		// the pane they see afterwards.
+		body += styleMuted.Render("Agents in this island can read these. Keeps them out of\nyour repo, and gives one place to rotate and revoke.")
+		return body
 	}
 	if m.currentRow().kind == rowAddAgent {
 		return styleTitle.Render("+ Add agent") + "\n\n" +

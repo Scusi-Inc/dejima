@@ -180,7 +180,9 @@ func TestRenderListGlyphs(t *testing.T) {
 		"◉",                     // a1 has an attached viewer → presence badge
 		"needs you",             // a1's waiting-for-input normalized to the call-to-action word
 		"stopped",               // a2 session is stopped
-		"├ ", "└ + add agent",   // tree connectors group the island's children
+		// Tree connectors group the island's children. The secrets row now caps
+		// the group (└), so add-agent branches (├) like the agent rows above it.
+		"├ ", "├ + add agent", "└ 🔒 secrets",
 		"+ new island",
 	} {
 		if !strings.Contains(bare, want) {

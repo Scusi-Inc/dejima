@@ -2829,6 +2829,14 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 			}
 		}
 	}
+	// Secret COUNT for the dashboard's per-island row. Reads the island's
+	// metadata file only — never the keychain — so it stays cheap enough for the
+	// poll and can't trigger a keychain access prompt.
+	if store, err := secrets.OpenIsland(); err == nil {
+		if metas, lerr := store.List(p.Name); lerr == nil {
+			info.SecretsCount = len(metas)
+		}
+	}
 	if status, err := s.rt.Status(ctx, p.ContainerName()); err == nil {
 		info.Container = string(status)
 		if status == runtime.StatusRunning {

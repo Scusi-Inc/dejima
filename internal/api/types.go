@@ -30,9 +30,13 @@ type IslandInfo struct {
 	// owner-scoping rules) — so clone/push will fail. A health surface so the
 	// operator/member can re-connect (docs/github-identities.md), not a silent
 	// break. Not set for islands that name no identity.
-	GitHubCredMissing bool   `json:"github_cred_missing,omitempty"`
-	State             string `json:"state"`     // desired state from config
-	Container         string `json:"container"` // observed status from runtime
+	GitHubCredMissing bool `json:"github_cred_missing,omitempty"`
+	// SecretsCount is how many secrets the island has. Read from the per-island
+	// metadata only — never the keychain — so listing stays cheap enough for the
+	// dashboard's poll. A count, never the names' values.
+	SecretsCount int    `json:"secrets_count,omitempty"`
+	State        string `json:"state"`     // desired state from config
+	Container    string `json:"container"` // observed status from runtime
 	// NoHibernate is true when the island is pinned awake (exempt from idle
 	// auto-hibernate). Set via PATCH /v1/islands/{name} (dejima pin/unpin).
 	NoHibernate bool            `json:"no_hibernate,omitempty"`
