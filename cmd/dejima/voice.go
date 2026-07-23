@@ -28,8 +28,15 @@ func newVoiceCmd() *cobra.Command {
 	var noInject bool
 
 	cmd := &cobra.Command{
-		Use:   "voice <island>[/<agent>]",
-		Short: "Dictate into an island's agent with your voice (local, on-device transcription).",
+		Use: "voice <island>[/<agent>]",
+		// Hidden: voice dictation is roadmapped, not shipped — the Windows
+		// install path isn't automated and there's no in-session hotkey yet (see
+		// docs/roadmap.md). The engine (internal/voicein) and these commands are
+		// kept intact and callable so the rebuild starts from working code, but
+		// they're off the help/completion surface so operators don't hit a
+		// half-wired flow.
+		Hidden: true,
+		Short:  "Dictate into an island's agent with your voice (local, on-device transcription).",
 		Long: "Capture the HOST microphone, transcribe it locally with whisper.cpp (no cloud, no " +
 			"subscription — audio never leaves this machine), and inject the transcript into the " +
 			"target agent's prompt. Push-to-talk: run it, speak, press Enter to stop.\n\n" +

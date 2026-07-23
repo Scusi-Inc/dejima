@@ -28,17 +28,12 @@ const (
 // not first — plus a repeat so it recurs more often) while voice dictation isn't
 // set up, and is dropped entirely once it's ready.
 func (m tuiModel) footerTips() []string {
+	// Voice dictation is roadmapped, not wired — its tip is intentionally absent
+	// (see docs/roadmap.md). tipVoice + the boost machinery stay defined so the
+	// rebuild can re-enable them without reconstruction.
 	tips := []string{tipAttach, tipInvite}
 	if m.hostTerminalsAvailable() {
 		tips = append(tips, tipHostTerm)
-	}
-	if !m.voice.Ready() {
-		if m.voiceTipShown < voiceBoostCap {
-			tips = insertStringAt(tips, 1, tipVoice) // high, but not the very first shown
-			tips = append(tips, tipVoice)            // and a second slot → recurs more often
-		} else {
-			tips = append(tips, tipVoice) // boost eased: still in the pool, just normal rotation
-		}
 	}
 	return tips
 }

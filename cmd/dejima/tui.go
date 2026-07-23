@@ -26,7 +26,6 @@ import (
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
-	"github.com/aoos/dejima/internal/voicein"
 	"path/filepath"
 )
 
@@ -179,9 +178,7 @@ type tuiModel struct {
 	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
 	building     bool              // island image build in flight
 
-	ticks         int            // tickMsg counter: drives footer-tip rotation + occasional voice re-check
-	voice         voicein.Status // cached voice-dictation readiness (refreshed on tick + settings-open)
-	voiceTipShown int            // times the voice tip has been shown this session; eases the boost after voiceBoostCap
+	ticks int // tickMsg counter: drives footer-tip rotation + occasional voice re-check
 
 	help       bool            // help overlay visible (all key sections always shown)
 	helpMore   bool            // help: the collapsible reference (glyphs + CLI) is expanded
@@ -342,10 +339,10 @@ var editorChoices = []editorChoice{
 }
 
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 8 // editor · group-by-repo · connection target · team · check-for-updates · update · voice · github
+const settingsTopLen = 7 // editor · group-by-repo · connection target · team · check-for-updates · update · github
+// NB: voice dictation was row 6; it is roadmapped, not wired — see docs/roadmap.md.
 
 func (m tuiModel) openSettings() tuiModel {
-	m.voice = voicein.Check() // fresh status for the Voice-dictation row
 	m.settings = &settingsModel{page: settingsTop}
 	return m
 }
@@ -413,32 +410,7 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.lastNotice = "already up to date"
 				}
 				return m, nil
-			case 6: // Voice dictation — install if not ready; ready is informational
-				m.voice = voicein.Check() // re-check right now (may have changed)
-				if m.voice.Ready() {
-					// Ready: actually start dictating against the selected island
-					// rather than printing a command for the operator to retype.
-					island := m.selectedIslandName()
-					if island == "" {
-						m.lastNotice = "select an island first, then press ⏎ on Voice dictation to dictate into it"
-						return m, nil
-					}
-					m.settings = nil
-					if err := m.openVoiceWindow(island, ""); err != nil {
-						m.lastNotice = "run `dejima voice " + island + "` in a terminal to dictate"
-					} else {
-						m.lastNotice = "dictating into " + island + " — speak, then press Enter in that window"
-					}
-					return m, nil
-				}
-				m.settings = nil
-				if err := m.openVoiceInstallWindow(); err != nil {
-					m.lastNotice = "run `dejima voice install` in a terminal to set up voice dictation"
-				} else {
-					m.lastNotice = "installing voice dictation in a new window…"
-				}
-				return m, nil
-			case 7: // GitHub → the self-serve identity pane
+			case 6: // GitHub → the self-serve identity pane
 				m.settings = nil
 				return m.openGithubView()
 			}
@@ -812,18 +784,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.ticks++
-		// Re-probe voice-dictation readiness occasionally (not per frame): the first
-		// tick, then every voiceCheckTicks. Cheap (PATH + stat), and it demotes the
-		// voice footer tip once the operator has set it up.
-		if m.ticks%voiceCheckTicks == 1 {
-			m.voice = voicein.Check()
-		}
-		// At each tip-rotation boundary, count a voice-tip showing so its boost eases
-		// to normal rotation after enough exposure (don't perma-nag a veteran who
-		// deliberately skips voice — the tip stays in the pool, just stops repeating).
-		if m.ticks%tipRotateTicks == 0 && m.footerTipText() == tipVoice {
-			m.voiceTipShown++
-		}
 		if m.demo {
 			m.demoTick++ // advance the synthetic fleet so agent states churn on screen
 		}
@@ -4373,7 +4333,6 @@ func (m tuiModel) renderHelp() string {
 		{"Ctrl-]", "attach a local file — type/paste its path, it uploads (DEJIMA_ATTACH_KEY)"},
 		{"Ctrl-\\", "summon this dashboard — the session stays alive (when launched from here)"},
 		{"Ctrl-b d", "detach — the agent keeps running inside"},
-		{"voice", "dictate into an agent: `dejima voice <island>` (no in-session key yet)"},
 	})
 
 	// Everything above is keybindings — always visible. The rest is REFERENCE
@@ -4680,22 +4639,13 @@ func (m tuiModel) renderSettings() string {
 	row(3, "", "Team & invites            "+styleMuted.Render("invite a teammate, revoke access")+styleMuted.Render("  →"))
 	row(4, "", "Check for updates")
 	row(5, "", updateRow)
-	voiceRow := "Voice dictation           "
-	if m.voice.Ready() {
-		voiceRow += styleRunning.Render("ready ✓")
-	} else if miss := m.voice.Missing(); len(miss) > 0 {
-		voiceRow += styleMuted.Render("not set up · needs " + strings.Join(miss, ", ") + "  · ⏎ install")
-	} else {
-		voiceRow += styleMuted.Render("not set up  · ⏎ install")
-	}
-	row(6, "", voiceRow)
 	githubRow := "GitHub                    "
 	if miss := m.githubMissingCredIslands(); len(miss) > 0 {
 		githubRow += styleWaiting.Render(fmt.Sprintf("⚠ %d island(s) need reconnect", len(miss))) + styleMuted.Render("  →")
 	} else {
 		githubRow += styleMuted.Render("connect your GitHub for private repos") + styleMuted.Render("  →")
 	}
-	row(7, "", githubRow)
+	row(6, "", githubRow)
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()

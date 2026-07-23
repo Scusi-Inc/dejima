@@ -221,6 +221,43 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **Voice dictation — rebuild (currently DISABLED)** *(engine built, surface stashed)* —
+  the local-transcription engine (`internal/voicein`: mic capture → whisper.cpp →
+  transcript inject) is built and works **on macOS/Linux**, and the CLI
+  (`dejima voice`, `voice install`, `voice status`, `voice device`) is intact but
+  `Hidden`, off the help/settings surface. Disabled 2026-07-23 because the flow
+  is half-wired for the primary user (Windows), where it misleads more than it
+  helps. Re-enabling means, IN THIS ORDER (verifiable-first, since the Windows
+  paths can't be tested from a macOS dev box):
+
+  1. **In-session voice chord** — a client-side key intercept in `dejima connect`,
+     exactly like the Ctrl-V image-paste chord: press a chord (default TBD,
+     configurable via `DEJIMA_VOICE_KEY`, disable-able) → record on the client
+     mic → whisper transcribes locally → inject the transcript into the agent's
+     prompt as text. Press-to-start / press-to-stop (a pty has no reliable
+     key-release). Build + prove on macOS/Linux FIRST. **Recording indicator:**
+     can't draw over an agent's alt-screen (same reason `sessionNotice` is
+     suppressed) — use the terminal TITLE bar via OSC ("🎙 recording…" →
+     "transcribing…" → clear), which survives alt-screen. **Chord collision:**
+     every Ctrl-key risks shadowing an agent binding; pick a safe default, make
+     it configurable and disable-able.
+  2. **Windows voice install automation** — the actual blocker for the Windows
+     user. Today `voice install` on Windows only PRINTS manual steps. Automate:
+     `winget install Gyan.FFmpeg` + download a whisper.cpp Windows release
+     (same machinery as the model download). Known hazards, all real: whisper.cpp
+     has **no stable winget package** — versioned release zips with inconsistent
+     asset names, CPU-variant selection (wrong AVX build CRASHES), possibly
+     missing DLLs, and SmartScreen/AV quarantine; **PATH doesn't refresh** in the
+     running process after winget (the gh-in-tmux trap again — installed tools
+     stay invisible until a shell restart, so say so loudly); winget may need
+     **UAC**. Pair with the `dejima voice device` picker (dshow needs a NAMED mic
+     — headset vs webcam array — no default).
+
+  Meta-risk to plan around: the entire Windows path is UNTESTABLE from the dev
+  box, and voice already shipped broken on Windows once for exactly this reason.
+  Expect several test round-trips with the operator; build the verifiable core
+  (#1 on macOS) solid before touching the blind part (#2).
+
 - **Brokered secret access — per-use logging + approval gating** *(post secrets-manager v1)* —
   these are ONE feature, not two. With environment injection there is no read event to observe:
   a tool reads `EXPO_TOKEN` from its own process memory and nothing crosses the daemon, so
