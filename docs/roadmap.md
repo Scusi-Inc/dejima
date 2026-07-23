@@ -152,6 +152,8 @@ home is here.
 3. **Audited MCP brokering** — deny-by-default grants of MCP servers into an island, every call ledgered. Table stakes (MCP is the default agent tool layer) *and* a differentiator (nobody audits it). (weeks)
 4. **Language SDKs (Python + TS) + OpenAPI spec** — `pip install dejima-sdk` / npm. Thin clients over the existing API; generate the request/response client from an OpenAPI spec (API changes = a regen, not hand-edits), hand-write only the PTY-stream ergonomics. Ship now with a "0.x — may change" note; drops example snippets into the API docs for free. (week+ each)
 
+5. **Per-island secrets manager** — managed storage for the access tokens agents' tools need (EAS, npm, API keys), so they stop living in repos, shell profiles, and chat messages. Per-island scope, values never leave the daemon, injected via a parsed (never sourced) read-only mount that rotates live, a deny-list covering loader/interpreter/git execution vectors **and dejima's own `HTTPS_PROXY`** (a secret by that name would silently switch off egress containment), values never displayed after entry, and log masking. Explicitly does NOT hide values from agents in the island — same property as Vault/Doppler/`gh` — and the copy says so. Full design: [`secrets-manager-spec.md`](secrets-manager-spec.md). (days)
+
 Correctly deferred (NOT in this queue): microVM, multi-tenant SaaS, cross-host orchestration, in-Dejima agent orchestration.
 
 ### 🛤️ Parallel lanes — up to 4 agents without collisions
@@ -218,6 +220,18 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 ## 🔭 Later / exploratory (NOT launch-blocking)
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
+
+- **Brokered secret access — per-use logging + approval gating** *(post secrets-manager v1)* —
+  these are ONE feature, not two. With environment injection there is no read event to observe:
+  a tool reads `EXPO_TOKEN` from its own process memory and nothing crosses the daemon, so
+  "agent X used this secret at 15:42" is unobtainable by construction. Both per-use audit and
+  per-use approval become possible only if the agent must *ask* (`dejima secret get NAME` over
+  the island token API), which also unlocks rate limiting and reuses the pending-actions
+  machinery in [`action-gate-spec.md`](action-gate-spec.md). The `require_approval` field is
+  stored from secrets-manager v1 so this lands without a migration. Cost: tools don't fetch
+  natively, so the agent wires it by hand and the value re-enters that shell's environment —
+  brokering removes *ambient* exposure and buys the audit trail; it does not make a value
+  unreadable. See [`secrets-manager-spec.md`](secrets-manager-spec.md) § Deferred.
 
 - **Native multi-agent tiled/split live view in the TUI** *(post-v1, consider)* — today,
   seeing several agents' *live* terminals at once needs either a terminal with a "new-window
@@ -298,6 +312,33 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   a **separate host/VM**, not a second daemon (which collides on `:7273`/`:7274`). Per-user-port
   daemons are buildable but arguably off-thesis (containment favors separate hosts for separate
   operators) — park unless demand is real. Relates to the multi-host question above.
+
+---
+
+## 🌐 Website + docs backlog
+
+The site and README lag the shipped feature set — found 2026-07-22 while adding
+the secrets manager to the feature list. Both of these are user-facing, on by
+default (egress) or fully built (voice), and appear in **neither** `README.md`
+nor `index.html`:
+
+- [x] **README `What you get`** — added the egress gate + voice dictation entries.
+- [ ] **`index.html` `#features`** — same two, plus the site has no mention of
+      egress control at all, which is one of the stronger containment claims
+      (see every destination an island reaches; allow/deny by host, no restart).
+- [ ] **Secrets manager** — announce on the site once built. Copy must state
+      plainly that it does NOT hide values from agents in the island; the
+      feature is repo/chat hygiene, central rotation, and audit, not a boundary.
+      Overclaiming here would be worse than shipping nothing, because operators
+      would put things in it they shouldn't. See
+      [`secrets-manager-spec.md`](secrets-manager-spec.md).
+- [ ] **Voice: platform table** — the site should say voice runs on the machine
+      with the microphone (not the daemon host), and that macOS/Linux install
+      via `dejima voice install` while Windows needs ffmpeg + whisper.cpp by hand.
+      This confused an operator driving a Mac mini from a Windows client.
+- [ ] **Audit ledger + SSH façade** — also shipped, also absent from the site.
+      Worth a sweep of `README.md` § `What you get` against the actual CLI verbs
+      rather than fixing these one at a time as they're noticed.
 
 ---
 

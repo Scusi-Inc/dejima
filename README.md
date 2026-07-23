@@ -34,6 +34,8 @@ A note on "API": throughout the docs, *the Dejima API* refers to Dejima's own HT
 - **Persistent sessions** — long-running agent work survives disconnects and host reboots via tmux + named volumes (interactive agents) or supervised processes with captured logs (headless agents).
 - **Multi-device attach** — drive the same island from a laptop, phone, or web client. Shared screen, presence-aware.
 - **Direct push to GitHub** — the daemon holds one or more GitHub identities (e.g. `work` and `personal`); each island clones and pushes as the one it picks, so `git push` just works from any device. See [`docs/github-identities.md`](docs/github-identities.md).
+- **Egress gate** — island outbound traffic routes through a daemon-run proxy, so you can see every destination each island reaches and allow/deny by host, with no restart. Observe-first by default; disable with `--no-egress-proxy`.
+- **Voice dictation** — speak into an island's agent. Capture and transcription (whisper.cpp) run on the machine you're sitting at, on-device; audio never leaves it and only the transcript reaches the island. macOS, Linux, and Windows.
 - **API-first** — the CLI is one client of the Dejima API. Mobile apps, Slack bots, custom integrations target the same surface.
 - **Host terminals (opt-in)** — resumable, separately-instanced operator shells on the daemon host itself, for server navigation/repair — the tmux+ssh painkiller. Uncontained and operator-only (`dejimad --host-terminals`); agents stay contained. See [`docs/host-terminals.md`](docs/host-terminals.md).
 
@@ -392,6 +394,7 @@ For more, see [`docs/v1-spec.md`](docs/v1-spec.md).
 See [`docs/roadmap.md`](docs/roadmap.md) for the full prioritized list. Highlights:
 
 - **v1.x hardening** — container watchdog, `panic`, Keychain-backed secrets, idle auto-hibernate. (`upgrade` and credential refresh have shipped.)
+- **Per-island secrets manager** — managed storage for the tokens agents' tools need, so they stop living in repos and shell profiles. Deliberately does *not* hide values from agents in the island; see [`docs/secrets-manager-spec.md`](docs/secrets-manager-spec.md).
 - **v2** — trust-on-first-use for new device attaches (the 2FA-shaped feature), audit ledger, backup/restore, microVM backend, MCP brokering, multi-user / RBAC, web/PWA reference client.
 - **Tier-2 integrations** (separate repos): `dejima-slack`, `dejima-telegram`, ntfy.sh and macOS notification helpers.
 
