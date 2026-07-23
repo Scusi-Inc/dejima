@@ -177,7 +177,12 @@ func (m tuiModel) openVoiceInstallWindow() error {
 		exe = "dejima"
 	}
 	title := "voice-install"
-	inner := fmt.Sprintf("DEJIMA_TAB_TITLE=%s exec %s voice install", shquote(title), shquote(exe))
+	// NOT exec: voice install runs brew + a ~142 MB model download (minutes),
+	// and an exec'd window closes the instant it finishes — success or a brew
+	// error, the operator sees neither. Keep the shell so the output stays, and
+	// pause so the window doesn't vanish before it's read.
+	inner := fmt.Sprintf("DEJIMA_TAB_TITLE=%s %s voice install; printf '\n[voice install finished — press Enter to close]'; read _",
+		shquote(title), shquote(exe))
 	switch {
 	case os.Getenv("TMUX") != "":
 		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
