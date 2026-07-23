@@ -156,6 +156,13 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 		keyGap:       m.agentKeyGap,
 	}
 	m.creator = c
+	if m.demo {
+		// Site recording: a fixed synthetic repo list, no filesystem scan (which
+		// would leak the operator's real repos), no real create.
+		c.step, c.root, c.scanning = stepPick, "~/code", false
+		c.repos = demoRepos()
+		return m, nil
+	}
 	if cfg.RepoRoot == "" {
 		pwd, _ := os.Getwd()
 		c.step = stepRoot

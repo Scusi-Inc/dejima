@@ -59,6 +59,9 @@ func (m tuiModel) openSecretsView(island string) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) loadSecretsCmd(island string) tea.Cmd {
+	if m.demo {
+		return func() tea.Msg { return islandSecretsMsg{island: island, secrets: demoSecrets(island)} }
+	}
 	c := m.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -71,6 +74,17 @@ func (m tuiModel) loadSecretsCmd(island string) tea.Cmd {
 // putSecretCmd sets or rotates a secret, then reloads. The value is dropped the
 // moment the request is built — it lives no longer in the client than it must.
 func (m tuiModel) putSecretCmd(island, name, value string) tea.Cmd {
+	if m.demo {
+		// Demo: no daemon, no real value stored — just show it landing, so the
+		// recording is deterministic and leaks nothing.
+		return func() tea.Msg {
+			list := append(demoSecrets(island), secrets.Meta{
+				Name: name, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+				Fingerprint: secrets.Fingerprint(value),
+			})
+			return islandSecretsMsg{island: island, secrets: list, added: name}
+		}
+	}
 	c := m.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -85,6 +99,17 @@ func (m tuiModel) putSecretCmd(island, name, value string) tea.Cmd {
 
 // removeSecretCmd deletes a secret and reloads the pane.
 func (m tuiModel) removeSecretCmd(island, key string) tea.Cmd {
+	if m.demo {
+		return func() tea.Msg {
+			kept := demoSecrets(island)[:0]
+			for _, s := range demoSecrets(island) {
+				if s.Name != key {
+					kept = append(kept, s)
+				}
+			}
+			return islandSecretsMsg{island: island, secrets: kept}
+		}
+	}
 	c := m.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
