@@ -184,6 +184,8 @@
   <li><strong>Terminal &amp; headless agents</strong> — attach to CLIs (Claude Code, Codex) or run background loops/workers.</li>
   <li><strong>Persistent sessions</strong> — survive disconnect, sleep, device switch; multiple devices share one screen.</li>
   <li><strong>Lifecycle verbs</strong> — <code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>.</li>
+  <li><strong>Egress gate</strong> — island outbound traffic routes through a daemon-run proxy: see every destination each island reaches, allow/deny by host, no restart. Observe-first by default.</li>
+  <li><strong>Per-island secrets</strong> — managed storage for the tokens an island's tools need (EAS, npm, API keys), injected as environment variables. Out of your repo, one place to rotate and revoke, scoped to the island.</li>
   <li><strong>Brokered host-file access (Port)</strong> — grant an island scoped, read-only host folders; deny-all by default.</li>
   <li><strong>Brokered MCP servers</strong> — grant an island host-curated MCP servers through a fixed method allow-list; deny-all, every call ledgered.</li>
   <li><strong>Tamper-evident ledger</strong> — every brokered file crossing is hash-chained; verify with <code>dejima audit --verify</code>.</li>
@@ -191,6 +193,18 @@
   <li><strong>HTTP/WebSocket API</strong> — one control surface for CLI, TUI, dashboards, bots.</li>
   <li><strong>Webhook events</strong> — island/agent lifecycle + agent-state pushed to your tooling.</li>
   <li><strong>Self-hosted</strong> — Mac mini / VPS / cloud VM; identical behavior, over Tailscale.</li>
+</ul>
+
+<h2 id="quality-of-life">The small stuff, handled</h2>
+<p>The day-to-day frictions of driving agents in a terminal — moving files in, keeping context, jumping around — already solved, so you stay in flow.</p>
+<ul class="qol-features">
+  <li><strong>Drag a file onto an agent</strong> — drop it into the session and it uploads into the island; the agent reads the in-island path. No <code>scp</code>, no manual copy.</li>
+  <li><strong>Paste a clipboard image</strong> — <code>Ctrl-V</code> sends the image straight to the agent (great for screenshots and mockups).</li>
+  <li><strong>Attach any local file</strong> — <code>Ctrl-]</code>, type or paste a path, it uploads and the agent gets the in-island path.</li>
+  <li><strong>Jump to the dashboard mid-session</strong> — <code>Ctrl-\</code> summons the fleet view without killing the agent; drop back in when you're done.</li>
+  <li><strong>Per-island secrets in a keystroke</strong> — a secrets row on every island; add or rotate a token inline, injected as an env var the island's tools read.</li>
+  <li><strong>One-key updates</strong> — <code>U</code> updates the client and the daemon together, with a clear warning before it restarts anything.</li>
+  <li><strong>Guided from zero</strong> — run <code>dejima</code> and the TUI walks you from an empty host to a sandboxed agent, no config file to write.</li>
 </ul>
 
 <h2 id="guides">Guides</h2>
