@@ -190,6 +190,36 @@ func (m tuiModel) openVoiceInstallWindow() error {
 	}
 }
 
+// openVoiceWindow starts a dictation session against an island in its own
+// window. Dictation is push-to-talk and interactive (speak, press Enter), so it
+// needs a terminal of its own rather than running inside the dashboard.
+//
+// It records on THIS machine's microphone and injects the transcript into the
+// island's agent through the daemon, so it works against a remote daemon.
+func (m tuiModel) openVoiceWindow(island, agentID string) error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "voice-" + island
+	target := island
+	if agentID != "" {
+		target += "/" + agentID
+	}
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s voice %s",
+		shquote(m.activeHost), shquote(title), shquote(exe), shquote(target))
+	switch {
+	case os.Getenv("TMUX") != "":
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "voice", target, "", title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima voice %s` in another terminal", target)
+	}
+}
+
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the

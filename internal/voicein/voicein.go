@@ -73,10 +73,18 @@ func recorders() []string {
 		return []string{"rec", "ffmpeg"} // sox `rec`, then ffmpeg (avfoundation)
 	case "linux":
 		return []string{"rec", "arecord", "ffmpeg"}
+	case "windows":
+		// ffmpeg's dshow input is the only broadly available capture path; sox
+		// builds for Windows are patchy and don't ship `rec` reliably.
+		return []string{"ffmpeg"}
 	default:
 		return nil
 	}
 }
+
+// needsNamedDevice reports whether capture requires naming a specific device
+// rather than addressing a system default. Only Windows/dshow does.
+func needsNamedDevice() bool { return runtime.GOOS == "windows" }
 
 // Supported reports whether this host platform has any mic-capture path.
 func Supported() bool { return len(recorders()) > 0 }
@@ -143,14 +151,18 @@ func (s Status) Ready() bool {
 // (empty when Ready). Drives the install prompt + the "not set up yet" hint.
 func (s Status) Missing() []string {
 	if !s.Supported {
-		return []string{"a supported host platform (macOS/Linux)"}
+		return []string{"a supported platform for microphone capture (macOS, Linux, or Windows)"}
 	}
 	var m []string
 	if s.WhisperBin == "" {
 		m = append(m, "whisper.cpp CLI")
 	}
 	if s.Recorder == "" {
-		m = append(m, "a microphone recorder (sox)")
+		if runtime.GOOS == "windows" {
+			m = append(m, "a microphone recorder (ffmpeg)")
+		} else {
+			m = append(m, "a microphone recorder (sox)")
+		}
 	}
 	if !s.ModelPresent {
 		m = append(m, "the speech model ("+DefaultModel+")")
@@ -192,6 +204,17 @@ func (p InstallPlan) Empty() bool { return len(p.BrewPackages) == 0 && p.ModelUR
 // packages, and the model download only when absent. Pure — unit-tested.
 func PlanInstall(st Status) InstallPlan {
 	var p InstallPlan
+	// Homebrew is macOS/Linux. On Windows the two binaries are installed by
+	// hand (see ManualSteps) — but the model download below is just HTTP, so
+	// `voice install` still does the large, fiddly part everywhere.
+	if !brewPlatform() {
+		if !st.ModelPresent {
+			p.ModelURL = modelBaseURL + DefaultModel
+			p.ModelDest = st.ModelPath
+			p.ModelSHA256 = modelSHA256[filepath.Base(st.ModelPath)]
+		}
+		return p
+	}
 	if st.WhisperBin == "" {
 		p.BrewPackages = append(p.BrewPackages, "whisper-cpp")
 	}
@@ -206,23 +229,60 @@ func PlanInstall(st Status) InstallPlan {
 	return p
 }
 
+// brewPlatform reports whether this host installs the toolchain via Homebrew.
+func brewPlatform() bool { return runtime.GOOS == "darwin" || runtime.GOOS == "linux" }
+
+// ManualSteps lists the binaries the operator must install themselves, for
+// platforms with no package-manager path wired up. Empty when nothing is
+// missing, or when the platform installs automatically.
+func ManualSteps(st Status) []string {
+	if brewPlatform() {
+		return nil
+	}
+	var steps []string
+	if st.Recorder == "" {
+		steps = append(steps, "ffmpeg (microphone capture):  winget install Gyan.FFmpeg")
+	}
+	if st.WhisperBin == "" {
+		steps = append(steps, "whisper.cpp (transcription):  download a Windows release from\n"+
+			"      https://github.com/ggerganov/whisper.cpp/releases  and put the folder\n"+
+			"      containing whisper-cli.exe on your PATH")
+	}
+	return steps
+}
+
 // recorderArgs builds the argv for a 16 kHz mono 16-bit WAV capture with the
 // given tool, writing to wav. Recording runs until the process is signalled;
 // each tool finalizes the WAV header on SIGINT/kill. Pure — unit-tested.
-func recorderArgs(tool, wav string) []string {
+func recorderArgs(tool, wav string) []string { return recorderArgsFor(tool, wav, "") }
+
+// recorderArgsFor is recorderArgs with an explicit capture device, used on
+// platforms where there is no system default to address (Windows/dshow). device
+// is ignored elsewhere. Pure — unit-tested per platform.
+func recorderArgsFor(tool, wav, device string) []string {
+	return recorderArgsOn(runtime.GOOS, tool, wav, device)
+}
+
+// recorderArgsOn is recorderArgsFor with the platform passed in, so every
+// platform's argv can be asserted from any machine. The Windows branch in
+// particular is unreachable from a developer Mac otherwise, and it is the one
+// that differs structurally (a named device rather than a default).
+func recorderArgsOn(goos, tool, wav, device string) []string {
 	switch tool {
 	case "rec": // sox
 		return []string{"-q", "-c", "1", "-r", "16000", "-b", "16", wav}
 	case "arecord":
 		return []string{"-q", "-f", "S16_LE", "-c", "1", "-r", "16000", wav}
 	case "ffmpeg":
-		in := "default"
-		if runtime.GOOS == "darwin" {
-			in = ":default" // avfoundation default audio device
-		}
-		f := "alsa"
-		if runtime.GOOS == "darwin" {
-			f = "avfoundation"
+		f, in := "alsa", "default"
+		switch goos {
+		case "darwin":
+			f, in = "avfoundation", ":default"
+		case "windows":
+			// dshow has no default device: the name is required and is passed
+			// as a single `audio=<name>` argument (names contain spaces and
+			// parentheses, so it must not be split).
+			f, in = "dshow", "audio="+device
 		}
 		return []string{"-hide_banner", "-loglevel", "error", "-f", f, "-i", in,
 			"-ac", "1", "-ar", "16000", "-y", wav}

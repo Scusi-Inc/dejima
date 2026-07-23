@@ -415,7 +415,19 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 6: // Voice dictation — install if not ready; ready is informational
 				m.voice = voicein.Check() // re-check right now (may have changed)
 				if m.voice.Ready() {
-					m.lastNotice = "voice dictation is ready — run `dejima voice <island>`"
+					// Ready: actually start dictating against the selected island
+					// rather than printing a command for the operator to retype.
+					island := m.selectedIslandName()
+					if island == "" {
+						m.lastNotice = "select an island first, then press ⏎ on Voice dictation to dictate into it"
+						return m, nil
+					}
+					m.settings = nil
+					if err := m.openVoiceWindow(island, ""); err != nil {
+						m.lastNotice = "run `dejima voice " + island + "` in a terminal to dictate"
+					} else {
+						m.lastNotice = "dictating into " + island + " — speak, then press Enter in that window"
+					}
 					return m, nil
 				}
 				m.settings = nil
@@ -2779,6 +2791,18 @@ func (m tuiModel) openAgentLogs(name, agentID string) (tea.Model, tea.Cmd) {
 }
 
 // currentRow returns the selected tree row, or a zero row if none.
+// selectedIslandName returns the island the cursor is on — the island itself,
+// or the island owning the selected agent row. "" when nothing is selected.
+func (m tuiModel) selectedIslandName() string {
+	if r := m.currentRow(); r.island != "" {
+		return r.island
+	}
+	if len(m.islands) == 1 {
+		return m.islands[0].Name // unambiguous with a single island
+	}
+	return ""
+}
+
 func (m tuiModel) currentRow() treeRow {
 	rows := m.visibleRows()
 	if m.selected < 0 || m.selected >= len(rows) {
