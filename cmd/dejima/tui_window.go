@@ -166,65 +166,6 @@ func (m tuiModel) openGithubConnectWindow() error {
 	}
 }
 
-// openVoiceInstallWindow launches `dejima voice install` in a new window/tab so
-// the TUI stays up while the (interactive brew + model-download) install runs.
-// It's host-local — no island/target — so no DEJIMA_HOST is needed. Returns an
-// error the caller turns into a "run it in a terminal" hint when a new window
-// isn't possible (plain non-tmux Linux/macOS).
-func (m tuiModel) openVoiceInstallWindow() error {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "dejima"
-	}
-	title := "voice-install"
-	// NOT exec: voice install runs brew + a ~142 MB model download (minutes),
-	// and an exec'd window closes the instant it finishes — success or a brew
-	// error, the operator sees neither. Keep the shell so the output stays, and
-	// pause so the window doesn't vanish before it's read.
-	inner := fmt.Sprintf("DEJIMA_TAB_TITLE=%s %s voice install; printf '\n[voice install finished — press Enter to close]'; read _",
-		shquote(title), shquote(exe))
-	switch {
-	case os.Getenv("TMUX") != "":
-		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
-	case goruntime.GOOS == "darwin":
-		return openMacTerminal(inner)
-	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, "voice install", "", "", title, nil, "")
-	default:
-		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima voice install` in another terminal")
-	}
-}
-
-// openVoiceWindow starts a dictation session against an island in its own
-// window. Dictation is push-to-talk and interactive (speak, press Enter), so it
-// needs a terminal of its own rather than running inside the dashboard.
-//
-// It records on THIS machine's microphone and injects the transcript into the
-// island's agent through the daemon, so it works against a remote daemon.
-func (m tuiModel) openVoiceWindow(island, agentID string) error {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "dejima"
-	}
-	title := "voice-" + island
-	target := island
-	if agentID != "" {
-		target += "/" + agentID
-	}
-	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s voice %s",
-		shquote(m.activeHost), shquote(title), shquote(exe), shquote(target))
-	switch {
-	case os.Getenv("TMUX") != "":
-		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
-	case goruntime.GOOS == "darwin":
-		return openMacTerminal(inner)
-	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, "voice", target, "", title, nil, m.activeHost)
-	default:
-		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima voice %s` in another terminal", target)
-	}
-}
-
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the
