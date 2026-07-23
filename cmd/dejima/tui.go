@@ -951,6 +951,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				v.err = msg.err.Error()
 			} else {
 				v.err, v.secrets = "", msg.secrets
+				if v.cursor >= len(v.secrets) { // a removal can shrink the list
+					v.cursor = max(0, len(v.secrets)-1)
+				}
+				if msg.added != "" {
+					v.restartPending = true
+					v.notice = "stored " + msg.added
+				}
 			}
 		}
 		return m, nil
@@ -3575,8 +3582,8 @@ const (
 	glyphAgent    = "◆" // an AI agent you attach to (claude-code, codex, …)
 	glyphHeadless = "■" // headless agent — supervised background process, logs only
 
-	// glyphSecrets marks the per-island secrets row: U+26BF SQUARED KEY, a
-	// monochrome lock/key symbol.
+	// glyphSecrets marks the per-island secrets row: U+26B7, a monochrome
+	// boxless key symbol.
 	//
 	// NOT the padlock emoji (U+1F512). Emoji are East Asian WIDE — the terminal
 	// draws two cells — but lipgloss/wcwidth count the text-presentation form as
@@ -3586,7 +3593,7 @@ const (
 	// The VARIATION SELECTOR-15 trick suppressed the colour but not the width,
 	// so it kept the bug. A text-default symbol that measures as one cell
 	// everywhere is the only safe kind here — like ◆/■/❯ above.
-	glyphSecrets = "⚿"
+	glyphSecrets = "⚷"
 )
 
 // agentTypeShell mirrors handlers.Shell — the plain-terminal agent type. Kept as
