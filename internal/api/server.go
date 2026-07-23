@@ -32,6 +32,7 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/secrets"
 	"github.com/aoos/dejima/internal/spawn"
 	"github.com/aoos/dejima/internal/usage"
 	"github.com/aoos/dejima/internal/version"
@@ -2545,6 +2546,13 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	if dir, err := paths.LLMIslandConfigPath(p.Name); err == nil {
 		_ = os.RemoveAll(dir)
 	}
+	// Per-island secrets: values (keychain entries) AND the metadata + the
+	// materialized mount file. Scoped to the island, so they must not outlive
+	// it — and keychain entries would otherwise persist with nothing pointing
+	// at them, invisible to every surface.
+	if store, err := secrets.OpenIsland(); err == nil {
+		_ = store.Purge(p.Name)
+	}
 	return project.Delete(p.Name)
 }
 
@@ -3085,6 +3093,16 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 				})
 			}
 		}
+	}
+
+	// Per-island secrets: a KEY=VALUE file the island PARSES (never sources).
+	// Absent when the island has no secrets, so no mount is added.
+	if secretsPath, err := islandSecretsMount(p); err != nil {
+		return nil, err
+	} else if secretsPath != "" {
+		binds = append(binds, runtime.BindMount{
+			HostPath: secretsPath, ContainerPath: "/opt/host/secrets.env", ReadOnly: true,
+		})
 	}
 
 	claudeDir, err := paths.HostClaudeDir()

@@ -75,19 +75,30 @@ and enforceable, since island tokens are already island-scoped.
 
 ## Storage
 
+Values go through the **existing keychain-backed store** in
+`internal/secrets` — macOS Keychain via `security`, libsecret via
+`secret-tool`, and a 0600 file when neither is usable. That fallback is
+deliberate, not a failure mode: a `--system` daemon starts at boot *before any
+login*, when the login keychain is still locked.
+
+Non-sensitive bookkeeping lives separately, which keeps `List` cheap and
+keychain-free:
+
 ```
-~/.dejima/secrets/<island>/store.json      0600, daemon-side
+keychain account "island:<name>:<KEY>"     ← the value
+~/.dejima/secrets/islands/<name>/meta.json ← 0600: names, timestamps, set_by,
+                                             fingerprint, require_approval
 ```
 
 Values never leave the daemon: absent from API responses, `dejima inspect`,
-island exports, the rescue bundle, and the ledger.
+island exports, the rescue bundle, and the ledger. `Meta` has no field for a
+value, so no code path can serialize one outward by accident.
 
-Per entry: `name`, `value`, `created_at`, `updated_at`, `set_by`, and
-`require_approval` (written from day one, **unenforced** — see Deferred).
-
-Encryption at rest is deliberately not in v1. `githubid` uses 0600 files, and a
-key stored beside its ciphertext is theatre. macOS Keychain or an operator
-passphrase are the honest options later.
+(An earlier draft of this spec planned a plain 0600 JSON store and deferred
+encryption at rest. That was wrong — the keychain store already existed, so
+using it is strictly better and costs nothing. `DEJIMA_SECRETS_BACKEND=file`
+forces the file backend for tests and for hosts where a locked keychain is more
+nuisance than protection.)
 
 ## Delivery into the island
 

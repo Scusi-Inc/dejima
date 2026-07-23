@@ -106,6 +106,25 @@ COPY image/write-primer.sh /opt/dejima/write-primer.sh
 COPY image/island-primer.md /opt/dejima/island-primer.md
 RUN chmod +x /opt/dejima/write-primer.sh
 
+# Dejima-managed per-island secrets. The daemon bind-mounts a KEY=VALUE file at
+# /opt/host/secrets.env; this script PARSES it and emits `export` lines, and the
+# profile.d hook evals that output. Sourcing the file directly would make bash
+# EXECUTE it, so a token containing a backtick or $(...) would run as a command
+# in every new shell — the parser is what keeps values as data.
+#
+# profile.d (not a per-agent shim) because every interactive agent launches with
+# `bash -l`: one hook covers claude-code, codex, shell and anything added later.
+COPY image/load-secrets.sh /opt/dejima/load-secrets.sh
+RUN chmod +x /opt/dejima/load-secrets.sh && \
+    printf '%s\n' \
+      '# Dejima: export per-island secrets (see /opt/dejima/load-secrets.sh).' \
+      '# Eval OUR quoted output, never the mounted file itself.' \
+      'if [ -r /opt/host/secrets.env ]; then' \
+      '  eval "$(/opt/dejima/load-secrets.sh)" || true' \
+      'fi' \
+      > /etc/profile.d/10-dejima-secrets.sh && \
+    chmod 0644 /etc/profile.d/10-dejima-secrets.sh
+
 # The npm global prefix lives OUTSIDE /home/dejima so it is NOT captured by the
 # per-island home volume. That keeps bundled-agent binaries image-managed
 # (refreshed on `dejima upgrade`) while the home volume persists only auth/state
