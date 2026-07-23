@@ -2301,9 +2301,22 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 					func(localPath string, bracketed []byte) bool { // pasted/dropped file path
 						switch pasteDropPolicy(altScreen.active.Load()) {
 						case pasteAsText:
-							// Disabled, or a full-screen TUI is attached: never silently
-							// upload — forward the path to the agent as plain text.
+							// Auto-upload disabled: forward the path to the agent as
+							// plain text; explicit upload stays on Ctrl-].
 							return false
+						case pasteUpload:
+							// A file dropped into an agent's TUI: upload and inject the
+							// in-island path, same as a clipboard image. No confirm —
+							// the alt-screen can't draw one, and a real-file drop is
+							// deliberate.
+							islandPath, err := bridge.drop(localPath)
+							if err != nil {
+								sessionNotice("\r\n[dejima] upload failed: %v\r\n", err)
+								return false // fall back to forwarding the path as text
+							}
+							inject(islandPath)
+							sessionNotice("\r\n[dejima] uploaded %s → %s\r\n", filepath.Base(localPath), islandPath)
+							return true
 						default: // pasteConfirm (plain shell): ask before ingesting.
 							pendingUp = &pendingUpload{path: localPath, bracketed: bracketed}
 							fmt.Fprintf(os.Stderr, "\r\n📎 %s is a file on your computer — [u] upload it to the agent · any other key = paste the path as text\r\n",

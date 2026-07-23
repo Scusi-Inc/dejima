@@ -28,8 +28,10 @@ func TestPasteDropPolicy(t *testing.T) {
 		t.Errorf("shell + enabled → %v, want pasteConfirm", got)
 	}
 	// Full-screen TUI → text (can't safely prompt over its screen).
-	if got := pasteDropPolicy(true); got != pasteAsText {
-		t.Errorf("alt-screen → %v, want pasteAsText", got)
+	// A file dropped into an agent's full-screen TUI uploads and injects the
+	// in-island path — the host path pasted as text is useless in the container.
+	if got := pasteDropPolicy(true); got != pasteUpload {
+		t.Errorf("alt-screen → %v, want pasteUpload", got)
 	}
 	// Disabled → always text, even in a shell.
 	t.Setenv("DEJIMA_PASTE_UPLOAD", "off")
