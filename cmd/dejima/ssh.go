@@ -77,7 +77,13 @@ func newSSHEnrollCmd() *cobra.Command {
 			// Write local ssh config for all islands so the editor list is ready.
 			host, port, enabled, rerr := resolveSSHEndpoint(cmd.Context())
 			if rerr != nil || !enabled {
-				fmt.Println("key authorized; SSH façade not enabled on the daemon yet (dejimad --ssh <addr>) — config skipped")
+				fmt.Println("key authorized — but the SSH façade isn't enabled on the daemon, so editor")
+				fmt.Println("config was skipped. Enable it on the daemon HOST (needs sudo):")
+				fmt.Println()
+				enable, _ := enableFacadeCommand()
+				fmt.Println("  " + enable)
+				fmt.Println()
+				fmt.Println("then re-run `dejima ssh enroll` here.")
 				return nil
 			}
 			islands, lerr := c.ListIslands(cmd.Context())
@@ -350,8 +356,7 @@ func newSSHConfigCmd() *cobra.Command {
 				return err
 			}
 			if !enabled {
-				return fmt.Errorf("the SSH façade is not enabled on the daemon; start it with " +
-					"`dejimad --ssh <addr>` (or `dejima service install --ssh :2222`)")
+				return fmt.Errorf("%s", sshFacadeSetupSteps())
 			}
 
 			// Resolve the target island list: --all = every island; else the one arg.

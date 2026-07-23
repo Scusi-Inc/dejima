@@ -147,7 +147,8 @@ func checkSSHFacade(r *doctorReport) {
 	}
 	if _, err := os.Stat(p); err != nil {
 		r.add("System", "ssh façade", "INFO",
-			"no host key yet — enable with `dejimad --ssh <addr>`, then `dejima ssh authorize <island>`", "")
+			"off — needed to open a gateway agent's UI (OpenClaw/Letta/Goose)",
+			"enable on the host with `sudo dejima service install --system --ssh <addr>:2222` (keep your flags), then `dejima ssh enroll`")
 		return
 	}
 	signer, err := sshfacade.HostSigner()

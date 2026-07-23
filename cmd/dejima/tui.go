@@ -2777,8 +2777,7 @@ const openAllConfirmThreshold = 4
 // it — the actionable nudge instead of a raw error.
 func (m tuiModel) openAgentGatewayUI(name, agentID string) (tea.Model, tea.Cmd) {
 	if m.overview == nil || m.overview.SSHAddr == "" {
-		m.lastError = "opening a gateway UI needs the daemon's SSH façade — install it with " +
-			"`dejima service install --system --ssh <addr>` on the host, then `dejima ssh enroll` here"
+		m.lastError = sshFacadeSetupStepsTUI()
 		return m, nil
 	}
 	if !canOpenNewWindow() {
@@ -4138,6 +4137,16 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		kind = "headless — background process, logs only"
 	}
 	b.WriteString(fmt.Sprintf("kind:      %s %s\n", agentGlyph(a), styleMuted.Render(kind)))
+	// Gateway agents (OpenClaw/Letta/Goose) have a web UI. Say so on the detail
+	// pane — and, when the façade that reaches it is off, that ⏎ shows the setup
+	// — so the requirement is learned by landing here, not only by a failed Enter.
+	if _, isGW := m.agentGatewayPort(d.Name, agentID); isGW {
+		if m.overview != nil && m.overview.SSHAddr != "" {
+			b.WriteString("ui:        " + styleMuted.Render("web console — ⏎ opens it in your browser") + "\n")
+		} else {
+			b.WriteString("ui:        " + styleWaiting.Render("web console — needs the SSH façade; ⏎ for setup steps") + "\n")
+		}
+	}
 	if sw, ss := agentStatus(a); sw != "" {
 		b.WriteString(fmt.Sprintf("state:     %s\n", ss.Render(sw)))
 	}

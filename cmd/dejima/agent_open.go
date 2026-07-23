@@ -77,8 +77,7 @@ func newAgentOpenCmd() *cobra.Command {
 				return err
 			}
 			if !enabled {
-				return fmt.Errorf("the SSH-façade is not enabled on the daemon; start it with " +
-					"`dejimad --ssh <addr>` (then `dejima ssh enroll` on this device) to use `agent open`")
+				return fmt.Errorf("%s", sshFacadeSetupSteps())
 			}
 
 			if localPort == 0 {

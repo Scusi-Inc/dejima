@@ -49,7 +49,11 @@ func TestGatewayUIRequiresSSHFacade(t *testing.T) {
 	if !strings.Contains(got, "SSH façade") {
 		t.Errorf("should point at enabling the SSH façade; got %q", got)
 	}
-	if !strings.Contains(got, "ssh enroll") {
-		t.Errorf("should name the enroll step; got %q", got)
+	// The nudge uses the shared TUI steps: host command + the in-TUI enroll.
+	if !strings.Contains(got, "service install") {
+		t.Errorf("should name the host enable command; got %q", got)
+	}
+	if !strings.Contains(got, "SSH setup") {
+		t.Errorf("should point at the in-TUI enroll (m → SSH setup); got %q", got)
 	}
 }
