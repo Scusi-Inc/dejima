@@ -111,6 +111,36 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 	}
 }
 
+// openAgentGatewayWindow opens `dejima agent open <island> <agentID>` in a new
+// window — the forward-and-open-browser flow for a gateway agent (OpenClaw,
+// Letta, Goose). Its own window because it holds an SSH tunnel until closed.
+// NOT exec: on failure (SSH façade off, etc.) the window stays so the operator
+// reads the error instead of a flash.
+func (m tuiModel) openAgentGatewayWindow(island, agentID string) error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "ui-" + island
+	// agent id is a POSITIONAL arg to `agent open`, not --agent.
+	arg := shquote(island)
+	if agentID != "" {
+		arg += " " + shquote(agentID)
+	}
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s %s agent open %s; printf '\n[gateway tunnel closed — press Enter]'; read _",
+		shquote(m.activeHost), shquote(title), shquote(exe), arg)
+	switch {
+	case os.Getenv("TMUX") != "":
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "agent open", island, agentID, title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima agent open %s` in another terminal", island)
+	}
+}
+
 // openHostTermWindow attaches to a host terminal (`dejima term attach <id>`) in a
 // separate window/tab, so the dashboard stays up — the same "don't hijack the
 // current view" behavior island shells and agent sessions already get. The tab is

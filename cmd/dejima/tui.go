@@ -126,6 +126,7 @@ type tuiModel struct {
 	setupChecked bool
 	claudeSeeded bool            // daemon can seed new islands with Claude creds
 	agentKeyGap  map[string]bool // agent type → requires an LLM provider key, none configured for it
+	gatewayPorts map[string]int  // agent type → its localhost gateway port (0/absent = no UI)
 
 	selected int
 	grouped  bool // group the island list by repo (toggled with `p`)
@@ -895,6 +896,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupChecked = true
 		m.claudeSeeded = msg.claudeSeeded
 		m.agentKeyGap = msg.keyGap
+		m.gatewayPorts = msg.gatewayPort
 		return m, nil
 
 	case selfBinaryChangedMsg:
@@ -2307,6 +2309,33 @@ func (m tuiModel) isHeadlessAgent(island, agentID string) bool {
 	return false
 }
 
+// agentGatewayPort returns the localhost gateway port for the agent (or the
+// island's primary), and whether it has one. A gateway agent (OpenClaw, Letta,
+// Goose) has a web/control UI that `dejima agent open` forwards; the TUI uses
+// this to offer "open UI" instead of only logs.
+func (m tuiModel) agentGatewayPort(island, agentID string) (int, bool) {
+	isl, ok := m.islandByName(island)
+	if !ok {
+		return 0, false
+	}
+	typ := ""
+	if agentID == "" {
+		if len(isl.Agents) > 0 {
+			typ = isl.Agents[0].Type
+		} else {
+			typ = isl.Agent
+		}
+	} else {
+		for _, a := range isl.Agents {
+			if a.ID == agentID {
+				typ = a.Type
+			}
+		}
+	}
+	port := m.gatewayPorts[typ]
+	return port, port > 0
+}
+
 // activateRow handles Enter/o on the selected row: affordance rows open the
 // creator or add-agent flow; island and agent rows open a workspace, except
 // headless agents, which open their logs (they have no attach surface).
@@ -2383,7 +2412,19 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 			label = row.agentID
 		}
 		title = "agent · " + label
-		if m.isHeadlessAgent(row.island, row.agentID) {
+		if _, isGW := m.agentGatewayPort(row.island, row.agentID); isGW {
+			// A gateway agent (OpenClaw/Letta/Goose): its web UI is the point, so
+			// lead with it. Logs stay one item down.
+			gwIsland, gwAgent := row.island, row.agentID
+			items = append(items,
+				actionMenuItem{label: "Open UI (gateway)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					return mm.openAgentGatewayUI(gwIsland, gwAgent)
+				}},
+				actionMenuItem{label: "View logs", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					return mm.openAgentLogs(gwIsland, gwAgent)
+				}},
+			)
+		} else if m.isHeadlessAgent(row.island, row.agentID) {
 			items = append(items, actionMenuItem{label: "View logs", key: "o"})
 		} else {
 			items = append(items,
@@ -2706,6 +2747,9 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 	if row.agentID == "" {
 		return m.openIslandAgents(name)
 	}
+	if _, isGW := m.agentGatewayPort(name, row.agentID); isGW {
+		return m.openAgentGatewayUI(name, row.agentID)
+	}
 	if m.isHeadlessAgent(name, row.agentID) {
 		return m.openAgentLogs(name, row.agentID)
 	}
@@ -2723,6 +2767,31 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 // asks before spawning them all (so a stray Enter on a big island can't blanket
 // the screen in tabs).
 const openAllConfirmThreshold = 4
+
+// openAgentGatewayUI forwards a gateway agent's web UI to this machine and opens
+// it (the TUI equivalent of `dejima agent open`), so an operator never has to
+// drop to the CLI to reach an OpenClaw/Letta/Goose console.
+//
+// The one hard prerequisite is the SSH façade (the tunnel runs over it). Rather
+// than spawn a window that fails, check first and point the operator at enabling
+// it — the actionable nudge instead of a raw error.
+func (m tuiModel) openAgentGatewayUI(name, agentID string) (tea.Model, tea.Cmd) {
+	if m.overview == nil || m.overview.SSHAddr == "" {
+		m.lastError = "opening a gateway UI needs the daemon's SSH façade — install it with " +
+			"`dejima service install --system --ssh <addr>` on the host, then `dejima ssh enroll` here"
+		return m, nil
+	}
+	if !canOpenNewWindow() {
+		m.lastNotice = "run `dejima agent open " + name + " " + agentID + "` in a terminal to reach its UI"
+		return m, nil
+	}
+	if err := m.openAgentGatewayWindow(name, agentID); err != nil {
+		m.lastError = "open gateway UI: " + err.Error()
+	} else {
+		m.lastNotice = "forwarding " + name + "'s gateway UI — opening your browser"
+	}
+	return m, nil
+}
 
 // openIslandAgents opens one window per attachable agent on the island (Enter on
 // an island row). It falls back to the in-island shell when there's nothing to
@@ -4350,7 +4419,7 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n")
 	b.WriteString(styleAccent.Render("[a]") + styleMuted.Render(" ▾ less"))
 	b.WriteString("\n\n")
-	para := "An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."
+	para := "An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs, or a gateway agent's UI (OpenClaw/Letta/Goose)."
 	paraLines := strings.Split(para, "\n")
 	for i, l := range paraLines {
 		paraLines[i] = truncateDisplay(l, contentW)
