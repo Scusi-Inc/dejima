@@ -232,6 +232,31 @@ func GitHubSecretsDir() (string, error) {
 	return dir, nil
 }
 
+// IslandSecretsDir returns ~/.dejima/secrets/islands/<name> — the daemon-side
+// store of an island's secrets, plus the KEY=VALUE file bind-mounted into it.
+// Created 0700; sits under the same secrets/ root as the GitHub identities.
+func IslandSecretsDir(name string) (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, "secrets", "islands", name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// IslandSecretsPath returns an island's secrets dir WITHOUT creating it — for
+// cleanup when the island is torn down.
+func IslandSecretsPath(name string) (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "secrets", "islands", name), nil
+}
+
 // GitHubIslandConfigPath returns the per-island gh config dir path WITHOUT
 // creating it — for cleanup when an island is torn down.
 func GitHubIslandConfigPath(name string) (string, error) {

@@ -95,9 +95,21 @@ func (s *Store) Delete(account string) error {
 	return s.file.del(account)
 }
 
+// BackendEnvVar forces the storage backend. Set it to "file" to skip the OS
+// keychain entirely.
+//
+// Two real uses beyond preference: tests must not write into the operator's
+// login Keychain (entries would survive the run and need manual cleanup), and
+// an operator on a headless box may prefer the file store rather than a
+// keychain that is locked more often than not.
+const BackendEnvVar = "DEJIMA_SECRETS_BACKEND"
+
 // osKeychain returns the platform keychain backend when its CLI is present, else
 // nil (callers then use the file fallback transparently).
 func osKeychain() backend {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(BackendEnvVar)), "file") {
+		return nil
+	}
 	switch goruntime.GOOS {
 	case "darwin":
 		if _, err := exec.LookPath("security"); err == nil {
