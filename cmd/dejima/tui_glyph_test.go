@@ -182,7 +182,7 @@ func TestRenderListGlyphs(t *testing.T) {
 		"stopped",               // a2 session is stopped
 		// Tree connectors group the island's children. The secrets row now caps
 		// the group (└), so add-agent branches (├) like the agent rows above it.
-		"├ ", "├ + add agent", "└ 🔒 secrets",
+		"├ ", "├ + add agent", "└ " + glyphSecrets + " secrets",
 		"+ new island",
 	} {
 		if !strings.Contains(bare, want) {

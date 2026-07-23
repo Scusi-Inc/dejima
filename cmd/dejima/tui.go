@@ -3491,9 +3491,9 @@ func (m tuiModel) renderList(width int) (string, int) {
 			// discoverable without knowing a keybinding — the count tells an
 			// operator at a glance whether this island has any.
 			isl := byName[row.island]
-			label := "🔒 secrets"
+			label := glyphSecrets + " secrets"
 			if n := isl.SecretsCount; n > 0 {
-				label = fmt.Sprintf("🔒 secrets (%d)", n)
+				label = fmt.Sprintf("%s secrets (%d)", glyphSecrets, n)
 			}
 			line = "   " + styleMuted.Render("└ "+label)
 		case rowAgent:
@@ -3574,6 +3574,17 @@ const (
 	glyphTerminal = "❯" // a plain shell/terminal you type into
 	glyphAgent    = "◆" // an AI agent you attach to (claude-code, codex, …)
 	glyphHeadless = "■" // headless agent — supervised background process, logs only
+
+	// glyphSecrets marks the per-island secrets row. U+1F512 followed by
+	// VARIATION SELECTOR-15 (U+FE0E), which requests TEXT presentation: the
+	// terminal draws it as a monochrome glyph in the current foreground colour
+	// instead of the gold emoji.
+	//
+	// That matters beyond taste. A colour emoji carries its own palette, so it
+	// ignores styleMuted and sits bright against a dim tree — and it renders
+	// double-width, misaligning the column. The glyphs above are all plain
+	// symbols for the same reasons; this keeps the lock in that family.
+	glyphSecrets = "\U0001F512\uFE0E"
 )
 
 // agentTypeShell mirrors handlers.Shell — the plain-terminal agent type. Kept as
@@ -3908,7 +3919,7 @@ func (m tuiModel) renderDetail(_ int) string {
 			styleMuted.Render("Press ⏎ to pick a repo and an agent, then launch.")
 	}
 	if r := m.currentRow(); r.kind == rowSecrets {
-		body := styleTitle.Render("🔒 Secrets") + "\n\n" +
+		body := styleTitle.Render(glyphSecrets+" Secrets") + "\n\n" +
 			styleMuted.Render("Tokens this island's tools read from the environment —\nEXPO_TOKEN, NPM_TOKEN, API keys.") + "\n\n" +
 			styleMuted.Render("Press ⏎ to view, add, or rotate. Values are never shown.") + "\n\n"
 		// The caveat belongs where someone decides what to put in, not only in
