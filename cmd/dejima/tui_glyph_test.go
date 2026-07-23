@@ -199,3 +199,32 @@ func TestRenderListGlyphs(t *testing.T) {
 		t.Errorf("unlabeled agent should lead with its id, not its type\n%s", bare)
 	}
 }
+
+// Tree glyphs MUST measure as one cell, and lipgloss's count must match what a
+// terminal draws. An emoji breaks this: it is East Asian Wide (two cells drawn)
+// while the text-presentation form measures as one — the mismatch wraps the row,
+// and Bubble Tea's newline-counting diff renderer then duplicates the whole view
+// on every repaint. That shipped once (the VS-15 padlock in v0.8.30); this keeps
+// it from shipping again.
+func TestTreeGlyphsAreSingleCellAndNotEmoji(t *testing.T) {
+	for name, g := range map[string]string{
+		"glyphSecrets":  glyphSecrets,
+		"glyphAgent":    glyphAgent,
+		"glyphTerminal": glyphTerminal,
+		"glyphHeadless": glyphHeadless,
+	} {
+		if w := lipgloss.Width(g); w != 1 {
+			t.Errorf("%s (%q) lipgloss.Width=%d, want 1 — a wider glyph wraps the row and duplicates the view", name, g, w)
+		}
+		for _, r := range g {
+			// Variation selectors and any codepoint at/above the emoji planes are
+			// the danger: lipgloss and the terminal disagree on their width.
+			if r == 0xFE0F || r == 0xFE0E {
+				t.Errorf("%s carries a variation selector (%U) — that's the exact width trap", name, r)
+			}
+			if r >= 0x1F000 {
+				t.Errorf("%s uses an emoji-plane rune (%U); use a text-default symbol", name, r)
+			}
+		}
+	}
+}

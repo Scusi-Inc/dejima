@@ -3575,16 +3575,18 @@ const (
 	glyphAgent    = "◆" // an AI agent you attach to (claude-code, codex, …)
 	glyphHeadless = "■" // headless agent — supervised background process, logs only
 
-	// glyphSecrets marks the per-island secrets row. U+1F512 followed by
-	// VARIATION SELECTOR-15 (U+FE0E), which requests TEXT presentation: the
-	// terminal draws it as a monochrome glyph in the current foreground colour
-	// instead of the gold emoji.
+	// glyphSecrets marks the per-island secrets row: U+26BF SQUARED KEY, a
+	// monochrome lock/key symbol.
 	//
-	// That matters beyond taste. A colour emoji carries its own palette, so it
-	// ignores styleMuted and sits bright against a dim tree — and it renders
-	// double-width, misaligning the column. The glyphs above are all plain
-	// symbols for the same reasons; this keeps the lock in that family.
-	glyphSecrets = "\U0001F512\uFE0E"
+	// NOT the padlock emoji (U+1F512). Emoji are East Asian WIDE — the terminal
+	// draws two cells — but lipgloss/wcwidth count the text-presentation form as
+	// one. That one-cell disagreement wraps the row, and Bubble Tea's diff
+	// renderer (which counts newlines, not display width) then leaves the
+	// wrapped remainder on screen: the whole view duplicates on every repaint.
+	// The VARIATION SELECTOR-15 trick suppressed the colour but not the width,
+	// so it kept the bug. A text-default symbol that measures as one cell
+	// everywhere is the only safe kind here — like ◆/■/❯ above.
+	glyphSecrets = "⚿"
 )
 
 // agentTypeShell mirrors handlers.Shell — the plain-terminal agent type. Kept as
