@@ -254,6 +254,10 @@ func configPath() (string, error) {
 	return filepath.Join(root, "client.json"), nil
 }
 
+// Path returns the client config file location (~/.dejima/client.json) without
+// creating it — for a client uninstall that removes it.
+func Path() (string, error) { return configPath() }
+
 // Load reads the client config. A missing file yields a zero Config, no error.
 func Load() (Config, error) {
 	var c Config

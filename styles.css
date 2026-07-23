@@ -232,6 +232,18 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
   display: flex; align-items: center; }
 .os-ico { width: 0.95em; height: 0.95em; margin-right: 0.4em; fill: currentColor;
   flex-shrink: 0; }
+/* OS switcher tabs (client install): a small tablist over stacked command panels */
+.os-tabs { display: flex; gap: 0.4rem; margin: 0.6rem 0 0.4rem; }
+.os-tab { display: inline-flex; align-items: center; cursor: pointer;
+  font: inherit; font-size: 0.82rem; color: var(--muted);
+  background: transparent; border: 1px solid var(--border); border-radius: 7px;
+  padding: 0.3rem 0.7rem; transition: color 0.12s, border-color 0.12s, background 0.12s; }
+.os-tab:hover { color: var(--fg); }
+.os-tab.is-active { color: var(--fg); border-color: var(--fg);
+  background: var(--card-hover-bg); }
+.os-panel { display: none; }
+.os-panel.is-active { display: block; }
+
 /* command box with an inline copy button */
 .cmd { position: relative; margin: 0.3rem 0 0; min-width: 0; }
 .cmd pre { margin: 0; padding-right: 4.6rem; }

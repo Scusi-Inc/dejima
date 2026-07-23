@@ -73,7 +73,7 @@ func resolveUninstallMode(keepIslands, purgeAll, keepData bool) (uninstallMode, 
 }
 
 func newUninstallCmd() *cobra.Command {
-	var yes, force, systemSvc, keepIslands, purgeAll, keepData bool
+	var yes, force, systemSvc, keepIslands, purgeAll, keepData, clientOnly bool
 	cmd := &cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove Dejima. Choose --keep-islands (re-adoptable) or --purge-all (irreversible).",
@@ -90,6 +90,12 @@ func newUninstallCmd() *cobra.Command {
 			"unless --yes.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// --client is the no-daemon path: a laptop/Windows box that only drives
+			// a remote server has nothing local to tear down. Handle it before any
+			// daemon contact or mode resolution.
+			if clientOnly {
+				return uninstallClient(yes)
+			}
 			mode, err := resolveUninstallMode(keepIslands, purgeAll, keepData)
 			if err != nil {
 				return err
@@ -256,6 +262,7 @@ func newUninstallCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&systemSvc, "system", false, "uninstall the system-wide LaunchDaemon (macOS)")
 	cmd.Flags().BoolVar(&keepIslands, "keep-islands", false, "remove the service + binaries + live containers, but KEEP island volumes + ~/.dejima config (a reinstall re-adopts)")
 	cmd.Flags().BoolVar(&purgeAll, "purge-all", false, "delete everything: purge every island (volumes included) and ~/.dejima (irreversible)")
+	cmd.Flags().BoolVar(&clientOnly, "client", false, "client-only: remove the CLI + saved server connection from THIS machine; no daemon, islands untouched")
 	cmd.Flags().BoolVar(&keepData, "keep-data", false, "deprecated alias for --keep-islands")
 	_ = cmd.Flags().MarkDeprecated("keep-data", "use --keep-islands")
 	return cmd

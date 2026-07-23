@@ -127,23 +127,30 @@
         <p class="hc-sub">The client CLI that drives the server. macOS, Linux, or Windows.</p>
         <div class="step">
           <p class="step-label"><span class="step-n">1</span>Install the client</p>
-          <p class="os"><svg class="os-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.42 2.2-1.12 2.98-.75.84-1.98 1.49-3.02 1.4-.13-1.1.44-2.28 1.1-3.02.74-.83 2.03-1.46 3.04-1.36zM20.9 17.09c-.55 1.27-.82 1.84-1.53 2.97-.99 1.57-2.39 3.53-4.12 3.54-1.54.01-1.94-1-4.03-.99-2.09.01-2.53 1.01-4.07.99-1.73-.02-3.05-1.78-4.04-3.35C-1.34 15.6-1.6 9.66 1.68 6.83c1.05-.9 2.4-1.42 3.6-1.42 1.53 0 2.5.99 3.77.99 1.23 0 1.98-.99 3.77-.99 1.07 0 2.2.58 3.01 1.58-2.65 1.45-2.22 5.23.06 6.6z"/></svg>macOS / Linux</p>
-          <div class="cmd">
-            <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          <div class="os-tabs" role="tablist" aria-label="Your computer's OS">
+            <button type="button" class="os-tab is-active" data-os="unix" role="tab" aria-selected="true">
+              <svg class="os-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.42 2.2-1.12 2.98-.75.84-1.98 1.49-3.02 1.4-.13-1.1.44-2.28 1.1-3.02.74-.83 2.03-1.46 3.04-1.36zM20.9 17.09c-.55 1.27-.82 1.84-1.53 2.97-.99 1.57-2.39 3.53-4.12 3.54-1.54.01-1.94-1-4.03-.99-2.09.01-2.53 1.01-4.07.99-1.73-.02-3.05-1.78-4.04-3.35C-1.34 15.6-1.6 9.66 1.68 6.83c1.05-.9 2.4-1.42 3.6-1.42 1.53 0 2.5.99 3.77.99 1.23 0 1.98-.99 3.77-.99 1.07 0 2.2.58 3.01 1.58-2.65 1.45-2.22 5.23.06 6.6z"/></svg>macOS / Linux</button>
+            <button type="button" class="os-tab" data-os="win" role="tab" aria-selected="false">
+              <svg class="os-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.1l7.5-1.03v7.24H3V5.1zm0 13.8l7.5 1.03v-7.15H3v6.12zM11.4 3.94L21 2.6v8.7h-9.6V3.94zm0 16.12L21 21.4v-8.62h-9.6v7.28z"/></svg>Windows</button>
           </div>
-          <p class="os"><svg class="os-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.1l7.5-1.03v7.24H3V5.1zm0 13.8l7.5 1.03v-7.15H3v6.12zM11.4 3.94L21 2.6v8.7h-9.6V3.94zm0 16.12L21 21.4v-8.62h-9.6v7.28z"/></svg>Windows &mdash; open <strong>PowerShell</strong>, not Command Prompt</p>
-          <div class="cmd">
-            <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          <div class="os-panel is-active" data-os="unix">
+            <div class="cmd">
+              <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
+              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            </div>
           </div>
-          <p class="small">Press <kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em> / <em>Windows PowerShell</em>. If you see
-            <code>'irm' is not recognized as an internal or external command</code>, you are in Command Prompt
-            (<code>cmd.exe</code>) &mdash; <code>irm</code> and <code>iex</code> are PowerShell commands. Either reopen in
-            PowerShell, or paste this, which works from Command Prompt too:</p>
-          <div class="cmd">
-            <pre><code>powershell -NoProfile -Command "irm https://dejima.tech/install-client.ps1 | iex"</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          <div class="os-panel" data-os="win">
+            <p class="small">Open <strong>PowerShell</strong> (Press <kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em> / <em>Windows PowerShell</em>) &mdash; <strong>not</strong> Command Prompt.</p>
+            <div class="cmd">
+              <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
+              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            </div>
+            <p class="small">If you see <code>'irm' is not recognized as an internal or external command</code>, you're in Command Prompt
+              (<code>cmd.exe</code>) &mdash; <code>irm</code> and <code>iex</code> are PowerShell commands. Reopen in PowerShell, or paste this, which works from Command Prompt too:</p>
+            <div class="cmd">
+              <pre><code>powershell -NoProfile -Command "irm https://dejima.tech/install-client.ps1 | iex"</code></pre>
+              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            </div>
           </div>
           <details class="disclose">
             <summary>Prefer a package manager like <em>brew</em> or <em>npm</em>?</summary>
@@ -345,6 +352,30 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
       }
     });
   });
+})();
+
+// OS switcher for the client-install commands: tabs toggle the matching panel,
+// and we auto-select Windows when the visitor is on Windows so they land on the
+// right command without a click. Progressive enhancement — with JS off, CSS
+// leaves the default (macOS/Linux) panel showing.
+(function () {
+  var tabs = document.querySelectorAll('.os-tab');
+  if (!tabs.length) return;
+  function select(os) {
+    document.querySelectorAll('.os-tab').forEach(function (t) {
+      var on = t.getAttribute('data-os') === os;
+      t.classList.toggle('is-active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.os-panel').forEach(function (pnl) {
+      pnl.classList.toggle('is-active', pnl.getAttribute('data-os') === os);
+    });
+  }
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () { select(t.getAttribute('data-os')); });
+  });
+  var ua = (navigator.userAgent || '') + ' ' + (navigator.platform || '');
+  if (/Win/i.test(ua)) select('win');
 })();
 </script>
 <script src="walkthrough.js" defer></script>
