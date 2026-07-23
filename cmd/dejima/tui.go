@@ -3492,7 +3492,7 @@ func (m tuiModel) renderList(width int) (string, int) {
 			line = styleAccent.Render("+ new island")
 		case rowAddAgent:
 			// Agent rows above branch (├); the secrets row below now caps the group.
-			line = "   " + styleMuted.Render("├ + add agent")
+			line = "   " + styleMuted.Render("└ + add agent")
 		case rowSecrets:
 			// Caps the island's child group (└). Always shown, so the feature is
 			// discoverable without knowing a keybinding — the count tells an
@@ -3502,7 +3502,9 @@ func (m tuiModel) renderList(width int) (string, int) {
 			if n := isl.SecretsCount; n > 0 {
 				label = fmt.Sprintf("%s secrets (%d)", glyphSecrets, n)
 			}
-			line = "   " + styleMuted.Render("└ "+label)
+			// Indented a level deeper than the agents: secrets are island
+			// configuration that sits beneath the agent group, not a peer of it.
+			line = "     " + styleMuted.Render("└ "+label)
 		case rowAgent:
 			isl := byName[row.island]
 			a := agentByID(isl, row.agentID)
