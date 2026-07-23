@@ -1,0 +1,161 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
+)
+
+// `dejima secret` — per-island storage for the access tokens an agent's tools
+// need, so they stop living in the repo, a shell profile, or a chat message.
+//
+// The copy here deliberately states that agents in the island can read these.
+// Overclaiming would be worse than shipping nothing: an operator who believed
+// values were hidden would store things that don't belong in an agent's
+// container. See docs/secrets-manager-spec.md.
+
+func newSecretCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "secret",
+		Short: "Manage an island's secrets (tokens its tools need).",
+		Long: "Per-island storage for the access tokens an agent's tools read from the\n" +
+			"environment — EXPO_TOKEN, NPM_TOKEN, API keys. Values are held by the daemon\n" +
+			"(OS keychain where available) and injected into the island; they are never\n" +
+			"shown again and never returned over the API.\n\n" +
+			"Note: this is not a boundary against agents. Everything in an island runs as\n" +
+			"one user, so any agent there can read these values from its own environment.\n" +
+			"What you get is that they're out of your repo and your chat history, in one\n" +
+			"place to rotate and revoke, scoped to a single island, and deleted with it.\n" +
+			"Prefer narrowly-scoped, rotatable tokens.",
+	}
+	cmd.AddCommand(newSecretSetCmd(), newSecretListCmd(), newSecretRemoveCmd())
+	return cmd
+}
+
+func newSecretSetCmd() *cobra.Command {
+	var fromStdin bool
+	cmd := &cobra.Command{
+		Use:   "set <island> <NAME>",
+		Short: "Set or rotate a secret (prompts for the value).",
+		Long: "Stores a value under NAME for <island>. With no --stdin the value is read\n" +
+			"from the terminal with echo off, so it stays out of your shell history and\n" +
+			"the process list.\n\n" +
+			"Setting an existing NAME rotates it: the value and fingerprint change, the\n" +
+			"original creation date is kept.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			island, key := args[0], args[1]
+			c, err := client()
+			if err != nil {
+				return err
+			}
+
+			var value string
+			switch {
+			case fromStdin:
+				b, rerr := io.ReadAll(os.Stdin)
+				if rerr != nil {
+					return fmt.Errorf("read value from stdin: %w", rerr)
+				}
+				// Trim only the trailing newline a pipe or heredoc adds; interior
+				// whitespace can be part of the value.
+				value = strings.TrimRight(string(b), "\r\n")
+			default:
+				if !term.IsTerminal(int(os.Stdin.Fd())) {
+					return fmt.Errorf("no terminal to prompt on — pipe the value instead:\n" +
+						"  echo <value> | dejima secret set <island> <NAME> --stdin")
+				}
+				fmt.Printf("Value for %s (input hidden): ", key)
+				b, rerr := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Println()
+				if rerr != nil {
+					return fmt.Errorf("read value: %w", rerr)
+				}
+				value = strings.TrimSpace(string(b))
+			}
+			if value == "" {
+				return fmt.Errorf("no value entered")
+			}
+
+			meta, err := c.PutSecret(cmd.Context(), island, key, value)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("set %s on %s (fingerprint %s)\n", meta.Name, island, meta.Fingerprint)
+			fmt.Println()
+			// The restart caveat is not a footnote: a running process cannot have
+			// its environment changed, so without this the operator watches their
+			// agent keep failing with the old value and concludes it didn't work.
+			fmt.Println("⚠  RESTART TERMINALS TO APPLY")
+			fmt.Printf("   It's live in NEW shells in %s; anything already running still has the\n", island)
+			fmt.Println("   old environment. Restart the agent to pick it up.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read the value from stdin (keeps it out of shell history and the process list)")
+	return cmd
+}
+
+func newSecretListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "ls <island>",
+		Aliases: []string{"list"},
+		Short:   "List an island's secrets (names only — values are never shown).",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			island := args[0]
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			metas, err := c.ListSecrets(cmd.Context(), island)
+			if err != nil {
+				return err
+			}
+			if len(metas) == 0 {
+				fmt.Printf("no secrets on %s\n", island)
+				fmt.Printf("  add one with:  dejima secret set %s <NAME>\n", island)
+				return nil
+			}
+			fmt.Printf("%-24s %-12s %-12s %s\n", "NAME", "FINGERPRINT", "ADDED", "ROTATED")
+			for _, m := range metas {
+				rotated := "—"
+				if m.UpdatedAt.After(m.CreatedAt) {
+					rotated = m.UpdatedAt.Local().Format("2006-01-02")
+				}
+				fmt.Printf("%-24s %-12s %-12s %s\n",
+					m.Name, m.Fingerprint, m.CreatedAt.Local().Format("2006-01-02"), rotated)
+			}
+			fmt.Println()
+			fmt.Println("Values are never displayed. The fingerprint is sha256(value)[:8] — hash your")
+			fmt.Println("own copy to confirm it matches.")
+			return nil
+		},
+	}
+}
+
+func newSecretRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "rm <island> <NAME>",
+		Aliases: []string{"remove"},
+		Short:   "Remove a secret from an island.",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			island, key := args[0], args[1]
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.DeleteSecret(cmd.Context(), island, key); err != nil {
+				return err
+			}
+			fmt.Printf("removed %s from %s\n", key, island)
+			fmt.Println("Already-running processes keep the old value until restarted.")
+			return nil
+		},
+	}
+}

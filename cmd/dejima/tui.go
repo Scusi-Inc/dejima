@@ -208,6 +208,7 @@ type tuiModel struct {
 	identity     *identityView     // non-nil while the visual-identity editor is open (opened with `i`)
 	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
 	github       *githubView       // non-nil while the self-serve GitHub identity pane is open (settings → GitHub)
+	secretsPane  *secretsView      // non-nil while the per-island Secrets pane is open
 	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
@@ -943,6 +944,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.restartPending = "a newer dejima is installed on disk — restart dejima to apply it"
 		return m, nil
 
+	case islandSecretsMsg:
+		if v := m.secretsPane; v != nil && v.island == msg.island {
+			v.loading = false
+			if msg.err != nil {
+				v.err = msg.err.Error()
+			} else {
+				v.err, v.secrets = "", msg.secrets
+			}
+		}
+		return m, nil
+
 	case latestReleaseMsg:
 		if msg.latest != "" {
 			m.latestRelease = msg.latest
@@ -1385,6 +1397,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.agentAdder != nil {
 		return m.agentAdderKey(msg)
 	}
+	// The Secrets pane owns keys while open.
+	if m.secretsPane != nil {
+		return m.secretsKey(msg)
+	}
 	// The help overlay owns keys while shown.
 	if m.help {
 		switch msg.String() {
@@ -1480,6 +1496,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Trust surface — what the highlighted island can reach (Port · MCP ·
 		// links · capabilities). Agent rows inherit their island's grants.
 		return m.openGrantsView(m.selectedName())
+	case "$":
+		// Per-island secrets. '$' for the shell-variable association — these are
+		// environment variables to the tools that use them.
+		return m.openSecretsView(m.selectedIslandName())
 	case "V":
 		// Action-gate approvals — the queue of cross-island actions awaiting a
 		// decision (reView) + the active auto-approve rules. Refresh both on open.
@@ -1842,6 +1862,15 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			m.dirtyOps[c.island] = "removing agent"
 			return m, m.removeAgentCmd(c.island, c.agent)
 		}
+	case "remove-secret":
+		// Typing the NAME, like purge types the island name — removing a secret
+		// breaks whatever tool was using it, so it shouldn't ride on one key.
+		if strings.TrimSpace(c.answer) == c.agent {
+			if v := m.secretsPane; v != nil {
+				v.restartPending = true
+			}
+			return m, m.removeSecretCmd(c.island, c.agent)
+		}
 	case "remove-terminal":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			return m, m.removeTerminalCmd(c.agent) // c.agent carries the terminal id
@@ -1920,6 +1949,8 @@ func confirmExpectation(c confirmPrompt) string {
 		return fmt.Sprintf("type the island name %q exactly", c.island)
 	case "remove-agent":
 		return fmt.Sprintf("type the agent id %q exactly", c.agent)
+	case "remove-secret":
+		return fmt.Sprintf("type the secret name %q exactly", c.agent)
 	case "reset", "upgrade", "recreate-island", "build-image", "force-purge",
 		"remove-terminal", "approve-action", "open-all-agents", "setup-ssh",
 		"update-client", "update-daemon":
@@ -2983,6 +3014,10 @@ func (m tuiModel) View() string {
 	}
 	if m.github != nil {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderGithubView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.secretsPane != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.secretsPane.view(m.width - 4))
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.aggregate != nil {
@@ -4393,6 +4428,9 @@ func (m tuiModel) renderConfirm() string {
 		}
 		prompt = fmt.Sprintf("Remove agent %q (id %s) from island %q — destroys its worktree + agent state.", who, c.agent, c.island)
 		input = "the agent id (" + c.agent + ")"
+	case "remove-secret":
+		prompt = fmt.Sprintf("Remove secret %q from island %q — tools using it will start failing.", c.agent, c.island)
+		input = "the secret name (" + c.agent + ")"
 	case "remove-terminal":
 		prompt = fmt.Sprintf("Close host terminal %s? (kills the shell on the daemon host)", c.agent)
 	case "approve-action":

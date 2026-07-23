@@ -341,6 +341,44 @@ func (s *IslandStore) Purge(island string) error {
 // logs useless, while protecting something that was never really a secret.
 const minRedactLen = 8
 
+// Redactor snapshots this island's values ONCE and returns a masking function.
+//
+// Use it for streams. Redact re-reads the store on every call, which is fine for
+// a one-shot string but wrong for a log follow that may run for hours: it would
+// re-read the keychain per line, costing both throughput and (on macOS) a
+// stream of keychain access prompts.
+//
+// The snapshot means a secret set mid-stream isn't masked until the next call —
+// acceptable, since it also wasn't in the environment of the process that wrote
+// those lines. Returns identity when there's nothing to mask, so the common
+// case costs nothing.
+func (s *IslandStore) Redactor(island string) func(string) string {
+	vals, err := s.Values(island)
+	if err != nil || len(vals) == 0 {
+		return func(text string) string { return text }
+	}
+	names := make([]string, 0, len(vals))
+	for name, v := range vals {
+		if len(v) < minRedactLen {
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return func(text string) string { return text }
+	}
+	// Longest value first: a value containing another must be masked whole
+	// rather than leaving a partially-redacted tail. strings.Replacer matches
+	// the earliest-listed pattern at each position, so order carries the rule.
+	sort.Slice(names, func(i, j int) bool { return len(vals[names[i]]) > len(vals[names[j]]) })
+	pairs := make([]string, 0, len(names)*2)
+	for _, name := range names {
+		pairs = append(pairs, vals[name], "[redacted:"+name+"]")
+	}
+	rep := strings.NewReplacer(pairs...)
+	return rep.Replace
+}
+
 // Redact replaces this island's stored values in text with a named placeholder.
 // Used to mask secrets in `dejima logs`, which is the likeliest real leak — a
 // tool echoing its own configuration.

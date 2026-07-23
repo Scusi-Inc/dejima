@@ -220,6 +220,35 @@ func (m tuiModel) openVoiceWindow(island, agentID string) error {
 	}
 }
 
+// openSecretSetWindow starts `dejima secret set` in its own window. The value is
+// read with echo off, which needs a real terminal — a dashboard that redraws is
+// the wrong place for a hidden-input prompt, and the same reasoning puts GitHub
+// sign-in in its own window.
+//
+// The NAME is left for the operator to type there, so the pane doesn't need a
+// second input mode just to collect it.
+func (m tuiModel) openSecretSetWindow(island string) error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "secret-" + island
+	// No `exec`: dropping to a shell afterwards lets the operator confirm with
+	// `dejima secret ls` without opening another window.
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s %s secret set %s",
+		shquote(m.activeHost), shquote(title), shquote(exe), shquote(island))
+	switch {
+	case os.Getenv("TMUX") != "":
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "secret set", island, "", title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima secret set %s <NAME>` in another terminal", island)
+	}
+}
+
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the

@@ -34,6 +34,17 @@ large uncommitted changes.
 worktree, sharing the repo + credentials. Run `dejima msg poll` to see who else
 is here.
 
+**Secrets.** Tokens your tools need (an EAS token, `NPM_TOKEN`, an API key) are
+managed by the operator with `dejima secret` and appear as ENVIRONMENT VARIABLES
+in your shell — you don't fetch or unlock anything, the tool just reads them.
+Run `dejima secret ls <island>` to see which NAMES exist (values are never
+shown). If a tool reports a missing credential, check whether the name is listed
+and ask the operator to set it; don't invent your own token file. Two things
+follow from how this works: a secret added after your shell started is NOT in
+your environment until you open a new one, and these values are readable by
+every agent here — so never echo them, paste them into a commit, or include them
+in output you send anywhere.
+
 **Learn more.** To see what you can do here, run `dejima --help` (and
 `dejima <cmd> --help` for a specific command). Full docs:
 https://dejima.tech/island.html

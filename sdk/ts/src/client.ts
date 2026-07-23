@@ -310,6 +310,41 @@ export class Client {
     return this.json("POST", "/v1/capabilities/execute", { json: clean({ target, island: opts.island, args: opts.args }) });
   }
 
+  // ===== Secrets --------------------------------------------------------
+  //
+  // Per-island storage for the tokens an agent's tools read from the
+  // environment. Values go in and are NEVER returned — no method here can
+  // retrieve one, because no endpoint serves one.
+  //
+  // Not a boundary against agents: everything in an island runs as one user, so
+  // any agent there can read these from its own environment. What it buys is
+  // that they're out of the repo, centrally rotatable, island-scoped, and
+  // deleted with the island. See docs/secrets-manager-spec.md.
+
+  /** List an island's secrets — names, timestamps and fingerprints only. */
+  listSecrets(name: string): Promise<any> {
+    return this.json("GET", `${this.island(name)}/secrets`);
+  }
+
+  /**
+   * Set or rotate a secret. Returns metadata, never the value.
+   *
+   * Rotating keeps the original creation date. Reserved names are rejected
+   * (400): several environment variables are interpreted by the loader, the
+   * shell, or a language runtime before any program logic runs, and
+   * HTTP(S)_PROXY would disable the island's egress gate.
+   *
+   * A change reaches NEW shells immediately; a process already running keeps
+   * the environment it started with, so restart the agent to apply it.
+   */
+  putSecret(name: string, key: string, value: string): Promise<any> {
+    return this.json("PUT", `${this.island(name)}/secrets/${this.seg(key)}`, { json: { value } });
+  }
+
+  async deleteSecret(name: string, key: string): Promise<void> {
+    await this.request("DELETE", `${this.island(name)}/secrets/${this.seg(key)}`);
+  }
+
   // ===== MCP broker -----------------------------------------------------
   listMcpGrants(name: string): Promise<any> {
     return this.json("GET", `${this.island(name)}/mcp/grants`);

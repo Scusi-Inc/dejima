@@ -95,22 +95,29 @@ var roleRouteCap = map[string]roleCap{
 	"GET /v1/panic":                            capRead, // status (engage/clear are owner)
 
 	// --- island lifecycle + interaction (operator and up; never purge) ---
-	"POST /v1/islands":                                     capOperate, // create (scoped tokens denied — no {name})
-	"PATCH /v1/islands/{name}":                             capOperate, // title / no_hibernate
-	"POST /v1/islands/{name}/schedules":                    capOperate, // add a scheduled wake
-	"GET /v1/islands/{name}/schedules":                     capOperate, // list scheduled wakes
-	"DELETE /v1/islands/{name}/schedules/{id}":             capOperate, // remove a scheduled wake
-	"PUT /v1/islands/{name}/identity":                      capOperate, // visual color+glyph override
-	"DELETE /v1/islands/{name}/identity":                   capOperate,
-	"PUT /v1/islands/{name}/resources":                     capOperate,
-	"POST /v1/islands/{name}/hibernate":                    capOperate,
-	"POST /v1/islands/{name}/wake":                         capOperate,
-	"POST /v1/islands/{name}/reset":                        capOperate,
-	"POST /v1/islands/{name}/upgrade":                      capOperate,
-	"POST /v1/islands/{name}/clone":                        capOperate,
-	"POST /v1/islands/{name}/agents":                       capOperate,
-	"DELETE /v1/islands/{name}/agents/{id}":                capOperate,
-	"PATCH /v1/islands/{name}/agents/{id}":                 capOperate,
+	"POST /v1/islands":                         capOperate, // create (scoped tokens denied — no {name})
+	"PATCH /v1/islands/{name}":                 capOperate, // title / no_hibernate
+	"POST /v1/islands/{name}/schedules":        capOperate, // add a scheduled wake
+	"GET /v1/islands/{name}/schedules":         capOperate, // list scheduled wakes
+	"DELETE /v1/islands/{name}/schedules/{id}": capOperate, // remove a scheduled wake
+	"PUT /v1/islands/{name}/identity":          capOperate, // visual color+glyph override
+	"DELETE /v1/islands/{name}/identity":       capOperate,
+	"PUT /v1/islands/{name}/resources":         capOperate,
+	"POST /v1/islands/{name}/hibernate":        capOperate,
+	"POST /v1/islands/{name}/wake":             capOperate,
+	"POST /v1/islands/{name}/reset":            capOperate,
+	"POST /v1/islands/{name}/upgrade":          capOperate,
+	"POST /v1/islands/{name}/clone":            capOperate,
+	"POST /v1/islands/{name}/agents":           capOperate,
+	"DELETE /v1/islands/{name}/agents/{id}":    capOperate,
+	"PATCH /v1/islands/{name}/agents/{id}":     capOperate,
+	// Secrets: names+metadata are readable by any role (values are never
+	// returned); writes need operate, and an island token is refused outright in
+	// the handler — an agent that can plant a value its peers trust is an
+	// escalation path.
+	"GET /v1/islands/{name}/secrets":                       capRead,
+	"PUT /v1/islands/{name}/secrets/{key}":                 capOperate,
+	"DELETE /v1/islands/{name}/secrets/{key}":              capOperate,
 	"POST /v1/islands/{name}/agents/{id}/move":             capOperate,
 	"PATCH /v1/islands/{name}/agents/{id}/config":          capOperate,
 	"PATCH /v1/islands/{name}/egress/policy":               capOperate, // set island egress allow/deny (operator)

@@ -26,6 +26,7 @@ import (
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/providercreds"
+	"github.com/aoos/dejima/internal/secrets"
 )
 
 // Client is a thin HTTP client for the Dejima API.
@@ -1356,4 +1357,27 @@ func (c *Client) ListTokens(ctx context.Context) ([]TokenView, error) {
 // RevokeToken deletes an operator token by id.
 func (c *Client) RevokeToken(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/tokens/"+url.PathEscape(id), nil, nil)
+}
+
+// ListSecrets returns an island's secret names + metadata. Values are never
+// included — the response type has no field for one.
+func (c *Client) ListSecrets(ctx context.Context, island string) ([]secrets.Meta, error) {
+	var out SecretsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+island+"/secrets", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Secrets, nil
+}
+
+// PutSecret sets or rotates a secret and returns its metadata.
+func (c *Client) PutSecret(ctx context.Context, island, key, value string) (secrets.Meta, error) {
+	var out secrets.Meta
+	err := c.do(ctx, http.MethodPut, "/v1/islands/"+island+"/secrets/"+key,
+		PutSecretRequest{Value: value}, &out)
+	return out, err
+}
+
+// DeleteSecret removes a secret from an island.
+func (c *Client) DeleteSecret(ctx context.Context, island, key string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/islands/"+island+"/secrets/"+key, nil, nil)
 }

@@ -334,6 +334,61 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Event" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/secrets:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: The island's secrets — names and metadata only
+      description: >
+        Values are NEVER returned by any endpoint. Readable by any role,
+        including an in-island token: knowing which secrets exist reveals
+        nothing the agent's own environment doesn't already.
+      operationId: listSecrets
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretsResponse" }
+  /v1/islands/{name}/secrets/{key}:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - name: key
+        in: path
+        required: true
+        description: The secret's name (an environment-variable identifier).
+        schema: { type: string }
+    put:
+      tags: [islands]
+      summary: Set or rotate a secret
+      description: >
+        Rotation keeps the original creation date and bumps updated_at.
+        Reserved names are refused with 400 — several environment variables are
+        interpreted by the loader, the shell, or a language runtime before any
+        program logic runs, and HTTP(S)_PROXY would disable the egress gate.
+        An in-island token is refused with 403: an agent that can plant a value
+        its peers trust is an escalation path.
+      operationId: putSecret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutSecretRequest" }
+      responses:
+        "200":
+          description: Stored; returns metadata (never the value)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretMeta" }
+        "400": { description: Reserved or malformed name, or an empty value }
+        "403": { description: Island tokens may not write secrets }
+    delete:
+      tags: [islands]
+      summary: Remove a secret
+      operationId: deleteSecret
+      responses:
+        "204": { description: Removed (also when it was not present) }
+        "403": { description: Island tokens may not remove secrets }
   /v1/islands/{name}/egress:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -2268,6 +2323,42 @@ components:
         method: { type: string, description: "\"CONNECT\" (HTTPS tunnel) or the HTTP verb" }
         decision: { type: string, enum: [allow, deny] }
         time: { type: string, format: date-time }
+    SecretMeta:
+      type: object
+      description: >
+        A secret's metadata. There is deliberately NO value field — values never
+        leave the daemon.
+      properties:
+        name: { type: string, example: EXPO_TOKEN }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        set_by: { type: string, description: Who last wrote it }
+        fingerprint:
+          type: string
+          description: >
+            sha256(value) truncated to 8 hex characters. Values are never shown
+            after entry — not even a prefix, since leading bytes are often the
+            identifying, high-entropy part. Hash your own copy to confirm a
+            match.
+          example: 4f2a91c8
+        require_approval:
+          type: boolean
+          description: >
+            Stored but NOT enforced in this version; reserved for brokered
+            per-use approval. See docs/secrets-manager-spec.md.
+      required: [name, created_at, updated_at, fingerprint]
+    SecretsResponse:
+      type: object
+      properties:
+        secrets:
+          type: array
+          items: { $ref: "#/components/schemas/SecretMeta" }
+      required: [secrets]
+    PutSecretRequest:
+      type: object
+      properties:
+        value: { type: string, description: The secret value. Never returned by any endpoint. }
+      required: [value]
     EgressEventsResponse:
       type: object
       properties:

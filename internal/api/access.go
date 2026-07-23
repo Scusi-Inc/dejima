@@ -11,9 +11,11 @@ import (
 	"strconv"
 	"strings"
 
+	"bufio"
 	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/secrets"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
 )
@@ -168,11 +170,21 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	flusher, _ := w.(http.Flusher)
-	buf := make([]byte, 4096)
+
+	// Mask the island's own secrets on the way out. A tool echoing its
+	// configuration is the likeliest way one of these actually leaks, and logs
+	// get pasted into issues and chats far more casually than credentials do.
+	//
+	// Line-oriented, NOT per-read-chunk: a fixed-size read can split a value
+	// across two buffers, and a substring replace would then miss both halves
+	// while looking like it worked. Splitting on newlines means a value is only
+	// missed if it contains one, which the format already escapes.
+	redact := secretRedactor(name)
+	br := bufio.NewReader(rc)
 	for {
-		n, readErr := rc.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+		line, readErr := br.ReadString('\n')
+		if line != "" {
+			if _, writeErr := io.WriteString(w, redact(line)); writeErr != nil {
 				return
 			}
 			if flusher != nil {
@@ -183,6 +195,24 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// secretRedactor returns a function masking island's stored secret values.
+//
+// The store is read ONCE per stream rather than per line: a follow stream can
+// run for hours, and re-reading the keychain for every line would be both slow
+// and a stream of keychain access prompts. A secret set mid-stream therefore
+// isn't masked until the next `dejima logs` — acceptable, since the value
+// wasn't in the process's environment when those lines were written either.
+//
+// Returns identity when the island has no secrets, so the common case costs
+// nothing.
+func secretRedactor(island string) func(string) string {
+	store, err := secrets.OpenIsland()
+	if err != nil {
+		return func(s string) string { return s }
+	}
+	return store.Redactor(island)
 }
 
 // handleRevokeSessions drops every active client websocket.
