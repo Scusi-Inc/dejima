@@ -152,6 +152,7 @@ type agentAdderPhase int
 
 const (
 	adderPick  agentAdderPhase = iota // choosing type via the picker
+	adderKey                          // guided provider-key entry for a key-requiring agent
 	adderLabel                        // typing an optional label
 )
 
@@ -166,6 +167,14 @@ type agentAdder struct {
 	err     string
 	memWarn string          // non-empty when the host is low on memory (OOM caution)
 	keyGap  map[string]bool // agent types needing an unconfigured LLM key (for the picker annotation)
+
+	// Guided provider-key entry (adderKey phase): a key-requiring agent has no key
+	// configured, so we collect one now — provider-level, so it applies the moment
+	// the agent launches — rather than let it come up unable to authenticate.
+	keyProviders []string
+	keyProvSel   int
+	keyInput     string
+	keyBusy      bool
 }
 
 // memPressureWarning returns an amber caution when the Docker host is low on
@@ -230,6 +239,9 @@ func (m tuiModel) agentAdderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.agentAdder = nil
 		return m, nil
 	}
+	if a.phase == adderKey {
+		return m.agentAdderKeyStep(msg)
+	}
 	if a.phase == adderLabel {
 		switch msg.String() {
 		case "esc":
@@ -253,9 +265,80 @@ func (m tuiModel) agentAdderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case pickerBack:
 		m.agentAdder = nil
 	case pickerDone:
-		a.phase = adderLabel // type chosen → ask for an optional label
+		// A key-requiring agent with no key set routes through the guided key step
+		// first, so it launches ready instead of failing to authenticate.
+		if provs := m.adderKeyProviders(a.picker.typ()); len(provs) > 0 {
+			a.keyProviders, a.keyProvSel, a.keyInput = provs, 0, ""
+			a.phase = adderKey
+		} else {
+			a.phase = adderLabel // type chosen → ask for an optional label
+		}
 	}
 	return m, nil
+}
+
+// adderKeyProviders returns the providers a just-picked agent could use when it
+// needs an LLM key and none is configured — nil when it's satisfied or doesn't
+// need one. Drives whether the add flow guides a key before the label step.
+func (m tuiModel) adderKeyProviders(agentType string) []string {
+	if !m.agentKeyGap[agentType] {
+		return nil
+	}
+	return m.agentProviders[agentType] // may be empty → no specific provider to guide
+}
+
+// agentAdderKeyStep drives the guided key entry in the add flow: pick a provider,
+// paste the key (masked), Enter stores it (provider-level), then on to the label.
+func (m tuiModel) agentAdderKeyStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	a := m.agentAdder
+	if a.keyBusy {
+		return m, nil // waiting on the store; ignore keys
+	}
+	switch msg.String() {
+	case "esc":
+		a.phase = adderLabel // skip: the picker already warned; `v` can set it later
+	case "up":
+		// Arrow keys only for provider nav — j/k are valid key characters.
+		if a.keyProvSel > 0 {
+			a.keyProvSel--
+		}
+	case "down":
+		if a.keyProvSel < len(a.keyProviders)-1 {
+			a.keyProvSel++
+		}
+	case "enter":
+		if strings.TrimSpace(a.keyInput) == "" {
+			return m, nil // nothing to store yet
+		}
+		a.keyBusy = true
+		return m, m.adderSetKeyCmd(a.keyProviders[a.keyProvSel], a.keyInput)
+	case "backspace":
+		if a.keyInput != "" {
+			a.keyInput = a.keyInput[:len(a.keyInput)-1]
+		}
+	default:
+		if s := msg.String(); len(s) == 1 {
+			a.keyInput += s
+		}
+	}
+	return m, nil
+}
+
+// adderSetKeyCmd stores a provider key during the add flow (provider-level, so it
+// applies as soon as the agent launches), reporting back via adderKeySetMsg.
+func (m tuiModel) adderSetKeyCmd(provider, key string) tea.Cmd {
+	cl := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, err := cl.PutProviderCredential(ctx, provider, api.PutProviderCredentialRequest{APIKey: key})
+		return adderKeySetMsg{provider: provider, err: err}
+	}
+}
+
+type adderKeySetMsg struct {
+	provider string
+	err      error
 }
 
 // addAgentSpecCmd posts a new agent to an island and reports the outcome.
@@ -289,7 +372,9 @@ func (a *agentAdder) view() string {
 		b.WriteString(styleAccent.Render("adding " + a.picker.typ() + "…"))
 		return b.String()
 	}
-	if a.phase == adderLabel {
+	if a.phase == adderKey {
+		a.viewKey(&b)
+	} else if a.phase == adderLabel {
 		b.WriteString(styleHeader.Render("Label"))
 		b.WriteString("\n")
 		b.WriteString(styleMuted.Render("Optional display name for the " + a.picker.typ() + " agent (e.g. \"frontend\").\nLeave blank to use its id."))
@@ -303,4 +388,31 @@ func (a *agentAdder) view() string {
 		b.WriteString("\n\n" + styleErrored.Render("✗ "+a.err))
 	}
 	return b.String()
+}
+
+// viewKey renders the guided provider-key step for a key-requiring agent being
+// added: pick a provider, paste the key (masked), and it launches ready.
+func (a *agentAdder) viewKey(b *strings.Builder) {
+	b.WriteString(styleWaiting.Render(a.picker.typ() + " needs a provider key to work"))
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("Set it now and the agent launches ready. (You can skip and set it later with `v`.)"))
+	b.WriteString("\n\n")
+	b.WriteString(styleMuted.Render("provider:"))
+	b.WriteString("\n")
+	for i, p := range a.keyProviders {
+		if i == a.keyProvSel {
+			b.WriteString("  " + styleSelected.Render("▶ "+p) + "\n")
+		} else {
+			b.WriteString("    " + p + "\n")
+		}
+	}
+	b.WriteString("\n")
+	// Mask the key — length only, never the characters.
+	b.WriteString("key: " + styleAccent.Render(strings.Repeat("•", len(a.keyInput))+"▏"))
+	b.WriteString("\n\n")
+	if a.keyBusy {
+		b.WriteString(styleAccent.Render("saving…"))
+		return
+	}
+	b.WriteString(styleMuted.Render("[↑/↓] provider · type the key (hidden) · [⏎] save & continue · [esc] skip"))
 }

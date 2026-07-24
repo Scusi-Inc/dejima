@@ -123,10 +123,11 @@ type tuiModel struct {
 	// Setup-readiness snapshot (fetched once at Init) so the UI can warn about a
 	// missing credential BEFORE an island is created rather than at first agent
 	// attach. setupChecked guards against a false warning before the fetch lands.
-	setupChecked bool
-	claudeSeeded bool            // daemon can seed new islands with Claude creds
-	agentKeyGap  map[string]bool // agent type → requires an LLM provider key, none configured for it
-	gatewayPorts map[string]int  // agent type → its localhost gateway port (0/absent = no UI)
+	setupChecked   bool
+	claudeSeeded   bool                // daemon can seed new islands with Claude creds
+	agentKeyGap    map[string]bool     // agent type → requires an LLM provider key, none configured for it
+	gatewayPorts   map[string]int      // agent type → its localhost gateway port (0/absent = no UI)
+	agentProviders map[string][]string // agent type → the providers it supports (guided key step)
 
 	selected int
 	grouped  bool // group the island list by repo (toggled with `p`)
@@ -897,6 +898,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.claudeSeeded = msg.claudeSeeded
 		m.agentKeyGap = msg.keyGap
 		m.gatewayPorts = msg.gatewayPort
+		m.agentProviders = msg.providers
 		return m, nil
 
 	case selfBinaryChangedMsg:
@@ -1238,6 +1240,44 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reposDiscoveredMsg:
 		if m.creator != nil {
 			m.creator.onReposDiscovered(msg)
+		}
+		return m, nil
+
+	case creatorKeySetMsg:
+		if c := m.creator; c != nil {
+			c.keyBusy = false
+			if msg.err != nil {
+				c.err = "save key: " + msg.err.Error()
+			} else {
+				if c.keySetOK == nil {
+					c.keySetOK = map[string]bool{}
+				}
+				c.keySetOK[msg.provider] = true
+				c.err, c.keyInput = "", ""
+				c.step = stepAgents // key stored — continue to the roster
+			}
+		}
+		return m, nil
+
+	case adderKeySetMsg:
+		if a := m.agentAdder; a != nil {
+			a.keyBusy = false
+			if msg.err != nil {
+				a.err = "save key: " + msg.err.Error()
+			} else {
+				// The provider key now exists — clear the local gap so a second add
+				// this session doesn't re-prompt, then continue to the label step.
+				for t, provs := range m.agentProviders {
+					for _, p := range provs {
+						if p == msg.provider {
+							delete(m.agentKeyGap, t)
+						}
+					}
+				}
+				a.keyGap = m.agentKeyGap
+				a.err, a.keyInput = "", ""
+				a.phase = adderLabel
+			}
 		}
 		return m, nil
 

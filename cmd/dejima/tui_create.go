@@ -27,6 +27,7 @@ const (
 	stepSource                        // diverged local repo: clone origin vs local copy
 	stepAgent                         // choose an agent (primary, then any extras)
 	stepAgentName                     // name that agent (blank = use its id)
+	stepAgentKey                      // set the provider key a key-requiring agent needs (guided)
 	stepAgents                        // roster: review seeded agents, add more, or continue
 	stepName                          // confirm/edit the island name
 	stepCreate                        // provisioning in flight
@@ -90,6 +91,15 @@ type creatorModel struct {
 	// entered at stepAgentName and the pair is appended to agents together.
 	pendingAgent api.AgentSpecRequest
 	agentNameIn  string
+
+	// guided provider-key step (stepAgentKey): shown when the chosen agent needs
+	// a provider key and none is configured, so the agent launches WITH it rather
+	// than coming up broken. keyProviders is the type's supported providers.
+	keyProviders []string
+	keyProvSel   int
+	keyInput     string
+	keyBusy      bool
+	keySetOK     map[string]bool // providers set during this flow (don't re-prompt)
 
 	// resolved selection
 	resolution   reposrc.Resolution
@@ -294,6 +304,8 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.creatorAgentKey(msg)
 	case stepAgentName:
 		return m.creatorAgentNameKey(msg)
+	case stepAgentKey:
+		return m.creatorProviderKeyKey(msg)
 	case stepAgents:
 		return m.creatorAgentsKey(msg)
 	case stepName:
@@ -744,7 +756,14 @@ func (m tuiModel) creatorAgentNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		c.pendingAgent = api.AgentSpecRequest{}
 		c.agentNameIn = ""
 		c.pickingExtra = false
-		c.step = stepAgents
+		// Guided key: if this agent needs a provider key and none is set, collect
+		// it now so the agent launches working instead of coming up broken.
+		if provs := m.needsProviderKey(spec.Type); len(provs) > 0 {
+			c.keyProviders, c.keyProvSel, c.keyInput = provs, 0, ""
+			c.step = stepAgentKey
+		} else {
+			c.step = stepAgents
+		}
 	case "backspace":
 		if c.agentNameIn != "" {
 			c.agentNameIn = c.agentNameIn[:len(c.agentNameIn)-1]
@@ -755,6 +774,87 @@ func (m tuiModel) creatorAgentNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// needsProviderKey returns the providers a key-requiring agent could use when it
+// has NO key configured, or nil when it's satisfied (or not key-requiring). The
+// creator uses it to decide whether to guide a key entry before create.
+func (m tuiModel) needsProviderKey(agentType string) []string {
+	c := m.creator
+	if c != nil && c.keySetOK != nil {
+		// A provider key set earlier in this same flow counts.
+		for _, p := range m.agentProviders[agentType] {
+			if c.keySetOK[p] {
+				return nil
+			}
+		}
+	}
+	if !m.agentKeyGap[agentType] {
+		return nil
+	}
+	provs := m.agentProviders[agentType]
+	if len(provs) == 0 {
+		return nil // no advisory list — can't guide a specific provider
+	}
+	return provs
+}
+
+// creatorProviderKeyKey drives the guided key step: pick a provider, paste the
+// key (masked), Enter to store it, then continue to the roster.
+func (m tuiModel) creatorProviderKeyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	c := m.creator
+	if c.keyBusy {
+		return m, nil // waiting on the store; ignore keys
+	}
+	switch msg.String() {
+	case "esc":
+		// Skip: proceed without a key. The agent will need `v` later — the picker
+		// already warns — but we don't force it.
+		c.step = stepAgents
+	case "up":
+		// Arrow keys only for provider nav — j/k are valid key characters and must
+		// be typed, not swallowed as vim motions.
+		if c.keyProvSel > 0 {
+			c.keyProvSel--
+		}
+	case "down":
+		if c.keyProvSel < len(c.keyProviders)-1 {
+			c.keyProvSel++
+		}
+	case "enter":
+		if strings.TrimSpace(c.keyInput) == "" {
+			return m, nil // nothing to store yet
+		}
+		provider := c.keyProviders[c.keyProvSel]
+		c.keyBusy = true
+		return m, m.creatorSetKeyCmd(provider, c.keyInput)
+	case "backspace":
+		if c.keyInput != "" {
+			c.keyInput = c.keyInput[:len(c.keyInput)-1]
+		}
+	default:
+		if s := msg.String(); len(s) == 1 {
+			c.keyInput += s
+		}
+	}
+	return m, nil
+}
+
+// creatorSetKeyCmd stores a provider key during creation (provider-level, so it
+// applies before the agent exists), reporting back via creatorKeySetMsg.
+func (m tuiModel) creatorSetKeyCmd(provider, key string) tea.Cmd {
+	cl := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, err := cl.PutProviderCredential(ctx, provider, api.PutProviderCredentialRequest{APIKey: key})
+		return creatorKeySetMsg{provider: provider, err: err}
+	}
+}
+
+type creatorKeySetMsg struct {
+	provider string
+	err      error
 }
 
 // creatorAgentsKey drives the roster: review the seeded agents, add another, drop
@@ -864,6 +964,8 @@ func (c *creatorModel) view(width int) string {
 		c.viewAgent(&b)
 	case stepAgentName:
 		c.viewAgentName(&b)
+	case stepAgentKey:
+		c.viewAgentKey(&b)
 	case stepAgents:
 		c.viewAgents(&b)
 	case stepName:
@@ -1062,6 +1164,37 @@ func (c *creatorModel) viewAgentName(b *strings.Builder) {
 	b.WriteString("\n\n")
 	b.WriteString("agent name: " + styleAccent.Render(c.agentNameIn+"_"))
 	b.WriteString("\n\n" + styleMuted.Render("[⏎] continue   [esc] pick a different agent"))
+}
+
+// viewAgentKey renders the guided provider-key step: a key-requiring agent has
+// no key, so collect one now (provider-level) rather than let it launch broken.
+func (c *creatorModel) viewAgentKey(b *strings.Builder) {
+	b.WriteString(styleWaiting.Render(c.pendingAgent.Type + " needs a provider key to work"))
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("Set it now and the agent launches ready. (You can skip and set it later with `v`.)"))
+	b.WriteString("\n\n")
+
+	b.WriteString(styleMuted.Render("provider:"))
+	b.WriteString("\n")
+	for i, p := range c.keyProviders {
+		if i == c.keyProvSel {
+			b.WriteString("  " + styleSelected.Render("▶ "+p) + "\n")
+		} else {
+			b.WriteString("    " + p + "\n")
+		}
+	}
+	b.WriteString("\n")
+	// Mask the key — length only, never the characters.
+	b.WriteString("key: " + styleAccent.Render(strings.Repeat("•", len(c.keyInput))+"▏"))
+	b.WriteString("\n\n")
+	if c.keyBusy {
+		b.WriteString(styleAccent.Render("saving…"))
+		return
+	}
+	if c.err != "" {
+		b.WriteString(styleErrored.Render("✗ "+c.err) + "\n\n")
+	}
+	b.WriteString(styleMuted.Render("[↑/↓] provider · type the key (hidden) · [⏎] save & continue · [esc] skip"))
 }
 
 // viewAgents renders the seeded-agent roster: the primary plus any extras, with

@@ -14,8 +14,9 @@ import (
 // instead of the user discovering it when an agent fails at first attach.
 type setupReadinessMsg struct {
 	claudeSeeded bool
-	keyGap       map[string]bool // agent type → requires a provider key, none set for it
-	gatewayPort  map[string]int  // agent type → its localhost gateway port (0/absent = none)
+	keyGap       map[string]bool     // agent type → requires a provider key, none set for it
+	gatewayPort  map[string]int      // agent type → its localhost gateway port (0/absent = none)
+	providers    map[string][]string // agent type → the providers it supports (for the guided key step)
 }
 
 // fetchSetupReadinessCmd loads the credential/provider-key picture in one go.
@@ -29,7 +30,7 @@ func (m tuiModel) fetchSetupReadinessCmd() tea.Cmd {
 
 		// Claude credentials: missing only when there's no host login AND no
 		// pushed seed — mirrors `dejima doctor`'s checkClaudeCreds verdict.
-		msg := setupReadinessMsg{claudeSeeded: true, keyGap: map[string]bool{}, gatewayPort: map[string]int{}}
+		msg := setupReadinessMsg{claudeSeeded: true, keyGap: map[string]bool{}, gatewayPort: map[string]int{}, providers: map[string][]string{}}
 		if st, err := c.ClaudeCredentialsStatus(ctx); err == nil {
 			msg.claudeSeeded = st.SeedPresent || st.HostSource != ""
 		}
