@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os/exec"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 
@@ -39,6 +40,14 @@ func NewServer(log *slog.Logger) (*Server, error) {
 // the CLI can print it for clients to pin (known_hosts).
 func (s *Server) HostKeyFingerprint() string {
 	return ssh.FingerprintSHA256(s.signer.PublicKey())
+}
+
+// HostPublicKey returns the daemon's host key as an OpenSSH authorized-key line
+// ("ssh-ed25519 AAAA…"), so a client can pin it in a known_hosts entry it manages
+// itself — fetched over the already-authenticated API, so a rotated key
+// self-heals instead of tripping "REMOTE HOST IDENTIFICATION HAS CHANGED".
+func (s *Server) HostPublicKey() string {
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(s.signer.PublicKey())))
 }
 
 // Serve accepts connections until ln errors or is closed. Each connection is

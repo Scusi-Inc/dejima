@@ -155,6 +155,10 @@ type Server struct {
 	// sshAddr is the SSH-façade listen addr, recorded via EnableSSH purely so
 	// /v1/overview can report it to clients. Empty unless dejimad has --ssh.
 	sshAddr string
+	// sshHostKey is the façade's host public key (OpenSSH authorized-key line),
+	// reported alongside sshAddr so a client can pin it in a known_hosts file it
+	// manages itself — making a rotated host key self-heal.
+	sshHostKey string
 
 	// hostTerminals gates the operator host-terminal feature (uncontained shells
 	// on the daemon host). Off unless dejimad is started with --host-terminals.
@@ -245,7 +249,7 @@ func (s *Server) EnableEgress(dial string, log *egress.Log, policy *egress.Polic
 // EnableSSH records the SSH-façade listen addr so clients (the TUI,
 // `dejima ssh config/info`) can surface the connection target. Reporting only —
 // the listener itself is owned by dejimad/main; this never opens a port.
-func (s *Server) EnableSSH(addr string) { s.sshAddr = addr }
+func (s *Server) EnableSSH(addr, hostKey string) { s.sshAddr, s.sshHostKey = addr, hostKey }
 
 // statsAll returns per-container stats, serving from a short-TTL cache.
 // Holding statsMu across the engine query makes concurrent callers wait for

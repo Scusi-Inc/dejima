@@ -250,6 +250,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		IslandImage:          DefaultImage,
 		HostTerminalsEnabled: s.hostTerminals,
 		SSHAddr:              s.sshAddr,
+		SSHHostKey:           s.sshHostKey,
 		DaemonVersion:        version.Version,
 		APIVersion:           version.APIVersion,
 		Panicked:             panicEngaged(),

@@ -337,7 +337,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 			return fmt.Errorf("ssh listen %s: %w", sshAddr, err)
 		}
 		defer sshLn.Close()
-		server.EnableSSH(sshAddr)
+		server.EnableSSH(sshAddr, sshSrv.HostPublicKey())
 		log.Info("ssh façade enabled", "addr", sshAddr, "host_key", sshSrv.HostKeyFingerprint())
 	}
 

@@ -216,6 +216,12 @@ type OverviewResponse struct {
 	// connection target and generate an ssh config entry. The bind host may be
 	// wildcard/empty (":2222"); clients resolve a reachable host themselves.
 	SSHAddr string `json:"ssh_addr,omitempty"`
+	// SSHHostKey is the façade's host public key (OpenSSH "ssh-ed25519 AAAA…"
+	// line), served with SSHAddr so a client pins it in a known_hosts file it
+	// manages — so `dejima agent open`'s tunnel verifies the key over the trusted
+	// API rather than TOFU, and a rotated key self-heals instead of failing with
+	// "REMOTE HOST IDENTIFICATION HAS CHANGED". Empty on daemons predating this.
+	SSHHostKey string `json:"ssh_host_key,omitempty"`
 	// DaemonVersion / APIVersion let a client detect skew against the daemon.
 	// APIVersion is 0 from daemons predating version reporting.
 	DaemonVersion string `json:"daemon_version,omitempty"`

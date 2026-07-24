@@ -5,12 +5,46 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/aoos/dejima/internal/project"
 	"github.com/spf13/cobra"
 )
+
+// managedKnownHostsArgs writes the façade's host public key to a dejima-owned
+// known_hosts file and returns ssh options that verify against ONLY that file.
+// Because it's rewritten from the daemon's authoritative key (fetched over the
+// trusted API) on every call, a rotated host key self-heals, and the user's
+// global known_hosts is bypassed — so a stale entry there can't cause
+// "REMOTE HOST IDENTIFICATION HAS CHANGED". Returns nil (no opts) when the daemon
+// supplied no key (older daemon): ssh falls back to its default behavior.
+func managedKnownHostsArgs(host, port, hostKey string) ([]string, error) {
+	hostKey = strings.TrimSpace(hostKey)
+	if hostKey == "" {
+		return nil, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(home, ".dejima")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, "known_hosts")
+	// known_hosts hosts a non-default port as "[host]:port"; port 22 is bare.
+	hostField := host
+	if port != "" && port != "22" {
+		hostField = "[" + host + "]:" + port
+	}
+	if err := os.WriteFile(path, []byte(hostField+" "+hostKey+"\n"), 0o600); err != nil {
+		return nil, err
+	}
+	return []string{"-o", "UserKnownHostsFile=" + path, "-o", "StrictHostKeyChecking=yes"}, nil
+}
 
 // newAgentOpenCmd opens an agent's web/control UI by forwarding its in-container
 // loopback gateway port to localhost over the SSH-façade, then launching a
@@ -72,7 +106,7 @@ func newAgentOpenCmd() *cobra.Command {
 					"(it may be CLI- or messaging-only)", agentType)
 			}
 
-			host, sshPort, enabled, err := resolveSSHEndpoint(cmd.Context())
+			host, sshPort, hostKey, enabled, err := resolveSSHEndpoint(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -92,12 +126,22 @@ func newAgentOpenCmd() *cobra.Command {
 			// dials the forward target inside the island's netns, so the agent's
 			// loopback-bound gateway is reachable. Uses the user's own ssh (keys +
 			// known_hosts from `dejima ssh enroll`).
-			sshArgs := []string{
-				"-N", "-o", "ExitOnForwardFailure=yes",
+			// Pin the façade host key in a dejima-managed known_hosts (from the key
+			// the daemon just reported over the trusted API), and point ssh at ONLY
+			// that file. This bypasses the user's global known_hosts, so a rotated
+			// façade key self-heals instead of failing "REMOTE HOST IDENTIFICATION
+			// HAS CHANGED" against a stale pinned entry.
+			khArgs, err := managedKnownHostsArgs(host, sshPort, hostKey)
+			if err != nil {
+				return err
+			}
+			sshArgs := []string{"-N", "-o", "ExitOnForwardFailure=yes"}
+			sshArgs = append(sshArgs, khArgs...)
+			sshArgs = append(sshArgs,
 				"-L", fmt.Sprintf("%d:127.0.0.1:%d", localPort, gw),
 				"-p", sshPort,
-				island + "@" + host,
-			}
+				island+"@"+host,
+			)
 			if printOnly {
 				fmt.Printf("%s\nssh %s\n", url, joinArgs(sshArgs))
 			}
