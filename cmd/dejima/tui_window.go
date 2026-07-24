@@ -196,6 +196,26 @@ func (m tuiModel) openGithubConnectWindow() error {
 	}
 }
 
+// windowsRunCommand builds the `dejima <verb> …` command line for a spawned
+// Windows tab. The agent id's placement is verb-specific: `agent open` takes it
+// POSITIONALLY (`agent open <island> <id>`), while connect/logs take `--agent
+// <id>`. Getting this wrong is why opening an OpenClaw console on Windows failed
+// with "unknown flag: --agent".
+func windowsRunCommand(exe, verb, name, agentID string, extra []string) string {
+	run := `"` + exe + `" ` + verb + ` ` + name
+	if agentID != "" {
+		if verb == "agent open" {
+			run += " " + agentID // positional, not a flag
+		} else {
+			run += " --agent " + agentID
+		}
+	}
+	for _, e := range extra {
+		run += " " + e
+	}
+	return run
+}
+
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the
@@ -210,13 +230,7 @@ func openWindowsTerminal(exe, verb, name, agentID, title string, extra []string,
 			return fmt.Errorf("can't open a window for %q — run `dejima %s %s` manually", s, verb, name)
 		}
 	}
-	run := `"` + exe + `" ` + verb + ` ` + name
-	if agentID != "" {
-		run += " --agent " + agentID
-	}
-	for _, e := range extra {
-		run += " " + e
-	}
+	run := windowsRunCommand(exe, verb, name, agentID, extra)
 	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
 	// title matches the tab name. Strip cmd.exe-special chars from the title
 	// before interpolating it (it's a user label, unlike name/agentID/host above).
