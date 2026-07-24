@@ -21,20 +21,25 @@ import (
 // the authenticated URL it prints, and rewrites its host:port onto the local
 // tunnel. This is how OpenClaw's console gets its auth token without the operator
 // copying anything.
-func fetchDashboardURL(ctx context.Context, khArgs []string, sshPort, island, host, dashCmd string, localPort int) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+func fetchDashboardURL(ctx context.Context, khArgs []string, sshPort, island, host, dashCmd string, localPort int) (localized, raw string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	args := append([]string{"-o", "BatchMode=yes"}, khArgs...)
 	args = append(args, "-p", sshPort, island+"@"+host, dashCmd)
 	out, err := exec.CommandContext(ctx, "ssh", args...).Output()
+	raw = string(out)
 	if err != nil {
-		return "", err
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			raw += string(ee.Stderr) // surface the remote error, not just "exit status N"
+		}
+		return "", raw, err
 	}
-	raw := firstURLIn(string(out))
-	if raw == "" {
-		return "", fmt.Errorf("no URL in dashboard output")
+	u := firstURLIn(raw)
+	if u == "" {
+		return "", raw, fmt.Errorf("no URL in dashboard output")
 	}
-	return localizeURL(raw, localPort)
+	localized, err = localizeURL(u, localPort)
+	return localized, raw, err
 }
 
 // firstURLIn returns the first http(s) URL token in s, trimmed of trailing
@@ -215,11 +220,15 @@ func newAgentOpenCmd() *cobra.Command {
 			// effort: any hiccup falls back to the root URL with a note.
 			openTarget := url
 			if dashCmd != "" && !printOnly {
-				if durl, derr := fetchDashboardURL(cmd.Context(), khArgs, sshPort, island, host, dashCmd, localPort); derr == nil && durl != "" {
+				durl, raw, derr := fetchDashboardURL(cmd.Context(), khArgs, sshPort, island, host, dashCmd, localPort)
+				switch {
+				case derr == nil && durl != "":
 					openTarget = durl
-				} else {
-					fmt.Printf("note: couldn't fetch the authenticated console URL (%v) — opening the gateway root; "+
-						"if it says \"could not connect\", the gateway needs its auth token\n", derr)
+				default:
+					fmt.Printf("note: couldn't fetch the authenticated console URL (%v) — opening the gateway root.\n", derr)
+					if s := strings.TrimSpace(raw); s != "" {
+						fmt.Printf("      dashboard command output was:\n%s\n", indentBlock(s, "        "))
+					}
 				}
 			}
 			if !noOpen && !printOnly {

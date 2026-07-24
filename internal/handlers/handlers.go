@@ -108,8 +108,10 @@ var registry = map[string]Handler{
 		// The gateway generates a per-startup auth token; the bare root URL carries
 		// none, so the dashboard can't complete its WebSocket ("could not connect").
 		// `openclaw dashboard` prints the URL WITH the current token — `agent open`
-		// runs this and localizes the host:port onto the tunnel.
-		DashboardCmd: "openclaw dashboard --no-open"},
+		// runs this and localizes the host:port onto the tunnel. Run under a LOGIN
+		// shell (bash -lc): openclaw is an npm-global bin that the façade's non-login
+		// exec shell may not have on PATH.
+		DashboardCmd: "bash -lc 'openclaw dashboard --no-open'"},
 	// Letta — a stateful-agent framework with a REST API + web UI on 8283. Reads
 	// its model key straight from the provider env var (OPENAI_API_KEY /
 	// ANTHROPIC_API_KEY …), so the launch sources the daemon-materialized key file
