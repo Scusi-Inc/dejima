@@ -180,9 +180,10 @@ func TestRenderListGlyphs(t *testing.T) {
 		"◉",                     // a1 has an attached viewer → presence badge
 		"needs you",             // a1's waiting-for-input normalized to the call-to-action word
 		"stopped",               // a2 session is stopped
-		// Tree connectors group the island's children. The secrets row now caps
-		// the group (└), so add-agent branches (├) like the agent rows above it.
-		"├ ", "└ + add agent", "└ " + glyphSecrets + " secrets",
+		// Tree connectors group the agents (├) and the add-agent affordance (└).
+		// Secrets is a sibling island-level action, left-aligned with "+ add agent"
+		// and WITHOUT a connector (not a child of it).
+		"├ ", "└ + add agent", glyphSecrets + " secrets",
 		"+ new island",
 	} {
 		if !strings.Contains(bare, want) {
