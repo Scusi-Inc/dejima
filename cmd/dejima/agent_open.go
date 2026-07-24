@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,56 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/spf13/cobra"
 )
+
+// fetchDashboardURL runs the framework's dashboard command inside the container
+// over the façade (a one-shot ssh exec, same host-key pin as the tunnel), reads
+// the authenticated URL it prints, and rewrites its host:port onto the local
+// tunnel. This is how OpenClaw's console gets its auth token without the operator
+// copying anything.
+func fetchDashboardURL(ctx context.Context, khArgs []string, sshPort, island, host, dashCmd string, localPort int) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	args := append([]string{"-o", "BatchMode=yes"}, khArgs...)
+	args = append(args, "-p", sshPort, island+"@"+host, dashCmd)
+	out, err := exec.CommandContext(ctx, "ssh", args...).Output()
+	if err != nil {
+		return "", err
+	}
+	raw := firstURLIn(string(out))
+	if raw == "" {
+		return "", fmt.Errorf("no URL in dashboard output")
+	}
+	return localizeURL(raw, localPort)
+}
+
+// firstURLIn returns the first http(s) URL token in s, trimmed of trailing
+// punctuation, or "".
+func firstURLIn(s string) string {
+	for _, tok := range strings.Fields(s) {
+		// https first so the "http" substring of "https://" doesn't win at a later
+		// index; find it WITHIN the token so leading punctuation ("(http://…") is ok.
+		for _, scheme := range []string{"https://", "http://"} {
+			if i := strings.Index(tok, scheme); i >= 0 {
+				return strings.TrimRight(tok[i:], ".,)]}\"'>")
+			}
+		}
+	}
+	return ""
+}
+
+// localizeURL rewrites raw's scheme/host to the local tunnel (plain http on
+// localhost:localPort), preserving the path, query (the auth token), and
+// fragment — so a URL the framework built for its own loopback address opens
+// through the forward.
+func localizeURL(raw string, localPort int) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	u.Scheme = "http"
+	u.Host = fmt.Sprintf("localhost:%d", localPort)
+	return u.String(), nil
+}
 
 // managedKnownHostsArgs writes the façade's host public key to a dejima-owned
 // known_hosts file and returns ssh options that verify against ONLY that file.
@@ -96,9 +148,11 @@ func newAgentOpenCmd() *cobra.Command {
 				return err
 			}
 			gw := 0
+			dashCmd := ""
 			for _, t := range types {
 				if t.Type == agentType {
 					gw = t.GatewayPort
+					dashCmd = t.DashboardCmd
 				}
 			}
 			if gw == 0 {
@@ -152,11 +206,27 @@ func newAgentOpenCmd() *cobra.Command {
 			if err := sshCmd.Start(); err != nil {
 				return fmt.Errorf("start ssh forward: %w", err)
 			}
+
+			// Frameworks whose dashboard needs an auth token (OpenClaw) can't be
+			// reached at the bare gateway root — the console loads but the WebSocket
+			// can't authenticate. Ask the framework for its OWN authenticated URL
+			// (over the façade, in-container), then localize its host:port onto the
+			// tunnel so the browser opens a console that actually connects. Best
+			// effort: any hiccup falls back to the root URL with a note.
+			openTarget := url
+			if dashCmd != "" && !printOnly {
+				if durl, derr := fetchDashboardURL(cmd.Context(), khArgs, sshPort, island, host, dashCmd, localPort); derr == nil && durl != "" {
+					openTarget = durl
+				} else {
+					fmt.Printf("note: couldn't fetch the authenticated console URL (%v) — opening the gateway root; "+
+						"if it says \"could not connect\", the gateway needs its auth token\n", derr)
+				}
+			}
 			if !noOpen && !printOnly {
 				// Give the forward a moment to come up, then open the browser.
 				go func() {
 					time.Sleep(800 * time.Millisecond)
-					_ = openURL(url)
+					_ = openURL(openTarget)
 				}()
 			}
 			return sshCmd.Wait()

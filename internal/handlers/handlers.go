@@ -59,6 +59,12 @@ type Handler struct {
 	// open it. 0 means there is no localhost UI to open (e.g. a messaging-only
 	// gateway).
 	GatewayPort int
+	// DashboardCmd, when set, is a command run INSIDE the container that prints the
+	// framework's own authenticated dashboard URL (token + path). `dejima agent
+	// open` runs it over the façade and rewrites the URL's host:port onto the local
+	// tunnel — so the operator lands in a console that can actually connect, rather
+	// than a bare gateway root that has no auth token. Empty = open the root.
+	DashboardCmd string
 }
 
 // Attachable reports whether clients can attach to this handler's agents.
@@ -98,7 +104,12 @@ var registry = map[string]Handler{
 		RequiresProviderKey: true,
 		SupportedProviders:  []string{"anthropic", "openai", "google"},
 		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6", "openai/gpt-5.5"},
-		GatewayPort:         18789},
+		GatewayPort:         18789,
+		// The gateway generates a per-startup auth token; the bare root URL carries
+		// none, so the dashboard can't complete its WebSocket ("could not connect").
+		// `openclaw dashboard` prints the URL WITH the current token — `agent open`
+		// runs this and localizes the host:port onto the tunnel.
+		DashboardCmd: "openclaw dashboard --no-open"},
 	// Letta — a stateful-agent framework with a REST API + web UI on 8283. Reads
 	// its model key straight from the provider env var (OPENAI_API_KEY /
 	// ANTHROPIC_API_KEY …), so the launch sources the daemon-materialized key file

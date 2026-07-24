@@ -132,6 +132,7 @@ func (s *Server) handleAgentTypes(w http.ResponseWriter, _ *http.Request) {
 			SupportedProviders:  h.SupportedProviders,
 			SuggestedModels:     h.SuggestedModels,
 			GatewayPort:         h.GatewayPort,
+			DashboardCmd:        h.DashboardCmd,
 		})
 	}
 	writeJSON(w, http.StatusOK, AgentTypesResponse{Types: out})
