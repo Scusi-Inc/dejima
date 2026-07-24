@@ -155,6 +155,8 @@ type tuiModel struct {
 	sshPort        string // resolved SSH-façade port
 	sshResolvedFor string // the SSHAddr we last resolved, so we don't re-exec tailscale each frame
 	latestRelease  string // newest published release tag (from GitHub; "" until fetched)
+	latestNotes    string // the newest release's curated notes (for the update blurb)
+	latestURL      string // the newest release's page URL ("view more")
 	selfStamp      string // on-disk identity of this executable at startup
 	updateCheckErr string // why the last release check failed ("" = it succeeded)
 	clientUpdate   bool   // this CLI build is behind latestRelease
@@ -673,6 +675,8 @@ func (m tuiModel) Init() tea.Cmd {
 // "already up to date" while silently knowing nothing.
 type latestReleaseMsg struct {
 	latest string
+	notes  string // the release body — source of the update blurb
+	url    string // the release page — "view more"
 	err    error
 }
 
@@ -683,11 +687,11 @@ func fetchLatestReleaseCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		v, err := selfupdate.LatestRelease(ctx)
+		info, err := selfupdate.LatestReleaseInfo(ctx)
 		if err != nil {
 			return latestReleaseMsg{err: err}
 		}
-		return latestReleaseMsg{latest: v}
+		return latestReleaseMsg{latest: info.Tag, notes: info.Notes, url: info.URL}
 	}
 }
 
@@ -930,6 +934,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case latestReleaseMsg:
 		if msg.latest != "" {
 			m.latestRelease = msg.latest
+			m.latestNotes = msg.notes
+			m.latestURL = msg.url
 			m.updateCheckErr = ""
 			m.clientUpdate = selfupdate.Evaluate(version.Version, msg.latest, selfupdate.DetectMode()).UpdateAvailable
 			m.daemonUpdate = daemonUpdateAvailable(msg.latest, m.overview)
@@ -4658,6 +4664,21 @@ func (m tuiModel) renderConfirm() string {
 	}
 	question := lipgloss.NewStyle().Width(width).Render(prompt)
 
+	// For an update, show a short "what's in this release" blurb (from the curated
+	// release notes) plus a link to read the rest — so applying an update is an
+	// informed choice, not a leap. Standard for every release: the notes are the
+	// GitHub release body, which we curate on each tag; this just surfaces them.
+	var extra string
+	if c.verb == "update-client" || c.verb == "update-daemon" {
+		if b := releaseBlurb(m.latestNotes); b != "" {
+			extra = "\n\n" + styleHeader.Render("What's in "+m.latestRelease) + "\n" +
+				lipgloss.NewStyle().Width(width).Render(styleMuted.Render(b))
+			if m.latestURL != "" {
+				extra += "\n" + styleMuted.Render("Full notes: "+m.latestURL)
+			}
+		}
+	}
+
 	// The action line: for a y/n verb, "▸ Type  y  then Enter"; for a typed verb,
 	// name what to type. The typed answer + cursor sit right after it.
 	verb := "Type"
@@ -4671,7 +4692,40 @@ func (m tuiModel) renderConfirm() string {
 	answerLine := styleHeader.Render("  › ") + styleTitle.Render(c.answer+"▌")
 
 	hint := styleMuted.Render("Enter = confirm    ·    Esc = cancel")
-	return title + "\n\n" + question + "\n\n" + action + "\n" + answerLine + "\n\n" + hint
+	return title + "\n\n" + question + extra + "\n\n" + action + "\n" + answerLine + "\n\n" + hint
+}
+
+// releaseBlurb distills a short, plain "what's in this update" line from a release
+// body (markdown): the first prose paragraph, past any leading heading, with the
+// markdown leaders/emphasis stripped and the length capped. Enough to say what the
+// update is in the confirm pop-up without reproducing the whole notes.
+func releaseBlurb(notes string) string {
+	var para []string
+	for _, ln := range strings.Split(notes, "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			if len(para) > 0 {
+				break // end of the first paragraph
+			}
+			continue
+		}
+		if strings.HasPrefix(t, "#") { // a heading: skip it, take the prose that follows
+			if len(para) > 0 {
+				break
+			}
+			continue
+		}
+		t = strings.TrimLeft(t, "-*># ") // list/quote/emphasis leaders
+		para = append(para, t)
+	}
+	blurb := strings.Join(para, " ")
+	blurb = strings.ReplaceAll(blurb, "**", "")
+	blurb = strings.ReplaceAll(blurb, "`", "")
+	const max = 240
+	if len(blurb) > max {
+		blurb = strings.TrimSpace(blurb[:max]) + "…"
+	}
+	return blurb
 }
 
 // renderActionMenu draws the inner content of the per-row context popup: a

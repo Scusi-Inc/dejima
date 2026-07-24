@@ -66,11 +66,29 @@ func DetectMode() Mode {
 // releasesURL is the GitHub "latest release" endpoint, overridable in tests.
 var releasesURL = "https://api.github.com/repos/aoos/dejima/releases/latest"
 
+// ReleaseInfo is the newest published release: its tag, its notes (the curated
+// release body — the source of the in-app "what's in this update" blurb), and the
+// URL of its release page ("view more").
+type ReleaseInfo struct {
+	Tag   string
+	Notes string
+	URL   string
+}
+
 // LatestRelease returns the tag of the newest published (non-prerelease) release.
 func LatestRelease(ctx context.Context) (string, error) {
+	info, err := LatestReleaseInfo(ctx)
+	return info.Tag, err
+}
+
+// LatestReleaseInfo returns the newest published release's tag, notes, and page
+// URL in one request. The notes are the release body we curate on every release;
+// the TUI shows a blurb of it in the update confirm so an operator sees WHAT the
+// update is before applying it (with the URL to read the rest).
+func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
 	if err != nil {
-		return "", err
+		return ReleaseInfo{}, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	if tok := githubToken(); tok != "" {
@@ -78,7 +96,7 @@ func LatestRelease(ctx context.Context) (string, error) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("query latest release: %w", err)
+		return ReleaseInfo{}, fmt.Errorf("query latest release: %w", err)
 	}
 	defer resp.Body.Close()
 	// 403/429 from the GitHub API is usually the unauthenticated rate limit
@@ -88,21 +106,23 @@ func LatestRelease(ctx context.Context) (string, error) {
 	// specifically for exhaustion, and say when it clears so "shortly" isn't a
 	// guess.
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return "", rateLimitError(resp)
+		return ReleaseInfo{}, rateLimitError(resp)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
+		return ReleaseInfo{}, fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
 	}
 	var body struct {
 		TagName string `json:"tag_name"`
+		Body    string `json:"body"`
+		HTMLURL string `json:"html_url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("decode release: %w", err)
+		return ReleaseInfo{}, fmt.Errorf("decode release: %w", err)
 	}
 	if body.TagName == "" {
-		return "", fmt.Errorf("no tag in latest release")
+		return ReleaseInfo{}, fmt.Errorf("no tag in latest release")
 	}
-	return body.TagName, nil
+	return ReleaseInfo{Tag: body.TagName, Notes: body.Body, URL: body.HTMLURL}, nil
 }
 
 // rateLimitError turns a 403/429 into a message that says which of the two
