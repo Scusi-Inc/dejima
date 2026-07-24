@@ -88,7 +88,12 @@ var registry = map[string]Handler{
 	//     loopback makes it self-generate a runtime token and come up `ready`;
 	//     widening the bind is the operator's job once auth/config is in place.
 	"openclaw": {ID: "openclaw", Kind: KindHeadless,
-		Launch:              "bash -lc 'command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; openclaw gateway --allow-unconfigured --bind loopback'",
+		// Source the daemon-materialized provider key (DEJIMA_PROVIDER_KEY_FILE →
+		// `<PROVIDER>_API_KEY=…`) into the env before launch, like letta/goose —
+		// OpenClaw reads OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY from
+		// the environment. Without this the gateway comes up but every task fails
+		// with "No API key found for provider …". exec so signals reach it.
+		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; exec openclaw gateway --allow-unconfigured --bind loopback'",
 		StateDir:            "/home/dejima/.openclaw",
 		RequiresProviderKey: true,
 		SupportedProviders:  []string{"anthropic", "openai", "google"},

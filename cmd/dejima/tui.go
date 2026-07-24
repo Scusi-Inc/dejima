@@ -1669,11 +1669,12 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r := m.currentRow(); r.island != "" {
 			return m.openAgentAdder(r.island)
 		}
-	case "X":
-		// Remove the selected agent (agent rows only). An island may have zero
-		// agents — you can still shell into it. The daemon enforces the one
-		// exception (a headless first agent that is the container's PID 1) and
-		// surfaces it as an error here.
+	case "x", "X":
+		// Remove the selected agent (agent rows only). Both cases, so pressing
+		// the accelerator shown in the [m] menu ("x") works and the old uppercase
+		// binding keeps working. An island may have zero agents — you can still
+		// shell into it. The daemon enforces the one exception (a headless first
+		// agent that is the container's PID 1) and surfaces it as an error here.
 		if r := m.currentRow(); r.kind == rowAgent {
 			m.confirm = &confirmPrompt{verb: "remove-agent", island: r.island, answer: "", agent: r.agentID}
 		}
@@ -2441,7 +2442,7 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 				return mm.openGrantsView(agentIsland)
 			}},
 			actionMenuItem{label: "Rename (relabel)", key: "e"},
-			actionMenuItem{label: "Remove agent", key: "X", danger: true},
+			actionMenuItem{label: "Remove agent", key: "x", danger: true},
 		)
 	default:
 		return m, false
