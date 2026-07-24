@@ -2,6 +2,23 @@ package main
 
 import "testing"
 
+func TestExtractGatewayToken(t *testing.T) {
+	cases := map[string]string{
+		"http://127.0.0.1:18789/?token=abcd1234efgh":                "abcd1234efgh",
+		"Gateway Token: abcd1234efgh":                               "abcd1234efgh",
+		"OPENCLAW_GATEWAY_TOKEN=abcd1234efgh":                       "abcd1234efgh",
+		`{"token":"abcd1234efgh"}`:                                  "abcd1234efgh",
+		"ws://localhost:64046  token   abcd1234efgh   (paste this)": "abcd1234efgh",
+		"no token here":       "", // "here" is <8 chars, and nothing token-like
+		"the token is short7": "", // 7 chars → rejected as not a real token
+	}
+	for in, want := range cases {
+		if got := extractGatewayToken(in); got != want {
+			t.Errorf("extractGatewayToken(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestFirstURLIn(t *testing.T) {
 	cases := map[string]string{
 		"Dashboard: http://127.0.0.1:18789/dashboard?token=abc123": "http://127.0.0.1:18789/dashboard?token=abc123",

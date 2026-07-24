@@ -42,6 +42,44 @@ func fetchDashboardURL(ctx context.Context, khArgs []string, sshPort, island, ho
 	return localized, raw, err
 }
 
+// extractGatewayToken pulls a gateway auth token out of dashboard output or a
+// URL. It handles the common shapes — a "token=…" query/param, a "Token: …" or
+// "OPENCLAW_GATEWAY_TOKEN=…" line, or a quoted "token":"…" — by finding the word
+// "token" and capturing the value that follows past separators. Returns "" if
+// none is found (the caller then shows the raw output to copy from).
+func extractGatewayToken(s string) string {
+	low := strings.ToLower(s)
+	for from := 0; ; {
+		i := strings.Index(low[from:], "token")
+		if i < 0 {
+			return ""
+		}
+		j := from + i + len("token")
+		// Skip separators between the label and the value.
+		for j < len(s) && strings.ContainsRune("=: \t\"'>&?", rune(s[j])) {
+			j++
+		}
+		// Capture the value up to the next separator/quote.
+		k := j
+		for k < len(s) && !strings.ContainsRune(" \t\r\n\"'>&", rune(s[k])) {
+			k++
+		}
+		if val := s[j:k]; len(val) >= 8 { // a real token, not a stray "token" word
+			return val
+		}
+		from = from + i + len("token")
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // firstURLIn returns the first http(s) URL token in s, trimmed of trailing
 // punctuation, or "".
 func firstURLIn(s string) string {
@@ -221,15 +259,28 @@ func newAgentOpenCmd() *cobra.Command {
 			openTarget := url
 			if dashCmd != "" && !printOnly {
 				durl, raw, derr := fetchDashboardURL(cmd.Context(), khArgs, sshPort, island, host, dashCmd, localPort)
-				switch {
-				case derr == nil && durl != "":
-					openTarget = durl
-				default:
-					fmt.Printf("note: couldn't fetch the authenticated console URL (%v) — opening the gateway root.\n", derr)
+				if derr == nil && durl != "" {
+					openTarget = durl // best-effort auto-connect
+				}
+				// Always surface the paste-in values: the framework's connect form may
+				// not read the token from the URL, so these are the reliable path. The
+				// WebSocket URL is the tunnel; the token comes from the dashboard output.
+				token := firstNonEmpty(extractGatewayToken(durl), extractGatewayToken(raw))
+				fmt.Println()
+				fmt.Println("If the browser shows a \"Gateway Dashboard\" connect form, paste:")
+				fmt.Printf("    WebSocket URL:  ws://localhost:%d\n", localPort)
+				if token != "" {
+					fmt.Printf("    Gateway Token:  %s\n", token)
+				} else {
+					fmt.Println("    Gateway Token:  (copy from the dashboard output below)")
 					if s := strings.TrimSpace(raw); s != "" {
-						fmt.Printf("      dashboard command output was:\n%s\n", indentBlock(s, "        "))
+						fmt.Printf("%s\n", indentBlock(s, "      "))
+					}
+					if derr != nil {
+						fmt.Printf("    (couldn't fetch it automatically: %v)\n", derr)
 					}
 				}
+				fmt.Println()
 			}
 			if !noOpen && !printOnly {
 				// Give the forward a moment to come up, then open the browser.
