@@ -5,6 +5,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/aoos/dejima/internal/api"
 )
 
 // setupReadinessMsg is the one-shot snapshot of "can a new island actually run
@@ -48,25 +50,41 @@ func (m tuiModel) fetchSetupReadinessCmd() tea.Cmd {
 				}
 			}
 		}
-		for _, t := range types {
-			if !t.RequiresProviderKey {
-				continue
-			}
-			have := false
-			if len(t.SupportedProviders) == 0 {
-				have = len(keySet) > 0 // no advisory list → any configured key counts
-			} else {
-				for _, p := range t.SupportedProviders {
-					if keySet[p] {
-						have = true
-						break
-					}
+		applyAgentTypeReadiness(&msg, types, keySet)
+		return msg
+	}
+}
+
+// applyAgentTypeReadiness fills keyGap, gatewayPort, and providers from the agent
+// types + which providers have a key. Split out (and pure) so a test can guard
+// that ALL THREE maps get populated: they were previously initialized empty and
+// only keyGap was ever filled, which silently disabled console-open (gatewayPort)
+// and the guided-key picker (providers).
+func applyAgentTypeReadiness(msg *setupReadinessMsg, types []api.AgentTypeCapability, keySet map[string]bool) {
+	for _, t := range types {
+		// gatewayPort and providers apply to EVERY type, before the key filter.
+		if t.GatewayPort > 0 {
+			msg.gatewayPort[t.Type] = t.GatewayPort
+		}
+		if len(t.SupportedProviders) > 0 {
+			msg.providers[t.Type] = t.SupportedProviders
+		}
+		if !t.RequiresProviderKey {
+			continue
+		}
+		have := false
+		if len(t.SupportedProviders) == 0 {
+			have = len(keySet) > 0 // no advisory list → any configured key counts
+		} else {
+			for _, p := range t.SupportedProviders {
+				if keySet[p] {
+					have = true
+					break
 				}
 			}
-			if !have {
-				msg.keyGap[t.Type] = true
-			}
 		}
-		return msg
+		if !have {
+			msg.keyGap[t.Type] = true
+		}
 	}
 }

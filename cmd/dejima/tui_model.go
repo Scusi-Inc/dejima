@@ -106,8 +106,17 @@ func (ed *modelEditor) applyLoaded(msg modelEditorLoadedMsg) {
 		}
 		sort.Strings(ed.providers)
 	}
+	// Preselect the provider: the agent's configured provider, else the one
+	// encoded in its model string ("openai/gpt-5.5" → openai), so the picker opens
+	// on the right provider instead of always the first.
+	want := msg.curProvider
+	if want == "" {
+		if i := strings.IndexByte(ed.model, '/'); i > 0 {
+			want = ed.model[:i]
+		}
+	}
 	for i, p := range ed.providers {
-		if p == msg.curProvider {
+		if p == want {
 			ed.provSel = i
 			break
 		}
@@ -270,11 +279,19 @@ func (m tuiModel) renderModelEditor() string {
 	ed := m.modelEditor
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("Model / provider / key — " + ed.island + "/" + ed.agentID))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	if ed.loading {
-		b.WriteString(styleAccent.Render("loading…"))
+		b.WriteString("\n" + styleAccent.Render("loading…"))
 		return b.String()
 	}
+	// Head off the common confusion ("where's the OpenClaw provider?"): the
+	// provider is the LLM backend the agent talks to, not the agent framework.
+	who := ed.agentType
+	if who == "" {
+		who = "this agent"
+	}
+	b.WriteString(styleMuted.Render("Provider = the LLM " + who + " talks to (openai · anthropic · google) — not " + who + " itself."))
+	b.WriteString("\n\n")
 
 	prov := ed.currentProvider()
 	if prov == "" {
@@ -296,7 +313,7 @@ func (m tuiModel) renderModelEditor() string {
 	}
 
 	rows := [3]struct{ label, val string }{
-		{"Provider", prov},
+		{"LLM provider", prov},
 		{"Model", modelVal},
 		{"API key", keyVal},
 	}
@@ -312,7 +329,7 @@ func (m tuiModel) renderModelEditor() string {
 				val = styleSelected.Render(" ‹ " + r.val + " › ")
 			}
 		}
-		b.WriteString(fmt.Sprintf("%s%-10s %s\n", lead, r.label, val))
+		b.WriteString(fmt.Sprintf("%s%-13s %s\n", lead, r.label, val))
 	}
 	b.WriteString("\n")
 	if ed.busy {
