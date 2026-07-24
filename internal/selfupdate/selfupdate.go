@@ -31,11 +31,22 @@ import (
 
 // githubToken returns a GitHub token from the environment, if any, used to lift
 // the release-check off the unauthenticated 60/hr rate limit (→ 5000/hr).
+// TokenFallback, when set, supplies a GitHub token for the release-check API
+// calls if neither GITHUB_TOKEN nor GH_TOKEN is set — so a daemon (or client)
+// that already has a connected GitHub identity authenticates its update checks
+// (5000/hr) instead of sharing the anonymous 60/hr-per-IP limit. Wired at
+// startup to the connected identity; kept as a hook so selfupdate needn't import
+// the identity store (and stays usable with no token at all).
+var TokenFallback func() string
+
 func githubToken() string {
 	for _, e := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
 		if v := strings.TrimSpace(os.Getenv(e)); v != "" {
 			return v
 		}
+	}
+	if TokenFallback != nil {
+		return strings.TrimSpace(TokenFallback())
 	}
 	return ""
 }

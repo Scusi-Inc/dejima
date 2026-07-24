@@ -27,9 +27,11 @@ import (
 	"github.com/aoos/dejima/internal/egress"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/fdlimit"
+	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/sshfacade"
 	"github.com/aoos/dejima/internal/version"
 )
@@ -199,6 +201,21 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 		}
 		ledger.Configure(key)
 		log.Info("ledger HMAC keying enabled", "key_file", audit.hmacKeyFile)
+	}
+
+	// Authenticate release-update checks with the connected GitHub identity when
+	// present, so the daemon isn't stuck on the anonymous 60/hr-per-IP GitHub limit
+	// (which a burst of releases + checks exhausts). Best-effort: no identity → the
+	// checks stay anonymous, exactly as before.
+	selfupdate.TokenFallback = func() string {
+		store, lerr := githubid.Load()
+		if lerr != nil {
+			return ""
+		}
+		if id, ok := store.ResolveForIsland("", ""); ok {
+			return id.Token
+		}
+		return ""
 	}
 
 	server := api.NewServer(rt, log, em)
