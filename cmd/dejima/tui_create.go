@@ -1194,7 +1194,8 @@ func (c *creatorModel) viewAgentKey(b *strings.Builder) {
 	if c.err != "" {
 		b.WriteString(styleErrored.Render("✗ "+c.err) + "\n\n")
 	}
-	b.WriteString(styleMuted.Render("[↑/↓] provider · type the key (hidden) · [⏎] save & continue · [esc] skip"))
+	b.WriteString("  " + styleSelected.Render(" Save & continue (⏎) ") + "    " + styleMuted.Render(" Skip (esc) "))
+	b.WriteString("\n" + styleMuted.Render("[↑/↓] provider · type the key (hidden)"))
 }
 
 // viewAgents renders the seeded-agent roster: the primary plus any extras, with

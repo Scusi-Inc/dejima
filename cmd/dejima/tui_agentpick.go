@@ -414,5 +414,6 @@ func (a *agentAdder) viewKey(b *strings.Builder) {
 		b.WriteString(styleAccent.Render("saving…"))
 		return
 	}
-	b.WriteString(styleMuted.Render("[↑/↓] provider · type the key (hidden) · [⏎] save & continue · [esc] skip"))
+	b.WriteString("  " + styleSelected.Render(" Save & continue (⏎) ") + "    " + styleMuted.Render(" Skip (esc) "))
+	b.WriteString("\n" + styleMuted.Render("[↑/↓] provider · type the key (hidden)"))
 }

@@ -302,7 +302,7 @@ func (m tuiModel) renderModelEditor() string {
 		keyVal = "set"
 	}
 	if ed.enteringKey {
-		keyVal = strings.Repeat("•", len(ed.keyInput)) + styleMuted.Render(" ⏎ save · esc cancel")
+		keyVal = strings.Repeat("•", len(ed.keyInput)) + "▌"
 	}
 	modelVal := ed.model
 	if ed.field == 1 {
@@ -333,20 +333,46 @@ func (m tuiModel) renderModelEditor() string {
 	}
 	b.WriteString("\n")
 	if ed.busy {
-		b.WriteString(styleAccent.Render("applying…"))
+		b.WriteString(styleAccent.Render("saving…"))
 		return b.String()
 	}
+
+	accountNote := styleMuted.Render("the key is account-wide — it applies to every agent on this provider")
+
+	// Confirm / cancel as visible buttons: the default action is highlighted and
+	// fires on ⏎, esc cancels — so committing or backing out is an obvious choice,
+	// not a hint you have to already know. The primary label matches what ⏎ does
+	// in the current context (start key entry vs save the key vs apply the config).
+	primary := "Apply"
+	switch {
+	case ed.enteringKey:
+		primary = "Save key"
+	case ed.field == 2:
+		primary = "Set key"
+	}
+	buttons := "   " + styleSelected.Render(" "+primary+" (⏎) ") + "    " + styleMuted.Render(" Cancel (esc) ")
+
+	// While entering the key, the buttons ARE the whole footer — Save / Cancel.
+	if ed.enteringKey {
+		b.WriteString(buttons)
+		b.WriteString("\n\n")
+		b.WriteString(styleMuted.Render("paste or type the key above · ") + accountNote)
+		return b.String()
+	}
+
 	if len(ed.suggested) > 0 {
 		b.WriteString(styleMuted.Render("suggested models: " + strings.Join(ed.suggested, ", ")))
 		b.WriteString("\n")
 	}
-	if prov != "" && !ed.keySet && !ed.enteringKey {
-		b.WriteString(styleWaiting.Render("⚠ no key for " + ed.currentProvider() + " — select the API key field and press ⏎ to set one"))
+	if ed.currentProvider() != "" && !ed.keySet {
+		b.WriteString(styleWaiting.Render("⚠ no key for " + ed.currentProvider() + " — go to the API key field and press ⏎ to enter one"))
 		b.WriteString("\n")
 	}
-	b.WriteString(styleMuted.Render("↑/↓ field · ←/→ provider · type the model · ⏎ apply · esc cancel"))
+	b.WriteString(buttons)
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("the key is account-wide — it applies to every agent on this provider"))
+	b.WriteString(styleMuted.Render("↑/↓ field · ←/→ provider · type the model"))
+	b.WriteString("\n")
+	b.WriteString(accountNote)
 	return b.String()
 }
 
