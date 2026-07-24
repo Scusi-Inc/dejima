@@ -394,13 +394,17 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 2: // Connection target → reuse the existing switcher overlay
 				m.settings = nil
 				return m.openSwitcher()
-			case 3: // Team & invites → the owner-only Team overlay (same as `I`)
+			case 3: // GitHub → the self-serve identity pane (account/identity, grouped
+				// with Team below)
+				m.settings = nil
+				return m.openGithubView()
+			case 4: // Team & invites → the owner-only Team overlay (same as `I`)
 				m.settings = nil
 				return m.openTeamView()
-			case 4: // Check for updates (re-poll GitHub) — stays open; line refreshes
+			case 5: // Check for updates (re-poll GitHub) — stays open; line refreshes
 				m.lastNotice = "checking for updates…"
 				return m, tea.Batch(fetchLatestReleaseCmd(), checkSelfBinaryCmd(m.selfStamp), m.fetchOverviewCmd())
-			case 5: // Update — same flow as 'u'/'U': client first, then the daemon (the
+			case 6: // Update — same flow as 'u'/'U': client first, then the daemon (the
 				// daemon update goes through the fleet-wide-restart warning + gate).
 				m.settings = nil
 				m.updateError = ""
@@ -412,9 +416,6 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.lastNotice = "already up to date"
 				}
 				return m, nil
-			case 6: // GitHub → the self-serve identity pane
-				m.settings = nil
-				return m.openGithubView()
 			}
 		}
 		// Editor sub-page: choose + persist, then back to the top page.
@@ -2410,25 +2411,27 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		} else {
 			items = append(items, actionMenuItem{label: "Wake", key: "w"})
 		}
-		items = append(items, actionMenuItem{label: "Rename", key: "e"})
 		islandName := isl.Name
+		// Config block, grouped: identity (rename + look), then compute, then the
+		// permission/reach items contiguously (network → host files → tokens → spawn).
+		items = append(items, actionMenuItem{label: "Rename", key: "e"})
+		items = append(items, actionMenuItem{label: "Color & glyph… (visual identity)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openIdentityEditor(islandName)
+		}})
 		items = append(items, actionMenuItem{label: "Resources… (memory · OOM priority)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openResourceEditor(islandName)
 		}})
 		items = append(items, actionMenuItem{label: "Grants… (what it can reach)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openGrantsView(islandName)
 		}})
-		items = append(items, actionMenuItem{label: "Sub-agent budget… (spawn grant)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
-			return mm.openSpawnGrantEditor(islandName)
+		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openScopeView(islandName)
 		}})
 		items = append(items, actionMenuItem{label: "Secrets… (tokens this island's tools use)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openSecretsView(islandName)
 		}})
-		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
-			return mm.openScopeView(islandName)
-		}})
-		items = append(items, actionMenuItem{label: "Color & glyph… (visual identity)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
-			return mm.openIdentityEditor(islandName)
+		items = append(items, actionMenuItem{label: "Sub-agent budget… (spawn grant)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openSpawnGrantEditor(islandName)
 		}})
 		if m.overview != nil && m.overview.SSHAddr != "" {
 			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
@@ -2787,6 +2790,25 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 	// `$`. (Agents are also openable one at a time via Enter on their own row.)
 	if row.agentID == "" {
 		return m.openIslandAgents(name)
+	}
+	// A key-requiring agent with no key configured is dead on arrival: its UI just
+	// errors and its logs only echo "No API key found for provider …" — the exact
+	// dead end operators kept landing in. Route Enter straight to the fix (the
+	// provider/model/key editor) instead of opening a useless surface.
+	if isl, ok := m.islandByName(name); ok {
+		if a := agentByID(isl, row.agentID); a.AuthState == "missing-provider-auth" {
+			prov := a.Provider
+			if prov == "" {
+				prov = "its provider"
+			}
+			mm, cmd := m.openModelEditor(name, row.agentID)
+			if tm, ok := mm.(tuiModel); ok {
+				tm.lastNotice = a.Type + " has no API key for " + prov +
+					" — set it here; you'll be offered a recreate to apply it"
+				return tm, cmd
+			}
+			return mm, cmd
+		}
 	}
 	if _, isGW := m.agentGatewayPort(name, row.agentID); isGW {
 		return m.openAgentGatewayUI(name, row.agentID)
@@ -4752,19 +4774,21 @@ func (m tuiModel) renderSettings() string {
 	case m.daemonUpdate:
 		updateRow = "Update                    " + styleWaiting.Render("daemon → "+m.latestRelease+" (restarts daemon)")
 	}
-	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
-	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))
-	row(2, "", "Connection target         "+styleMuted.Render(target)+styleMuted.Render("  →"))
-	row(3, "", "Team & invites            "+styleMuted.Render("invite a teammate, revoke access")+styleMuted.Render("  →"))
-	row(4, "", "Check for updates")
-	row(5, "", updateRow)
 	githubRow := "GitHub                    "
 	if miss := m.githubMissingCredIslands(); len(miss) > 0 {
 		githubRow += styleWaiting.Render(fmt.Sprintf("⚠ %d island(s) need reconnect", len(miss))) + styleMuted.Render("  →")
 	} else {
 		githubRow += styleMuted.Render("connect your GitHub for private repos") + styleMuted.Render("  →")
 	}
-	row(6, "", githubRow)
+	// Order: display prefs (editor, grouping) · where you connect · account &
+	// collaborators (GitHub + Team, adjacent) · updates (the maintenance pair, last).
+	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
+	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))
+	row(2, "", "Connection target         "+styleMuted.Render(target)+styleMuted.Render("  →"))
+	row(3, "", githubRow)
+	row(4, "", "Team & invites            "+styleMuted.Render("invite a teammate, revoke access")+styleMuted.Render("  →"))
+	row(5, "", "Check for updates")
+	row(6, "", updateRow)
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()
