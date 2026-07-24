@@ -99,19 +99,22 @@ var registry = map[string]Handler{
 		// OpenClaw reads OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY from
 		// the environment. Without this the gateway comes up but every task fails
 		// with "No API key found for provider …". exec so signals reach it.
-		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; exec openclaw gateway --allow-unconfigured --bind loopback'",
+		// Before launching, pin a STABLE gateway auth token (the exact config the
+		// gateway itself recommends: `gateway.auth.mode token` + `gateway.auth.token
+		// …`). Otherwise a fresh runtime token is minted each start and only copied
+		// to a clipboard — which doesn't exist in a container — so the console can
+		// never authenticate. We keep the token in a file dejima reads back
+		// (DashboardCmd) to show the operator.
+		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; t=\"$HOME/.openclaw/.dejima-gateway-token\"; [ -s \"$t\" ] || { mkdir -p \"$HOME/.openclaw\"; head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9 > \"$t\"; }; openclaw config set gateway.auth.mode token >/dev/null 2>&1 || true; openclaw config set gateway.auth.token \"$(cat \"$t\")\" >/dev/null 2>&1 || true; exec openclaw gateway --allow-unconfigured --bind loopback'",
 		StateDir:            "/home/dejima/.openclaw",
 		RequiresProviderKey: true,
 		SupportedProviders:  []string{"anthropic", "openai", "google"},
 		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6", "openai/gpt-5.5"},
 		GatewayPort:         18789,
-		// The gateway generates a per-startup auth token; the bare root URL carries
-		// none, so the dashboard can't complete its WebSocket ("could not connect").
-		// `openclaw dashboard` prints the URL WITH the current token — `agent open`
-		// runs this and localizes the host:port onto the tunnel. Run under a LOGIN
-		// shell (bash -lc): openclaw is an npm-global bin that the façade's non-login
-		// exec shell may not have on PATH.
-		DashboardCmd: "bash -lc 'openclaw dashboard --no-open'"},
+		// Read back the pinned token so `agent open` can show it (openclaw's own
+		// `dashboard` command only copies it to an unavailable clipboard). Labeled so
+		// the client's token extractor picks it up.
+		DashboardCmd: "bash -lc 'echo Gateway Token: $(cat \"$HOME/.openclaw/.dejima-gateway-token\" 2>/dev/null)'"},
 	// Letta — a stateful-agent framework with a REST API + web UI on 8283. Reads
 	// its model key straight from the provider env var (OPENAI_API_KEY /
 	// ANTHROPIC_API_KEY …), so the launch sources the daemon-materialized key file
