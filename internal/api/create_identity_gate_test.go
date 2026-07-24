@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/aoos/dejima/internal/githubid"
 )
 
 // TestBlockDoomedClone covers the gate decision without network: the probe is
@@ -50,6 +52,34 @@ func TestBlockDoomedClone(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGatePassesWithConfiguredIdentity is the regression guard for the bug where
+// the gate read the legacy store.Identities map (always nil after Load migrates
+// it into Idents), so it demanded a token even on daemons WITH a connected
+// identity. A default identity must let a private-repo create through untouched.
+func TestGatePassesWithConfiguredIdentity(t *testing.T) {
+	srv, _, _ := wakeServer(t) // temp HOME → empty store to start
+	srv.anonCloneFn = func(context.Context, string) bool { return false } // not anon-reachable
+
+	// With no identity, the private clone is gated.
+	if err := srv.blockDoomedClone(context.Background(),
+		CreateIslandRequest{Repo: "https://github.com/acme/private"}); err == nil {
+		t.Fatal("expected a gate with no identity configured")
+	}
+
+	// Connect a host identity and make it the default — exactly what
+	// `dejima github connect` does. The gate must now pass without a token prompt.
+	if _, err := githubid.Update(func(s *githubid.Store) error {
+		s.Put(githubid.Identity{Name: "github", Login: "octocat", Token: "tok"})
+		return s.SetDefault("github")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.blockDoomedClone(context.Background(),
+		CreateIslandRequest{Repo: "https://github.com/acme/private"}); err != nil {
+		t.Errorf("a configured default identity should clear the gate, got: %v", err)
 	}
 }
 

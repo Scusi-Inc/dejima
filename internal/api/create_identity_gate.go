@@ -36,7 +36,7 @@ const gateProbeTimeout = 12 * time.Second
 // case, so a public repo or an identity-bound create pays no cost.
 func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) error {
 	repo := strings.TrimSpace(req.Repo)
-	if req.AllowNoIdentity || !reposrc.IsURL(repo) || s.islandWillHaveGitHubIdentity(req.GitHubIdentity) {
+	if req.AllowNoIdentity || !reposrc.IsURL(repo) || s.islandWillHaveGitHubIdentity(ctx, req.GitHubIdentity) {
 		return nil
 	}
 	// Only probe real git-remote schemes. A file:// or other exotic URL is treated
@@ -58,14 +58,28 @@ func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) 
 }
 
 // islandWillHaveGitHubIdentity reports whether the island has SOME identity to
-// clone with: an explicitly named one, or at least one configured daemon
-// identity (the default a create falls back to).
-func (s *Server) islandWillHaveGitHubIdentity(named string) bool {
+// clone with: an explicitly named one (validated for real later in createIsland,
+// so a bad name gets the clearer "unknown identity" error there — not this gate),
+// or one the caller's tenant resolves by default.
+//
+// It asks the SAME resolver the clone will use (ResolveForIsland), so the gate
+// agrees with reality: it fires exactly when the clone would find no credentials.
+// The previous check read store.Identities — the LEGACY bare-name map that
+// Load() migrates into Idents and then nils. Once owner-scoping (#327) shipped
+// that map is always empty after load, so the check silently started gating
+// EVERY private-repo create even for daemons with a connected identity. Resolve
+// against the live store instead.
+func (s *Server) islandWillHaveGitHubIdentity(ctx context.Context, named string) bool {
 	if strings.TrimSpace(named) != "" {
 		return true
 	}
 	store, err := githubid.Load()
-	return err == nil && len(store.Identities) > 0
+	if err != nil {
+		return false
+	}
+	owner, _ := s.callerGHScope(ctx)
+	_, ok := store.ResolveForIsland(owner, "") // "" → the tenant's default identity
+	return ok
 }
 
 // isGitRemoteURL reports whether url is a network git remote we should probe —
