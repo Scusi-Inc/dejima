@@ -3,8 +3,11 @@
 **Status:** Runbook for operator execution on Minion (macOS daemon host). Author cannot run it
 from inside an island (no host Docker access); this is the script to drive it and the two
 investigations to record.
-**Last updated:** 2026-06-12
+**Last updated:** 2026-07-24 (added §6 — operator console access, now shipped and working).
 **Companion to:** `docs/port-island-spec.md` (esp. §3.2 Home Island, §6 V1, §11.3 macOS TCP path).
+
+> **Reaching OpenClaw's web console** (the operator dashboard, distinct from the Port-broker
+> test below) is a shipped feature — see **§6. Operator console access**.
 
 ## Goal
 
@@ -237,7 +240,72 @@ This graduated `port-island-spec.md` §11.3 from open question to spec.
 
 ---
 
-## 6. Teardown
+## 6. Operator console access (the OpenClaw dashboard) — ✅ SHIPPED
+
+Distinct from everything above (which is the brain reaching *out* to the daemon/host), this is the
+**operator reaching *in*** to OpenClaw's web Control UI — chat with the brain, configure it, wire
+channels. It works end-to-end from the TUI as of the v0.8.5x line.
+
+### How to use it
+
+Prerequisites (one-time):
+
+- **SSH façade enabled** on the daemon: `dejimad --ssh <addr>:2222` (via `dejima service install
+  --system … --ssh …`), and this device enrolled — TUI `m → SSH setup`, or `dejima ssh enroll`.
+- **Provider key set** so the brain can reach its LLM: TUI `v` on the agent (e.g. `openai` +
+  `sk-proj-…`), or `dejima provider set openai`.
+
+Then just open it:
+
+- **TUI:** press **⏎** on the OpenClaw agent row. Your browser opens straight into the authenticated
+  console.
+- **CLI:** `dejima agent open <island> [agent-id]` (holds the tunnel; Ctrl-C to stop).
+
+### How it works (and why it's built this way)
+
+The tunnel is generic; the OpenClaw specifics are **declarative** registry data, so core's
+`agent open` stays framework-neutral (same bargain that keeps claude-code first-class) — see
+`docs/positioning.md`.
+
+1. **Tunnel.** `ssh -N -L <localport>:127.0.0.1:18789 <island>@<host> -p <sshport>` over the façade
+   (`cmd/dejima/agent_open.go`). The forward target is OpenClaw's loopback-bound gateway — which is
+   also OpenClaw's *own* recommended access pattern (`docs.openclaw.ai/gateway/remote`: "loopback +
+   SSH is the safest default").
+2. **Host-key pin (self-healing).** The daemon publishes its façade host key
+   (`OverviewResponse.SSHHostKey`, from `sshfacade.HostPublicKey`); the client pins it in a
+   dejima-owned `~/.dejima/known_hosts` and verifies against only that file. A rotated key (daemon
+   reinstall) self-heals — no more "REMOTE HOST IDENTIFICATION HAS CHANGED", no touching the user's
+   global `known_hosts`.
+3. **Auth token (pinned at launch).** OpenClaw's gateway needs an auth token, and it only uses one
+   set when it **starts**. The launch (`internal/handlers/handlers.go`) generates a stable token
+   into `~/.openclaw/.dejima-gateway-token` and pins it: `openclaw config set gateway.auth.mode
+   token` + `gateway.auth.token "$(cat …)"`.
+4. **Tokenized URL.** The handler declares `DashboardTokenCmd` (reads that file) and
+   `DashboardTokenSuffix` (`#token={token}`). `agent open` runs the command over the façade and opens
+   `http://localhost:<localport>/#token=<token>`. OpenClaw's Control UI reads the token from the URL
+   **fragment**, auto-connects, then strips it.
+
+### Gotchas we hit (record so nobody re-derives them)
+
+- **Token goes in the URL FRAGMENT (`#token=`), not the query (`?token=`).** The Control UI reads it
+  from the fragment (`docs.openclaw.ai/web/dashboard`). `?token=` silently does nothing.
+- **`openclaw config get gateway.auth.token` REDACTS the value** — it returns the literal
+  `__OPENCLAW_REDACTED__`, not the token. Read the pinned file directly instead. (This one cost the
+  most time: the "token" looked real but was the placeholder.)
+- **`openclaw dashboard --no-open` copies the tokenized link to the clipboard** — which doesn't
+  exist in a container — and prints only the bare (tokenless) URL. Don't parse it for the token.
+- **Existing agents predating token-pinning** have no token until the gateway restarts with one, so
+  they need a **one-time, consented** recreate: `dejima upgrade <island>` (or TUI `m → Upgrade`).
+  dejima never restarts an island on its own for this.
+- **Windows:** `dejima agent open` passes the agent id **positionally** (`agent open <island> <id>`),
+  not `--agent` (which `agent open` doesn't accept).
+- **Not proven here:** widening `gateway.bind` beyond loopback re-introduces the need for the
+  gateway's own auth on the exposed surface — the façade-gated loopback model is what makes the
+  tokenized-URL flow the whole story.
+
+---
+
+## 7. Teardown
 
 ```bash
 dejima purge oc-home -f
@@ -247,7 +315,7 @@ rm -rf /tmp/vault /tmp/oc-config
 
 ---
 
-## 7. Findings to capture (paste back)
+## 8. Findings to capture (paste back)
 
 1. **#1 UID/perms:** the `ls -ln` + `stat` output; did `open.md` read and `locked.md` EACCES as
    predicted? Any xattr warnings? → decides whether we ship the `chmod a+r`-on-intake fix.
