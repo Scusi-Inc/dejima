@@ -118,13 +118,15 @@ var registry = map[string]Handler{
 		SupportedProviders:  []string{"anthropic", "openai", "google"},
 		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6", "openai/gpt-5.5"},
 		GatewayPort:         18789,
-		// Read the pinned token back via OpenClaw's own config (the sanctioned way —
-		// its `dashboard` command only copies the tokenized link to a clipboard that
-		// doesn't exist in a container). `agent open` turns it into
-		// http://localhost:<port>/#token=<token>. The Control UI reads the token from
-		// the URL FRAGMENT (docs.openclaw.ai/web/dashboard) — not the query string —
-		// and auto-connects, then strips it.
-		DashboardTokenCmd:    "bash -lc 'openclaw config get gateway.auth.token 2>/dev/null'",
+		// Read the pinned token straight from the file the launch wrote it to —
+		// NOT `openclaw config get gateway.auth.token`, which redacts secret values
+		// and returns the literal "__OPENCLAW_REDACTED__" placeholder. Since the
+		// launch sets gateway.auth.token to exactly this file's contents, the file is
+		// the real token. `agent open` turns it into
+		// http://localhost:<port>/#token=<token>; the Control UI reads the token from
+		// the URL FRAGMENT (docs.openclaw.ai/web/dashboard), auto-connects, then
+		// strips it.
+		DashboardTokenCmd:    "bash -lc 'cat \"$HOME/.openclaw/.dejima-gateway-token\" 2>/dev/null'",
 		DashboardTokenSuffix: "#token={token}"},
 	// Letta — a stateful-agent framework with a REST API + web UI on 8283. Reads
 	// its model key straight from the provider env var (OPENAI_API_KEY /
