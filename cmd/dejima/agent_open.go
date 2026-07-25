@@ -16,12 +16,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// fetchDashboardURL runs the framework's dashboard command inside the container
-// over the façade (a one-shot ssh exec, same host-key pin as the tunnel), reads
-// the authenticated URL it prints, and rewrites its host:port onto the local
-// tunnel. This is how OpenClaw's console gets its auth token without the operator
-// copying anything.
-func fetchDashboardURL(ctx context.Context, khArgs []string, sshPort, island, host, dashCmd string, localPort int) (localized, raw string, err error) {
+// probeGatewayToken runs the framework's dashboard/token command inside the
+// container over the façade (a one-shot ssh exec, same host-key pin as the
+// tunnel) and returns its raw output. The caller extracts the token (and an
+// optional URL) from it. This is how OpenClaw's pinned console token is read back
+// without the operator copying anything.
+func probeGatewayToken(ctx context.Context, khArgs []string, sshPort, island, host, dashCmd string) (raw string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	args := append([]string{"-o", "BatchMode=yes"}, khArgs...)
@@ -32,14 +32,8 @@ func fetchDashboardURL(ctx context.Context, khArgs []string, sshPort, island, ho
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
 			raw += string(ee.Stderr) // surface the remote error, not just "exit status N"
 		}
-		return "", raw, err
 	}
-	u := firstURLIn(raw)
-	if u == "" {
-		return "", raw, fmt.Errorf("no URL in dashboard output")
-	}
-	localized, err = localizeURL(u, localPort)
-	return localized, raw, err
+	return raw, err
 }
 
 // extractGatewayToken pulls a gateway auth token out of dashboard output or a
@@ -69,15 +63,6 @@ func extractGatewayToken(s string) string {
 		}
 		from = from + i + len("token")
 	}
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // firstURLIn returns the first http(s) URL token in s, trimmed of trailing
@@ -250,34 +235,42 @@ func newAgentOpenCmd() *cobra.Command {
 				return fmt.Errorf("start ssh forward: %w", err)
 			}
 
-			// Frameworks whose dashboard needs an auth token (OpenClaw) can't be
-			// reached at the bare gateway root — the console loads but the WebSocket
-			// can't authenticate. Ask the framework for its OWN authenticated URL
-			// (over the façade, in-container), then localize its host:port onto the
-			// tunnel so the browser opens a console that actually connects. Best
-			// effort: any hiccup falls back to the root URL with a note.
+			// A gateway whose console needs an auth token (OpenClaw) can't be reached
+			// at the bare root — the console loads but the WebSocket can't
+			// authenticate. dejima pins a stable token at launch and reads it back
+			// here (over the façade), so we can show the operator the exact values to
+			// paste into the connect form.
 			openTarget := url
 			if dashCmd != "" && !printOnly {
-				durl, raw, derr := fetchDashboardURL(cmd.Context(), khArgs, sshPort, island, host, dashCmd, localPort)
-				if derr == nil && durl != "" {
-					openTarget = durl // best-effort auto-connect
+				raw, derr := probeGatewayToken(cmd.Context(), khArgs, sshPort, island, host, dashCmd)
+				token := extractGatewayToken(raw)
+				// If the probe also emitted a full URL, auto-open the localized form.
+				if u := firstURLIn(raw); u != "" {
+					if loc, e := localizeURL(u, localPort); e == nil {
+						openTarget = loc
+					}
 				}
-				// Always surface the paste-in values: the framework's connect form may
-				// not read the token from the URL, so these are the reliable path. The
-				// WebSocket URL is the tunnel; the token comes from the dashboard output.
-				token := firstNonEmpty(extractGatewayToken(durl), extractGatewayToken(raw))
 				fmt.Println()
-				fmt.Println("If the browser shows a \"Gateway Dashboard\" connect form, paste:")
-				fmt.Printf("    WebSocket URL:  ws://localhost:%d\n", localPort)
 				if token != "" {
+					fmt.Println("In the browser's \"Gateway Dashboard\" connect form, paste:")
+					fmt.Printf("    WebSocket URL:  ws://localhost:%d\n", localPort)
 					fmt.Printf("    Gateway Token:  %s\n", token)
 				} else {
-					fmt.Println("    Gateway Token:  (copy from the dashboard output below)")
-					if s := strings.TrimSpace(raw); s != "" {
-						fmt.Printf("%s\n", indentBlock(s, "      "))
+					// No pinned token → this container is running a launch from before
+					// the token fix (the gateway must START with the token; it only
+					// takes effect on container create). Say exactly how to fix it, and
+					// name the daemon version so a not-yet-updated daemon is obvious.
+					ver := "an older version"
+					if ov, e := c.Overview(cmd.Context()); e == nil && ov.DaemonVersion != "" {
+						ver = "v" + strings.TrimPrefix(ov.DaemonVersion, "v")
 					}
+					fmt.Println("⚠ This OpenClaw agent has no pinned console token yet, so the dashboard")
+					fmt.Println("  can't authenticate. Its container predates the token fix. To fix it:")
+					fmt.Printf("    1. Update the daemon to v0.8.48+  (it reports %s)\n", ver)
+					fmt.Println("    2. Recreate this agent: remove it (x) and add it back (a),")
+					fmt.Println("       or recreate the island — the new agent starts with a pinned token.")
 					if derr != nil {
-						fmt.Printf("    (couldn't fetch it automatically: %v)\n", derr)
+						fmt.Printf("  (token probe: %v)\n", derr)
 					}
 				}
 				fmt.Println()

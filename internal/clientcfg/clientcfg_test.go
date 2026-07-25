@@ -150,3 +150,42 @@ func TestActiveHost(t *testing.T) {
 		})
 	}
 }
+
+func TestRenameProfile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := AddProfile("minon", "100.64.0.9:7273"); err != nil { // typo to fix
+		t.Fatal(err)
+	}
+	if err := AddProfile("work", "work.tailnet:7273"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SwitchProfile("minon"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rename keeps the host + follows into ActiveProfile.
+	if err := RenameProfile("minon", "minion"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	cfg, _ := Load()
+	if h, err := cfg.LookupProfile("minion"); err != nil || h != "100.64.0.9:7273" {
+		t.Errorf("renamed profile host = %q err=%v, want the original host", h, err)
+	}
+	if _, err := cfg.LookupProfile("minon"); err == nil {
+		t.Error("old name should no longer resolve")
+	}
+	if cfg.ActiveProfile != "minion" {
+		t.Errorf("ActiveProfile = %q, want it to follow the rename", cfg.ActiveProfile)
+	}
+
+	// Collisions and reserved/unknown names are rejected.
+	if err := RenameProfile("minion", "work"); err == nil {
+		t.Error("renaming onto an existing name should error")
+	}
+	if err := RenameProfile("minion", "local"); err == nil {
+		t.Error("renaming to the reserved 'local' should error")
+	}
+	if err := RenameProfile("nope", "x"); err == nil {
+		t.Error("renaming an unknown profile should error")
+	}
+}

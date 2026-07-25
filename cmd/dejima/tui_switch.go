@@ -45,7 +45,8 @@ const (
 	swList switcherStep = iota
 	swAddLabel
 	swAddHost
-	swJoin // paste a team invite blob → decode → save profile → connect
+	swJoin   // paste a team invite blob → decode → save profile → connect
+	swRename // rename the selected saved connection
 )
 
 // openSwitcher loads saved profiles (prepending a synthetic "local") and opens
@@ -73,6 +74,8 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switcherAddHostKey(msg)
 	case swJoin:
 		return m.switcherJoinKey(msg)
+	case swRename:
+		return m.switcherRenameKey(msg)
 	}
 	// swList
 	switch msg.String() {
@@ -92,12 +95,46 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Join via a team invite — paste the blob an owner sent you. (Capital J and
 		// `i` both open it; lowercase j is list navigation above.)
 		s.step, s.blob, s.err = swJoin, "", ""
+	case "e":
+		if s.cursor > 0 { // "local" is synthetic — nothing to rename
+			s.step, s.label, s.err = swRename, s.profiles[s.cursor].Name, ""
+		}
 	case "d":
 		if s.cursor > 0 { // never delete the synthetic "local"
 			return m.switcherDelete()
 		}
 	case "enter":
 		return m.switcherActivate()
+	}
+	return m, nil
+}
+
+// switcherRenameKey collects a new display name for the selected connection and
+// commits it (host/token unchanged) on Enter.
+func (m tuiModel) switcherRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := m.switcher
+	switch msg.String() {
+	case "esc":
+		s.step, s.err = swList, ""
+	case "enter":
+		old := s.profiles[s.cursor].Name
+		if err := clientcfg.RenameProfile(old, s.label); err != nil {
+			s.err = err.Error()
+			return m, nil
+		}
+		newName := strings.TrimSpace(s.label)
+		if m.activeLabel == old {
+			m.activeLabel = newName // keep the header/status label in step
+		}
+		cfg, _ := clientcfg.Load()
+		s.profiles = append([]clientcfg.Profile{{Name: "local", Host: ""}}, cfg.Profiles...)
+		s.step, s.err = swList, ""
+	case "backspace":
+		if s.label != "" {
+			s.label = s.label[:len(s.label)-1]
+		}
+	default:
+		s.label += printableInput(msg)
 	}
 	return m, nil
 }
@@ -329,6 +366,10 @@ func (s *switcherModel) view() string {
 		b.WriteString("\n\n" + styleMuted.Render("How to find it: on the machine running dejimad, run ") + styleAccent.Render("tailscale ip") + styleMuted.Render(" → use that address with ") + styleAccent.Render(":7273") + styleMuted.Render("."))
 		b.WriteString("\n" + styleMuted.Render("(a bare host with no :port gets :7273 added automatically.)"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] save   [esc] back"))
+	case swRename:
+		b.WriteString(styleMuted.Render("Rename this connection (host and token stay the same)."))
+		b.WriteString("\n\nname: " + styleAccent.Render(s.label+"_"))
+		b.WriteString("\n\n" + styleMuted.Render("[⏎] save   [esc] cancel"))
 	case swJoin:
 		b.WriteString(styleMuted.Render("Joining a teammate's server? Paste the ") + styleAccent.Render("dejima-invite:") + styleMuted.Render(" blob they sent you."))
 		b.WriteString("\n" + styleMuted.Render("It carries the host + your access token — no env vars, no manual host:port."))
@@ -355,7 +396,7 @@ func (s *switcherModel) view() string {
 			}
 			b.WriteString("\n")
 		}
-		b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] connect   [a] add   [J] join via invite   [d] delete   [esc] close"))
+		b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] connect   [a] add   [e] rename   [J] join via invite   [d] delete   [esc] close"))
 	}
 
 	if s.err != "" {
