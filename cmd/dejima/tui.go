@@ -1143,14 +1143,19 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case providerKeySetMsg:
-		if m.modelEditor != nil {
-			m.modelEditor.busy = false
+		if ed := m.modelEditor; ed != nil {
+			ed.busy = false
 			if msg.err != nil {
 				m.lastError = "set provider key: " + msg.err.Error()
 			} else {
-				m.modelEditor.keySet = true
-				m.modelEditor.enteringKey = false
-				m.modelEditor.keyInput = ""
+				ed.keySet, ed.keyInput = true, ""
+				if ed.applyCfgAfterKey {
+					// The save also changed provider/model — apply it, then that
+					// message closes the editor (and prompts a recreate if needed).
+					ed.applyCfgAfterKey, ed.busy = false, true
+					return m, m.applyAgentConfigCmd(ed.island, ed.agentID, ed.currentProvider(), ed.model)
+				}
+				m.modelEditor = nil // key stored — close the pop-up
 				m.lastNotice = "key set for " + msg.provider + " — applies to all " + msg.provider + " agents"
 			}
 		}

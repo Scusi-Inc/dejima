@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/aoos/dejima/internal/api"
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,15 +27,17 @@ type modelEditor struct {
 	suggested []string // SuggestedModels (hints only)
 	keyStatus map[string]bool
 
-	field   int // 0 provider · 1 model · 2 key
+	field   int // 0 provider · 1 model · 2 key · 3 save
 	provSel int
 	model   string // editable
 
-	keySet bool // whether a key exists for the selected provider
+	keySet   bool   // whether a key exists for the selected provider
+	keyInput string // typed key, masked on render; never echoed
+	busy     bool
 
-	enteringKey bool
-	keyInput    string // masked on render; never echoed
-	busy        bool
+	loadedProvider   string // provider/model at load, to detect a change on save
+	loadedModel      string
+	applyCfgAfterKey bool // a save that stored a key, then applies provider/model
 }
 
 func (m tuiModel) openModelEditor(island, agentID string) (tea.Model, tea.Cmd) {
@@ -122,6 +125,9 @@ func (ed *modelEditor) applyLoaded(msg modelEditorLoadedMsg) {
 		}
 	}
 	ed.refreshKeySet()
+	// Baseline for change detection on save.
+	ed.loadedProvider = msg.curProvider
+	ed.loadedModel = ed.model
 }
 
 func (ed *modelEditor) refreshKeySet() {
@@ -139,110 +145,116 @@ func (ed *modelEditor) currentProvider() string {
 	return ""
 }
 
+// fieldSave is the index of the Save action row (below provider/model/key).
+const fieldSave = 3
+
 func (m tuiModel) modelEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	ed := m.modelEditor
 	key := msg.String()
 	if key == "esc" || key == "ctrl+c" {
-		if ed.enteringKey { // cancel key entry, not the whole overlay
-			ed.enteringKey, ed.keyInput = false, ""
-			return m, nil
-		}
 		m.modelEditor = nil
 		return m, nil
 	}
 	if ed.loading || ed.busy {
 		return m, nil
 	}
-
-	// Masked key entry sub-mode owns input.
-	if ed.enteringKey {
-		switch key {
-		case "enter":
-			if strings.TrimSpace(ed.keyInput) == "" {
-				ed.enteringKey = false
-				return m, nil
-			}
-			ed.busy = true
-			return m, m.setProviderKeyCmd(ed.currentProvider(), ed.keyInput)
-		case "backspace":
-			if len(ed.keyInput) > 0 {
-				ed.keyInput = ed.keyInput[:len(ed.keyInput)-1]
-			}
-		default:
-			if len(key) == 1 {
-				ed.keyInput += key
-			}
+	// Navigation and commit are the same on every field: arrows move between
+	// fields (never j/k — those are valid key/model characters), Enter saves. So
+	// the key/model fields accept typing/paste immediately, with no "press Enter
+	// to start editing" step.
+	switch key {
+	case "up":
+		if ed.field > 0 {
+			ed.field--
 		}
 		return m, nil
+	case "down":
+		if ed.field < fieldSave {
+			ed.field++
+		}
+		return m, nil
+	case "enter":
+		return m.saveModelEditor()
 	}
-
+	// Field-specific input.
 	switch ed.field {
-	case 1: // model: free text
+	case 0: // provider cycler
 		switch key {
-		case "up", "k":
-			ed.field = 0
-		case "down", "j":
-			ed.field = 2
-		case "enter":
-			return m.applyModelEditor()
-		case "backspace":
-			if len(ed.model) > 0 {
-				ed.model = ed.model[:len(ed.model)-1]
-			}
-		default:
-			if len(key) == 1 {
-				ed.model += key
-			}
-		}
-		return m, nil
-	default: // provider (0) or key (2)
-		switch key {
-		case "up", "k":
-			if ed.field > 0 {
-				ed.field--
-			}
-		case "down", "j":
-			if ed.field < 2 {
-				ed.field++
-			}
 		case "left", "h":
-			if ed.field == 0 && len(ed.providers) > 0 {
+			if len(ed.providers) > 0 {
 				ed.provSel = (ed.provSel - 1 + len(ed.providers)) % len(ed.providers)
 				ed.refreshKeySet()
 			}
-		case "right", "l", " ":
-			if ed.field == 0 && len(ed.providers) > 0 {
+		case "right", "l":
+			if len(ed.providers) > 0 {
 				ed.provSel = (ed.provSel + 1) % len(ed.providers)
 				ed.refreshKeySet()
 			}
-		case "enter":
-			if ed.field == 2 { // begin masked key entry for the selected provider
-				if ed.currentProvider() == "" {
-					m.lastError = "pick a provider first"
-					return m, nil
-				}
-				ed.enteringKey, ed.keyInput = true, ""
-				return m, nil
-			}
-			return m.applyModelEditor()
 		}
+	case 1: // model: free text (type or paste)
+		if key == "backspace" {
+			if len(ed.model) > 0 {
+				ed.model = ed.model[:len(ed.model)-1]
+			}
+		} else {
+			ed.model += pastableInput(msg)
+		}
+	case 2: // API key: type or paste directly, no enter-to-edit
+		if key == "backspace" {
+			if len(ed.keyInput) > 0 {
+				ed.keyInput = ed.keyInput[:len(ed.keyInput)-1]
+			}
+		} else {
+			ed.keyInput += pastableInput(msg)
+		}
+	}
+	return m, nil
+}
+
+// saveModelEditor commits the editor: stores a typed key (account-wide) and/or
+// applies a changed provider/model, then closes. Enter triggers it from any
+// field, and it's the highlighted Save action at the bottom.
+func (m tuiModel) saveModelEditor() (tea.Model, tea.Cmd) {
+	ed := m.modelEditor
+	if ed.currentProvider() == "" {
+		m.lastError = "pick a provider first"
+		return m, nil
+	}
+	hasKey := strings.TrimSpace(ed.keyInput) != ""
+	cfgChanged := ed.currentProvider() != ed.loadedProvider ||
+		strings.TrimSpace(ed.model) != strings.TrimSpace(ed.loadedModel)
+	if cfgChanged && strings.TrimSpace(ed.model) == "" {
+		m.lastError = "enter a model (e.g. " + firstOr(ed.suggested, "anthropic/claude-sonnet-4-6") + ")"
+		return m, nil
+	}
+	switch {
+	case hasKey:
+		// Store the key first; the providerKeySetMsg handler applies the config
+		// after (if it changed) or closes.
+		ed.applyCfgAfterKey = cfgChanged
+		ed.busy = true
+		return m, m.setProviderKeyCmd(ed.currentProvider(), ed.keyInput)
+	case cfgChanged:
+		ed.busy = true
+		return m, m.applyAgentConfigCmd(ed.island, ed.agentID, ed.currentProvider(), ed.model)
+	default:
+		m.modelEditor = nil // nothing to change
 		return m, nil
 	}
 }
 
-// applyModelEditor PATCHes the agent's provider/model.
-func (m tuiModel) applyModelEditor() (tea.Model, tea.Cmd) {
-	ed := m.modelEditor
-	if ed.currentProvider() == "" {
-		m.lastError = "pick a provider"
-		return m, nil
+// pastableInput returns the printable text a key event contributes to a text
+// field — a single typed rune OR a whole bracketed paste (KeyRunes carries the
+// full pasted string), control characters filtered out. Editing/navigation keys
+// contribute nothing.
+func pastableInput(msg tea.KeyMsg) string {
+	var b strings.Builder
+	for _, r := range msg.Runes {
+		if unicode.IsPrint(r) {
+			b.WriteRune(r)
+		}
 	}
-	if strings.TrimSpace(ed.model) == "" {
-		m.lastError = "enter a model (e.g. " + firstOr(ed.suggested, "anthropic/claude-sonnet-4-6") + ")"
-		return m, nil
-	}
-	ed.busy = true
-	return m, m.applyAgentConfigCmd(ed.island, ed.agentID, ed.currentProvider(), ed.model)
+	return b.String()
 }
 
 type agentConfiguredMsg struct {
@@ -297,16 +309,24 @@ func (m tuiModel) renderModelEditor() string {
 	if prov == "" {
 		prov = styleMuted.Render("(no providers)")
 	}
+	// API key: masked. When the field is focused you type/paste straight in — no
+	// "press Enter to edit" step; the cursor shows it's live.
 	keyVal := styleErrored.Render("not set")
 	if ed.keySet {
 		keyVal = "set"
 	}
-	if ed.enteringKey {
-		keyVal = strings.Repeat("•", len(ed.keyInput)) + "▌"
+	switch {
+	case len(ed.keyInput) > 0:
+		keyVal = strings.Repeat("•", len(ed.keyInput))
+		if ed.field == 2 {
+			keyVal += "▌"
+		}
+	case ed.field == 2:
+		keyVal = styleMuted.Render("type or paste the key ") + "▌"
 	}
 	modelVal := ed.model
 	if ed.field == 1 {
-		modelVal += "_"
+		modelVal += "▌"
 	}
 	if modelVal == "" {
 		modelVal = styleMuted.Render("(required)")
@@ -331,48 +351,32 @@ func (m tuiModel) renderModelEditor() string {
 		}
 		b.WriteString(fmt.Sprintf("%s%-13s %s\n", lead, r.label, val))
 	}
-	b.WriteString("\n")
+
 	if ed.busy {
-		b.WriteString(styleAccent.Render("saving…"))
+		b.WriteString("\n" + styleAccent.Render("saving…"))
 		return b.String()
 	}
 
-	accountNote := styleMuted.Render("the key is account-wide — it applies to every agent on this provider")
-
-	// Confirm / cancel as visible buttons: the default action is highlighted and
-	// fires on ⏎, esc cancels — so committing or backing out is an obvious choice,
-	// not a hint you have to already know. The primary label matches what ⏎ does
-	// in the current context (start key entry vs save the key vs apply the config).
-	primary := "Apply"
-	switch {
-	case ed.enteringKey:
-		primary = "Save key"
-	case ed.field == 2:
-		primary = "Set key"
+	// Save action row — navigate to it and ⏎, or ⏎ from any field. Highlighted
+	// when selected so "scroll down and hit Enter to save" is obvious.
+	if ed.field == fieldSave {
+		b.WriteString(styleAccent.Render(" ▸ ") + styleSelected.Render(" Save (⏎) ") + "    " + styleMuted.Render("esc cancel"))
+	} else {
+		b.WriteString("   " + styleMuted.Render("[Save (⏎)]") + "    " + styleMuted.Render("esc cancel"))
 	}
-	buttons := "   " + styleSelected.Render(" "+primary+" (⏎) ") + "    " + styleMuted.Render(" Cancel (esc) ")
-
-	// While entering the key, the buttons ARE the whole footer — Save / Cancel.
-	if ed.enteringKey {
-		b.WriteString(buttons)
-		b.WriteString("\n\n")
-		b.WriteString(styleMuted.Render("paste or type the key above · ") + accountNote)
-		return b.String()
-	}
+	b.WriteString("\n\n")
 
 	if len(ed.suggested) > 0 {
 		b.WriteString(styleMuted.Render("suggested models: " + strings.Join(ed.suggested, ", ")))
 		b.WriteString("\n")
 	}
-	if ed.currentProvider() != "" && !ed.keySet {
-		b.WriteString(styleWaiting.Render("⚠ no key for " + ed.currentProvider() + " — go to the API key field and press ⏎ to enter one"))
+	if ed.currentProvider() != "" && !ed.keySet && len(ed.keyInput) == 0 {
+		b.WriteString(styleWaiting.Render("⚠ no key for " + ed.currentProvider() + " — select the API key field and type or paste one"))
 		b.WriteString("\n")
 	}
-	b.WriteString(buttons)
+	b.WriteString(styleMuted.Render("↑/↓ field · ←/→ provider · type/paste the model & key · ⏎ save · esc cancel"))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("↑/↓ field · ←/→ provider · type the model"))
-	b.WriteString("\n")
-	b.WriteString(accountNote)
+	b.WriteString(styleMuted.Render("the key is account-wide — it applies to every agent on this provider"))
 	return b.String()
 }
 
