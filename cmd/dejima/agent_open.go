@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/url"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,33 +65,19 @@ func extractGatewayToken(s string) string {
 	}
 }
 
-// firstURLIn returns the first http(s) URL token in s, trimmed of trailing
-// punctuation, or "".
-func firstURLIn(s string) string {
-	for _, tok := range strings.Fields(s) {
-		// https first so the "http" substring of "https://" doesn't win at a later
-		// index; find it WITHIN the token so leading punctuation ("(http://…") is ok.
-		for _, scheme := range []string{"https://", "http://"} {
-			if i := strings.Index(tok, scheme); i >= 0 {
-				return strings.TrimRight(tok[i:], ".,)]}\"'>")
-			}
+// parseTokenOutput extracts the gateway token from a DashboardTokenCmd's output.
+// The command (e.g. `openclaw config get gateway.auth.token`) normally prints the
+// bare token, so prefer the last non-empty single-word line; fall back to the
+// labeled forms extractGatewayToken handles ("Token: …", "token=…").
+func parseTokenOutput(raw string) string {
+	lines := strings.Split(strings.TrimSpace(raw), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		s := strings.TrimSpace(lines[i])
+		if s != "" && !strings.ContainsAny(s, " \t") && len(s) >= 8 {
+			return s // a bare token on its own line
 		}
 	}
-	return ""
-}
-
-// localizeURL rewrites raw's scheme/host to the local tunnel (plain http on
-// localhost:localPort), preserving the path, query (the auth token), and
-// fragment — so a URL the framework built for its own loopback address opens
-// through the forward.
-func localizeURL(raw string, localPort int) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", err
-	}
-	u.Scheme = "http"
-	u.Host = fmt.Sprintf("localhost:%d", localPort)
-	return u.String(), nil
+	return extractGatewayToken(raw)
 }
 
 // managedKnownHostsArgs writes the façade's host public key to a dejima-owned
@@ -176,11 +162,11 @@ func newAgentOpenCmd() *cobra.Command {
 				return err
 			}
 			gw := 0
-			dashCmd := ""
+			dashTokenCmd, dashTokenParam := "", ""
 			for _, t := range types {
 				if t.Type == agentType {
 					gw = t.GatewayPort
-					dashCmd = t.DashboardCmd
+					dashTokenCmd, dashTokenParam = t.DashboardTokenCmd, t.DashboardTokenParam
 				}
 			}
 			if gw == 0 {
@@ -237,44 +223,54 @@ func newAgentOpenCmd() *cobra.Command {
 			}
 
 			// A gateway whose console needs an auth token (OpenClaw) can't be reached
-			// at the bare root — the console loads but the WebSocket can't
-			// authenticate. dejima pins a stable token at launch and reads it back
-			// here (over the façade), so we can show the operator the exact values to
-			// paste into the connect form.
+			// at the bare root. The handler declares how to read its token; we build
+			// the tokenized URL its Control UI reads from the query param, so the
+			// browser auto-authenticates — no paste. Core stays generic; the framework
+			// specifics (the command, the param) are declarative registry data.
 			openTarget := url
-			if dashCmd != "" && !printOnly {
-				raw, derr := probeGatewayToken(cmd.Context(), khArgs, sshPort, island, host, dashCmd)
-				token := extractGatewayToken(raw)
-				// If the probe also emitted a full URL, auto-open the localized form.
-				if u := firstURLIn(raw); u != "" {
-					if loc, e := localizeURL(u, localPort); e == nil {
-						openTarget = loc
-					}
-				}
-				fmt.Println()
+			if dashTokenCmd != "" && !printOnly {
+				raw, derr := probeGatewayToken(cmd.Context(), khArgs, sshPort, island, host, dashTokenCmd)
+				token := parseTokenOutput(raw)
 				if token != "" {
-					fmt.Println("In the browser's \"Gateway Dashboard\" connect form, paste:")
+					param := dashTokenParam
+					if param == "" {
+						param = "token"
+					}
+					openTarget = fmt.Sprintf("http://localhost:%d/?%s=%s", localPort, param, neturl.QueryEscape(token))
+					// Safety net: if the console still shows a connect form, these are
+					// the values to paste.
+					fmt.Println()
+					fmt.Println("Opening the console with its auth token applied. If it shows a connect")
+					fmt.Println("form instead, paste:")
 					fmt.Printf("    WebSocket URL:  ws://localhost:%d\n", localPort)
 					fmt.Printf("    Gateway Token:  %s\n", token)
+					fmt.Println()
 				} else {
-					// No pinned token. Explain WHY and let the operator decide — never
-					// restart their island behind their back.
+					// No token yet → this container was created before the token was
+					// pinned (it only takes effect when the gateway STARTS with it).
+					// Explain, and offer the one-time remedy the operator runs — never
+					// restart their island unprompted.
+					ver := "an older version"
+					if ov, e := c.Overview(cmd.Context()); e == nil && ov.DaemonVersion != "" {
+						ver = "v" + strings.TrimPrefix(ov.DaemonVersion, "v")
+					}
+					fmt.Println()
 					fmt.Println("This console needs an auth token, and this agent doesn't have one pinned yet.")
 					fmt.Println()
 					fmt.Println("  Why: the gateway only uses a token if one was set when it STARTED. dejima")
-					fmt.Println("  pins a token via the agent's launch, but that applies only when the container")
-					fmt.Println("  is (re)created — and this container was created before that fix, so it came")
-					fmt.Println("  up without one. Updating dejima doesn't change an already-running container.")
+					fmt.Println("  pins one via the agent's launch, which applies when the container is")
+					fmt.Println("  (re)created — this container predates that, so it came up without one.")
+					fmt.Println("  (Updating dejima doesn't change an already-running container.)")
 					fmt.Println()
-					fmt.Printf("  To pin it, recreate this island's container once (this restarts its agents):\n")
+					fmt.Printf("  Pin it by recreating this island's container once (restarts its agents):\n")
 					fmt.Printf("      dejima upgrade %s\n", island)
-					fmt.Println("  or in the TUI: select the island, press m → \"Upgrade to the current image\".")
-					fmt.Println("  Then open this agent again and it'll show the token to paste.")
+					fmt.Println("  or in the TUI: select the island, m → \"Upgrade to the current image\".")
+					fmt.Printf("  (daemon reports %s; token pinning needs v0.8.48+.)\n", ver)
 					if derr != nil {
 						fmt.Printf("  (token probe: %v)\n", derr)
 					}
+					fmt.Println()
 				}
-				fmt.Println()
 			}
 			if !noOpen && !printOnly {
 				// Give the forward a moment to come up, then open the browser.

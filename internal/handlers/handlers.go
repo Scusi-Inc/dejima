@@ -59,12 +59,17 @@ type Handler struct {
 	// open it. 0 means there is no localhost UI to open (e.g. a messaging-only
 	// gateway).
 	GatewayPort int
-	// DashboardCmd, when set, is a command run INSIDE the container that prints the
-	// framework's own authenticated dashboard URL (token + path). `dejima agent
-	// open` runs it over the façade and rewrites the URL's host:port onto the local
-	// tunnel — so the operator lands in a console that can actually connect, rather
-	// than a bare gateway root that has no auth token. Empty = open the root.
-	DashboardCmd string
+	// DashboardTokenCmd, when set, is a command run INSIDE the container that prints
+	// the framework's gateway auth token to stdout. `dejima agent open` runs it over
+	// the façade and builds a tokenized console URL
+	// (…?<DashboardTokenParam>=<token>) against the local tunnel, so the browser
+	// auto-authenticates instead of landing on a connect form. This is the
+	// framework-specific knowledge kept DECLARATIVE (like Launch), so core's
+	// agent-open stays generic. Empty = open the gateway root.
+	DashboardTokenCmd string
+	// DashboardTokenParam is the query parameter the console reads its token from
+	// (e.g. "token"). Only meaningful alongside DashboardTokenCmd.
+	DashboardTokenParam string
 }
 
 // Attachable reports whether clients can attach to this handler's agents.
@@ -103,18 +108,22 @@ var registry = map[string]Handler{
 		// gateway itself recommends: `gateway.auth.mode token` + `gateway.auth.token
 		// …`). Otherwise a fresh runtime token is minted each start and only copied
 		// to a clipboard — which doesn't exist in a container — so the console can
-		// never authenticate. We keep the token in a file dejima reads back
-		// (DashboardCmd) to show the operator.
+		// never authenticate. A generated value is kept in a file so it's stable
+		// across restarts; DashboardTokenCmd reads it back via `openclaw config get`
+		// to build the tokenized console URL.
 		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; command -v openclaw >/dev/null 2>&1 || npm install -g openclaw; t=\"$HOME/.openclaw/.dejima-gateway-token\"; [ -s \"$t\" ] || { mkdir -p \"$HOME/.openclaw\"; head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9 > \"$t\"; }; openclaw config set gateway.auth.mode token >/dev/null 2>&1 || true; openclaw config set gateway.auth.token \"$(cat \"$t\")\" >/dev/null 2>&1 || true; exec openclaw gateway --allow-unconfigured --bind loopback'",
 		StateDir:            "/home/dejima/.openclaw",
 		RequiresProviderKey: true,
 		SupportedProviders:  []string{"anthropic", "openai", "google"},
 		SuggestedModels:     []string{"anthropic/claude-sonnet-4-6", "openai/gpt-5.5"},
 		GatewayPort:         18789,
-		// Read back the pinned token so `agent open` can show it (openclaw's own
-		// `dashboard` command only copies it to an unavailable clipboard). Labeled so
-		// the client's token extractor picks it up.
-		DashboardCmd: "bash -lc 'echo Gateway Token: $(cat \"$HOME/.openclaw/.dejima-gateway-token\" 2>/dev/null)'"},
+		// Read the pinned token back via OpenClaw's own config (the sanctioned way —
+		// its `dashboard` command only copies the tokenized link to a clipboard that
+		// doesn't exist in a container). `agent open` turns it into
+		// http://localhost:<port>/?token=<token>, which the Control UI reads from the
+		// query param and auto-connects (docs.openclaw.ai/web/control-ui).
+		DashboardTokenCmd:   "bash -lc 'openclaw config get gateway.auth.token 2>/dev/null'",
+		DashboardTokenParam: "token"},
 	// Letta — a stateful-agent framework with a REST API + web UI on 8283. Reads
 	// its model key straight from the provider env var (OPENAI_API_KEY /
 	// ANTHROPIC_API_KEY …), so the launch sources the daemon-materialized key file

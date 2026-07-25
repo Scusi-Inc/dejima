@@ -627,10 +627,12 @@ type AgentTypeCapability struct {
 	SupportedProviders  []string `json:"supported_providers,omitempty"`
 	SuggestedModels     []string `json:"suggested_models,omitempty"`
 	GatewayPort         int      `json:"gateway_port,omitempty"` // 0 = no localhost UI to open
-	// DashboardCmd, when set, prints the framework's authenticated dashboard URL
-	// when run in the container; `dejima agent open` runs it over the façade and
-	// localizes the URL onto the tunnel. Empty = open the gateway root.
-	DashboardCmd string `json:"dashboard_cmd,omitempty"`
+	// DashboardTokenCmd, run in the container, prints the framework's gateway auth
+	// token; `dejima agent open` builds a tokenized console URL from it so the
+	// browser auto-authenticates. DashboardTokenParam is the query param the console
+	// reads the token from. Both empty = open the gateway root.
+	DashboardTokenCmd   string `json:"dashboard_token_cmd,omitempty"`
+	DashboardTokenParam string `json:"dashboard_token_param,omitempty"`
 }
 
 // AgentTypesResponse is the body of GET /v1/agent-types.
