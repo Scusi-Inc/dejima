@@ -61,15 +61,16 @@ type Handler struct {
 	GatewayPort int
 	// DashboardTokenCmd, when set, is a command run INSIDE the container that prints
 	// the framework's gateway auth token to stdout. `dejima agent open` runs it over
-	// the façade and builds a tokenized console URL
-	// (…?<DashboardTokenParam>=<token>) against the local tunnel, so the browser
-	// auto-authenticates instead of landing on a connect form. This is the
-	// framework-specific knowledge kept DECLARATIVE (like Launch), so core's
-	// agent-open stays generic. Empty = open the gateway root.
+	// the façade and appends DashboardTokenSuffix (with the token substituted) to the
+	// tunnel URL, so the browser auto-authenticates instead of landing on a connect
+	// form. This is the framework-specific knowledge kept DECLARATIVE (like Launch),
+	// so core's agent-open stays generic. Empty = open the gateway root.
 	DashboardTokenCmd string
-	// DashboardTokenParam is the query parameter the console reads its token from
-	// (e.g. "token"). Only meaningful alongside DashboardTokenCmd.
-	DashboardTokenParam string
+	// DashboardTokenSuffix is appended to the console URL with the literal "{token}"
+	// replaced by the (url-escaped) token — e.g. "#token={token}" (OpenClaw reads it
+	// from the URL fragment) or "?token={token}". Only meaningful with
+	// DashboardTokenCmd.
+	DashboardTokenSuffix string
 }
 
 // Attachable reports whether clients can attach to this handler's agents.
@@ -120,10 +121,11 @@ var registry = map[string]Handler{
 		// Read the pinned token back via OpenClaw's own config (the sanctioned way —
 		// its `dashboard` command only copies the tokenized link to a clipboard that
 		// doesn't exist in a container). `agent open` turns it into
-		// http://localhost:<port>/?token=<token>, which the Control UI reads from the
-		// query param and auto-connects (docs.openclaw.ai/web/control-ui).
-		DashboardTokenCmd:   "bash -lc 'openclaw config get gateway.auth.token 2>/dev/null'",
-		DashboardTokenParam: "token"},
+		// http://localhost:<port>/#token=<token>. The Control UI reads the token from
+		// the URL FRAGMENT (docs.openclaw.ai/web/dashboard) — not the query string —
+		// and auto-connects, then strips it.
+		DashboardTokenCmd:    "bash -lc 'openclaw config get gateway.auth.token 2>/dev/null'",
+		DashboardTokenSuffix: "#token={token}"},
 	// Letta — a stateful-agent framework with a REST API + web UI on 8283. Reads
 	// its model key straight from the provider env var (OPENAI_API_KEY /
 	// ANTHROPIC_API_KEY …), so the launch sources the daemon-materialized key file

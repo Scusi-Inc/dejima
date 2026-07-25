@@ -162,11 +162,11 @@ func newAgentOpenCmd() *cobra.Command {
 				return err
 			}
 			gw := 0
-			dashTokenCmd, dashTokenParam := "", ""
+			dashTokenCmd, dashTokenSuffix := "", ""
 			for _, t := range types {
 				if t.Type == agentType {
 					gw = t.GatewayPort
-					dashTokenCmd, dashTokenParam = t.DashboardTokenCmd, t.DashboardTokenParam
+					dashTokenCmd, dashTokenSuffix = t.DashboardTokenCmd, t.DashboardTokenSuffix
 				}
 			}
 			if gw == 0 {
@@ -232,11 +232,12 @@ func newAgentOpenCmd() *cobra.Command {
 				raw, derr := probeGatewayToken(cmd.Context(), khArgs, sshPort, island, host, dashTokenCmd)
 				token := parseTokenOutput(raw)
 				if token != "" {
-					param := dashTokenParam
-					if param == "" {
-						param = "token"
+					suffix := dashTokenSuffix
+					if suffix == "" {
+						suffix = "#token={token}"
 					}
-					openTarget = fmt.Sprintf("http://localhost:%d/?%s=%s", localPort, param, neturl.QueryEscape(token))
+					openTarget = fmt.Sprintf("http://localhost:%d/", localPort) +
+						strings.ReplaceAll(suffix, "{token}", neturl.QueryEscape(token))
 					// Safety net: if the console still shows a connect form, these are
 					// the values to paste.
 					fmt.Println()

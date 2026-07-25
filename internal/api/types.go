@@ -628,11 +628,12 @@ type AgentTypeCapability struct {
 	SuggestedModels     []string `json:"suggested_models,omitempty"`
 	GatewayPort         int      `json:"gateway_port,omitempty"` // 0 = no localhost UI to open
 	// DashboardTokenCmd, run in the container, prints the framework's gateway auth
-	// token; `dejima agent open` builds a tokenized console URL from it so the
-	// browser auto-authenticates. DashboardTokenParam is the query param the console
-	// reads the token from. Both empty = open the gateway root.
-	DashboardTokenCmd   string `json:"dashboard_token_cmd,omitempty"`
-	DashboardTokenParam string `json:"dashboard_token_param,omitempty"`
+	// token; `dejima agent open` appends DashboardTokenSuffix (with "{token}"
+	// substituted) to the console URL so the browser auto-authenticates. E.g. suffix
+	// "#token={token}" (OpenClaw reads the token from the URL fragment). Both empty =
+	// open the gateway root.
+	DashboardTokenCmd    string `json:"dashboard_token_cmd,omitempty"`
+	DashboardTokenSuffix string `json:"dashboard_token_suffix,omitempty"`
 }
 
 // AgentTypesResponse is the body of GET /v1/agent-types.
