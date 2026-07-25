@@ -217,6 +217,30 @@ func newAgentOpenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// A token-gated console (OpenClaw) needs the gateway to have STARTED with
+			// a pinned token. dejima pins one at launch, but that only applies when the
+			// container is (re)created — an agent from before the token fix has none.
+			// Detect that and recreate the container once, automatically, via the same
+			// path as `dejima upgrade`, so the operator doesn't have to. One-time: the
+			// token persists, so later opens skip this.
+			if dashCmd != "" && !printOnly {
+				if raw, _ := probeGatewayToken(cmd.Context(), khArgs, sshPort, island, host, dashCmd); extractGatewayToken(raw) == "" {
+					fmt.Printf("This console has no pinned auth token yet — recreating %q's container once to pin it\n(its agents restart briefly; one-time)…\n", island)
+					if _, uerr := c.UpgradeIsland(cmd.Context(), island); uerr != nil {
+						fmt.Printf("  couldn't recreate automatically (%v).\n  Run this once:  dejima upgrade %s\n", uerr, island)
+					} else {
+						// Wait for the recreated gateway to come up and pin its token.
+						for i := 0; i < 12; i++ {
+							time.Sleep(2 * time.Second)
+							if r2, _ := probeGatewayToken(cmd.Context(), khArgs, sshPort, island, host, dashCmd); extractGatewayToken(r2) != "" {
+								break
+							}
+						}
+					}
+				}
+			}
+
 			sshArgs := []string{"-N", "-o", "ExitOnForwardFailure=yes"}
 			sshArgs = append(sshArgs, khArgs...)
 			sshArgs = append(sshArgs,
@@ -256,19 +280,17 @@ func newAgentOpenCmd() *cobra.Command {
 					fmt.Printf("    WebSocket URL:  ws://localhost:%d\n", localPort)
 					fmt.Printf("    Gateway Token:  %s\n", token)
 				} else {
-					// No pinned token → this container is running a launch from before
-					// the token fix (the gateway must START with the token; it only
-					// takes effect on container create). Say exactly how to fix it, and
-					// name the daemon version so a not-yet-updated daemon is obvious.
+					// Still no token even after the auto-recreate above — something
+					// deeper. Give the fallback manual step and the daemon version so a
+					// not-yet-updated daemon is obvious.
 					ver := "an older version"
 					if ov, e := c.Overview(cmd.Context()); e == nil && ov.DaemonVersion != "" {
 						ver = "v" + strings.TrimPrefix(ov.DaemonVersion, "v")
 					}
-					fmt.Println("⚠ This OpenClaw agent has no pinned console token yet, so the dashboard")
-					fmt.Println("  can't authenticate. Its container predates the token fix. To fix it:")
-					fmt.Printf("    1. Update the daemon to v0.8.48+  (it reports %s)\n", ver)
-					fmt.Println("    2. Recreate this agent: remove it (x) and add it back (a),")
-					fmt.Println("       or recreate the island — the new agent starts with a pinned token.")
+					fmt.Println("⚠ Still no pinned console token after recreating the container.")
+					fmt.Printf("  Daemon reports %s (the token fix needs v0.8.48+).\n", ver)
+					fmt.Printf("  Try once by hand:  dejima upgrade %s\n", island)
+					fmt.Println("  If it still fails after that, tell me — it's a deeper issue.")
 					if derr != nil {
 						fmt.Printf("  (token probe: %v)\n", derr)
 					}
