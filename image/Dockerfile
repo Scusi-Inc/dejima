@@ -154,7 +154,12 @@ ENV HOME=/home/dejima \
 # so on-disk paths are user-owned; auto-updates write to the same prefix.
 # Other agents (Aider, Goose, etc.) are supported via a custom image — see
 # docs/custom-agents.md.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
+# claude-code is floored at ^2.1.200 — the release that enables synchronized
+# terminal output (DECSET 2026) under tmux 3.4+, fixing the scroll-time render
+# corruption its Ink renderer otherwise produces over tmux + Windows Terminal
+# (pairs with the `sync` terminal-feature in image/tmux.conf). ^ still tracks
+# latest patches; it only guarantees a floor with the fix.
+RUN npm install -g @anthropic-ai/claude-code@^2.1.200 @openai/codex
 
 # Containers stay alive via dejima-start.sh, which manages tmux + agent process.
 ENTRYPOINT ["/usr/local/bin/dejima-start.sh"]
