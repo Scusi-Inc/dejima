@@ -120,20 +120,40 @@ func TestTUIForcePurgeOnUnpushedWork(t *testing.T) {
 
 // TestTUISettingsKeysBoth: both 's' and 'S' open Settings (S used to be SSH
 // setup — that moved into the Server menu [H] / actions menu [m]).
-func TestTUISettingsKeysBoth(t *testing.T) {
-	for _, k := range []string{"s", "S"} {
+func TestTUISettingsKeys(t *testing.T) {
+	// S and , open the global Dejima settings overlay directly, regardless of the
+	// highlighted row.
+	for _, k := range []string{"S", ","} {
 		m := driveKeys(t, seededModel(t, island("alpha")), k)
 		if m.settings == nil {
-			t.Errorf("%q should open Settings, got settings=nil", k)
+			t.Errorf("%q should open Dejima settings, got settings=nil", k)
 		}
 		if m.confirm != nil {
 			t.Errorf("%q should not arm a confirm, got %+v", k, m.confirm)
 		}
 	}
+	// s on an island row opens THAT island's contextual settings menu (not the
+	// global overlay), carrying a "Dejima settings" nav button to reach it.
+	m := driveKeys(t, seededModel(t, island("alpha")), "s")
+	if m.menu == nil {
+		t.Fatalf("s on an island should open the contextual settings menu, got menu=nil")
+	}
+	if m.settings != nil {
+		t.Errorf("s on a row should open the row menu, not the global overlay directly")
+	}
+	hasNav := false
+	for _, it := range m.menu.items {
+		if it.nav && strings.Contains(it.label, "Dejima settings") {
+			hasNav = true
+		}
+	}
+	if !hasNav {
+		t.Errorf("island menu should carry a Dejima settings nav button; items=%+v", m.menu.items)
+	}
 }
 
 // TestTUISetupSSHGate: the SSH-setup helper (reached from the Server menu [H] and
-// the per-row [m] menu) refuses when the façade is off and arms the account-wide
+// the per-row [s] settings menu) refuses when the façade is off and arms the account-wide
 // setup-ssh confirm when an SSH address is present.
 func TestTUISetupSSHGate(t *testing.T) {
 	// Façade off: no overview / no SSHAddr.
@@ -254,7 +274,7 @@ func TestTUIActionMenuFullVerbs(t *testing.T) {
 	tm := runModel(t, seededModel(t, island("alpha")))
 	waitForAll(t, tm, "alpha")
 
-	tm.Send(key("m"))
+	tm.Send(key("s")) // contextual island settings menu
 	// A running island offers hibernate; reset/upgrade/rename/purge are always there.
 	waitForAll(t, tm, "Hibernate", "Reset agent state", "Upgrade", "Rename", "Purge island")
 
@@ -270,7 +290,7 @@ func TestTUIActionMenuWakeOnHibernated(t *testing.T) {
 	tm := runModel(t, seededModel(t, isl))
 	waitForAll(t, tm, "sleepy")
 
-	tm.Send(key("m"))
+	tm.Send(key("s")) // contextual island settings menu adapts to container state
 	waitForAll(t, tm, "Wake")
 
 	tm.Send(key("esc"))

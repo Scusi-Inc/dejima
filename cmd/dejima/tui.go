@@ -277,6 +277,10 @@ type actionMenuItem struct {
 	// disabled greys the item out and makes it un-selectable (e.g. "daemon up to
 	// date" — shown for context, but there's nothing to do).
 	disabled bool
+	// nav marks a level-navigation button (e.g. "Dejima settings", "Island
+	// settings") rendered at the top of the menu above a separator — it moves
+	// between the Dejima/island/agent settings levels rather than acting on a row.
+	nav bool
 	// open, when set, is a menu-only action with no global hotkey — chooseMenuItem
 	// calls it directly (after re-anchoring) instead of re-dispatching a key.
 	open func(tuiModel) (tea.Model, tea.Cmd)
@@ -1465,11 +1469,20 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.lastNotice = hostTerminalsOffNote
 		return m, nil
-	case "s", "S", ",":
-		// General settings (editor · group-by-repo · connection target). Both s and
-		// S open it (S used to be SSH setup — that moved into the Server menu [H] and
-		// the per-row actions menu [m]). Server switching lives inside here rather
-		// than owning its own hotkey.
+	case "s":
+		// Contextual settings. On an island/agent row `s` opens that row's settings
+		// menu (which carries a "Dejima settings" nav button, and — for agents — an
+		// "Island settings" one); anywhere else it drops straight into the global
+		// Dejima settings. This subsumes the old `m` per-row action menu.
+		if r := m.currentRow(); r.kind == rowIsland || r.kind == rowAgent {
+			if mm, ok := m.openActionMenu(); ok {
+				return mm, nil
+			}
+		}
+		return m.openSettings(), nil
+	case "S", ",":
+		// Direct shortcuts to the global Dejima settings, regardless of the
+		// highlighted row (power-user accelerators; `s` on a plain row does the same).
 		return m.openSettings(), nil
 	case ">":
 		// In-island /workspace shell for the selected island. (Enter opens the
@@ -1514,21 +1527,13 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// affordance row it runs the creator / add-agent flow. The per-row action
 		// menu lives on `m`, not here, so opening never costs an extra keystroke.
 		return m.activateRow()
-	case "m":
-		// Per-row action menu — the lifecycle/setup actions (hibernate, reset,
-		// rename, ssh setup, purge…) that used to crowd the footer, now hanging
-		// off the highlighted island/agent/terminal row.
-		if mm, ok := m.openActionMenu(); ok {
-			return mm, nil
-		}
-		return m, nil
 	case "c":
 		// Open the island's repo in VS Code / Cursor over Remote-SSH, straight at
 		// /workspace — no folder-browsing. Needs the SSH façade (so the dejima-<island>
 		// host exists) and a local editor CLI.
 		if name := m.selectedName(); name != "" {
 			if m.overview == nil || m.overview.SSHAddr == "" {
-				m.lastError = "ssh façade is off — press m → SSH setup, or start dejimad with --ssh"
+				m.lastError = "ssh façade is off — press s → SSH setup, or start dejimad with --ssh"
 				return m, nil
 			}
 			if err := openInEditor("dejima-"+name, m.editor); err != nil {
@@ -1684,7 +1689,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// fleet-wide" confirm + the defer-while-attached gate (see the update-daemon
 		// verb) — so it's a consented action, not a silent side effect, and clients
 		// reconnect through the restart. Also reachable deliberately via [H]. (Old
-		// lowercase-u = island-upgrade moved into the [m] actions menu.)
+		// lowercase-u = island-upgrade moved into the [s] settings menu.)
 		m.updateError = "" // clear a prior failure when retrying
 		if m.clientUpdate {
 			m.confirm = &confirmPrompt{verb: "update-client"}
@@ -2201,10 +2206,26 @@ func (m tuiModel) isHeadlessAgent(island, agentID string) bool {
 // row kind and (for islands) running/hibernated state so it only ever offers
 // actions that make sense right now. Returns ok=false for rows that have no
 // menu (affordances), so ⏎ falls through to activateRow.
+// openActionMenu opens the contextual settings menu for the highlighted row.
+// Bound to `s`: an island row → island settings, an agent row → agent settings.
 func (m tuiModel) openActionMenu() (tuiModel, bool) {
-	row := m.currentRow()
+	return m.buildMenuFor(m.currentRow())
+}
+
+// buildMenuFor builds the contextual settings menu for a given row. It's
+// separate from openActionMenu so the level-navigation buttons (e.g. an agent
+// menu's "Island settings") can rebuild the menu for a *different* row without
+// moving the list cursor. Each menu carries nav buttons at the top linking the
+// three settings levels: Dejima (global) ← Island ← Agent.
+func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
+	// dejimaNav is the "Dejima settings" button — present on every level; it opens
+	// the global preferences overlay.
+	dejimaNav := actionMenuItem{label: "⚙  Dejima settings", nav: true, open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+		return mm.openSettings(), nil
+	}}
 	var (
 		title string
+		nav   []actionMenuItem
 		items []actionMenuItem
 	)
 	switch row.kind {
@@ -2213,6 +2234,7 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		if !ok {
 			return m, false
 		}
+		nav = []actionMenuItem{dejimaNav}
 		title = "island · " + isl.Name + "  (" + isl.Container + ")"
 		if isl.Container == "running" {
 			items = append(items,
@@ -2266,6 +2288,16 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		if label == "" {
 			label = row.agentID
 		}
+		// Agent settings sit one level down: offer a jump up to its island's
+		// settings as well as the global Dejima settings.
+		islandRow := treeRow{kind: rowIsland, island: row.island}
+		nav = []actionMenuItem{dejimaNav, {label: "🏝  Island settings", nav: true, open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			nm, ok := mm.buildMenuFor(islandRow)
+			if !ok {
+				return mm, nil
+			}
+			return nm, nil
+		}}}
 		title = "agent · " + label
 		if m.isHeadlessAgent(row.island, row.agentID) {
 			items = append(items, actionMenuItem{label: "View logs", key: "o"})
@@ -2289,7 +2321,11 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 	default:
 		return m, false
 	}
-	m.menu = &actionMenu{title: title, items: items, row: row}
+	// Nav buttons ride at the top above a separator; the cursor lands on the first
+	// real action so opening a menu and hitting ⏎ still does the obvious thing, and
+	// the "back/up" nav is a deliberate scroll up.
+	all := append(nav, items...)
+	m.menu = &actionMenu{title: title, items: all, row: row, sel: len(nav)}
 	return m, true
 }
 
@@ -3973,16 +4009,17 @@ func (m tuiModel) renderFooter() string {
 	// (global commands, then island lifecycle), right-aligned to a shared edge.
 	// The strip used to share line one with the global commands, which collided
 	// on narrow terminals — giving it its own row keeps both readable.
-	// Row 1: the primary "open something" actions. Row 2: settings + the ⏎ action
-	// menu (which holds the per-row lifecycle/setup actions — hibernate, reset,
-	// purge, rename, ssh setup, …) + globals. Those keys still work directly;
-	// they're listed in the ⏎ menu and in [?] help.
+	// Row 1: the primary "open something" actions. Row 2: the contextual [s]
+	// settings menu (island/agent settings — holding the per-row lifecycle/setup
+	// actions: hibernate, reset, purge, rename, ssh setup, … — plus a nav button to
+	// global Dejima settings) + globals. Those keys still work directly; they're
+	// listed in the [s] menu and in [?] help.
 	term := ""
 	if m.hostTerminalsAvailable() {
 		term = "   [/] host terminal"
 	}
 	keys1 := "[⏎] open agent(s)   [>] island shell" + term
-	keys2 := "[s] settings   [m] actions   [H] server   [space] expand   [?] help   [q] quit"
+	keys2 := "[s] settings   [H] server   [space] expand   [?] help   [q] quit"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -4092,7 +4129,7 @@ func (m tuiModel) renderHelp() string {
 		{"v", "set an agent's LLM provider / model / key (key-requiring types)"},
 		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
 		{"a", "attach here — replaces the dashboard with the agent"},
-		{"m", "actions menu for the highlighted row (attach, hibernate, rename, upgrade, ssh, purge…)"},
+		{"s", "settings for the highlighted row — island or agent (attach, model, grants, rename, hibernate, purge…); a nav button links up to global Dejima settings"},
 		{"c", "open the island in your editor over SSH, straight at /workspace"},
 		{"h", "hibernate — stop the container, keep all data"},
 		{"w", "wake a hibernated island"},
@@ -4113,7 +4150,7 @@ func (m tuiModel) renderHelp() string {
 	sec("Server controls (the daemon / host)", [][2]string{
 		{"H", "server menu — update daemon · set up SSH fleet-wide · build image · refresh"},
 		{"u / U", "update Dejima — the client first, then the daemon if needed (daemon update warns + gates: it restarts the daemon, closing all terminals fleet-wide). Also in [H]"},
-		{"s / S", "settings — editor · group-by-repo · connection target (which server)"},
+		{"S / ,", "global Dejima settings — editor · group-by-repo · connection target (which server). Also `s` on empty space, or the top nav button in any row's settings menu"},
 		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
 		{"b", "build the island image on the daemon host — confirms first"},
 		{"R", "refresh now"},
@@ -4184,7 +4221,7 @@ func (m tuiModel) renderHelp() string {
 	}
 	b.WriteString(stateLine)
 	b.WriteString("\n  ")
-	b.WriteString(styleMuted.Render(truncateDisplay("islands are uniform by default; give one its own color + glyph via the actions menu (m → Color & glyph)", contentW-2)))
+	b.WriteString(styleMuted.Render(truncateDisplay("islands are uniform by default; give one its own color + glyph via island settings (s → Color & glyph)", contentW-2)))
 	b.WriteString("\n\n")
 
 	b.WriteString(styleHeader.Render(truncateDisplay("From the shell (scriptable; the TUI is just a front-end)", contentW)))
@@ -4332,7 +4369,18 @@ func (m tuiModel) renderActionMenu() string {
 	var b strings.Builder
 	b.WriteString(styleHeader.Render(am.title))
 	b.WriteString("\n\n")
+	// Nav buttons (level-switching) ride at the top; a rule separates them from the
+	// row's own actions.
+	navCount := 0
+	for _, it := range am.items {
+		if it.nav {
+			navCount++
+		}
+	}
 	for i, it := range am.items {
+		if i == navCount && navCount > 0 {
+			b.WriteString(styleMuted.Render("   ──────────────────────────") + "\n")
+		}
 		mark := "   "
 		if i == am.sel && !it.disabled {
 			mark = styleAccent.Render(" ▸ ")
@@ -4375,7 +4423,7 @@ func (m tuiModel) renderSettings() string {
 	}
 
 	if st.page == settingsEditor {
-		b.WriteString(styleHeader.Render("Settings · preferred editor"))
+		b.WriteString(styleHeader.Render("Dejima settings · preferred editor"))
 		b.WriteString("\n")
 		b.WriteString(styleMuted.Render("which editor 'c' opens an island in (Remote-SSH, at /workspace)"))
 		b.WriteString("\n\n")
@@ -4391,7 +4439,7 @@ func (m tuiModel) renderSettings() string {
 		return b.String()
 	}
 
-	b.WriteString(styleHeader.Render("Settings"))
+	b.WriteString(styleHeader.Render("Dejima settings"))
 	b.WriteString("\n")
 	// Version line: this client, the connected daemon (when it differs), and
 	// whether anything's behind the latest release.
