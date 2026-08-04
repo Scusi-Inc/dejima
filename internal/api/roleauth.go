@@ -143,6 +143,12 @@ var roleRouteCap = map[string]roleCap{
 	// --- owner only (explicit; also the default for anything unlisted) ---
 	"DELETE /v1/islands/{name}":                     capOwner, // purge — the operator/owner divide
 	"POST /v1/image/build":                          capOwner,
+	"GET /v1/local":                                 capOwner,
+	"POST /v1/local/install":                        capOwner,
+	"GET /v1/local/models":                          capOwner,
+	"POST /v1/local/models/{name}/pull":             capOwner,
+	"DELETE /v1/local/models/{name}":                capOwner,
+	"POST /v1/local/off":                            capOwner,
 	"POST /v1/admin/update":                         capOwner,
 	"POST /v1/panic":                                capOwner,
 	"DELETE /v1/panic":                              capOwner,

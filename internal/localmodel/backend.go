@@ -1,0 +1,215 @@
+package localmodel
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os/exec"
+	"strings"
+)
+
+// In-island wiring for the default (Ollama) backend. Islands reach the host's
+// inference server via host.docker.internal (already in the egress no-proxy
+// path); Ollama exposes an OpenAI-compatible API under /v1 on port 11434.
+const (
+	// LocalProviderName is the providercreds entry auto-registered when a backend
+	// is installed, so local models show up in the `v` model editor unprompted.
+	LocalProviderName = "local"
+
+	// OllamaEndpoint is the base URL an island uses to reach the host's Ollama.
+	OllamaEndpoint = "http://host.docker.internal:11434/v1"
+	// OllamaAllowHostPort is the egress-allowlist entry that lets an island reach
+	// exactly that endpoint and nothing else.
+	OllamaAllowHostPort = "host.docker.internal:11434"
+)
+
+// InstalledModel is a model already pulled into the backend on the host.
+type InstalledModel struct {
+	Ref   string `json:"ref"`             // backend tag, e.g. "qwen2.5-coder:32b-instruct-q4_K_M"
+	Size  string `json:"size,omitempty"`  // human size from the backend, e.g. "20 GB"
+	Alias string `json:"alias,omitempty"` // catalog alias, when the ref is one we curate
+}
+
+// Status is the backend's runtime state on the daemon host, plus the host-aware
+// recommendation — everything the TUI/CLI needs to render "Local models" in one
+// call.
+type Status struct {
+	Backend    Backend          `json:"backend"`
+	Installed  bool             `json:"installed"` // backend binary present on the host
+	Running    bool             `json:"running"`   // backend responding (models listable)
+	Endpoint   string           `json:"endpoint"`  // in-island OpenAI-compatible base URL
+	Models     []InstalledModel `json:"models"`
+	HostRAMGiB int              `json:"host_ram_gib"`
+	Recommend  Recommendation   `json:"recommend"`
+	Provider   string           `json:"provider"` // the providercreds name islands use ("local")
+}
+
+// LocalBackend abstracts a host inference server so Ollama (default), vLLM, and
+// LM Studio can slot in behind one interface. All methods run on the daemon
+// HOST (where the GPU is), never inside an island.
+type LocalBackend interface {
+	Name() Backend
+	// Detect reports whether the backend binary is installed and whether it's
+	// currently responding.
+	Detect(ctx context.Context) (installed, running bool)
+	// Endpoint is the in-island base URL for the OpenAI-compatible API.
+	Endpoint() string
+	// AllowHostPort is the egress-allowlist entry islands need to reach Endpoint.
+	AllowHostPort() string
+	// List returns models already pulled on the host.
+	List(ctx context.Context) ([]InstalledModel, error)
+	// Pull downloads a model, streaming progress lines. Caller closes the reader.
+	Pull(ctx context.Context, ref string) (io.ReadCloser, error)
+	// Remove deletes a pulled model.
+	Remove(ctx context.Context, ref string) error
+	// Install streams a best-effort install of the backend on the host.
+	Install(ctx context.Context) (io.ReadCloser, error)
+}
+
+// Ollama is the default LocalBackend: the daemon shells out to the host `ollama`
+// CLI. It's the simplest path and Mac-friendly (Metal); vLLM is the better
+// default on a Linux/GPU daemon and can implement this same interface later.
+type Ollama struct {
+	bin string // resolved lazily; "ollama" by default
+}
+
+// NewOllama returns the default-configured Ollama backend.
+func NewOllama() *Ollama { return &Ollama{bin: "ollama"} }
+
+func (o *Ollama) Name() Backend         { return BackendOllama }
+func (o *Ollama) Endpoint() string      { return OllamaEndpoint }
+func (o *Ollama) AllowHostPort() string { return OllamaAllowHostPort }
+
+func (o *Ollama) exe() string {
+	if o.bin == "" {
+		return "ollama"
+	}
+	return o.bin
+}
+
+// Detect: installed = binary on PATH; running = `ollama list` succeeds (it talks
+// to the local server, so a clean exit means the server is up).
+func (o *Ollama) Detect(ctx context.Context) (installed, running bool) {
+	if _, err := exec.LookPath(o.exe()); err != nil {
+		return false, false
+	}
+	installed = true
+	if err := exec.CommandContext(ctx, o.exe(), "list").Run(); err == nil {
+		running = true
+	}
+	return installed, running
+}
+
+// List parses `ollama list` and annotates any ref we curate with its alias.
+func (o *Ollama) List(ctx context.Context) ([]InstalledModel, error) {
+	out, err := exec.CommandContext(ctx, o.exe(), "list").Output()
+	if err != nil {
+		return nil, fmt.Errorf("ollama list: %w", err)
+	}
+	return parseOllamaList(string(out)), nil
+}
+
+// Pull streams `ollama pull <ref>` combined output. The model ref is validated
+// by the caller (ValidateRef) before we ever build the command.
+func (o *Ollama) Pull(ctx context.Context, ref string) (io.ReadCloser, error) {
+	return streamCommand(exec.CommandContext(ctx, o.exe(), "pull", ref))
+}
+
+func (o *Ollama) Remove(ctx context.Context, ref string) error {
+	if out, err := exec.CommandContext(ctx, o.exe(), "rm", ref).CombinedOutput(); err != nil {
+		return fmt.Errorf("ollama rm %s: %w: %s", ref, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Install runs Ollama's official install script (Linux/macOS). It's best-effort
+// and explicitly user-invoked (`dejima local install`); we never auto-install.
+func (o *Ollama) Install(ctx context.Context) (io.ReadCloser, error) {
+	// The official one-liner is idempotent and handles platform detection.
+	return streamCommand(exec.CommandContext(ctx, "sh", "-c",
+		"curl -fsSL https://ollama.com/install.sh | sh"))
+}
+
+// parseOllamaList turns `ollama list` tabular output into InstalledModels.
+// Format: "NAME  ID  SIZE  MODIFIED" header then rows; NAME is field 0, and
+// SIZE is a "<n> <unit>" pair we stitch back together when present.
+func parseOllamaList(out string) []InstalledModel {
+	var models []InstalledModel
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 || strings.EqualFold(fields[0], "NAME") {
+			continue // header or blank
+		}
+		m := InstalledModel{Ref: fields[0]}
+		// SIZE is typically fields[2]+" "+fields[3] ("20 GB"); tolerate variation.
+		if len(fields) >= 4 {
+			m.Size = fields[2] + " " + fields[3]
+		}
+		if cat, ok := Lookup(m.Ref); ok {
+			m.Alias = cat.Alias
+		}
+		models = append(models, m)
+	}
+	return models
+}
+
+// streamCommand starts cmd with stdout+stderr merged into a single reader the
+// caller drains and closes (mirrors the runtime's ExecStream shape).
+func streamCommand(cmd *exec.Cmd) (io.ReadCloser, error) {
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		return nil, err
+	}
+	go func() {
+		err := cmd.Wait()
+		_ = pw.CloseWithError(err) // surfaces a non-zero exit to the reader
+	}()
+	return &pipeReadCloser{r: pr}, nil
+}
+
+type pipeReadCloser struct{ r *io.PipeReader }
+
+func (p *pipeReadCloser) Read(b []byte) (int, error) { return p.r.Read(b) }
+func (p *pipeReadCloser) Close() error               { return p.r.Close() }
+
+// ValidateRef guards a model ref before it reaches a shell/exec arg. Refs are
+// backend tags like "qwen2.5-coder:32b-instruct-q4_K_M" — alnum plus a small
+// punctuation set; anything else is rejected rather than escaped.
+func ValidateRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("empty model ref")
+	}
+	if len(ref) > 200 {
+		return fmt.Errorf("model ref too long")
+	}
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("._:-/+", r):
+		default:
+			return fmt.Errorf("invalid character %q in model ref", r)
+		}
+	}
+	return nil
+}
+
+// ResolveRef maps a user-typed handle (a curated alias or a raw backend ref) to
+// the ref to pull. A curated alias resolves to its pinned ref; anything else is
+// passed through verbatim after validation, so power users can pull uncurated
+// models. ok reports whether the handle matched the curated catalog.
+func ResolveRef(handle string) (ref string, curated bool, err error) {
+	if m, ok := Lookup(handle); ok {
+		return m.Ref, true, nil
+	}
+	if err := ValidateRef(handle); err != nil {
+		return "", false, err
+	}
+	return handle, false, nil
+}

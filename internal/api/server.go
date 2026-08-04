@@ -659,6 +659,13 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/islands/{name}/upgrade", s.upgradeIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/clone", s.cloneIsland)
 	mux.HandleFunc("POST /v1/image/build", s.handleImageBuild)
+	// Managed local models (owner-only): orchestrate a host inference backend.
+	mux.HandleFunc("GET /v1/local", s.handleLocalStatus)
+	mux.HandleFunc("POST /v1/local/install", s.handleLocalInstall)
+	mux.HandleFunc("GET /v1/local/models", s.handleLocalModels)
+	mux.HandleFunc("POST /v1/local/models/{name}/pull", s.handleLocalPull)
+	mux.HandleFunc("DELETE /v1/local/models/{name}", s.handleLocalRemove)
+	mux.HandleFunc("POST /v1/local/off", s.handleLocalOff)
 	mux.HandleFunc("POST /v1/admin/update", s.handleAdminUpdate)
 	mux.HandleFunc("GET /v1/panic", s.handlePanicStatus)
 	mux.HandleFunc("POST /v1/panic", s.handlePanic)

@@ -22,6 +22,7 @@ import (
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/localmodel"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/policy"
@@ -869,6 +870,81 @@ func (c *Client) BuildImage(ctx context.Context, out io.Writer) error {
 		return errors.New(strings.TrimPrefix(last, "ERROR: "))
 	}
 	return errors.New("build stream ended without a result (daemon restarted?)")
+}
+
+// consumeProgress drains a daemon progress stream to out, returning nil on the
+// okMarker line and a trailing "ERROR: …" line as an error. Shared by the local
+// backend install/pull streams (same in-band success/error convention as build).
+func consumeProgress(body io.Reader, okMarker string, out io.Writer) error {
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	last := ""
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.TrimSpace(line) == okMarker {
+			return nil
+		}
+		if strings.TrimSpace(line) != "" {
+			last = line
+		}
+		fmt.Fprintln(out, line)
+	}
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("stream interrupted: %w", err)
+	}
+	if strings.HasPrefix(last, "ERROR: ") {
+		return errors.New(strings.TrimPrefix(last, "ERROR: "))
+	}
+	return errors.New("stream ended without a result (daemon restarted?)")
+}
+
+// LocalStatus fetches the managed local-model backend status (backend, endpoint,
+// pulled models, host RAM + recommendation).
+func (c *Client) LocalStatus(ctx context.Context) (*localmodel.Status, error) {
+	var out localmodel.Status
+	if err := c.do(ctx, http.MethodGet, "/v1/local", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListLocalModels returns pulled models plus the host-aware recommendation.
+func (c *Client) ListLocalModels(ctx context.Context) (*LocalModelsResponse, error) {
+	var out LocalModelsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/local/models", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// LocalInstall streams a best-effort backend install to out.
+func (c *Client) LocalInstall(ctx context.Context, out io.Writer) error {
+	body, err := c.stream(ctx, http.MethodPost, "/v1/local/install")
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	return consumeProgress(body, localInstallOKMarker, out)
+}
+
+// PullLocalModel streams a model pull; name may be a curated alias or a raw ref.
+func (c *Client) PullLocalModel(ctx context.Context, name string, out io.Writer) error {
+	body, err := c.stream(ctx, http.MethodPost, "/v1/local/models/"+url.PathEscape(name)+"/pull")
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	return consumeProgress(body, localPullOKMarker, out)
+}
+
+// RemoveLocalModel deletes a pulled model from the host backend.
+func (c *Client) RemoveLocalModel(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/local/models/"+url.PathEscape(name), nil, nil)
+}
+
+// LocalOff deregisters the `local` provider; the backend + pulled models stay.
+func (c *Client) LocalOff(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/v1/local/off", nil, nil)
 }
 
 // stream issues a request whose response body may outlive the standard client
