@@ -634,6 +634,11 @@ type AgentTypeCapability struct {
 	// open the gateway root.
 	DashboardTokenCmd    string `json:"dashboard_token_cmd,omitempty"`
 	DashboardTokenSuffix string `json:"dashboard_token_suffix,omitempty"`
+	// Bundled marks a tier-1 agent preinstalled in the image; tier-2 agents
+	// (Bundled=false) self-install on first launch. InstallCmd is the informational
+	// install command a picker can surface as "installs on first use".
+	Bundled    bool     `json:"bundled,omitempty"`
+	InstallCmd []string `json:"install_cmd,omitempty"`
 }
 
 // AgentTypesResponse is the body of GET /v1/agent-types.

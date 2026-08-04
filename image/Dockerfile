@@ -21,6 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         less \
         openssh-client \
         openssh-sftp-server \
+        pipx \
+        python3 \
         sudo \
         tmux \
         unzip \
@@ -131,6 +133,11 @@ RUN chmod +x /opt/dejima/load-secrets.sh && \
 # (~/.npmrc, ~/.claude, ~/.codex, ~/.config, …). Owned by dejima so the agents'
 # auto-updaters can still write to it.
 RUN mkdir -p /opt/dejima/npm-global && chown -R dejima:dejima /opt/dejima/npm-global
+# Writable pipx prefix for tier-2 Python agents (aider) that self-install on
+# first launch. Under /opt (not the home volume) so it isn't shadowed per island;
+# Ubuntu 24.04's system pip is PEP-668 "externally managed", so pipx — not
+# `pip install` — is the sanctioned path for CLI tools.
+RUN mkdir -p /opt/dejima/pipx/bin && chown -R dejima:dejima /opt/dejima/pipx
 
 # Entrypoint.
 COPY image/start.sh /usr/local/bin/dejima-start.sh
@@ -147,7 +154,9 @@ WORKDIR /workspace
 ENV HOME=/home/dejima \
     GH_CONFIG_DIR=/opt/host/gh-config \
     NPM_CONFIG_PREFIX=/opt/dejima/npm-global \
-    PATH=/opt/dejima/npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PIPX_HOME=/opt/dejima/pipx \
+    PIPX_BIN_DIR=/opt/dejima/pipx/bin \
+    PATH=/opt/dejima/npm-global/bin:/opt/dejima/pipx/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Bundled agents. Both are npm-distributed CLI agents that talk to their
 # respective vendor APIs. Installed as the dejima user into NPM_CONFIG_PREFIX

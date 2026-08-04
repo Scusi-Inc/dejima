@@ -126,14 +126,16 @@ func (s *Server) handleAgentTypes(w http.ResponseWriter, _ *http.Request) {
 	out := make([]AgentTypeCapability, 0, len(all))
 	for _, h := range all {
 		out = append(out, AgentTypeCapability{
-			Type:                h.ID,
-			Interactive:         h.Attachable(),
-			RequiresProviderKey: h.RequiresProviderKey,
-			SupportedProviders:  h.SupportedProviders,
-			SuggestedModels:     h.SuggestedModels,
-			GatewayPort:         h.GatewayPort,
+			Type:                 h.ID,
+			Interactive:          h.Attachable(),
+			RequiresProviderKey:  h.RequiresProviderKey,
+			SupportedProviders:   h.SupportedProviders,
+			SuggestedModels:      h.SuggestedModels,
+			GatewayPort:          h.GatewayPort,
 			DashboardTokenCmd:    h.DashboardTokenCmd,
 			DashboardTokenSuffix: h.DashboardTokenSuffix,
+			Bundled:              h.Bundled,
+			InstallCmd:           h.InstallCmd,
 		})
 	}
 	writeJSON(w, http.StatusOK, AgentTypesResponse{Types: out})

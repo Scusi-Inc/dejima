@@ -71,6 +71,14 @@ type Handler struct {
 	// from the URL fragment) or "?token={token}". Only meaningful with
 	// DashboardTokenCmd.
 	DashboardTokenSuffix string
+	// Bundled marks a TIER-1 agent preinstalled in the island image (claude-code,
+	// codex): no first-use install wait. Tier-2 agents (Bundled=false) self-install
+	// on first launch instead — see InstallCmd and the self-installing Launch line.
+	Bundled bool
+	// InstallCmd is the tier-2 install command (informational: surfaced in the
+	// picker as "installs on first use"). The actual install happens inside the
+	// self-installing Launch line, matching the existing goose/letta/hermes pattern.
+	InstallCmd []string
 }
 
 // Attachable reports whether clients can attach to this handler's agents.
@@ -83,9 +91,27 @@ func (h Handler) NeedsProviderKey() bool { return h.RequiresProviderKey }
 // treated as generic interactive agents (the image's start.sh `*)` fallback
 // runs the type string as a command); see Lookup.
 var registry = map[string]Handler{
-	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", StateDir: "/home/dejima/.claude"},
-	"codex":       {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox-policy=no-sandbox", StateDir: "/home/dejima/.codex"},
-	Shell:         {ID: Shell, Kind: KindInteractive, Launch: "bash -l", StateDir: "/home/dejima"},
+	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", StateDir: "/home/dejima/.claude", Bundled: true},
+	"codex":       {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox-policy=no-sandbox", StateDir: "/home/dejima/.codex", Bundled: true},
+	// Aider: the open, model-agnostic tier-1 anchor (interactive). Its diff-based
+	// edit loop tolerates weaker LOCAL models far better than a tool-call-heavy
+	// agent — so it's the natural pairing for `dejima local`. Self-installs on
+	// first launch (pip, kept out of the base image), sources the provider key,
+	// and bridges providercreds' OPENAI_BASE_URL to aider/litellm's OPENAI_API_BASE
+	// so a `local` provider works out of the box. Model comes from DEJIMA_MODEL
+	// (provider-prefix stripped, routed via the openai/ litellm path).
+	"aider": {
+		ID: "aider", Kind: KindInteractive, StateDir: "/home/dejima/.aider",
+		Launch: "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; " +
+			"export OPENAI_API_BASE=\"${OPENAI_API_BASE:-${OPENAI_BASE_URL:-}}\"; " +
+			"command -v aider >/dev/null 2>&1 || pipx install aider-chat; " +
+			"if [ -n \"${DEJIMA_MODEL:-}\" ]; then exec aider --model \"openai/${DEJIMA_MODEL#*/}\"; else exec aider; fi'",
+		RequiresProviderKey: true,
+		SupportedProviders:  []string{"local", "openai", "anthropic", "google"},
+		SuggestedModels:     []string{"local/qwen-coder", "openai/gpt-5.5", "anthropic/claude-sonnet-4-6"},
+		InstallCmd:          []string{"pipx", "install", "aider-chat"},
+	},
+	Shell: {ID: Shell, Kind: KindInteractive, Launch: "bash -l", StateDir: "/home/dejima"},
 	// OpenClaw: a first-class headless assistant. Self-installs on first launch
 	// (kept out of the base image to avoid bloating every island) and runs its
 	// gateway from /workspace — which should hold the brain's config (the Home
