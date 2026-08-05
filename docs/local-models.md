@@ -1,9 +1,9 @@
 # Local models & agent tiers
 
-**Status:** shipped on `feat/local-models` (catalog + backend + `/v1/local/*` API
-+ `dejima local` CLI + ts/py SDK + agent tiers/Aider + TUI status sub-page +
-`doctor` check). Remaining follow-ups: the setup-wizard cloud/local/both branch
-and openapi.yaml entries for `/v1/local/*`.
+**Status:** shipped complete on `feat/local-models` — catalog + backend +
+`/v1/local/*` API (+ openapi) + `dejima local` CLI + ts/py SDK + agent
+tiers/Aider + TUI status sub-page + `doctor` check + the provisioning-wizard
+local-models step.
 **Goal:** run open-weights models (Qwen-Coder, Mistral, Kimi K2, …) on your own
 hardware and drive isolated Dejima agents with them — managed the same easy way
 everything else in Dejima is, from the **TUI, CLI, or SDK**.
@@ -156,6 +156,5 @@ workflows rather than let tool-use-heavy skills silently underperform.
    (Streaming install/pull stay in the CLI, where streaming belongs.)
 4. ✅ **Agent tiers** — `Handler.Bundled`/`InstallCmd`, the `aider` handler
    (self-installs via pipx), surfaced on the agent-types API.
-5. ◻︎ **Remaining** — the setup-wizard "cloud / local / both" branch, and
-   openapi.yaml entries for `/v1/local/*`. SDK (ts+py) and the `doctor` check are
-   ✅ done.
+5. ✅ **Rest** — ts+py SDK, `doctor` check, the provisioning-wizard "local models"
+   step, and openapi.yaml entries (with surface tests + waivers) for `/v1/local/*`.
