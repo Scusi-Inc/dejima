@@ -1801,6 +1801,89 @@ paths:
           description: Build output stream
           content:
             text/plain: { schema: { type: string } }
+  /v1/local:
+    get:
+      tags: [daemon]
+      summary: Managed local-model backend status
+      description: >
+        Backend (Ollama by default), whether it's installed/running, the in-island
+        OpenAI-compatible endpoint, pulled models, and a host-RAM-aware model
+        recommendation. Owner-only.
+      operationId: localStatus
+      responses:
+        "200":
+          description: Backend status
+          content:
+            application/json: { schema: { type: object } }
+  /v1/local/install:
+    post:
+      tags: [daemon]
+      summary: Install the local inference backend (streams progress)
+      description: >
+        Best-effort install of the backend on the daemon host, then auto-registers
+        the `local` LLM provider. Streams text/plain progress ending with a
+        `--- dejima: local backend installed ---` marker or a trailing `ERROR: …`.
+        Owner-only.
+      operationId: localInstall
+      responses:
+        "200":
+          description: Install output stream
+          content:
+            text/plain: { schema: { type: string } }
+  /v1/local/models:
+    get:
+      tags: [daemon]
+      summary: Pulled local models + host-aware recommendation
+      operationId: localModels
+      responses:
+        "200":
+          description: Pulled models and recommendation
+          content:
+            application/json: { schema: { type: object } }
+  /v1/local/models/{name}/pull:
+    post:
+      tags: [daemon]
+      summary: Pull a local model (streams progress)
+      description: >
+        `name` is a curated alias (e.g. `qwen-coder`) or a raw backend ref. Streams
+        text/plain progress ending with `--- dejima: local model pulled ---` or a
+        trailing `ERROR: …`. Owner-only.
+      operationId: localPull
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pull output stream
+          content:
+            text/plain: { schema: { type: string } }
+  /v1/local/models/{name}:
+    delete:
+      tags: [daemon]
+      summary: Remove a pulled local model
+      operationId: localRemove
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json: { schema: { type: object } }
+  /v1/local/off:
+    post:
+      tags: [daemon]
+      summary: Deregister the `local` provider (backend + pulled models stay)
+      operationId: localOff
+      responses:
+        "200":
+          description: Disabled
+          content:
+            application/json: { schema: { type: object } }
   /v1/ssh/account-keys:
     get:
       tags: [daemon]

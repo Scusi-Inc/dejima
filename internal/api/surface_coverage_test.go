@@ -84,6 +84,25 @@ func TestSurfaceAgentTypes(t *testing.T) {
 	}
 }
 
+// TestSurfaceLocalModels exercises the side-effect-free local-model endpoints.
+// The backend CLI is absent under test, so status reports "not installed" and
+// GET is safe; POST /v1/local/off just deregisters the (absent) provider. The
+// install/pull/rm endpoints shell out to the backend, so they're covered by the
+// internal/localmodel unit tests + the `dejima local` CLI test and waived in
+// cmd/dejima/testdata/coverage_waivers.txt.
+func TestSurfaceLocalModels(t *testing.T) {
+	h, _ := newTestServer(t)
+	if rr := do(t, h, http.MethodGet, "/v1/local", ""); !ok2xx(rr.Code) {
+		t.Fatalf("GET /v1/local: %d, body %s", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, http.MethodGet, "/v1/local/models", ""); !ok2xx(rr.Code) {
+		t.Fatalf("GET /v1/local/models: %d, body %s", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, http.MethodPost, "/v1/local/off", ""); !ok2xx(rr.Code) {
+		t.Fatalf("POST /v1/local/off: %d, body %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestSurfaceClientHistory(t *testing.T) {
 	h, _ := newTestServer(t)
 	rr := do(t, h, http.MethodGet, "/v1/clients", "")
