@@ -4642,7 +4642,10 @@ func (m tuiModel) renderConfirm() string {
 	case "upgrade":
 		prompt = fmt.Sprintf("Recreate %q on the current island image? (all state preserved)", c.island)
 	case "recreate-island":
-		prompt = fmt.Sprintf("OOM priority changed — restart %q now to apply? (recreates the container; workspace + agents preserved)", c.island)
+		// Generic recreate confirm (secrets apply, OOM-priority apply, …): be honest
+		// that running agent sessions restart — that's the disruption the operator
+		// is consenting to — while reassuring that persisted state survives.
+		prompt = fmt.Sprintf("Recreate %q now to apply changes? Running agent sessions restart; workspace + agent state preserved.", c.island)
 	case "build-image":
 		prompt = "Rebuild the island image? Takes a few minutes; islands pick it up on upgrade."
 	case "purge":

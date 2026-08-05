@@ -148,6 +148,14 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		v.loading, v.notice, v.err = true, "", ""
 		return m, m.loadSecretsCmd(v.island)
+	case "R":
+		// Apply changes to RUNNING agents. Only a container recreate adds/refreshes
+		// the secrets mount and relaunches agents with the new environment — a
+		// detach/reattach of the client does NOT (the process keeps its old env).
+		// recreate-island carries its own confirm + warning.
+		m.secretsPane = nil
+		m.confirm = &confirmPrompt{verb: "recreate-island", island: v.island}
+		return m, nil
 	case "a":
 		v.adding, v.addPhase = true, 0
 		v.nameInput, v.valInput, v.err, v.notice = "", "", "", ""
@@ -279,10 +287,13 @@ func (v *secretsView) view(width int) string {
 
 	if v.restartPending {
 		// Loud on purpose: this is the single thing most likely to make the
-		// feature look broken when it is working correctly.
-		b.WriteString(styleWaiting.Render("⚠  RESTART TERMINALS TO APPLY"))
+		// feature look broken when it is working correctly. And be precise about
+		// the mechanism — "restart the terminal" (detach/reattach the client) does
+		// NOT work; only a container recreate adds/refreshes the mount and
+		// relaunches agents with the new environment.
+		b.WriteString(styleWaiting.Render("⚠  RECREATE TO APPLY TO RUNNING AGENTS"))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("   Live in NEW shells. Anything already running still has the old\n   environment — restart the agent to pick it up."))
+		b.WriteString(styleMuted.Render("   A running agent keeps the environment it launched with. Closing and\n   reopening a terminal does NOT reload it. Recreating the island adds/\n   refreshes the secrets mount and relaunches agents with the new value\n   (workspace + state preserved).\n   Press [R] to recreate this island now."))
 		b.WriteString("\n\n")
 	}
 
@@ -298,6 +309,6 @@ func (v *secretsView) view(width int) string {
 		b.WriteString(styleRunning.Render("✓ " + v.notice))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [r] reload   [esc] back"))
+	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [R] recreate to apply   [r] reload   [esc] back"))
 	return b.String()
 }
