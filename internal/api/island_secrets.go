@@ -76,11 +76,15 @@ func escapeSecretValue(v string) string {
 	return strings.ReplaceAll(v, "\r", "%0D")
 }
 
-// materializeIslandSecrets writes (or removes) an island's secrets file and
-// returns its host path, or "" when the island has none.
-//
-// Removing the file when the last secret goes is the point of the empty case:
-// a stale file would keep injecting a secret the operator believes they deleted.
+// materializeIslandSecrets writes an island's secrets file and returns its host
+// path. It ALWAYS writes the file — even with zero secrets, when the file is just
+// the header comments — because the file is bind-mounted at container create and
+// a mount can't be added to a live container. If the file were absent for an
+// island that starts with no secrets, the FIRST secret added later would never
+// reach it (the exact "my secret isn't showing up" bug). An empty (header-only)
+// file injects nothing, so deleting the last secret is still honored: new shells
+// export no values. (A process already running keeps its start-time environment
+// until it restarts — callers surface that as a restart notice.)
 func materializeIslandSecrets(store *secrets.IslandStore, island string) (string, error) {
 	path, err := islandSecretsFile(island)
 	if err != nil {
@@ -89,12 +93,6 @@ func materializeIslandSecrets(store *secrets.IslandStore, island string) (string
 	vals, err := store.Values(island)
 	if err != nil {
 		return "", err
-	}
-	if len(vals) == 0 {
-		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
-			return "", rmErr
-		}
-		return "", nil
 	}
 
 	// Ensure the 0700 dir exists (this is a write path, unlike reads).
@@ -127,7 +125,9 @@ func materializeIslandSecrets(store *secrets.IslandStore, island string) (string
 
 // islandSecretsMount returns the host path to bind at /opt/host/secrets.env,
 // refreshing the file first so a container start always carries current values.
-// Returns "" when the island has no secrets, so no mount is added.
+// The file (and thus the mount) is ALWAYS present — header-only when the island
+// has no secrets yet — so a secret added later reaches the running container
+// through the live mount instead of needing a recreate to gain the mount.
 func islandSecretsMount(p *project.Project) (string, error) {
 	store, err := secrets.OpenIsland()
 	if err != nil {
