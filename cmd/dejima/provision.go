@@ -174,6 +174,7 @@ func runProvisionHost(ctx context.Context, yes, reset bool) error {
 		{"vm-rightsize", "Docker VM memory", provPhaseVMRightsize},
 		{"shell-ssh", "Shell PATH & Remote Login", provPhaseShellSSH},
 		{"dejima-install", "Install the Dejima daemon", provPhaseDejimaInstall},
+		{"local-models", "Local models (optional)", provPhaseLocalModels},
 		{"verify", "Verify & connection info", provPhaseVerify},
 	}
 
@@ -639,7 +640,54 @@ func provPhaseDejimaInstall(pc *provCtx) error {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 6 — verify + handoff
+// Phase 6 — local models (optional): the cloud/local choice
+// ---------------------------------------------------------------------------
+
+// provPhaseLocalModels offers the "run open-weights models on this host" path.
+// Opt-in (a model is a multi-GB download), so it defaults to no — and under
+// --yes it's skipped entirely rather than pulling gigabytes unattended. When
+// taken it installs the backend + pulls the host-recommended model via the
+// freshly-installed daemon; anything not auto-done becomes a manual hint.
+func provPhaseLocalModels(pc *provCtx) error {
+	fmt.Println("  Optional: run open-weights models (Qwen-Coder, Mistral, …) on THIS host so")
+	fmt.Println("  your isolated agents can use them — no per-token cloud cost, nothing leaves")
+	fmt.Println("  the machine. The model loads once here; islands share it as an OpenAI-")
+	fmt.Println("  compatible endpoint. (You can always do this later with `dejima local`.)")
+	if !pc.confirm("  Set up local models now (installs Ollama + a recommended model)?", false) {
+		pc.addManual("Local models (optional): `dejima local install`, then `dejima local pull <model>`")
+		return nil
+	}
+	c, err := client()
+	if err != nil {
+		pc.addManual("Local models: daemon not reachable yet — run `dejima local install` once it's up")
+		return nil
+	}
+	fmt.Println("  Installing the inference backend (Ollama)…")
+	if err := c.LocalInstall(pc.ctx, os.Stdout); err != nil {
+		pc.addManual("Local models: install didn't finish — retry with `dejima local install` (" + err.Error() + ")")
+		return nil
+	}
+	st, err := c.LocalStatus(pc.ctx)
+	if err != nil || st.Recommend.Top == nil {
+		pc.addManual("Local models: pick + pull a model with `dejima local models` / `dejima local pull <model>`")
+		return nil
+	}
+	top := st.Recommend.Top
+	if !pc.confirm(fmt.Sprintf("  Pull the recommended model for this host — %s (%s)?", top.Alias, top.Params), true) {
+		pc.addManual("Local models: pull a model with `dejima local pull <model>`")
+		return nil
+	}
+	fmt.Printf("  Pulling %s…\n", top.Alias)
+	if err := c.PullLocalModel(pc.ctx, top.Alias, os.Stdout); err != nil {
+		pc.addManual("Local models: model pull didn't finish — retry with `dejima local pull " + top.Alias + "`")
+		return nil
+	}
+	fmt.Println("  ✓ local models ready — point an agent at the `local` provider (the `v` model editor).")
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 — verify + handoff
 // ---------------------------------------------------------------------------
 
 func provPhaseVerify(pc *provCtx) error {
