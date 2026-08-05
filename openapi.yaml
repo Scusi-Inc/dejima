@@ -560,6 +560,32 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentInfo" } }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/agents/{id}/restart:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AgentID"
+    post:
+      tags: [agents]
+      summary: Relaunch an agent in place so it picks up a changed environment (e.g. a new secret)
+      description: >
+        Kills and re-creates the agent's tmux session so it starts in a fresh
+        login shell. `{"resume": true}` continues the agent's previous
+        conversation when the framework supports it (claude-code). The island
+        must be running. Operator-only.
+      operationId: restartAgent
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { resume: { type: boolean, description: "continue the previous conversation instead of a cold start" } }
+      responses:
+        "200":
+          description: OK — { restarted, resumed }
+          content:
+            application/json: { schema: { type: object } }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/agents/{id}/config:
     parameters:
       - $ref: "#/components/parameters/Name"

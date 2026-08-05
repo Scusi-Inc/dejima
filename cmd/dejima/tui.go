@@ -211,6 +211,7 @@ type tuiModel struct {
 	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
 	github       *githubView       // non-nil while the self-serve GitHub identity pane is open (settings → GitHub)
 	secretsPane  *secretsView      // non-nil while the per-island Secrets pane is open
+	restartPane  *restartView      // non-nil while the "which agents to restart" checklist is open
 	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
@@ -965,6 +966,22 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case restartDoneMsg:
+		if v := m.restartPane; v != nil && v.island == msg.island {
+			v.busy = false
+			if len(msg.failed) > 0 {
+				v.notice = ""
+				v.err = fmt.Sprintf("%d restarted; failed: %s", msg.ok, strings.Join(msg.failed, ", "))
+				if msg.err != nil {
+					v.err += " (" + msg.err.Error() + ")"
+				}
+			} else {
+				v.err = ""
+				v.notice = fmt.Sprintf("restarted %d agent(s) — new environment loaded. [esc] to close.", msg.ok)
+			}
+		}
+		return m, nil
+
 	case localStatusMsg:
 		// Land the status in the settings sub-page only if it's still open on it.
 		if s := m.settings; s != nil && s.page == settingsLocal {
@@ -1466,6 +1483,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The Secrets pane owns keys while open.
 	if m.secretsPane != nil {
 		return m.secretsKey(msg)
+	}
+	// The restart checklist owns keys while open.
+	if m.restartPane != nil {
+		return m.restartKey(msg)
 	}
 	// The help overlay owns keys while shown.
 	if m.help {
@@ -3182,6 +3203,10 @@ func (m tuiModel) View() string {
 	}
 	if m.secretsPane != nil {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.secretsPane.view(m.width - 4))
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.restartPane != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.restartPane.view(m.width - 4))
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.aggregate != nil {

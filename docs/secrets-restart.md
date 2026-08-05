@@ -1,6 +1,7 @@
 # Applying secrets to running agents — design
 
-**Status:** Phase 1 shipped (`feat/secrets-restart-tui`); Phase 2 proposed.
+**Status:** Phase 1 + 2 shipped (`feat/secrets-restart-tui`) — recreate-to-apply,
+graceful per-agent restart with resume, and the restart checklist.
 
 ## The mechanical model (why this needs care)
 

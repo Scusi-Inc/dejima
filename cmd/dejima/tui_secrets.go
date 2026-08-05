@@ -149,13 +149,13 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		v.loading, v.notice, v.err = true, "", ""
 		return m, m.loadSecretsCmd(v.island)
 	case "R":
-		// Apply changes to RUNNING agents. Only a container recreate adds/refreshes
-		// the secrets mount and relaunches agents with the new environment — a
-		// detach/reattach of the client does NOT (the process keeps its old env).
-		// recreate-island carries its own confirm + warning.
+		// Open the restart checklist: choose which agents to relaunch so they pick
+		// up the change (a detach/reattach of the client does NOT — the process
+		// keeps its old env). The checklist also offers [!] recreate-island for the
+		// first-secret case, where no mount exists yet.
+		island := v.island
 		m.secretsPane = nil
-		m.confirm = &confirmPrompt{verb: "recreate-island", island: v.island}
-		return m, nil
+		return m.openRestartView(island), nil
 	case "a":
 		v.adding, v.addPhase = true, 0
 		v.nameInput, v.valInput, v.err, v.notice = "", "", "", ""
@@ -293,7 +293,7 @@ func (v *secretsView) view(width int) string {
 		// relaunches agents with the new environment.
 		b.WriteString(styleWaiting.Render("⚠  RECREATE TO APPLY TO RUNNING AGENTS"))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("   A running agent keeps the environment it launched with. Closing and\n   reopening a terminal does NOT reload it. Recreating the island adds/\n   refreshes the secrets mount and relaunches agents with the new value\n   (workspace + state preserved).\n   Press [R] to recreate this island now."))
+		b.WriteString(styleMuted.Render("   A running agent keeps the environment it launched with. Closing and\n   reopening a terminal does NOT reload it — the agent must relaunch.\n   Press [R] to pick which agents to restart (resume supported), with a\n   recreate-island option for a first-ever secret."))
 		b.WriteString("\n\n")
 	}
 
@@ -309,6 +309,6 @@ func (v *secretsView) view(width int) string {
 		b.WriteString(styleRunning.Render("✓ " + v.notice))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [R] recreate to apply   [r] reload   [esc] back"))
+	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [R] restart to apply   [r] reload   [esc] back"))
 	return b.String()
 }

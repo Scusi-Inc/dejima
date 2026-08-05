@@ -12,7 +12,7 @@ import (
 // if the marker text drifts on one side, the TUI restart count silently breaks.
 func TestSupervisorMarkerContract(t *testing.T) {
 	supervised := &project.AgentSpec{ID: "w2", Type: "openclaw", Restart: true}
-	script := agentLaunchScript(supervised)
+	script := agentLaunchScript(supervised, false)
 	if !strings.Contains(script, headlessRestartMarker("w2")) {
 		t.Fatalf("supervisor script must log %q (what headlessRestartCount greps):\n%s",
 			headlessRestartMarker("w2"), script)
@@ -23,7 +23,20 @@ func TestSupervisorMarkerContract(t *testing.T) {
 
 	// A non-supervised headless agent has no loop and no marker.
 	oneShot := &project.AgentSpec{ID: "w3", Type: "openclaw", Restart: false}
-	if s := agentLaunchScript(oneShot); strings.Contains(s, "while true") {
+	if s := agentLaunchScript(oneShot, false); strings.Contains(s, "while true") {
 		t.Fatalf("Restart=false headless agent should not be supervised:\n%s", s)
+	}
+}
+
+// TestAgentLaunchResume: an interactive claude-code agent launches with
+// `claude --continue` when a graceful restart requests resume, and plain
+// `claude` (cold start) otherwise.
+func TestAgentLaunchResume(t *testing.T) {
+	a := &project.AgentSpec{ID: "a1", Type: "claude-code"}
+	if s := agentLaunchScript(a, false); !strings.Contains(s, "exec claude") || strings.Contains(s, "--continue") {
+		t.Errorf("cold start should be plain `claude`; got %q", s)
+	}
+	if s := agentLaunchScript(a, true); !strings.Contains(s, "claude --continue") {
+		t.Errorf("resume should launch `claude --continue`; got %q", s)
 	}
 }

@@ -232,6 +232,14 @@ export class Client {
     await this.request("DELETE", `${this.island(name)}/agents/${this.seg(agentId)}`);
   }
 
+  /** Relaunch an agent in place so it picks up a changed environment (e.g. a new
+   * secret). `resume` continues its previous conversation where supported. */
+  restartAgent(name: string, agentId: string, opts: { resume?: boolean } = {}): Promise<any> {
+    return this.json("POST", `${this.island(name)}/agents/${this.seg(agentId)}/restart`, {
+      json: { resume: opts.resume || false },
+    });
+  }
+
   /** Set an agent's LLM provider/model (key-requiring frameworks only). */
   configureAgent(
     name: string,

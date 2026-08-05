@@ -32,3 +32,9 @@ cli ssh enroll        # writes client SSH keys + ~/.ssh/config on the host
 api POST /v1/local/install
 api POST /v1/local/models/{name}/pull
 api DELETE /v1/local/models/{name}
+
+# Relaunches a real tmux session in the container (kill + re-create) — needs a
+# live island, so not hit in surface tests. Covered by the restart-checklist TUI
+# test (TestRestartChecklist), the CLI test (TestAgentRestartCommand), and the
+# restartAgentSession/handler logic.
+api POST /v1/islands/{name}/agents/{id}/restart

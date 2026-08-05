@@ -225,6 +225,14 @@ class Client:
         the branch is kept). The primary and last agent cannot be removed."""
         self._req("DELETE", f"{self._island(name)}/agents/{self._seg(agent_id)}")
 
+    def restart_agent(self, name: str, agent_id: str, *, resume: bool = False) -> Dict[str, Any]:
+        """Relaunch an agent in place so it picks up a changed environment (e.g. a
+        newly added secret). ``resume`` continues its previous conversation when the
+        framework supports it (claude-code)."""
+        return self._json(
+            "POST", f"{self._island(name)}/agents/{self._seg(agent_id)}/restart", json={"resume": resume}
+        )
+
     def configure_agent(
         self,
         name: str,

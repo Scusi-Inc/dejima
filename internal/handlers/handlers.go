@@ -79,6 +79,20 @@ type Handler struct {
 	// picker as "installs on first use"). The actual install happens inside the
 	// self-installing Launch line, matching the existing goose/letta/hermes pattern.
 	InstallCmd []string
+	// ResumeLaunch is the Launch variant used for a GRACEFUL, operator-initiated
+	// restart (e.g. applying a new secret): it continues the agent's previous
+	// conversation instead of a cold start. Empty means the framework has no
+	// resume affordance, so a restart falls back to a normal (fresh) Launch.
+	ResumeLaunch string
+}
+
+// LaunchFor returns the command to run for this handler, honoring resume when the
+// handler supports it. Falls back to the normal Launch otherwise.
+func (h Handler) LaunchFor(resume bool) string {
+	if resume && h.ResumeLaunch != "" {
+		return h.ResumeLaunch
+	}
+	return h.Launch
 }
 
 // Attachable reports whether clients can attach to this handler's agents.
@@ -91,7 +105,7 @@ func (h Handler) NeedsProviderKey() bool { return h.RequiresProviderKey }
 // treated as generic interactive agents (the image's start.sh `*)` fallback
 // runs the type string as a command); see Lookup.
 var registry = map[string]Handler{
-	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", StateDir: "/home/dejima/.claude", Bundled: true},
+	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", ResumeLaunch: "claude --continue", StateDir: "/home/dejima/.claude", Bundled: true},
 	"codex":       {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox-policy=no-sandbox", StateDir: "/home/dejima/.codex", Bundled: true},
 	// Aider: the open, model-agnostic tier-1 anchor (interactive). Its diff-based
 	// edit loop tolerates weaker LOCAL models far better than a tool-call-heavy

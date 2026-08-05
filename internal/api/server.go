@@ -680,6 +680,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
 	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/move", s.moveAgent)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/restart", s.restartAgent)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
 	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
@@ -1279,7 +1280,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if s.agentsLive(r.Context(), p) {
-		if err := s.ensureAgentSession(r.Context(), p, &p.Agents[len(p.Agents)-1]); err != nil {
+		if err := s.ensureAgentSession(r.Context(), p, &p.Agents[len(p.Agents)-1], false); err != nil {
 			s.setAgentError(name, id, err)
 			s.log.Warn("add agent: ensure session", "island", name, "agent", id, "err", err)
 		} else {
@@ -2273,7 +2274,7 @@ func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error 
 	}
 	for i := 1; i < len(p.Agents); i++ {
 		a := &p.Agents[i]
-		if err := s.ensureAgentSession(ctx, p, a); err != nil {
+		if err := s.ensureAgentSession(ctx, p, a, false); err != nil {
 			s.setAgentError(p.Name, a.ID, err)
 			s.log.Warn("ensure agent session", "island", p.Name, "agent", a.ID, "err", err)
 		} else {
@@ -2308,7 +2309,7 @@ func (s *Server) waitForWorkspace(ctx context.Context, p *project.Project) bool 
 
 // ensureAgentSession makes sure one non-primary agent has its worktree and a
 // running tmux session. Idempotent.
-func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *project.AgentSpec) error {
+func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *project.AgentSpec, resume bool) error {
 	wt := a.Worktree
 	if wt == "" {
 		wt = "/workspace"
@@ -2338,7 +2339,7 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	// process), scoped to DEJIMA_AGENT_ID via sh so we don't depend on a specific
 	// tmux version's `new-session -e`. Headless agents are marked non-attachable,
 	// redirect to a per-agent log file, and optionally restart on crash.
-	script := agentLaunchScript(a)
+	script := agentLaunchScript(a, resume)
 	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{
 		"tmux", "new-session", "-d", "-s", a.Tmux, "-c", wt, "sh", "-c", script,
 	})
@@ -2359,6 +2360,59 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	// leaves the inline-scoped launch as-is).
 	s.setSessionAgentEnv(ctx, p, a)
 	return nil
+}
+
+// restartAgentSession relaunches ONE agent in place: it kills the agent's tmux
+// session and re-creates it, so the agent starts in a fresh login shell and picks
+// up any changed environment (a newly added or rotated secret). resume, when the
+// handler supports it (claude-code → `claude --continue`), continues the previous
+// conversation instead of a cold start. This is the lighter, per-agent
+// alternative to a whole-container recreate for an island that already carries
+// its secrets mount.
+func (s *Server) restartAgentSession(ctx context.Context, p *project.Project, a *project.AgentSpec, resume bool) error {
+	if a.Tmux != "" {
+		// Best-effort kill; if the session is already gone, ensureAgentSession just
+		// creates a fresh one below.
+		_, _, _, _ = s.rt.Exec(ctx, p.ContainerName(), []string{"tmux", "kill-session", "-t", a.Tmux})
+	}
+	return s.ensureAgentSession(ctx, p, a, resume)
+}
+
+// restartAgent relaunches one agent in place so it picks up a changed
+// environment — e.g. a newly added/rotated secret. Optional {"resume": true}
+// continues the agent's prior conversation when the framework supports it.
+// Operator-only; the island must be running (tmux lives in the container).
+func (s *Server) restartAgent(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("name"), r.PathValue("id")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	a, ok := p.AgentByID(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
+		return
+	}
+	var req struct {
+		Resume bool `json:"resume"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	if err := s.restartAgentSession(r.Context(), p, a, req.Resume); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	resumed := req.Resume
+	if h, ok := handlers.Lookup(a.Type); !ok || h.ResumeLaunch == "" {
+		resumed = false // asked to resume, but this framework has no resume affordance
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"restarted": id, "resumed": resumed})
 }
 
 // setSessionAgentEnv records the per-agent DEJIMA_AGENT_ID / DEJIMA_TMUX in the
@@ -2409,11 +2463,11 @@ func headlessLogPath(agentID string) string {
 // agentLaunchScript builds the sh -c script that a tmux session runs for one
 // agent. Interactive agents exec their launch command directly; headless agents
 // redirect output to a per-agent log file and (when Restart) self-respawn.
-func agentLaunchScript(a *project.AgentSpec) string {
+func agentLaunchScript(a *project.AgentSpec, resume bool) string {
 	idEnv := "DEJIMA_AGENT_ID=" + a.ID + " "
 	if handlers.Attachable(a.Type) {
 		h, _ := handlers.Lookup(a.Type)
-		launch := h.Launch
+		launch := h.LaunchFor(resume) // resume continues the prior conversation when supported
 		if launch == "" {
 			launch = a.Type // unknown/custom interactive agent: run the type as a command
 		}

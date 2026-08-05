@@ -1387,6 +1387,16 @@ func (c *Client) MoveAgent(ctx context.Context, name, id string, delta int) erro
 	return c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(name)+"/agents/"+url.PathEscape(id)+"/move", MoveAgentRequest{Delta: delta}, nil)
 }
 
+// RestartAgent relaunches one agent in place (kill + re-create its tmux session)
+// so it starts in a fresh login shell and picks up a changed environment, e.g. a
+// newly added secret. resume continues the agent's prior conversation when the
+// framework supports it (claude-code).
+func (c *Client) RestartAgent(ctx context.Context, name, id string, resume bool) error {
+	return c.do(ctx, http.MethodPost,
+		"/v1/islands/"+url.PathEscape(name)+"/agents/"+url.PathEscape(id)+"/restart",
+		map[string]bool{"resume": resume}, nil)
+}
+
 // AddAgent adds an agent to an island.
 func (c *Client) AddAgent(ctx context.Context, name string, req AgentSpecRequest) (*AgentInfo, error) {
 	var out AgentInfo

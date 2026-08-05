@@ -119,6 +119,7 @@ var roleRouteCap = map[string]roleCap{
 	"PUT /v1/islands/{name}/secrets/{key}":                 capOperate,
 	"DELETE /v1/islands/{name}/secrets/{key}":              capOperate,
 	"POST /v1/islands/{name}/agents/{id}/move":             capOperate,
+	"POST /v1/islands/{name}/agents/{id}/restart":          capOperate,
 	"PATCH /v1/islands/{name}/agents/{id}/config":          capOperate,
 	"PATCH /v1/islands/{name}/egress/policy":               capOperate, // set island egress allow/deny (operator)
 	"GET /v1/islands/{name}/spawn-grant":                   capRead,    // read the spawn budget (operator/viewer)

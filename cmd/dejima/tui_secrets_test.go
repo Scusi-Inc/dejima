@@ -106,16 +106,16 @@ func TestSecretsRemoveTargetsCursor(t *testing.T) {
 	}
 }
 
-// TestSecretsRestartArmsRecreate: [R] in the Secrets pane arms the
-// recreate-island confirm — the only thing that loads a newly-added secret into
-// already-running agents — and closes the pane so the confirm takes over.
-func TestSecretsRestartArmsRecreate(t *testing.T) {
+// TestSecretsRestartOpensChecklist: [R] in the Secrets pane opens the
+// "which agents to restart" checklist (which loads a newly-added secret into
+// running agents) and closes the pane.
+func TestSecretsRestartOpensChecklist(t *testing.T) {
 	m := tuiModel{secretsPane: &secretsView{island: "wildfire", restartPending: true}}
 	m = feedSecrets(m, "R")
 	if m.secretsPane != nil {
 		t.Errorf("[R] should close the secrets pane; got %+v", m.secretsPane)
 	}
-	if m.confirm == nil || m.confirm.verb != "recreate-island" || m.confirm.island != "wildfire" {
-		t.Fatalf("[R] should arm a recreate-island confirm for the island; got %+v", m.confirm)
+	if m.restartPane == nil || m.restartPane.island != "wildfire" {
+		t.Fatalf("[R] should open the restart checklist for the island; got %+v", m.restartPane)
 	}
 }

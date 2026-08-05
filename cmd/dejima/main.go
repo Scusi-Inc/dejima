@@ -2546,7 +2546,36 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Manage the agents within an island.",
 	}
-	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRenameCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd())
+	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRenameCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd(), newAgentRestartCmd())
+	return cmd
+}
+
+// newAgentRestartCmd relaunches an agent in place so it picks up a changed
+// environment (e.g. a newly added secret). --resume continues its previous
+// conversation when the framework supports it (claude-code).
+func newAgentRestartCmd() *cobra.Command {
+	var resume bool
+	cmd := &cobra.Command{
+		Use:   "restart <island> <agent-id>",
+		Short: "Relaunch an agent in place (picks up new secrets; --resume continues the convo).",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.RestartAgent(cmd.Context(), args[0], args[1], resume); err != nil {
+				return err
+			}
+			msg := "restarted " + args[0] + "/" + args[1]
+			if resume {
+				msg += " (resuming its conversation where supported)"
+			}
+			fmt.Println(msg)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&resume, "resume", false, "continue the agent's previous conversation instead of a cold start")
 	return cmd
 }
 
