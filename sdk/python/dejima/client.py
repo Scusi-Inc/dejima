@@ -407,6 +407,31 @@ class Client:
         """Remove a provider credential; reports islands that still reference it."""
         return self._json("DELETE", f"/v1/credentials/providers/{self._seg(provider)}")
 
+    # ----- local models (owner-only) -----------------------------------
+    def local_status(self) -> Dict[str, Any]:
+        """Managed local-model backend status (backend, endpoint, models, host RAM + recommendation)."""
+        return self._json("GET", "/v1/local")
+
+    def list_local_models(self) -> Dict[str, Any]:
+        """Pulled local models plus the host-aware recommendation."""
+        return self._json("GET", "/v1/local/models")
+
+    def local_install(self) -> str:
+        """Install the inference backend on the daemon host; returns the progress text."""
+        return self._req("POST", "/v1/local/install").text
+
+    def pull_local_model(self, name: str) -> str:
+        """Pull a model — a curated alias (e.g. "qwen-coder") or a raw backend ref; returns progress text."""
+        return self._req("POST", f"/v1/local/models/{self._seg(name)}/pull").text
+
+    def remove_local_model(self, name: str) -> None:
+        """Remove a pulled model."""
+        self._req("DELETE", f"/v1/local/models/{self._seg(name)}")
+
+    def local_off(self) -> None:
+        """Deregister the `local` provider (the backend + pulled models stay)."""
+        self._req("POST", "/v1/local/off")
+
     # ===== operator tokens (owner-only) ----------------------------------
     def list_tokens(self) -> Dict[str, Any]:
         """List issued operator tokens (metadata only; never secrets)."""

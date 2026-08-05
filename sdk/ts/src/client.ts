@@ -412,6 +412,37 @@ export class Client {
     return this.json("DELETE", `/v1/credentials/providers/${this.seg(provider)}`);
   }
 
+  // ===== local models (owner-only) ------------------------------------
+  /** Managed local-model backend status (backend, endpoint, pulled models, host RAM + recommendation). */
+  localStatus(): Promise<any> {
+    return this.json("GET", "/v1/local");
+  }
+
+  /** Pulled local models plus the host-aware recommendation. */
+  listLocalModels(): Promise<any> {
+    return this.json("GET", "/v1/local/models");
+  }
+
+  /** Install the inference backend on the daemon host; resolves to the progress text. */
+  async localInstall(): Promise<string> {
+    return (await this.request("POST", "/v1/local/install")).text();
+  }
+
+  /** Pull a model — a curated alias (e.g. "qwen-coder") or a raw backend ref; resolves to progress text. */
+  async pullLocalModel(name: string): Promise<string> {
+    return (await this.request("POST", `/v1/local/models/${this.seg(name)}/pull`)).text();
+  }
+
+  /** Remove a pulled model. */
+  async removeLocalModel(name: string): Promise<void> {
+    await this.request("DELETE", `/v1/local/models/${this.seg(name)}`);
+  }
+
+  /** Deregister the `local` provider (the backend + pulled models stay). */
+  async localOff(): Promise<void> {
+    await this.request("POST", "/v1/local/off");
+  }
+
   // ===== operator tokens (owner-only) ----------------------------------
   listTokens(): Promise<any> {
     return this.json("GET", "/v1/tokens");
