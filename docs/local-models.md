@@ -1,6 +1,9 @@
 # Local models & agent tiers
 
-**Status:** design of record (approved direction, not yet built).
+**Status:** shipped on `feat/local-models` (catalog + backend + `/v1/local/*` API
++ `dejima local` CLI + ts/py SDK + agent tiers/Aider + TUI status sub-page +
+`doctor` check). Remaining follow-ups: the setup-wizard cloud/local/both branch
+and openapi.yaml entries for `/v1/local/*`.
 **Goal:** run open-weights models (Qwen-Coder, Mistral, Kimi K2, …) on your own
 hardware and drive isolated Dejima agents with them — managed the same easy way
 everything else in Dejima is, from the **TUI, CLI, or SDK**.
@@ -143,12 +146,16 @@ workflows rather than let tool-use-heavy skills silently underperform.
 
 ## Phased delivery
 
-1. **Foundation (`internal/localmodel`)** — backend detection + host-aware curated
-   catalog (reuse `vmmem`), pure Go + unit tests. No daemon wiring. *Testable in
-   isolation.*
-2. **Daemon API + CLI** — `/v1/local/*` endpoints, `dejima local` verbs, auto
-   provider registration + egress grant.
-3. **TUI** — the "Local models" settings sub-page + surfacing local models in `v`.
-4. **Agent tiers** — `Handler.Bundled`/`InstallCmd`, the `aider` handler,
-   install-on-first-use for tier-2.
-5. **Setup branch + doctor + SDK + docs.**
+1. ✅ **Foundation (`internal/localmodel`)** — Ollama backend detection + a
+   host-aware curated catalog (reuses `vmmem`), pure Go + unit tests.
+2. ✅ **Daemon API + CLI** — `/v1/local/*` endpoints, `dejima local` verbs, auto
+   provider registration. (No egress grant needed: `host.docker.internal` is
+   already in the egress NO_PROXY set, so islands reach the host endpoint direct.)
+3. ✅ **TUI** — read-only "Local models" settings sub-page; local models surface
+   in the `v` model editor automatically once the `local` provider is registered.
+   (Streaming install/pull stay in the CLI, where streaming belongs.)
+4. ✅ **Agent tiers** — `Handler.Bundled`/`InstallCmd`, the `aider` handler
+   (self-installs via pipx), surfaced on the agent-types API.
+5. ◻︎ **Remaining** — the setup-wizard "cloud / local / both" branch, and
+   openapi.yaml entries for `/v1/local/*`. SDK (ts+py) and the `doctor` check are
+   ✅ done.

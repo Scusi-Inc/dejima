@@ -278,6 +278,26 @@ func checkDaemon(ctx context.Context, r *doctorReport) {
 				"`dejima panic --clear` to resume")
 		}
 	}
+
+	// Local models (optional): surface the managed backend's health when present.
+	if st, err := c.LocalStatus(ctx); err == nil {
+		switch {
+		case !st.Installed:
+			r.add("System", "local models", "INFO",
+				fmt.Sprintf("%s backend not installed (optional)", st.Backend),
+				"`dejima local install` to run open-weights models on this host")
+		case !st.Running:
+			r.add("System", "local models", "WARN",
+				fmt.Sprintf("%s installed but not responding", st.Backend),
+				"start it (e.g. `ollama serve`), or reinstall with `dejima local install`")
+		case len(st.Models) == 0:
+			r.add("System", "local models", "INFO",
+				fmt.Sprintf("%s running, no models pulled", st.Backend), "`dejima local pull <model>`")
+		default:
+			r.add("System", "local models", "OK",
+				fmt.Sprintf("%s running · %d model(s) · %s", st.Backend, len(st.Models), st.Endpoint), "")
+		}
+	}
 }
 
 // checkSupervision answers "how is the daemon running, and will it survive a
