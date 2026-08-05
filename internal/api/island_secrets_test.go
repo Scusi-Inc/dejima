@@ -84,13 +84,18 @@ func TestMaterializeWritesAndRemoves(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No secrets → no file, so nothing is mounted.
+	// No secrets → a header-only file is STILL written, so the bind-mount is
+	// always present and a secret added later reaches a running container without
+	// a recreate. The file just carries no values.
 	path, err := materializeIslandSecrets(store, "wildfire")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != "" {
-		t.Errorf("island with no secrets produced a file at %q", path)
+	if path == "" {
+		t.Fatal("island with no secrets should still produce a (header-only) file for the mount")
+	}
+	if b, _ := os.ReadFile(path); strings.Contains(string(b), "=") {
+		t.Errorf("empty island's secrets file should have no NAME=value lines:\n%s", b)
 	}
 
 	if _, err := store.Set("wildfire", "EXPO_TOKEN", "tok-abc", "aoos"); err != nil {
@@ -114,8 +119,9 @@ func TestMaterializeWritesAndRemoves(t *testing.T) {
 		t.Errorf("secrets file mode = %o, want 0600", fi.Mode().Perm())
 	}
 
-	// Removing the last secret must delete the file. A stale one would keep
-	// injecting a secret the operator believes they deleted.
+	// Removing the last secret EMPTIES the file (header only) rather than deleting
+	// it — the live bind-mount stays valid, and an empty file injects nothing, so
+	// the deleted secret is still gone from new shells.
 	if err := store.Remove("wildfire", "EXPO_TOKEN"); err != nil {
 		t.Fatal(err)
 	}
@@ -123,15 +129,10 @@ func TestMaterializeWritesAndRemoves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != "" {
-		t.Errorf("file still reported after the last secret was removed: %q", path)
+	if path == "" {
+		t.Fatal("file should remain present (header only) after the last secret was removed")
 	}
-	if p, _ := islandSecretsFile("wildfire"); fileExists(p) {
-		t.Error("stale secrets file left on disk — it would keep injecting a deleted secret")
+	if b, _ := os.ReadFile(path); strings.Contains(string(b), "EXPO_TOKEN") {
+		t.Errorf("removed secret must not linger in the file:\n%s", b)
 	}
-}
-
-func fileExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
 }
