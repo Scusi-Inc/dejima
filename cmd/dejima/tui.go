@@ -22,6 +22,7 @@ import (
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/localmodel"
 	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
@@ -319,6 +320,9 @@ func initialTUIModel(c *api.Client) tuiModel {
 type settingsModel struct {
 	page settingsPage
 	sel  int
+	// Local-models sub-page state, fetched async when the page opens.
+	localStatus *localmodel.Status
+	localErr    string
 }
 
 type settingsPage int
@@ -326,6 +330,7 @@ type settingsPage int
 const (
 	settingsTop    settingsPage = iota // the preferences list
 	settingsEditor                     // the editor radio sub-page
+	settingsLocal                      // the local-models status sub-page
 )
 
 type editorChoice struct {
@@ -343,7 +348,7 @@ var editorChoices = []editorChoice{
 }
 
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 7 // editor · group-by-repo · connection target · team · check-for-updates · update · github
+const settingsTopLen = 8 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models
 // NB: voice dictation was row 6; it is roadmapped, not wired — see docs/roadmap.md.
 
 func (m tuiModel) openSettings() tuiModel {
@@ -364,12 +369,15 @@ func editorIndex(cmd string) int {
 func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.settings
 	rows := settingsTopLen
-	if s.page == settingsEditor {
+	switch s.page {
+	case settingsEditor:
 		rows = len(editorChoices)
+	case settingsLocal:
+		rows = 0 // read-only status page — nothing to move through
 	}
 	switch msg.String() {
 	case "esc", "q", "ctrl+c", "left", "h":
-		if s.page == settingsEditor { // back to the top page, don't close
+		if s.page == settingsEditor || s.page == settingsLocal { // back to the top page, don't close
 			s.page, s.sel = settingsTop, 0
 			return m, nil
 		}
@@ -386,7 +394,8 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter", "right", "l", " ":
-		if s.page == settingsTop {
+		switch s.page {
+		case settingsTop:
 			switch s.sel {
 			case 0: // Preferred editor → sub-page
 				s.page, s.sel = settingsEditor, editorIndex(m.editor)
@@ -418,24 +427,49 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.lastNotice = "already up to date"
 				}
 				return m, nil
+			case 7: // Local models → read-only status sub-page (fetched async)
+				s.page, s.sel = settingsLocal, 0
+				s.localStatus, s.localErr = nil, ""
+				return m, m.fetchLocalStatusCmd()
 			}
+			return m, nil
+		case settingsEditor:
+			// Choose an editor + persist, then back to the top page.
+			choice := editorChoices[s.sel]
+			m.editor = choice.cmd
+			cfg, _ := clientcfg.Load()
+			cfg.Editor = choice.cmd
+			if err := clientcfg.Save(cfg); err != nil {
+				m.lastError = "couldn't save settings: " + err.Error()
+			} else if choice.cmd == "" {
+				m.lastNotice = "editor: auto-detect"
+			} else {
+				m.lastNotice = "editor set to " + choice.label
+			}
+			s.page, s.sel = settingsTop, 0
+			return m, nil
 		}
-		// Editor sub-page: choose + persist, then back to the top page.
-		choice := editorChoices[s.sel]
-		m.editor = choice.cmd
-		cfg, _ := clientcfg.Load()
-		cfg.Editor = choice.cmd
-		if err := clientcfg.Save(cfg); err != nil {
-			m.lastError = "couldn't save settings: " + err.Error()
-		} else if choice.cmd == "" {
-			m.lastNotice = "editor: auto-detect"
-		} else {
-			m.lastNotice = "editor set to " + choice.label
-		}
-		s.page, s.sel = settingsTop, 0
 		return m, nil
 	}
 	return m, nil
+}
+
+// localStatusMsg carries the managed local-model status into the settings
+// overlay's Local-models sub-page.
+type localStatusMsg struct {
+	status *localmodel.Status
+	err    error
+}
+
+// fetchLocalStatusCmd loads the local-model backend status for the sub-page.
+func (m tuiModel) fetchLocalStatusCmd() tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		st, err := c.LocalStatus(ctx)
+		return localStatusMsg{status: st, err: err}
+	}
 }
 
 // toggleGrouped flips repo-grouping and re-anchors the cursor on the island it
@@ -927,6 +961,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					v.restartPending = true
 					v.notice = "stored " + msg.added
 				}
+			}
+		}
+		return m, nil
+
+	case localStatusMsg:
+		// Land the status in the settings sub-page only if it's still open on it.
+		if s := m.settings; s != nil && s.page == settingsLocal {
+			if msg.err != nil {
+				s.localErr = msg.err.Error()
+			} else {
+				s.localStatus, s.localErr = msg.status, ""
 			}
 		}
 		return m, nil
@@ -4799,6 +4844,59 @@ func (m tuiModel) renderSettings() string {
 		return b.String()
 	}
 
+	if st.page == settingsLocal {
+		b.WriteString(styleHeader.Render("Settings · local models"))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("a host inference backend islands share; manage with `dejima local`"))
+		b.WriteString("\n\n")
+		switch {
+		case st.localErr != "":
+			b.WriteString(styleErrored.Render("couldn't load status: " + st.localErr))
+			b.WriteString("\n")
+		case st.localStatus == nil:
+			b.WriteString(styleMuted.Render("loading…"))
+			b.WriteString("\n")
+		default:
+			ls := st.localStatus
+			var state string
+			switch {
+			case ls.Running:
+				state = styleRunning.Render("running")
+			case ls.Installed:
+				state = styleWaiting.Render("installed (not running)")
+			default:
+				state = styleMuted.Render("not installed — run `dejima local install`")
+			}
+			b.WriteString(fmt.Sprintf("backend:  %s\n", ls.Backend))
+			b.WriteString("status:   " + state + "\n")
+			b.WriteString(styleMuted.Render(fmt.Sprintf("endpoint: %s  (provider %q)", ls.Endpoint, ls.Provider)) + "\n")
+			if ls.HostRAMGiB > 0 {
+				b.WriteString(styleMuted.Render(fmt.Sprintf("host RAM: %d GiB", ls.HostRAMGiB)) + "\n")
+			}
+			b.WriteString("\n")
+			if len(ls.Models) == 0 {
+				b.WriteString(styleMuted.Render("no models pulled — `dejima local pull <model>`") + "\n")
+			} else {
+				b.WriteString("pulled models:\n")
+				for _, mdl := range ls.Models {
+					line := "  • " + mdl.Ref
+					if mdl.Size != "" {
+						line += styleMuted.Render("  " + mdl.Size)
+					}
+					b.WriteString(line + "\n")
+				}
+			}
+			if ls.Recommend.Top != nil {
+				b.WriteString("\n" + styleMuted.Render(fmt.Sprintf(
+					"recommended for this host: %s (%s) — `dejima local pull %s`",
+					ls.Recommend.Top.Alias, ls.Recommend.Top.Params, ls.Recommend.Top.Alias)) + "\n")
+			}
+		}
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("esc back"))
+		return b.String()
+	}
+
 	b.WriteString(styleHeader.Render("Settings"))
 	b.WriteString("\n")
 	// Version line: this client, the connected daemon (when it differs), and
@@ -4847,6 +4945,7 @@ func (m tuiModel) renderSettings() string {
 	row(4, "", "Team & invites            "+styleMuted.Render("invite a teammate, revoke access")+styleMuted.Render("  →"))
 	row(5, "", "Check for updates")
 	row(6, "", updateRow)
+	row(7, "", "Local models              "+styleMuted.Render("shared open-weights models (Ollama)")+styleMuted.Render("  →"))
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()

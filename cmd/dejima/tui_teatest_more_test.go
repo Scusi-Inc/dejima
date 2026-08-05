@@ -305,3 +305,22 @@ func TestWindowLabelManualNames(t *testing.T) {
 		t.Errorf("unknown island: got %q, want %q", got, "ghost")
 	}
 }
+
+// TestTUISettingsLocalModelsPage: the Settings overlay's "Local models" row
+// (index 7) opens a read-only status sub-page, and esc returns to the top page.
+func TestTUISettingsLocalModelsPage(t *testing.T) {
+	// Open Settings, move to the "Local models" row (7th), and select it.
+	m := driveKeys(t, seededModel(t, island("alpha")),
+		"s", "j", "j", "j", "j", "j", "j", "j", "enter")
+	if m.settings == nil || m.settings.page != settingsLocal {
+		t.Fatalf("expected the Local models sub-page, got settings=%+v", m.settings)
+	}
+	if view := m.renderSettings(); !strings.Contains(view, "local models") {
+		t.Errorf("Local models sub-page should render its header; got:\n%s", view)
+	}
+	// esc returns to the top settings page rather than closing the overlay.
+	m = driveKeys(t, m, "esc")
+	if m.settings == nil || m.settings.page != settingsTop {
+		t.Errorf("esc from Local models should return to the top settings page, got %+v", m.settings)
+	}
+}
