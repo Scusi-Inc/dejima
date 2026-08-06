@@ -2463,6 +2463,12 @@ func headlessLogPath(agentID string) string {
 // agentLaunchScript builds the sh -c script that a tmux session runs for one
 // agent. Interactive agents exec their launch command directly; headless agents
 // redirect output to a per-agent log file and (when Restart) self-respawn.
+// shSingleQuote wraps s in single quotes for safe inclusion in a /bin/sh command,
+// escaping embedded single quotes (the '\” idiom).
+func shSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func agentLaunchScript(a *project.AgentSpec, resume bool) string {
 	idEnv := "DEJIMA_AGENT_ID=" + a.ID + " "
 	if handlers.Attachable(a.Type) {
@@ -2471,7 +2477,19 @@ func agentLaunchScript(a *project.AgentSpec, resume bool) string {
 		if launch == "" {
 			launch = a.Type // unknown/custom interactive agent: run the type as a command
 		}
-		return idEnv + "exec " + launch
+		// Source the island's Dejima-managed secrets into the agent's environment
+		// before exec, so they reach the agent AND every tool subprocess it spawns
+		// (its own Bash tool is a non-login shell, so inheriting from the agent
+		// process is the only path). Secrets normally load via /etc/profile.d, but
+		// ONLY for login shells — and the tmux session runs this under a non-login
+		// `sh -c`, so the agent otherwise never sees them (the exact "my secret
+		// isn't there" bug). We source the profile.d hook directly under `bash -c`
+		// (NOT `bash -lc`): a login shell would re-run /etc/profile and reset PATH,
+		// dropping /opt/dejima/npm-global/bin where the agent binary lives. bash
+		// (not sh) so load-secrets' %q-quoted output evals correctly. A missing hook
+		// (older image) is a harmless no-op; headless agents wrap their own bash -lc.
+		inner := ". /etc/profile.d/10-dejima-secrets.sh 2>/dev/null || true; exec " + launch
+		return idEnv + "exec bash -c " + shSingleQuote(inner)
 	}
 	// Headless: capture output to the per-agent log, optionally with a restart loop.
 	cmd := a.Cmd

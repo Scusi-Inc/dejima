@@ -40,3 +40,20 @@ func TestAgentLaunchResume(t *testing.T) {
 		t.Errorf("resume should launch `claude --continue`; got %q", s)
 	}
 }
+
+// TestInteractiveAgentSourcesSecrets guards the secrets-injection fix: an
+// interactive agent must source the secrets profile.d hook before exec so the
+// island's secrets reach its environment (and its Bash tool's). Sourcing it
+// directly — not via a full login shell — avoids /etc/profile resetting PATH and
+// dropping the agent binary. A launch that skips this is the bug where an added
+// secret never reaches the agent.
+func TestInteractiveAgentSourcesSecrets(t *testing.T) {
+	a := &project.AgentSpec{ID: "a1", Type: "claude-code"}
+	s := agentLaunchScript(a, false)
+	if !strings.Contains(s, "/etc/profile.d/10-dejima-secrets.sh") {
+		t.Errorf("interactive agent must source the secrets hook so secrets load; got %q", s)
+	}
+	if strings.Contains(s, "bash -lc") || strings.Contains(s, "bash -l ") {
+		t.Errorf("must NOT use a login shell (it resets PATH, dropping the agent binary); got %q", s)
+	}
+}
