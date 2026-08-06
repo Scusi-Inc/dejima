@@ -118,17 +118,34 @@ func TestTUIForcePurgeOnUnpushedWork(t *testing.T) {
 	}
 }
 
-// TestTUISettingsKeysBoth: both 's' and 'S' open Settings (S used to be SSH
-// setup — that moved into the Server menu [H] / actions menu [m]).
-func TestTUISettingsKeysBoth(t *testing.T) {
-	for _, k := range []string{"s", "S"} {
+// TestTUISettingsKeys: S and , open the global Dejima settings overlay directly;
+// s on an island row opens that island's contextual settings menu (with a
+// Dejima-settings nav button) instead.
+func TestTUISettingsKeys(t *testing.T) {
+	for _, k := range []string{"S", ","} {
 		m := driveKeys(t, seededModel(t, island("alpha")), k)
 		if m.settings == nil {
-			t.Errorf("%q should open Settings, got settings=nil", k)
+			t.Errorf("%q should open Dejima settings, got settings=nil", k)
 		}
 		if m.confirm != nil {
 			t.Errorf("%q should not arm a confirm, got %+v", k, m.confirm)
 		}
+	}
+	m := driveKeys(t, seededModel(t, island("alpha")), "s")
+	if m.menu == nil {
+		t.Fatalf("s on an island should open the contextual settings menu, got menu=nil")
+	}
+	if m.settings != nil {
+		t.Errorf("s on a row should open the row menu, not the global overlay directly")
+	}
+	hasNav := false
+	for _, it := range m.menu.items {
+		if it.nav && strings.Contains(it.label, "Dejima settings") {
+			hasNav = true
+		}
+	}
+	if !hasNav {
+		t.Errorf("island menu should carry a Dejima settings nav button; items=%+v", m.menu.items)
 	}
 }
 
@@ -254,7 +271,7 @@ func TestTUIActionMenuFullVerbs(t *testing.T) {
 	tm := runModel(t, seededModel(t, island("alpha")))
 	waitForAll(t, tm, "alpha")
 
-	tm.Send(key("m"))
+	tm.Send(key("s")) // contextual settings menu
 	// A running island offers hibernate; reset/upgrade/rename/purge are always there.
 	waitForAll(t, tm, "Hibernate", "Reset agent state", "Upgrade", "Rename", "Purge island")
 
@@ -270,7 +287,7 @@ func TestTUIActionMenuWakeOnHibernated(t *testing.T) {
 	tm := runModel(t, seededModel(t, isl))
 	waitForAll(t, tm, "sleepy")
 
-	tm.Send(key("m"))
+	tm.Send(key("s")) // contextual settings menu
 	waitForAll(t, tm, "Wake")
 
 	tm.Send(key("esc"))
@@ -309,9 +326,10 @@ func TestWindowLabelManualNames(t *testing.T) {
 // TestTUISettingsLocalModelsPage: the Settings overlay's "Local models" row
 // (index 7) opens a read-only status sub-page, and esc returns to the top page.
 func TestTUISettingsLocalModelsPage(t *testing.T) {
-	// Open Settings, move to the "Local models" row (7th), and select it.
+	// Open global Dejima settings (`,` — `s` on a row is now the contextual menu),
+	// move to the "Local models" row (8th, index 7), and select it.
 	m := driveKeys(t, seededModel(t, island("alpha")),
-		"s", "j", "j", "j", "j", "j", "j", "j", "enter")
+		",", "j", "j", "j", "j", "j", "j", "j", "enter")
 	if m.settings == nil || m.settings.page != settingsLocal {
 		t.Fatalf("expected the Local models sub-page, got settings=%+v", m.settings)
 	}
