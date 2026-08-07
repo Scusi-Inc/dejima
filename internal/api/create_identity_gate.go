@@ -54,7 +54,7 @@ func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) 
 		"  1. On a machine where the gh CLI can see the repo, sign in:  gh auth login\n"+
 		"  2. Connect it to this daemon:                                dejima github connect\n"+
 		"  3. Retry creating the island.\n"+
-		"Or pass --force to create it now and authenticate later.", repo)
+		"Or pass --force to create it now and authenticate later", repo)
 }
 
 // islandWillHaveGitHubIdentity reports whether the island has SOME identity to

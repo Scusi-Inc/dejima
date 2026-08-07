@@ -89,7 +89,7 @@ func TestRosterFlow(t *testing.T) {
 
 	// Continue → creates. The island name is asked for BEFORE the agent now, so
 	// the roster is the last step rather than a detour on the way to naming.
-	m = feedCreator(m, "enter")
+	feedCreator(m, "enter") // c (a pointer) captures the state change; the returned model is unused here
 	if c.step != stepCreate {
 		t.Fatalf("continue: step=%v, want stepCreate", c.step)
 	}

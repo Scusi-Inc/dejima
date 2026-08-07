@@ -2,14 +2,14 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/api"
-	"io"
-	"os"
 )
 
 // newGithubCmd is the self-serve GitHub identity group: a team member connects

@@ -60,7 +60,7 @@ func TestBlockDoomedClone(t *testing.T) {
 // it into Idents), so it demanded a token even on daemons WITH a connected
 // identity. A default identity must let a private-repo create through untouched.
 func TestGatePassesWithConfiguredIdentity(t *testing.T) {
-	srv, _, _ := wakeServer(t) // temp HOME → empty store to start
+	srv, _, _ := wakeServer(t)                                            // temp HOME → empty store to start
 	srv.anonCloneFn = func(context.Context, string) bool { return false } // not anon-reachable
 
 	// With no identity, the private clone is gated.

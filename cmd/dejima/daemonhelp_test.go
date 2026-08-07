@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/aoos/dejima/internal/service"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aoos/dejima/internal/service"
 )
 
 // withDejimaHome points paths.* at a throwaway HOME so the socket-state probe in

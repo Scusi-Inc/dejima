@@ -20,5 +20,5 @@ func softLimit() uint64 {
 	if syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim) != nil {
 		return 0
 	}
-	return uint64(lim.Cur)
+	return uint64(lim.Cur) //nolint:unconvert // Rlimit.Cur is int64 on darwin; the conversion is real there
 }

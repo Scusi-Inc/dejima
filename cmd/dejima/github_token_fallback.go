@@ -6,11 +6,12 @@ import (
 	"strings"
 
 	"errors"
+	"os"
+
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/reposrc"
 	"golang.org/x/term"
-	"os"
 )
 
 // deviceFlowUnconfigured reports whether err is the daemon refusing guided
@@ -95,7 +96,7 @@ func promptForToken() (string, error) {
 			"    dejima github connect --token <token>\n" +
 			"    (or pipe it:  echo <token> | dejima github connect --token-stdin)\n\n" +
 			"  Create one at https://github.com/settings/tokens — a fine-grained token\n" +
-			"  with Contents: Read and Write on the repos the islands should reach.")
+			"  with Contents: Read and Write on the repos the islands should reach")
 	}
 	fmt.Println()
 	fmt.Println("Connect GitHub with a personal access token")

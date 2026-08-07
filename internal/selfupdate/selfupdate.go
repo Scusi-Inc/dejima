@@ -25,8 +25,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aoos/dejima/internal/version"
 	"strconv"
+
+	"github.com/aoos/dejima/internal/version"
 )
 
 // githubToken returns a GitHub token from the environment, if any, used to lift

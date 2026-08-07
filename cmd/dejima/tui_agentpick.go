@@ -372,16 +372,17 @@ func (a *agentAdder) view() string {
 		b.WriteString(styleAccent.Render("adding " + a.picker.typ() + "…"))
 		return b.String()
 	}
-	if a.phase == adderKey {
+	switch a.phase {
+	case adderKey:
 		a.viewKey(&b)
-	} else if a.phase == adderLabel {
+	case adderLabel:
 		b.WriteString(styleHeader.Render("Label"))
 		b.WriteString("\n")
 		b.WriteString(styleMuted.Render("Optional display name for the " + a.picker.typ() + " agent (e.g. \"frontend\").\nLeave blank to use its id."))
 		b.WriteString("\n\n")
 		b.WriteString("label: " + styleAccent.Render(a.label+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] add   [esc] back to type"))
-	} else {
+	default:
 		a.picker.view(&b, "Agent type", a.keyGap)
 	}
 	if a.err != "" {

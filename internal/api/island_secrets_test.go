@@ -71,7 +71,7 @@ func TestEncodeSecretsFileIsSorted(t *testing.T) {
 		t.Error("encoding is not deterministic")
 	}
 	ai, mi, zi := strings.Index(first, "ALPHA="), strings.Index(first, "MIKE="), strings.Index(first, "ZULU=")
-	if !(ai < mi && mi < zi) {
+	if ai >= mi || mi >= zi {
 		t.Errorf("records are not name-sorted:\n%s", first)
 	}
 }

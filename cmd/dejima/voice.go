@@ -9,8 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aoos/dejima/internal/voicein"
 	"runtime"
+
+	"github.com/aoos/dejima/internal/voicein"
 )
 
 // newVoiceCmd is the host→island voice-dictation bridge: capture the HOST
@@ -233,7 +234,7 @@ func errUnsupportedPlatform() error {
 		"  Voice runs on the machine with the microphone — this one — and transcribes locally;\n"+
 		"  audio never leaves it. Only the finished transcript is sent to the island's agent,\n"+
 		"  so it works fine against a remote daemon.\n\n"+
-		"  Supported: macOS, Linux, Windows.", runtime.GOOS)
+		"  Supported: macOS, Linux, Windows", runtime.GOOS)
 }
 
 // newVoiceDeviceCmd lists the microphones this host can capture from and saves

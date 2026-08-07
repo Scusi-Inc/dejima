@@ -84,5 +84,5 @@ func preflightNotInsideDaemon(force bool) error {
 		"Tearing down the service waits for every process it owns, including this one, so it would hang.\n\n"+
 		"  Run the uninstall from a normal terminal on the host instead — e.g. an SSH session\n"+
 		"  or Terminal.app, not a dejima host terminal.\n\n"+
-		"Pass --force to override this check.", ancestor)
+		"Pass --force to override this check", ancestor)
 }

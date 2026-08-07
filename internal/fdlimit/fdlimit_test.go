@@ -44,7 +44,7 @@ func TestRaiseGivesHeadroom(t *testing.T) {
 	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &now); err != nil {
 		t.Fatalf("getrlimit after: %v", err)
 	}
-	if uint64(now.Cur) != res.Now {
+	if uint64(now.Cur) != res.Now { //nolint:unconvert // Rlimit.Cur is int64 on darwin
 		t.Errorf("reported %d but kernel says %d", res.Now, now.Cur)
 	}
 }

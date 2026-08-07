@@ -22,7 +22,7 @@ func Raise() (Result, error) {
 	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
 		return Result{}, fmt.Errorf("get RLIMIT_NOFILE: %w", err)
 	}
-	res := Result{Was: uint64(lim.Cur), Now: uint64(lim.Cur), Max: uint64(lim.Max)}
+	res := Result{Was: uint64(lim.Cur), Now: uint64(lim.Cur), Max: uint64(lim.Max)} //nolint:unconvert // Rlimit fields are int64 on darwin
 
 	want := Target
 	if res.Max != ^uint64(0) && want > res.Max {

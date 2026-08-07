@@ -17,6 +17,8 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
+	"path/filepath"
+
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/events"
@@ -27,7 +29,6 @@ import (
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
-	"path/filepath"
 )
 
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
@@ -4493,15 +4494,10 @@ func (m tuiModel) renderFooterLeft() string {
 // capitalizeFirst upper-cases the first letter of a help description so the line
 // leads with a capital for skimming, leaving symbol-first rows (⏎, ↑/↓) alone.
 func capitalizeFirst(s string) string {
-	for i, r := range s {
-		if r >= 'a' && r <= 'z' {
-			return s[:i] + string(r-32) + s[i+1:]
-		}
-		if r >= 'A' && r <= 'Z' {
-			return s // already capitalized
-		}
-		// A leading symbol/space: don't force a capital onto it.
-		break
+	// Capitalize a leading lowercase ASCII letter; leave already-capitalized text
+	// and a leading symbol/space untouched.
+	if s != "" && s[0] >= 'a' && s[0] <= 'z' {
+		return string(s[0]-32) + s[1:]
 	}
 	return s
 }
