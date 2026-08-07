@@ -380,7 +380,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SecretMeta" }
-        "400": { description: Reserved or malformed name, or an empty value }
+        "400": { description: "Reserved or malformed name, or an empty value" }
         "403": { description: Island tokens may not write secrets }
     delete:
       tags: [islands]
