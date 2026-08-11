@@ -2841,7 +2841,29 @@ func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanup()
 
-	stream, err := s.rt.BuildImage(r.Context(), dir, islandimage.Dockerfile, DefaultImage)
+	// Pin the in-island CLI to THIS daemon's release. Two reasons, both load-bearing:
+	//
+	//  1. Cache correctness. The Dockerfile's default is DEJIMA_VERSION=latest,
+	//     which it resolves by curl-ing the GitHub releases API *inside* a RUN.
+	//     Docker can't see that the answer changed, so it reuses that layer
+	//     forever — the in-island `dejima` froze at whatever release was newest
+	//     the first time the layer built, and no number of rebuilds moved it.
+	//     Passing an explicit version changes the ARG, which invalidates the layer.
+	//  2. Version agreement. An island's CLI talks to this daemon; building it
+	//     from "whatever GitHub calls latest" could straddle a release boundary
+	//     mid-build and hand an island a client newer than the daemon it reports to.
+	//
+	// A dev/source daemon has no matching published release, so it keeps the
+	// "latest" default (there is no asset named dejima_dev_*.tar.gz to fetch) —
+	// and with it the stale-layer caveat, which only bites un-released builds.
+	// IsExactRelease, not IsRelease: the latter also accepts a git-describe string
+	// like "v0.8.60-3-gabc1234", and no release asset exists under that name — the
+	// Dockerfile's curl would 404 and fail the whole build.
+	buildArgs := map[string]string{}
+	if version.IsExactRelease(version.Version) {
+		buildArgs["DEJIMA_VERSION"] = version.Version
+	}
+	stream, err := s.rt.BuildImage(r.Context(), dir, islandimage.Dockerfile, DefaultImage, buildArgs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

@@ -64,12 +64,10 @@ const (
 // release was produced by `make release` (a packaged client build); anything
 // else ("dev", a git-describe string) is a working checkout.
 func DetectMode() Mode {
-	v := strings.TrimSpace(version.Version)
-	// A *clean* release tag (vX.Y.Z, no suffix) is a packaged client build.
-	// version.IsRelease accepts a git-describe string too (it ignores the
-	// "-N-gHASH"/"-dirty" suffix), so additionally require no suffix — that's
-	// what separates a release client from a `make`-from-checkout dev/server.
-	if version.IsRelease(v) && !strings.ContainsAny(v, "-+") {
+	// A *clean* release tag (vX.Y.Z, no suffix) is a packaged client build; a
+	// git-describe string is a `make`-from-checkout dev/server. That distinction
+	// now lives in version.IsExactRelease (IsRelease alone accepts the suffix).
+	if version.IsExactRelease(version.Version) {
 		return ModeRelease
 	}
 	return ModeSource

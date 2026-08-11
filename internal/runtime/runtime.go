@@ -144,7 +144,12 @@ type Runtime interface {
 	// BuildImage builds tag from the build context at contextDir (dockerfile
 	// is relative to it), streaming combined build output. A failed build
 	// surfaces as a non-EOF error from the stream's final Read.
-	BuildImage(ctx context.Context, contextDir, dockerfile, tag string) (io.ReadCloser, error)
+	//
+	// buildArgs (may be nil) become --build-arg flags. They are not merely
+	// configuration: an ARG whose value changes invalidates the layer that
+	// consumes it, which is the only thing that makes a rebuild pick up new
+	// content for a step whose inputs the Dockerfile resolves at build time.
+	BuildImage(ctx context.Context, contextDir, dockerfile, tag string, buildArgs map[string]string) (io.ReadCloser, error)
 
 	// CopyToContainer copies a file or directory from host to container path.
 	CopyToContainer(ctx context.Context, name, hostPath, containerPath string) error

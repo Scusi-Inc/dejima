@@ -35,4 +35,31 @@ func TestIsRelease(t *testing.T) {
 			t.Errorf("IsRelease(%q) = true, want false", v)
 		}
 	}
+	// Documented leniency: a git-describe string keeps a usable semver core, so
+	// comparison callers accept it. IsExactRelease is what rejects it.
+	if !IsRelease("v0.8.60-3-gabc1234") {
+		t.Error(`IsRelease("v0.8.60-3-gabc1234") = false; the lenient form must accept a describe string`)
+	}
+}
+
+func TestIsExactRelease(t *testing.T) {
+	for _, v := range []string{"v0.1.0", "1.2.3", "v10.20.30", " v2.0.0 "} {
+		if !IsExactRelease(v) {
+			t.Errorf("IsExactRelease(%q) = false, want true", v)
+		}
+	}
+	// The whole point: anything that doesn't name a published release must fail,
+	// because callers use it to fetch a release asset or resolve a git tag.
+	for _, v := range []string{
+		"dev",
+		"v0.8.60-3-gabc1234", // three commits past the tag — no such release
+		"v0.8.60-dirty",
+		"v1.2.3+build7",
+		"v1.2",
+		"",
+	} {
+		if IsExactRelease(v) {
+			t.Errorf("IsExactRelease(%q) = true, want false", v)
+		}
+	}
 }

@@ -86,7 +86,7 @@ func (f *Fake) ExecStream(context.Context, string, []string) (io.ReadCloser, err
 	return io.NopCloser(strings.NewReader("")), nil
 }
 func (f *Fake) ImageExists(context.Context, string) (bool, error) { return true, nil }
-func (f *Fake) BuildImage(context.Context, string, string, string) (io.ReadCloser, error) {
+func (f *Fake) BuildImage(context.Context, string, string, string, map[string]string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
 func (f *Fake) CopyToContainer(context.Context, string, string, string) error   { return nil }

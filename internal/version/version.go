@@ -15,11 +15,24 @@ var Version = "dev"
 // the daemon's reported value to detect skew instead of silently degrading.
 const APIVersion = 1
 
-// IsRelease reports whether v looks like a real semver release (vX.Y.Z), as
-// opposed to "dev" or a git-describe string.
+// IsRelease reports whether v carries a usable semver core (vX.Y.Z), as opposed
+// to "dev". Deliberately LENIENT: parseSemver drops any -prerelease/+build
+// suffix, so a git-describe string like "v0.8.60-3-gabc1234" also passes. That's
+// what comparison callers want — such a build really is "at least v0.8.60" for
+// skew checks. Callers that need a version to name a PUBLISHED artifact (a
+// release asset to download) must use IsExactRelease instead.
 func IsRelease(v string) bool {
 	_, ok := parseSemver(v)
 	return ok
+}
+
+// IsExactRelease reports whether v is a clean release tag — vX.Y.Z with no
+// -prerelease/+build suffix — and so names a real published release. Use this
+// (not IsRelease) whenever the version has to resolve to a downloadable asset or
+// a git tag: "v0.8.60-3-gabc1234" is three commits PAST v0.8.60 and no release
+// by that name exists, so fetching it 404s.
+func IsExactRelease(v string) bool {
+	return IsRelease(v) && !strings.ContainsAny(strings.TrimSpace(v), "-+")
 }
 
 // Compare returns -1, 0, or +1 comparing two semver strings (a leading 'v' and

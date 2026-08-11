@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -361,9 +363,15 @@ func (d *Docker) Logs(ctx context.Context, name string, follow bool) (io.ReadClo
 // build fails the stream's final Read returns the build error instead of EOF
 // (via CloseWithError), so callers distinguish success from failure without a
 // side channel.
-func (d *Docker) BuildImage(ctx context.Context, contextDir, dockerfile, tag string) (io.ReadCloser, error) {
-	cmd := exec.CommandContext(ctx, d.bin(), "build", "-t", tag,
-		"-f", filepath.Join(contextDir, dockerfile), contextDir)
+func (d *Docker) BuildImage(ctx context.Context, contextDir, dockerfile, tag string, buildArgs map[string]string) (io.ReadCloser, error) {
+	args := []string{"build", "-t", tag, "-f", filepath.Join(contextDir, dockerfile)}
+	// Sorted so the command line is deterministic (map order isn't) — a stable
+	// argv keeps build output and any log of it diffable across runs.
+	for _, k := range slices.Sorted(maps.Keys(buildArgs)) {
+		args = append(args, "--build-arg", k+"="+buildArgs[k])
+	}
+	args = append(args, contextDir)
+	cmd := exec.CommandContext(ctx, d.bin(), args...)
 	r, w := io.Pipe()
 	cmd.Stdout = w
 	cmd.Stderr = w
