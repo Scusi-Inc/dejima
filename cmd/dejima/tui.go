@@ -2497,20 +2497,28 @@ func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
 		}
 		nav = []actionMenuItem{dejimaNav}
 		title = "island · " + isl.Name + "  (" + isl.Container + ")"
+		islandName := isl.Name
 		if isl.Container == "running" {
 			items = append(items,
 				actionMenuItem{label: "Open (new tab)", key: "o"},
 				actionMenuItem{label: "Attach in this terminal", key: "a"},
 				actionMenuItem{label: "Add an agent", key: "+"},
-				actionMenuItem{label: "Hibernate", key: "h"},
 			)
 			if m.overview != nil && m.overview.SSHAddr != "" {
 				items = append(items, actionMenuItem{label: "Open in VS Code / Cursor (/workspace)", key: "c"})
 			}
+			// Lifecycle (non-destructive): stop-and-keep, and recreate on the current
+			// image — kept clear of the danger block at the very bottom.
+			items = append(items,
+				actionMenuItem{label: "Hibernate", key: "h"},
+				actionMenuItem{label: "Upgrade to the current image", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					mm.confirm = &confirmPrompt{verb: "upgrade", island: islandName}
+					return mm, nil
+				}},
+			)
 		} else {
 			items = append(items, actionMenuItem{label: "Wake", key: "w"})
 		}
-		islandName := isl.Name
 		// Config block, grouped: identity (rename + look), then compute, then the
 		// permission/reach items contiguously (network → host files → tokens → spawn).
 		items = append(items, actionMenuItem{label: "Rename", key: "e"})
@@ -2537,15 +2545,9 @@ func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
 				return mm.startSSHSetup()
 			}})
 		}
+		// Destructive block, grouped at the very bottom (both rendered in alarm color).
 		if isl.Container == "running" {
-			upgradeName := isl.Name
-			items = append(items,
-				actionMenuItem{label: "Reset agent state", key: "r", danger: true},
-				actionMenuItem{label: "Upgrade to the current image", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
-					mm.confirm = &confirmPrompt{verb: "upgrade", island: upgradeName}
-					return mm, nil
-				}},
-			)
+			items = append(items, actionMenuItem{label: "Reset agent state", key: "r", danger: true})
 		}
 		items = append(items, actionMenuItem{label: "Purge island", key: "d", danger: true})
 	case rowAgent:
@@ -4874,7 +4876,14 @@ func (m tuiModel) renderActionMenu() string {
 		if it.key != "" {
 			accel = styleMuted.Render("  [" + it.key + "]")
 		}
-		b.WriteString(mark + st.Render(it.label) + accel + "\n")
+		// A trailing "(…)" gloss is rendered muted so the action name reads first.
+		label := st.Render(it.label)
+		if !it.disabled {
+			if p := strings.Index(it.label, " ("); p >= 0 && strings.HasSuffix(it.label, ")") {
+				label = st.Render(it.label[:p]) + styleMuted.Render(it.label[p:])
+			}
+		}
+		b.WriteString(mark + label + accel + "\n")
 	}
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
