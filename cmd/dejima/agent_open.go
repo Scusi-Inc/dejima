@@ -265,7 +265,7 @@ func newAgentOpenCmd() *cobra.Command {
 					fmt.Println()
 					fmt.Printf("  Pin it by recreating this island's container once (restarts its agents):\n")
 					fmt.Printf("      dejima upgrade %s\n", island)
-					fmt.Println("  or in the TUI: select the island, m → \"Upgrade to the current image\".")
+					fmt.Println("  or in the TUI: select the island, s → \"Upgrade to the current image\".")
 					fmt.Printf("  (daemon reports %s; token pinning needs v0.8.48+.)\n", ver)
 					if derr != nil {
 						fmt.Printf("  (token probe: %v)\n", derr)

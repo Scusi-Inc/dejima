@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -123,6 +124,65 @@ func TestAnnouncementLifecycle(t *testing.T) {
 	_, st = full(tuiModel{updateApplied: "y", clientUpdate: true})
 	if !sameStyle(st, styleSuccessBroadcast) {
 		t.Error("applied must outrank the available prompt")
+	}
+}
+
+// TestImageBuildAnnouncement locks in the image-build feedback loop. Both halves
+// regressed silently before: the in-flight state was a lone footer glyph that a
+// stale error hid outright, and a SUCCESSFUL build rendered nothing anywhere — so
+// a finished build looked identical to one that never started.
+func TestImageBuildAnnouncement(t *testing.T) {
+	sameStyle := func(a, b lipgloss.Style) bool { return a.Render("x") == b.Render("x") }
+
+	// In flight: an announcement, not just a footer glyph.
+	full, _, st, ok := tuiModel{building: true}.announcement()
+	if !ok {
+		t.Fatal("a build in flight must broadcast something")
+	}
+	if !strings.Contains(full, "building the island image") || !sameStyle(st, styleWarnBroadcast) {
+		t.Errorf("in-flight build should be an orange progress banner: %q", full)
+	}
+
+	// Starting a build clears a stale lastError, which renderFooterLeft would
+	// otherwise early-return on — swallowing the footer's ⏳ for the whole build.
+	out, _ := tuiModel{lastError: "some earlier op blew up"}.
+		runConfirmed(confirmPrompt{verb: "build-image", answer: "y"})
+	started := out.(tuiModel)
+	if !started.building {
+		t.Fatal("confirming build-image must set building")
+	}
+	if started.lastError != "" {
+		t.Errorf("starting a build must clear a stale error, got %q", started.lastError)
+	}
+
+	// Success: banner names the SECOND step, since building alone moves no island.
+	out, _ = started.Update(imageBuildDoneMsg{})
+	done := out.(tuiModel)
+	if done.building {
+		t.Error("a finished build must clear building")
+	}
+	if !strings.Contains(done.imageBuiltPending, "Upgrade to the current image") {
+		t.Errorf("success banner must name the upgrade step, got %q", done.imageBuiltPending)
+	}
+	full, _, st, ok = done.announcement()
+	if !ok || !strings.Contains(full, "[esc] dismiss") || !sameStyle(st, styleWarnBroadcast) {
+		t.Errorf("built-image notice should be a sticky orange banner: %q", full)
+	}
+
+	// ...and [esc] dismisses it, like the other sticky banners.
+	out, _ = done.handleKey(key("esc"))
+	if got := out.(tuiModel).imageBuiltPending; got != "" {
+		t.Errorf("esc must dismiss the built-image notice, got %q", got)
+	}
+
+	// A failed build reports the error and claims no success.
+	out, _ = started.Update(imageBuildDoneMsg{err: errors.New("boom")})
+	failed := out.(tuiModel)
+	if !strings.Contains(failed.lastError, "boom") {
+		t.Errorf("a failed build must surface the error, got %q", failed.lastError)
+	}
+	if failed.imageBuiltPending != "" {
+		t.Errorf("a failed build must not claim the image was built, got %q", failed.imageBuiltPending)
 	}
 }
 

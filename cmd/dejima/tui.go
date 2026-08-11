@@ -245,6 +245,13 @@ type tuiModel struct {
 	// but this running process is still the old one until they relaunch. Stays
 	// until restart or an explicit [esc] dismiss.
 	restartPending string
+	// imageBuiltPending is an ORANGE, sticky banner for a finished island image
+	// build. Same "landed but needs the user to act" shape as restartPending: the
+	// new image exists, but every running island keeps its old one until it's
+	// recreated onto the new image, so the build is only half the job. Success used
+	// to be rendered NOWHERE (the footer's ⏳ just vanished), which left no way to
+	// tell a finished build from a build that never started. Sticky until [esc].
+	imageBuiltPending string
 	// updating is a BLUE in-progress banner shown while an update command is
 	// running — a daemon source update does `git pull && make install` (tens of
 	// seconds) before it restarts, and without this the TUI looks frozen between
@@ -1313,6 +1320,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.building = false
 		if msg.err != nil {
 			m.lastError = fmt.Sprintf("image build: %v", msg.err)
+		} else {
+			// Building the image changes nothing on its own — a running island stays on
+			// the image it was created from. Name the second step, since that's the one
+			// that actually moves an island onto what we just built. Action first, so
+			// the narrow-terminal clip eats the parenthetical rather than the
+			// instruction.
+			m.imageBuiltPending = "image built — now: select an island, [s] → \"Upgrade to the current image\" (islands keep their old image until recreated)"
 		}
 		return m, m.fetchOverviewCmd()
 
@@ -1902,10 +1916,12 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// behind an explicit fleet-wide-restart warning.
 		return m.openServerMenu(), nil
 	case "esc":
-		// Dismiss whichever sticky update banner is showing (no overlay here):
-		// a failure, or an applied-but-needs-restart notice. (Green fades itself.)
+		// Dismiss whichever sticky banner is showing (no overlay here): a failure, an
+		// applied-but-needs-restart notice, or a built-image-needs-upgrade notice.
+		// (Green fades itself.)
 		m.updateError = ""
 		m.restartPending = ""
+		m.imageBuiltPending = ""
 		return m, nil
 	case "R":
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd())
@@ -1936,6 +1952,12 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	case "build-image":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			m.building = true
+			// renderFooterLeft early-returns on lastError before it ever reaches the
+			// building case, and lastError is sticky until [esc] — so a stale error
+			// from some earlier op would silently swallow the footer's ⏳ for the whole
+			// build. Starting a build is a clean slate; drop it.
+			m.lastError = ""
+			m.imageBuiltPending = ""
 			return m, m.buildImageCmd()
 		}
 	case "purge":
@@ -3341,6 +3363,12 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 		// result (applied / restart-pending / error).
 		return " ⟳ " + m.updating,
 			" ⟳ updating… ", styleWarnBroadcast, true
+	case m.building:
+		// Same reasoning as m.updating: a cold-cache image build runs for minutes
+		// with no other feedback than a footer glyph that any error or notice hides,
+		// so the header says it plainly for as long as it's in flight.
+		return " ⟳ building the island image — minutes on a cold cache, seconds if Docker can reuse its layers",
+			" ⟳ building image ", styleWarnBroadcast, true
 	case m.updateError != "":
 		// A failed self-update outranks everything else here and stays put (red)
 		// until retried [U] or dismissed [esc] — never wiped by a poll.
@@ -3351,6 +3379,9 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 		// sticks (orange) until they restart or dismiss it.
 		return " ⟳ " + m.restartPending + "   ·   [esc] dismiss",
 			" ⟳ restart to apply ", styleWarnBroadcast, true
+	case m.imageBuiltPending != "":
+		return " ✓ " + m.imageBuiltPending + "   ·   [esc] dismiss",
+			" ✓ image built ", styleWarnBroadcast, true
 	case m.updateApplied != "":
 		// A clean landing — green, and it fades on its own (updateNoticeFadedMsg).
 		return " ✓ " + m.updateApplied,
@@ -3473,7 +3504,11 @@ func (m tuiModel) renderHeader() string {
 	// when there's something to say (an available update, today).
 	topLine := ""
 	if full, _, style, ok := m.announcement(); ok {
-		topLine = style.Width(infoW).Render(full)
+		// Clip to infoW BEFORE styling: .Width() pads to infoW but *wraps* anything
+		// longer, and a banner that grows to two rows pushes the 7-row info block out
+		// of alignment with the logo. At the narrow end of full-header mode (width 99)
+		// infoW is only ~55 columns, which most banner texts exceed.
+		topLine = style.Width(infoW).Render(truncateDisplay(full, infoW))
 	}
 
 	// The two former subtitle lines are collapsed into one, freeing a row for a
