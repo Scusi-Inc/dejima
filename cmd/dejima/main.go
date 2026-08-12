@@ -2118,8 +2118,17 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 	}
 
 	// Re-send the size on (re)attach so tmux opens/resumes at the right dimensions.
+	// The FIRST resize also carries this terminal's identity: the island otherwise
+	// sees only the daemon's TERM (docker exec propagates the docker CLI's env, not
+	// ours), which is the same for every client and describes none of them. With a
+	// real TERM the in-island tmux can gate RGB/sync/extkeys on what this terminal
+	// actually supports instead of advertising them to everything — see
+	// image/tmux.conf. Later resizes omit it; the terminal doesn't change mid-session.
 	if rows, cols, err := terminalSize(stdinFd); err == nil {
-		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{
+			Type: "resize", Rows: rows, Cols: cols,
+			Term: os.Getenv("TERM"), ColorTerm: os.Getenv("COLORTERM"),
+		})
 	}
 	watchTerminalResize(connCtx, stdinFd, func(rows, cols uint16) {
 		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})

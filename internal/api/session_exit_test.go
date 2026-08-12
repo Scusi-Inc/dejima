@@ -23,17 +23,17 @@ import (
 // HostPTY (a command that exits on its own); skipped where no PTY is available.
 func TestServeTmuxWS_SendsExitOnTerminalEnd(t *testing.T) {
 	// Probe PTY availability up front so the assertion below is unambiguous.
-	if probe, err := bridge.HostPTY(context.Background(), []string{"true"}, 0, 0); err != nil {
+	if probe, err := bridge.HostPTY(context.Background(), []string{"true"}, 0, 0, bridge.TermEnv{}); err != nil {
 		t.Skipf("no PTY available in this environment: %v", err)
 	} else {
 		probe.Close()
 	}
 
 	s := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	attach := func(ctx context.Context, rows, cols uint16) (*bridge.PTYSession, error) {
+	attach := func(ctx context.Context, rows, cols uint16, te bridge.TermEnv) (*bridge.PTYSession, error) {
 		// A terminal that prints once and exits — mimics a shell `exit` / an
 		// instant open-failure: the PTY reaches EOF while the ws is healthy.
-		return bridge.HostPTY(ctx, []string{"sh", "-c", "echo bye; exit 0"}, rows, cols)
+		return bridge.HostPTY(ctx, []string{"sh", "-c", "echo bye; exit 0"}, rows, cols, te)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.serveTmuxWS(w, r, "test-term", "k", attach, nil)

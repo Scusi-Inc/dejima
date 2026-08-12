@@ -23,6 +23,101 @@ type PTYSession struct {
 	pty *os.File
 }
 
+// TermEnv carries the CLIENT terminal's identity into the container, so the
+// in-island tmux can decide what the OUTER terminal actually supports.
+//
+// Without this the island sees only the DAEMON's TERM (docker exec propagates
+// the docker CLI's environment, not the end user's), which is identical for
+// every connected client and says nothing about any of them. That is why
+// image/tmux.conf's capability lines had drifted to matching `,*:` — there was
+// no per-client signal to match on — and why a terminal that genuinely can't
+// handle RGB/sync/extkeys was being told to emit them anyway.
+//
+// Both fields are best-effort and may be empty (automation, a non-TTY client,
+// or an older dejima client that doesn't send them); empty means "say nothing",
+// which leaves the container's own defaults in place.
+type TermEnv struct {
+	Term      string // client's $TERM, e.g. "xterm-256color"
+	ColorTerm string // client's $COLORTERM, e.g. "truecolor"
+}
+
+// dockerEnvArgs renders te as `-e KEY=VALUE` args for `docker exec`, dropping
+// anything that fails safeTermValue.
+//
+// These values originate from a network client, so they are filtered rather
+// than trusted. They are passed as discrete argv elements (no shell), so the
+// risk is not injection but scope: an unfiltered value could smuggle embedded
+// NULs/newlines or a second `KEY=` into the container's environment. The
+// character class below is a superset of every real TERM/COLORTERM and a subset
+// of what could be abused.
+func (te TermEnv) dockerEnvArgs() []string {
+	var args []string
+	if t := canonicalTERM(te.Term); t != "" {
+		args = append(args, "-e", "TERM="+t)
+	}
+	if safeTermValue(te.ColorTerm) {
+		// Not canonicalized: COLORTERM is a free-form capability hint ("truecolor",
+		// "24bit") that agent processes read directly. tmux ignores it — the RGB
+		// gate is TERM-based — so it never needs to resolve against terminfo.
+		args = append(args, "-e", "COLORTERM="+te.ColorTerm)
+	}
+	return args
+}
+
+// baseTerminfo is the set of terminfo names the island image is guaranteed to
+// resolve. The image installs ncurses-base only (no ncurses-term), so this is
+// deliberately small — see canonicalTERM for why passing anything else is unsafe.
+var baseTerminfo = map[string]bool{
+	"ansi": true, "dumb": true, "linux": true, "vt100": true, "vt220": true,
+	"screen": true, "screen-256color": true,
+	"tmux": true, "tmux-256color": true,
+	"xterm": true, "xterm-color": true, "xterm-256color": true,
+	"rxvt-unicode": true, "rxvt-unicode-256color": true,
+}
+
+// canonicalTERM maps a client's TERM to one the island can actually resolve,
+// returning "" when there is nothing safe to say.
+//
+// This guard is not cosmetic. tmux refuses to start against a terminfo entry it
+// cannot find — "open terminal failed: missing or unsuitable terminal: X" — and
+// on the attach path that surfaces as a session that dies instantly and a client
+// that reconnects forever. Modern terminals ship names the base terminfo set has
+// never heard of (Ghostty sets xterm-ghostty, kitty sets xterm-kitty, and
+// alacritty/wezterm/foot/contour set their own), so forwarding TERM verbatim
+// would break attach for exactly the users whose terminals work best.
+//
+// Anything outside baseTerminfo therefore degrades to xterm-256color: present
+// everywhere, 256-color, and — via image/tmux.conf's `*-256color` gate — still
+// eligible for RGB/extkeys/sync, which is the right answer for every terminal in
+// that bucket. A client reporting bare `xterm` keeps `xterm`, which is what
+// correctly excludes it from those features.
+func canonicalTERM(term string) string {
+	if !safeTermValue(term) {
+		return ""
+	}
+	if baseTerminfo[term] {
+		return term
+	}
+	return "xterm-256color"
+}
+
+// safeTermValue reports whether v is a plausible TERM/COLORTERM: non-empty,
+// short, and drawn only from the characters terminfo names actually use.
+func safeTermValue(v string) bool {
+	if v == "" || len(v) > 64 {
+		return false
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.', r == '+':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // AttachToTmux starts `docker exec -it <container> tmux attach-session -t <session>`
 // against a host PTY and returns the session. Caller should Copy() to bridge
 // bytes between the PTY and a client transport (e.g., a websocket), and Close()
@@ -33,20 +128,24 @@ type PTYSession struct {
 // up at creack/pty's 80x24 default, the agent renders its TUI at that size,
 // and the SIGWINCH that arrives from the client's first resize envelope races
 // the agent's initial render. Sizing up-front eliminates the race.
-func AttachToTmux(ctx context.Context, dockerBin, container, tmuxSession string, rows, cols uint16) (*PTYSession, error) {
+//
+// te carries the client's terminal identity; see TermEnv.
+func AttachToTmux(ctx context.Context, dockerBin, container, tmuxSession string, rows, cols uint16, te TermEnv) (*PTYSession, error) {
 	return ExecPTY(ctx, dockerBin, container,
-		[]string{"tmux", "new-session", "-A", "-s", tmuxSession}, rows, cols)
+		[]string{"tmux", "new-session", "-A", "-s", tmuxSession}, rows, cols, te)
 }
 
 // ExecPTY starts `docker exec -it <container> <cmd...>` against a host PTY and
 // returns the session, sized to rows/cols when both are non-zero. It generalizes
 // AttachToTmux for the SSH façade, which bridges an SSH session channel to an
 // arbitrary in-container command (a login shell, or `bash -lc <exec>`).
-func ExecPTY(ctx context.Context, dockerBin, container string, cmd []string, rows, cols uint16) (*PTYSession, error) {
+func ExecPTY(ctx context.Context, dockerBin, container string, cmd []string, rows, cols uint16, te TermEnv) (*PTYSession, error) {
 	if dockerBin == "" {
 		dockerBin = "docker"
 	}
-	args := append([]string{"exec", "-it", container}, cmd...)
+	args := append([]string{"exec"}, te.dockerEnvArgs()...)
+	args = append(args, "-it", container)
+	args = append(args, cmd...)
 	return startPTY(exec.CommandContext(ctx, dockerBin, args...), rows, cols)
 }
 
@@ -71,7 +170,7 @@ func startPTY(c *exec.Cmd, rows, cols uint16) (*PTYSession, error) {
 // host-terminal path (no container). Mirrors ExecPTY without the docker wrapper.
 // This runs UNCONTAINED on the daemon host; it is gated to operators only and
 // must never be reachable by an island token (see internal/api/tokenauth.go).
-func HostPTY(ctx context.Context, cmd []string, rows, cols uint16) (*PTYSession, error) {
+func HostPTY(ctx context.Context, cmd []string, rows, cols uint16, te TermEnv) (*PTYSession, error) {
 	if len(cmd) == 0 {
 		return nil, fmt.Errorf("host pty: empty command")
 	}
@@ -83,14 +182,20 @@ func HostPTY(ctx context.Context, cmd []string, rows, cols uint16) (*PTYSession,
 	// and retries forever. Guarantee a sane, universally-available terminal type
 	// for the host PTY; an already-set non-empty TERM in the daemon env wins.
 	// (The in-container path doesn't need this — `docker exec -it` sets TERM.)
-	c.Env = ensureTERM(os.Environ())
+	c.Env = ensureTERM(os.Environ(), te.Term)
 	return startPTY(c, rows, cols)
 }
 
-// ensureTERM returns env with exactly one TERM entry, guaranteed non-empty:
-// any existing TERM is preserved if set, otherwise xterm-256color is supplied.
-// Duplicates are collapsed so the child can't inherit a stray empty TERM=.
-func ensureTERM(env []string) []string {
+// ensureTERM returns env with exactly one TERM entry, guaranteed non-empty.
+// Precedence: the CLIENT's TERM (when it passes safeTermValue) beats the
+// daemon's own, which beats the xterm-256color fallback. Duplicates are
+// collapsed so the child can't inherit a stray empty TERM=.
+//
+// The client wins because it is the only party that knows what the outer
+// terminal is: the daemon's TERM describes whatever launchd/systemd handed the
+// service, which is the same for every connected operator and descriptive of
+// none of them. ~/.dejima/tmux-host.conf gates its capabilities on this value.
+func ensureTERM(env []string, preferred string) []string {
 	out := make([]string, 0, len(env)+1)
 	term := ""
 	for _, kv := range env {
@@ -100,6 +205,9 @@ func ensureTERM(env []string) []string {
 		}
 		out = append(out, kv)
 	}
+	if t := canonicalTERM(preferred); t != "" {
+		term = t
+	}
 	if term == "" {
 		term = "xterm-256color"
 	}
@@ -107,9 +215,10 @@ func ensureTERM(env []string) []string {
 }
 
 // AttachToHostTmux attaches (creating if absent) to a tmux session on the daemon
-// host — the operator host-terminal equivalent of AttachToTmux.
-func AttachToHostTmux(ctx context.Context, tmuxSession string, rows, cols uint16) (*PTYSession, error) {
-	return HostPTY(ctx, hosttmux.NewSessionArgs("new-session", "-A", "-s", tmuxSession), rows, cols)
+// host — the operator host-terminal equivalent of AttachToTmux. te carries the
+// client's terminal identity; see TermEnv.
+func AttachToHostTmux(ctx context.Context, tmuxSession string, rows, cols uint16, te TermEnv) (*PTYSession, error) {
+	return HostPTY(ctx, hosttmux.NewSessionArgs("new-session", "-A", "-s", tmuxSession), rows, cols, te)
 }
 
 // Wait reaps the underlying `docker exec` and returns its exit code. Call it

@@ -156,8 +156,8 @@ func (s *Server) terminalSessionWS(w http.ResponseWriter, r *http.Request) {
 	}
 	tmuxName := term.Tmux()
 	s.serveTmuxWS(w, r, "host terminal", id,
-		func(ctx context.Context, rows, cols uint16) (*bridge.PTYSession, error) {
-			return bridge.AttachToHostTmux(ctx, tmuxName, rows, cols)
+		func(ctx context.Context, rows, cols uint16, te bridge.TermEnv) (*bridge.PTYSession, error) {
+			return bridge.AttachToHostTmux(ctx, tmuxName, rows, cols, te)
 		},
 		func(ctx context.Context) (uint16, uint16, bool) {
 			return bridge.HostMaxClientSize(ctx, tmuxName)

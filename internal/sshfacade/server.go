@@ -182,6 +182,7 @@ func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
 		wantPTY bool
 		rows    uint16
 		cols    uint16
+		term    string             // client's TERM from pty-req, for the in-island tmux
 		sess    *bridge.PTYSession // set once an interactive command starts
 		started bool
 	)
@@ -194,13 +195,16 @@ func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
 				Modes                string
 			}
 			if ssh.Unmarshal(req.Payload, &p) == nil {
-				wantPTY, cols, rows = true, uint16(p.Cols), uint16(p.Rows)
+				wantPTY, cols, rows, term = true, uint16(p.Cols), uint16(p.Rows), p.Term
 			}
 			_ = req.Reply(true, nil)
 		case "env":
 			// Accept but don't forward: the in-container login shell sets its own
 			// environment, and forwarding client env into the island is a footgun
-			// we don't want by default.
+			// we don't want by default. (TERM is the deliberate exception, and it
+			// arrives via pty-req above rather than here — it is part of the PTY
+			// request itself, is filtered by bridge.safeTermValue, and the island's
+			// tmux needs it to tell what the outer terminal can render.)
 			_ = req.Reply(true, nil)
 		case "window-change":
 			var p struct{ Cols, Rows, Wpx, Hpx uint32 }
@@ -217,7 +221,7 @@ func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
 			}
 			started = true
 			_ = req.Reply(true, nil)
-			sess = s.run(ch, container, loginShell(), wantPTY, rows, cols)
+			sess = s.run(ch, container, loginShell(), wantPTY, rows, cols, term)
 		case "exec":
 			if started {
 				_ = req.Reply(false, nil)
@@ -227,7 +231,7 @@ func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
 			var p struct{ Command string }
 			_ = ssh.Unmarshal(req.Payload, &p)
 			_ = req.Reply(true, nil)
-			sess = s.run(ch, container, execCmd(p.Command), wantPTY, rows, cols)
+			sess = s.run(ch, container, execCmd(p.Command), wantPTY, rows, cols, term)
 		case "subsystem":
 			if started {
 				_ = req.Reply(false, nil)
@@ -241,7 +245,7 @@ func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
 				// protocol over the channel).
 				started = true
 				_ = req.Reply(true, nil)
-				sess = s.run(ch, container, sftpServerCmd(), false, 0, 0)
+				sess = s.run(ch, container, sftpServerCmd(), false, 0, 0, "")
 			} else {
 				// Unknown subsystem — reject so clients fall back gracefully.
 				_ = req.Reply(false, nil)
@@ -261,10 +265,10 @@ func (s *Server) handleSession(newCh ssh.NewChannel, island string) {
 // returns the live session (so window-change can resize it); without one it runs
 // the command on plain pipes. Either way it relays exit status and closes ch
 // when the command finishes.
-func (s *Server) run(ch ssh.Channel, container string, cmd []string, wantPTY bool, rows, cols uint16) *bridge.PTYSession {
+func (s *Server) run(ch ssh.Channel, container string, cmd []string, wantPTY bool, rows, cols uint16, term string) *bridge.PTYSession {
 	ctx := context.Background()
 	if wantPTY {
-		sess, err := bridge.ExecPTY(ctx, s.dockerBin, container, cmd, rows, cols)
+		sess, err := bridge.ExecPTY(ctx, s.dockerBin, container, cmd, rows, cols, bridge.TermEnv{Term: term})
 		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "dejima: %v\r\n", err)
 			sendExit(ch, 1)

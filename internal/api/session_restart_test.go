@@ -30,7 +30,7 @@ func (s *Server) attachedConnCount() int {
 // {"type":"exit"} envelope while restarting (which would stop the client). This
 // is the server half of "a daemon restart is a reconnect blink, not a drop".
 func TestCloseSessionsForRestart_ClosesWithRestartCode(t *testing.T) {
-	if probe, err := bridge.HostPTY(context.Background(), []string{"true"}, 0, 0); err != nil {
+	if probe, err := bridge.HostPTY(context.Background(), []string{"true"}, 0, 0, bridge.TermEnv{}); err != nil {
 		t.Skipf("no PTY available in this environment: %v", err)
 	} else {
 		probe.Close()
@@ -39,8 +39,8 @@ func TestCloseSessionsForRestart_ClosesWithRestartCode(t *testing.T) {
 	s := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	// A long-lived terminal: the PTY does NOT reach EOF on its own, so any close
 	// the client sees comes from the restart path, not a natural terminal end.
-	attach := func(ctx context.Context, rows, cols uint16) (*bridge.PTYSession, error) {
-		return bridge.HostPTY(ctx, []string{"sleep", "10"}, rows, cols)
+	attach := func(ctx context.Context, rows, cols uint16, te bridge.TermEnv) (*bridge.PTYSession, error) {
+		return bridge.HostPTY(ctx, []string{"sleep", "10"}, rows, cols, te)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.serveTmuxWS(w, r, "test-term", "k", attach, nil)

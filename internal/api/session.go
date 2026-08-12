@@ -109,12 +109,20 @@ func (p *presenceTracker) RevokeAll() int {
 //   - {"type":"data","b64":"..."}         both directions
 //   - {"type":"resize","rows":N,"cols":N} client → server
 //   - {"type":"presence","attached":[...]} server → client when others join/leave
+//
+// Term/ColorTerm ride along on the FIRST resize (the client's opening message)
+// and are ignored on later ones — they describe the client's terminal, which
+// does not change mid-session. They are optional in both directions: an older
+// client omits them and an older daemon ignores them, so either side upgrading
+// alone is safe. See bridge.TermEnv for what the daemon does with them.
 type SessionEnvelope struct {
-	Type     string          `json:"type"`
-	B64      string          `json:"b64,omitempty"`
-	Rows     uint16          `json:"rows,omitempty"`
-	Cols     uint16          `json:"cols,omitempty"`
-	Attached []PresenceEntry `json:"attached,omitempty"`
+	Type      string          `json:"type"`
+	B64       string          `json:"b64,omitempty"`
+	Rows      uint16          `json:"rows,omitempty"`
+	Cols      uint16          `json:"cols,omitempty"`
+	Term      string          `json:"term,omitempty"`
+	ColorTerm string          `json:"colorterm,omitempty"`
+	Attached  []PresenceEntry `json:"attached,omitempty"`
 }
 
 // presenceKey is the composite map key for an (island, agent) presence tracker.
@@ -410,6 +418,7 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	// during the size handshake; in practice it stays nil.
 	var (
 		initRows, initCols uint16
+		initTerm           bridge.TermEnv
 		pending            *SessionEnvelope
 	)
 	select {
@@ -417,6 +426,7 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		if r.err == nil && r.env != nil {
 			if r.env.Type == "resize" {
 				initRows, initCols = r.env.Rows, r.env.Cols
+				initTerm = bridge.TermEnv{Term: r.env.Term, ColorTerm: r.env.ColorTerm}
 			} else {
 				pending = r.env
 			}
@@ -438,7 +448,7 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxName, initRows, initCols)
+	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxName, initRows, initCols, initTerm)
 	if err != nil {
 		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
 		return
@@ -526,7 +536,7 @@ func sendEnvelope(ctx context.Context, conn *websocket.Conn, env SessionEnvelope
 // from Accept through close. logName/key label the attach/detach log line.
 func (s *Server) serveTmuxWS(
 	w http.ResponseWriter, r *http.Request, logName, key string,
-	attach func(ctx context.Context, rows, cols uint16) (*bridge.PTYSession, error),
+	attach func(ctx context.Context, rows, cols uint16, te bridge.TermEnv) (*bridge.PTYSession, error),
 	maxSize func(ctx context.Context) (uint16, uint16, bool),
 ) {
 	label := r.URL.Query().Get("label")
@@ -585,6 +595,7 @@ func (s *Server) serveTmuxWS(
 
 	var (
 		initRows, initCols uint16
+		initTerm           bridge.TermEnv
 		pending            *SessionEnvelope
 	)
 	select {
@@ -592,6 +603,7 @@ func (s *Server) serveTmuxWS(
 		if rd.err == nil && rd.env != nil {
 			if rd.env.Type == "resize" {
 				initRows, initCols = rd.env.Rows, rd.env.Cols
+				initTerm = bridge.TermEnv{Term: rd.env.Term, ColorTerm: rd.env.ColorTerm}
 			} else {
 				pending = rd.env
 			}
@@ -606,7 +618,7 @@ func (s *Server) serveTmuxWS(
 		}
 	}
 
-	sess, err := attach(ctx, initRows, initCols)
+	sess, err := attach(ctx, initRows, initCols, initTerm)
 	if err != nil {
 		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
 		return
@@ -702,8 +714,8 @@ func (s *Server) islandShellWS(w http.ResponseWriter, r *http.Request) {
 	}
 	container := p.ContainerName()
 	s.serveTmuxWS(w, r, "island shell", name,
-		func(ctx context.Context, rows, cols uint16) (*bridge.PTYSession, error) {
-			return bridge.AttachToTmux(ctx, "docker", container, islandShellSession, rows, cols)
+		func(ctx context.Context, rows, cols uint16, te bridge.TermEnv) (*bridge.PTYSession, error) {
+			return bridge.AttachToTmux(ctx, "docker", container, islandShellSession, rows, cols, te)
 		},
 		func(ctx context.Context) (uint16, uint16, bool) {
 			return bridge.MaxClientSize(ctx, "docker", container, islandShellSession)
