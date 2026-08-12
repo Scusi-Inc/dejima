@@ -37,6 +37,10 @@ type switcherModel struct {
 	host     string
 	blob     string // join-flow input: a pasted `dejima-invite:` blob
 	err      string
+	// delActive records, at the moment [d] was pressed, whether the profile being
+	// deleted is the one we're currently connected through — so the prompt can
+	// warn that confirming also drops the session back to the local socket.
+	delActive bool
 }
 
 type switcherStep int
@@ -45,8 +49,9 @@ const (
 	swList switcherStep = iota
 	swAddLabel
 	swAddHost
-	swJoin   // paste a team invite blob → decode → save profile → connect
-	swRename // rename the selected saved connection
+	swJoin          // paste a team invite blob → decode → save profile → connect
+	swRename        // rename the selected saved connection
+	swConfirmDelete // confirm removing the selected saved connection
 )
 
 // openSwitcher loads saved profiles (prepending a synthetic "local") and opens
@@ -76,6 +81,8 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switcherJoinKey(msg)
 	case swRename:
 		return m.switcherRenameKey(msg)
+	case swConfirmDelete:
+		return m.switcherConfirmDeleteKey(msg)
 	}
 	// swList
 	switch msg.String() {
@@ -101,7 +108,8 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "d":
 		if s.cursor > 0 { // never delete the synthetic "local"
-			return m.switcherDelete()
+			s.delActive = s.profiles[s.cursor].Host == m.activeHost
+			s.step, s.err = swConfirmDelete, ""
 		}
 	case "enter":
 		return m.switcherActivate()
@@ -179,8 +187,24 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
 }
 
+// switcherConfirmDeleteKey gates removal behind an explicit "y". Enter is
+// deliberately NOT a confirm: in the list Enter means "connect", so a d-then-
+// Enter reflex must never remove a connection. Unrecognized keys leave the
+// prompt up rather than resolving it either way.
+func (m tuiModel) switcherConfirmDeleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := m.switcher
+	switch msg.String() {
+	case "y", "Y":
+		return m.switcherDelete()
+	case "n", "N", "esc", "q", "ctrl+c":
+		s.step, s.err = swList, ""
+	}
+	return m, nil
+}
+
 func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 	s := m.switcher
+	s.step, s.err = swList, ""
 	target := s.profiles[s.cursor]
 	// Shared store mutation — the same path as `dejima profile rm`. Removes the
 	// profile and clears ActiveProfile if it was the one deleted (profile names
@@ -370,6 +394,16 @@ func (s *switcherModel) view() string {
 		b.WriteString(styleMuted.Render("Rename this connection (host and token stay the same)."))
 		b.WriteString("\n\nname: " + styleAccent.Render(s.label+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] save   [esc] cancel"))
+	case swConfirmDelete:
+		p := s.profiles[s.cursor]
+		b.WriteString(styleMuted.Render("Remove this saved connection?"))
+		b.WriteString("\n\n  " + styleAccent.Render(p.Name) + "   " + styleMuted.Render(p.Host))
+		b.WriteString("\n\n" + styleMuted.Render("Only the saved entry goes away — the daemon, its islands, and their"))
+		b.WriteString("\n" + styleMuted.Render("agents are untouched. You can add it back with [a]."))
+		if s.delActive {
+			b.WriteString("\n\n" + styleErrored.Render("This is your active connection — deleting it drops you to the local socket."))
+		}
+		b.WriteString("\n\n" + styleMuted.Render("[y] delete   [n/esc] cancel"))
 	case swJoin:
 		b.WriteString(styleMuted.Render("Joining a teammate's server? Paste the ") + styleAccent.Render("dejima-invite:") + styleMuted.Render(" blob they sent you."))
 		b.WriteString("\n" + styleMuted.Render("It carries the host + your access token — no env vars, no manual host:port."))

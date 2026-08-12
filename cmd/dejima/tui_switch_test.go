@@ -364,3 +364,107 @@ func TestClientForHostRejectsControlChars(t *testing.T) {
 		t.Fatalf("error should name the cause, got: %v", err)
 	}
 }
+
+// [d] used to delete a saved connection instantly. It now stages a confirmation,
+// because the list's own Enter means "connect" — so a d-then-Enter reflex was one
+// keystroke away from removing a profile the user meant to switch to. The rules
+// under test: d stages (never deletes), only y commits, Enter is inert while the
+// prompt is up, and the synthetic "local" row stays undeletable.
+func TestSwitcherDeleteConfirmation(t *testing.T) {
+	setup := func(t *testing.T) tuiModel {
+		t.Helper()
+		t.Setenv("HOME", t.TempDir())
+		cfg, _ := clientcfg.Load()
+		cfg.Profiles = []clientcfg.Profile{{Name: "minion", Host: "10.0.0.1:7273"}}
+		if err := clientcfg.Save(cfg); err != nil {
+			t.Fatalf("seed config: %v", err)
+		}
+		return tuiModel{switcher: &switcherModel{
+			profiles: []clientcfg.Profile{{Name: "local"}, {Name: "minion", Host: "10.0.0.1:7273"}},
+			cursor:   1,
+		}}
+	}
+	press := func(m tuiModel, key string) tuiModel {
+		var msg tea.KeyMsg
+		switch key {
+		case "esc":
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+		}
+		out, _ := m.switcherKey(msg)
+		return out.(tuiModel)
+	}
+	saved := func(t *testing.T) int {
+		t.Helper()
+		cfg, _ := clientcfg.Load()
+		return len(cfg.Profiles)
+	}
+
+	t.Run("d stages the prompt without deleting", func(t *testing.T) {
+		m := press(setup(t), "d")
+		if m.switcher.step != swConfirmDelete {
+			t.Fatalf("step = %d, want swConfirmDelete", m.switcher.step)
+		}
+		if n := saved(t); n != 1 {
+			t.Fatalf("profile removed before confirming (%d left)", n)
+		}
+	})
+
+	t.Run("enter does not confirm", func(t *testing.T) {
+		m := press(press(setup(t), "d"), "enter")
+		if m.switcher.step != swConfirmDelete {
+			t.Errorf("Enter should leave the prompt up, got step %d", m.switcher.step)
+		}
+		if n := saved(t); n != 1 {
+			t.Errorf("Enter deleted the profile (%d left)", n)
+		}
+	})
+
+	for _, key := range []string{"n", "esc"} {
+		t.Run(key+" cancels", func(t *testing.T) {
+			m := press(press(setup(t), "d"), key)
+			if m.switcher.step != swList {
+				t.Errorf("%q should return to the list, got step %d", key, m.switcher.step)
+			}
+			if n := saved(t); n != 1 {
+				t.Errorf("%q deleted the profile (%d left)", key, n)
+			}
+		})
+	}
+
+	t.Run("y commits and returns to the list", func(t *testing.T) {
+		m := press(press(setup(t), "d"), "y")
+		if m.switcher.step != swList {
+			t.Errorf("after deleting, step = %d, want swList", m.switcher.step)
+		}
+		if n := saved(t); n != 0 {
+			t.Errorf("y should have removed the profile, %d left", n)
+		}
+	})
+
+	t.Run("local is undeletable", func(t *testing.T) {
+		m := setup(t)
+		m.switcher.cursor = 0
+		if got := press(m, "d"); got.switcher.step != swList {
+			t.Errorf("d on synthetic local should do nothing, got step %d", got.switcher.step)
+		}
+	})
+
+	t.Run("prompt names the profile and warns when it is active", func(t *testing.T) {
+		m := setup(t)
+		m.activeHost = "10.0.0.1:7273" // connected through the row under the cursor
+		m = press(m, "d")
+		if !m.switcher.delActive {
+			t.Error("delActive should be set when deleting the active connection")
+		}
+		v := m.switcher.view()
+		for _, want := range []string{"minion", "10.0.0.1:7273", "active connection", "[y] delete"} {
+			if !strings.Contains(v, want) {
+				t.Errorf("confirm view missing %q:\n%s", want, v)
+			}
+		}
+	})
+}
