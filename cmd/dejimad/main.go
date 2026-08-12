@@ -383,21 +383,39 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	}()
 
 	// Optional Tailscale-pinned TCP listener.
+	//
+	// A tailnet that isn't up YET is a transient state, not a misconfiguration.
+	// `dejima onboard --provision-host` installs the daemon with --tcp :7273
+	// before the operator has signed in to Tailscale, and on a headless Mac that
+	// sign-in can land minutes or days later. Treating it as fatal took the unix
+	// socket down with it — every local command failed with "is dejimad
+	// running?", and launchd's KeepAlive turned it into a silent crash loop. So
+	// the remote listener degrades the same way the egress proxy does: warn, keep
+	// serving locally, and bring the tailnet up on its own once it answers.
 	var tcpLn net.Listener
+	tcpUp := false
 	if tcpAddr != "" {
 		tnet, err := loadTailscaleIPs(log)
-		if err != nil {
-			return fmt.Errorf("tailscale lookup: %w (install tailscale or run without --tcp)", err)
+		switch {
+		case err != nil:
+			log.Warn("remote access not up yet — Tailscale isn't answering. serving the local "+
+				"unix socket and retrying in the background; `sudo tailscale up --ssh` is all this needs",
+				"addr", tcpAddr, "err", err)
+			go serveTailnetWhenReady(ctx, log, tcpAddr, httpServer, errCh)
+		default:
+			raw, lerr := net.Listen("tcp", tcpAddr)
+			if lerr != nil {
+				// A busy port is a real conflict (usually a second daemon), not
+				// something waiting to resolve itself — say so and stop.
+				return fmt.Errorf("tcp listen %s: %w", tcpAddr, lerr)
+			}
+			tcpLn = &tailscaleListener{Listener: raw, tailnet: tnet, log: log}
+			tcpUp = true
+			go func() {
+				log.Info("dejimad listening (tcp)", "addr", tcpAddr, "tailnet_size", len(tnet))
+				errCh <- httpServer.Serve(tcpLn)
+			}()
 		}
-		raw, err := net.Listen("tcp", tcpAddr)
-		if err != nil {
-			return fmt.Errorf("tcp listen %s: %w", tcpAddr, err)
-		}
-		tcpLn = &tailscaleListener{Listener: raw, tailnet: tnet, log: log}
-		go func() {
-			log.Info("dejimad listening (tcp)", "addr", tcpAddr, "tailnet_size", len(tnet))
-			errCh <- httpServer.Serve(tcpLn)
-		}()
 	}
 
 	// Optional host-internal, token-authenticated listener (autonomy path).
@@ -427,7 +445,10 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	// Announce the daemon is up (push signal for headless hosts) and start the
 	// container watchdog that emits container.crashed on unexpected exits.
 	listenModes := []string{"unix"}
-	if tcpAddr != "" {
+	if tcpUp {
+		// Only what's actually serving — announcing "tcp" while the tailnet
+		// listener is still waiting on Tailscale tells clients to dial a port
+		// nothing is on.
 		listenModes = append(listenModes, "tcp")
 	}
 	if tokenSrv != nil {
@@ -589,6 +610,39 @@ func addrOnTailnet(a netip.Addr, prefixes []netip.Prefix) bool {
 		}
 	}
 	return false
+}
+
+// tailnetRetryInterval paces the wait for Tailscale to come up. A var so tests
+// don't have to sit through it.
+var tailnetRetryInterval = 30 * time.Second
+
+// serveTailnetWhenReady brings the Tailscale-pinned listener up once Tailscale
+// starts answering, for a daemon that booted before the operator signed in.
+// Until then the unix socket carries every local command, so this failing
+// forever is a degraded daemon, never a dead one.
+func serveTailnetWhenReady(ctx context.Context, log *slog.Logger, addr string, srv *http.Server, errCh chan<- error) {
+	t := time.NewTicker(tailnetRetryInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		tnet, err := loadTailscaleIPs(log)
+		if err != nil {
+			continue // still logged out; say nothing, this is the expected state
+		}
+		raw, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Warn("Tailscale is up but the remote-access port is taken — retrying",
+				"addr", addr, "err", err)
+			continue
+		}
+		log.Info("remote access is up — Tailscale came online", "addr", addr, "tailnet_size", len(tnet))
+		errCh <- srv.Serve(&tailscaleListener{Listener: raw, tailnet: tnet, log: log})
+		return
+	}
 }
 
 // loadTailscaleIPs invokes `tailscale status --json` to enumerate peers and

@@ -625,22 +625,41 @@ func provPhaseDejimaInstall(pc *provCtx) error {
 	// Install (or reinstall) dejimad as a boot LaunchDaemon with the recommended
 	// host posture: tailnet TCP for remote clients, the in-island autonomy path,
 	// and the operational audit log on.
+	//
+	// The tailnet listener needs Tailscale actually signed in — and by this point
+	// we've already learned whether it is. Baking --tcp in regardless is how a
+	// fresh mini ended up with a daemon that couldn't start: the wizard puts
+	// "bring Tailscale up" on the manual checklist and then installs a service
+	// whose precondition that checklist item IS. The daemon now degrades instead
+	// of dying, so this isn't load-bearing anymore, but promising remote access
+	// we can't deliver yet is still the wrong thing to print.
+	tailnetUp := tailscaleStatus().BackendState == "Running"
 	fmt.Println("  Installing dejimad as a system service (starts at boot, no login needed) with:")
-	fmt.Println("    • remote access on :7273 (tailnet peers only)")
+	if tailnetUp {
+		fmt.Println("    • remote access on :7273 (tailnet peers only)")
+	} else {
+		fmt.Println("    • remote access on :7273 — Tailscale isn't up yet, so this comes online")
+		fmt.Println("      by itself once you finish `sudo tailscale up --ssh --accept-dns=true`")
+	}
 	fmt.Println("    • in-island autonomy on 127.0.0.1:7274")
 	fmt.Println("    • the operational audit log (--audit)")
+	const svcHint = "Install the daemon: dejima service install --system --tcp :7273 --token-tcp 127.0.0.1:7274 --audit"
 	if pc.confirm("  Install the service now (sudo)?", true) {
 		args := []string{"service", "install", "--system",
 			"--tcp", ":7273", "--token-tcp", "127.0.0.1:7274", "--audit",
 			"--no-tcp-prompt", "--no-notify-prompt"}
 		if err := execInteractive(self, args...); err != nil {
 			fmt.Printf("  ✗ service install: %v\n", err)
-			pc.addManual("Install the daemon: dejima service install --system --tcp :7273 --token-tcp 127.0.0.1:7274 --audit")
+			pc.addManual(svcHint)
 			return nil
 		}
 		fmt.Println("  ✓ daemon installed and supervised")
+		if !tailnetUp {
+			pc.addManual("Remote access (:7273) is waiting on Tailscale — run " +
+				"`sudo tailscale up --ssh --accept-dns=true`; the daemon picks it up within a minute, no restart needed")
+		}
 	} else {
-		pc.addManual("Install the daemon: dejima service install --system --tcp :7273 --token-tcp 127.0.0.1:7274 --audit")
+		pc.addManual(svcHint)
 	}
 	return nil
 }
