@@ -221,6 +221,30 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **Dejima running locally on Windows** *(research done, see
+  [`windows-native-daemon.md`](windows-native-daemon.md))* — today `local` in the
+  connection switcher dead-ends on Windows: `dejimad` ships for darwin/linux only
+  (`Makefile`), so a Windows user can only be a client of someone else's daemon.
+  There is a real audience for isolated islands on the Windows box itself.
+  Research finding: the daemon is far closer than "Unix-only" implies — it
+  already **cross-compiles and `go vet`s clean for windows/amd64** — and there is
+  exactly ONE functional blocker, `startPTY` in `internal/bridge/session.go`,
+  because `creack/pty`'s Windows build is a stub returning `ErrUnsupported`. Two
+  callers, one of them the optional `--host-terminals` feature. Three paths:
+  (A) a ConPTY `startPTY` on Windows — smallest, but puts ConPTY on both ends,
+  which is the class of bug behind the left-column smearing; (B) drop the host
+  PTY entirely and use the Docker Engine API's exec+attach hijacked stream — a
+  real `internal/bridge` refactor, but removes creack/pty from the session path
+  on *every* OS and is the only option that leaves Unix better than it found it;
+  (C) WSL2, already built on `agent/d4` (`35f929c`). Sequencing note: Docker
+  Desktop runs Linux containers in a VM regardless, so a native daemon is a
+  packaging/UX win, **not** an isolation win — C already delivers the capability,
+  so ship it, learn from real Windows users, then decide whether B earns the
+  refactor. Carries an unresolved design question either way: the local socket's
+  "filesystem-trusted, acts as OWNER" model (`clientForHost("")` ignores
+  `DEJIMA_TOKEN`) has no Windows equivalent and must be settled before a Windows
+  daemon is safe to expose. Motivated 2026-08-12. Owner: daemon. (weeks)
+
 - **Voice dictation — rebuild (currently DISABLED)** *(engine built, surface stashed)* —
   the local-transcription engine (`internal/voicein`: mic capture → whisper.cpp →
   transcript inject) is built and works **on macOS/Linux**, and the CLI
