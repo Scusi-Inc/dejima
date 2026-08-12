@@ -1958,6 +1958,14 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 			return fmt.Errorf("raw mode: %w", rerr)
 		}
 		defer func() { _ = term.Restore(stdinFd, oldState) }()
+		// MakeRaw only configures stdin. On Windows the OUTPUT handle needs its own
+		// mode — above all DISABLE_NEWLINE_AUTO_RETURN, for the deferred end-of-line
+		// wrap that tmux and every curses app assume; without it a full-width line
+		// smears its leading characters down the left column. No-op off Windows.
+		// Best-effort: a redirected (non-console) stdout has no mode to set, and
+		// failing to tune the console is never a reason to refuse to attach.
+		restoreConsole, _ := prepareConsoleOutput()
+		defer restoreConsole()
 		// Title the local tab to what we're attached to. Emitted to the local
 		// terminal (not into the websocket), so it sits above any inner tmux and
 		// works regardless of the container's tmux config. Cleared on detach.
