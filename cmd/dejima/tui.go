@@ -3009,13 +3009,49 @@ func (m tuiModel) openIslandAgents(name string) (tea.Model, tea.Cmd) {
 
 // openAgents opens a window for each given agent id; errors surface but don't
 // stop the rest from opening.
+//
+// Failures are AGGREGATED rather than assigned in the loop. Assigning
+// m.lastError per iteration meant each failure overwrote the one before it, so
+// a fan-out where every window failed reported a single message naming the last
+// agent — indistinguishable from one unlucky agent among many that worked. That
+// is the worst shape for this particular call: it is the only path that spawns
+// N windows at once (Enter on an island row), so it is also the only one where
+// a systemic failure looks local.
+//
+// Caveat worth knowing when reading a "success" here: on the Windows backend
+// openWindowsTerminal runs `wt.exe … new-tab … cmd /c <inner>`, and .Run()
+// reports whether WINDOWS TERMINAL started, not whether <inner> did. A tab that
+// comes up showing a ConPTY launch error ("[error 0x… when launching …]") is
+// invisible to us and counts as opened. Detecting that needs a handshake back
+// from the spawned client, which does not exist yet.
 func (m tuiModel) openAgents(name string, ids []string) (tea.Model, tea.Cmd) {
+	var (
+		failed   []string
+		firstErr string
+	)
 	for _, id := range ids {
 		if err := m.openInNewWindow(name, id, ""); err != nil {
-			m.lastError = err.Error()
+			failed = append(failed, id)
+			if firstErr == "" {
+				firstErr = err.Error()
+			}
 		}
 	}
+	if len(failed) > 0 {
+		m.lastError = openAgentsError(len(ids), failed, firstErr)
+	}
 	return m, nil
+}
+
+// openAgentsError renders the aggregate. A lone failure reads as its own error
+// (adding "1 of 1" would be noise); several report the count and which agents,
+// so a systemic failure is legible as one, with a representative cause attached.
+func openAgentsError(total int, failed []string, firstErr string) string {
+	if len(failed) == 1 {
+		return firstErr
+	}
+	return fmt.Sprintf("%d of %d agent windows failed to open (%s): %s",
+		len(failed), total, strings.Join(failed, ", "), firstErr)
 }
 
 // openIslandShell attaches the local terminal to the island's in-island shell at
