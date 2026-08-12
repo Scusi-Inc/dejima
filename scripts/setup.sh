@@ -39,6 +39,55 @@ prompt_yn() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# sudo pre-authorization
+# ---------------------------------------------------------------------------
+# Homebrew cask installs ask for a password PARTWAY THROUGH, not up front: the
+# Docker cask links its CLI into /usr/local, which on Apple Silicon is outside
+# the /opt/homebrew prefix and root-owned. That prompt lands on a terminal
+# Homebrew is already capturing for its own `==>` output, and the observed
+# result on a fresh Mac mini is the password echoed in the clear followed by an
+# apparent hang. sudo's timestamp is per-tty and brew inherits ours, so priming
+# it here means brew's own sudo calls find a warm ticket and never prompt.
+SUDO_KEEPALIVE_PID=""
+
+prime_sudo() {
+    local reason="$1"
+    if [[ "$(id -u)" == "0" ]]; then return 0; fi
+    if ! command -v sudo >/dev/null 2>&1; then return 0; fi
+    # No tty means no place to prompt. Let the child fail on its own terms
+    # rather than blocking a scripted run on a password nobody can type.
+    if [[ ! -t 0 ]]; then return 0; fi
+
+    if ! sudo -n -v 2>/dev/null; then
+        info ""
+        info "$reason needs your password partway through (Homebrew links binaries"
+        info "into root-owned /usr/local). Asking now, once, so the installer doesn't"
+        info "stop to ask in the middle of its own output:"
+        if ! sudo -v; then
+            warn "couldn't pre-authorize sudo — the installer may prompt mid-run"
+            return 0
+        fi
+    fi
+
+    # A cask download can outlast sudo's 5-minute timestamp, so hold it open.
+    # The loop exits on its own if this script dies without calling the stop.
+    ( while kill -0 "$$" 2>/dev/null; do
+          sudo -n -v 2>/dev/null || true
+          sleep 60
+      done ) &
+    SUDO_KEEPALIVE_PID=$!
+}
+
+stop_sudo_keepalive() {
+    if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
+        kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+        SUDO_KEEPALIVE_PID=""
+    fi
+}
+trap stop_sudo_keepalive EXIT
+
 OS=$(uname -s)
 case "$OS" in
     Darwin) ;;
@@ -276,12 +325,15 @@ else
                 info ""
                 if prompt_yn "Install Docker Desktop now via Homebrew?" "y"; then
                     info "Running: brew install --cask docker-desktop"
+                    prime_sudo "Installing Docker Desktop"
                     brew install --cask docker-desktop || {
+                        stop_sudo_keepalive
                         fail "brew install --cask docker-desktop failed (Gatekeeper or a previous install may be involved)"
                         info "If install dropped to /Applications/Docker.app, just open it once to finish setup."
                         info "Otherwise: download from https://www.docker.com/products/docker-desktop/ and re-run setup."
                         exit 1
                     }
+                    stop_sudo_keepalive
                     info "Now open /Applications/Docker.app once to grant macOS permissions."
                     info "Setup will wait up to 90s for the Docker daemon to come up."
                     for _ in $(seq 1 90); do

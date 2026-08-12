@@ -69,3 +69,54 @@ func TestCaskInstallsPrimeSudo(t *testing.T) {
 		t.Fatal("no cask installs found — this guard is scanning the wrong place")
 	}
 }
+
+// The curl installer (install.sh → `make setup` → scripts/setup.sh) never
+// touches the Go wizard, so the shell path needs the same priming or the
+// one-line install still reproduces the bug. Only actual invocations count —
+// a cask name quoted inside an info/hint string isn't running anything.
+func TestShellCaskInstallsPrimeSudo(t *testing.T) {
+	root := repoRoot(t)
+	scripts, err := filepath.Glob(filepath.Join(root, "scripts", "*.sh"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	scripts = append(scripts, filepath.Join(root, "install.sh"))
+	invokeRe := regexp.MustCompile(`^\s*brew install .*--cask`)
+	heredocRe := regexp.MustCompile(`<<-?\s*([A-Za-z_'"][A-Za-z0-9_'"]*)`)
+
+	for _, path := range scripts {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue // install.sh is the only non-glob entry; tolerate a rename
+		}
+		lines := strings.Split(string(body), "\n")
+		heredoc := "" // terminator while inside one; "" when not
+		for i, line := range lines {
+			// Text emitted into a heredoc is advice we print, not a command we
+			// run — gen-homebrew-formula.sh's caveats say "brew install --cask
+			// docker-desktop" without ever executing it.
+			if heredoc != "" {
+				if strings.TrimSpace(line) == heredoc {
+					heredoc = ""
+				}
+				continue
+			}
+			if m := heredocRe.FindStringSubmatch(line); m != nil {
+				heredoc = strings.Trim(m[1], `'"`)
+				continue
+			}
+			if !invokeRe.MatchString(line) {
+				continue
+			}
+			start := i - 5
+			if start < 0 {
+				start = 0
+			}
+			if !strings.Contains(strings.Join(lines[start:i], "\n"), "prime_sudo") {
+				t.Errorf("%s:%d installs a Homebrew cask without priming sudo first:\n\t%s\n"+
+					"call prime_sudo \"…\" just above it (and stop_sudo_keepalive after)",
+					filepath.Base(path), i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}
