@@ -59,13 +59,59 @@ base="https://github.com/${REPO}/releases/download/${ver}"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 info "downloading $asset"
+# An ~9 MB asset over a flaky link is where this installer is most likely to
+# fail, and it's the first thing a new user runs. A real report: five straight
+# `curl: (56) Connection died` on a Mac, while the asset itself was fine
+# (checksum verified, 3s from elsewhere). So don't take one failure as final.
+#
+#   --retry/--retry-all-errors  ride out transient drops (56 is a mid-transfer
+#                               death, not a bad URL — a 404 still fails fast
+#                               because -f makes it a hard error curl won't retry)
+#   -C -                        resume rather than restart from zero
+#   pass 2: -4                  a broken IPv6 path to the CDN is the most common
+#                               cause of a repeatedly-dying transfer
+#   pass 3: --http1.1           HTTP/2 stream resets are the next most common
+#
 # Show a progress bar (-#) instead of the silent -s: a multi-MB download over a
 # slow link is the longest single step, and a blank terminal reads as a hang.
 # Fall back to a quiet download if this isn't a terminal (piped/CI logs).
 if [[ -t 2 ]]; then
-  curl -fL --progress-bar "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
+  curl_out=(--progress-bar)
 else
-  curl -fsSL "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
+  curl_out=(-sS)
+fi
+
+# --retry-all-errors landed in curl 7.71 (2020). An unknown option makes curl
+# exit immediately, which would turn a hardening measure into a hard failure on
+# an older box — so probe for it once instead of assuming.
+retry_all=()
+if curl --help all 2>/dev/null | grep -q -- --retry-all-errors; then
+  retry_all=(--retry-all-errors)
+fi
+
+fetch_asset() {
+  # $@ = extra curl args for this attempt
+  curl -fL "${curl_out[@]}" --retry 3 --retry-delay 2 "${retry_all[@]}" \
+       --connect-timeout 20 -C - "$@" "$base/$asset" -o "$tmp/$asset"
+}
+
+if ! fetch_asset; then
+  info "download died mid-transfer — retrying over IPv4 only…"
+  # A partial file from the failed attempt confuses `-C -` if the next attempt
+  # negotiates differently; start each fallback clean.
+  rm -f "$tmp/$asset"
+  if ! fetch_asset -4; then
+    info "still failing — retrying with HTTP/1.1…"
+    rm -f "$tmp/$asset"
+    if ! fetch_asset -4 --http1.1; then
+      fail "download failed after 3 attempts (plain, IPv4, HTTP/1.1): $base/$asset
+  The release asset is almost certainly fine — this is the network path to
+  GitHub's CDN. Check whether you're on a VPN or exit node, then either re-run
+  this installer or grab it by hand:
+    curl -4 -fL -o /tmp/$asset $base/$asset
+    tar -xzf /tmp/$asset -C /tmp && sudo install -m 0755 /tmp/dejima /usr/local/bin/dejima"
+    fi
+  fi
 fi
 
 if curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" 2>/dev/null; then
