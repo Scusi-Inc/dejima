@@ -147,7 +147,7 @@ func (s *Server) restartToRunning(ctx context.Context, p *project.Project) bool 
 	case runtime.StatusRunning:
 		// already up
 	case runtime.StatusMissing:
-		if err := s.createContainerForProject(ctx, p, ""); err != nil {
+		if err := s.createContainerForProject(ctx, p, "", false); err != nil {
 			s.log.Error("unpanic: recreate container", "island", p.Name, "err", err)
 			return false
 		}
@@ -157,6 +157,6 @@ func (s *Server) restartToRunning(ctx context.Context, p *project.Project) bool 
 			return false
 		}
 	}
-	s.reconcileAgentsAsync(p)
+	s.reconcileAgentsAsync(p, false)
 	return true
 }

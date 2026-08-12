@@ -817,7 +817,7 @@ func (s *Server) AdoptExisting(ctx context.Context) {
 		}
 		// Restore non-primary agent sessions for islands meant to be running.
 		if p.DesiredState == project.StateRunning {
-			s.reconcileAgentsAsync(p)
+			s.reconcileAgentsAsync(p, false)
 		}
 	}
 }
@@ -1850,11 +1850,11 @@ func (s *Server) cloneIsland(w http.ResponseWriter, r *http.Request) {
 		fail(fmt.Errorf("copy home volume: %w", err))
 		return
 	}
-	if err := s.createContainerForProject(r.Context(), dst, ""); err != nil {
+	if err := s.createContainerForProject(r.Context(), dst, "", false); err != nil {
 		fail(err)
 		return
 	}
-	s.reconcileAgentsAsync(dst)
+	s.reconcileAgentsAsync(dst, false)
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: dst.Name})
 	s.emit(events.Event{Type: events.TypeIslandRunning, Island: dst.Name})
 	writeJSON(w, http.StatusCreated, s.toInfo(r.Context(), dst))
@@ -2104,16 +2104,22 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		return p, fmt.Errorf("create network: %w", err)
 	}
 
-	if err := s.createContainerForProject(ctx, p, seedPath); err != nil {
+	if err := s.createContainerForProject(ctx, p, seedPath, false); err != nil {
 		return p, err
 	}
-	s.reconcileAgentsAsync(p) // bring up any non-primary agents once the clone lands
+	s.reconcileAgentsAsync(p, false) // bring up any non-primary agents once the clone lands
 	return p, nil
 }
 
 // createContainerForProject creates the long-lived container for an existing
 // project. Used by provision() and reset().
-func (s *Server) createContainerForProject(ctx context.Context, p *project.Project, seedPath string) error {
+// resume, when true, launches the primary agent with its handler's ResumeLaunch
+// (claude-code → `claude --continue`) instead of a cold Launch. Only the graceful
+// operator-initiated paths pass true — recreating the container under a user who
+// had a conversation going, where a cold start silently loses their context. A
+// brand-new or reset island must NOT resume: there is nothing to continue, and
+// `claude --continue` in an empty state dir is at best a no-op.
+func (s *Server) createContainerForProject(ctx context.Context, p *project.Project, seedPath string, resume bool) error {
 	binds, err := credentialBindMounts(p)
 	if err != nil {
 		return err
@@ -2168,7 +2174,10 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 			env["DEJIMA_AGENT_CMD"] = pa.Cmd
 		}
 		if h, ok := handlers.Lookup(pa.Type); ok {
-			env["DEJIMA_LAUNCH"] = h.Launch // empty for headless → entrypoint runs DEJIMA_AGENT_CMD as PID 1
+			// LaunchFor falls back to the plain Launch when the handler has no resume
+			// affordance, and both are empty for headless → entrypoint runs
+			// DEJIMA_AGENT_CMD as PID 1.
+			env["DEJIMA_LAUNCH"] = h.LaunchFor(resume)
 			// LLM provider/model selection for frameworks that reach a model over
 			// an API key. The key bytes are NOT injected here — only the path to
 			// the read-only mounted file is (materialized by islandLLMConfigDir),
@@ -2252,11 +2261,11 @@ const agentsWorktreeRoot = "/workspace/.agents"
 // reconcileAgentsAsync ensures the island's non-primary agent sessions exist, in
 // the background. The container entrypoint launches the primary agent; the
 // daemon owns the rest. Safe to call after create, wake, and at adopt.
-func (s *Server) reconcileAgentsAsync(p *project.Project) {
+func (s *Server) reconcileAgentsAsync(p *project.Project, resume bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		if err := s.reconcileAgents(ctx, p); err != nil {
+		if err := s.reconcileAgents(ctx, p, resume); err != nil {
 			s.log.Warn("reconcile agents", "island", p.Name, "err", err)
 		}
 	}()
@@ -2265,7 +2274,10 @@ func (s *Server) reconcileAgentsAsync(p *project.Project) {
 // reconcileAgents brings tmux sessions and worktrees into line with p.Agents for
 // every non-primary agent. Idempotent. The primary (Agents[0]) is launched by
 // the entrypoint and skipped here.
-func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error {
+// resume is passed through to each session so the non-primary agents follow the
+// same cold/continue decision the primary got — otherwise an upgrade would
+// resume agent 0 and cold-start the rest, which is worse than being consistent.
+func (s *Server) reconcileAgents(ctx context.Context, p *project.Project, resume bool) error {
 	if len(p.Agents) <= 1 {
 		return nil
 	}
@@ -2274,7 +2286,7 @@ func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error 
 	}
 	for i := 1; i < len(p.Agents); i++ {
 		a := &p.Agents[i]
-		if err := s.ensureAgentSession(ctx, p, a, false); err != nil {
+		if err := s.ensureAgentSession(ctx, p, a, resume); err != nil {
 			s.setAgentError(p.Name, a.ID, err)
 			s.log.Warn("ensure agent session", "island", p.Name, "agent", a.ID, "err", err)
 		} else {
@@ -2690,7 +2702,7 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 	switch status {
 	case runtime.StatusMissing:
 		// Container was removed; recreate it against the existing volumes.
-		if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
+		if err := s.createContainerForProject(r.Context(), p, "", false); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -2710,7 +2722,7 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandWoken, Island: p.Name})
-	s.reconcileAgentsAsync(p) // the entrypoint relaunches the primary; restore the rest
+	s.reconcileAgentsAsync(p, false) // the entrypoint relaunches the primary; restore the rest
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
@@ -2751,7 +2763,7 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// reset preserves the workspace volume, so no re-clone happens; no seed.
-	if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
+	if err := s.createContainerForProject(r.Context(), p, "", false); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -2802,14 +2814,22 @@ func (s *Server) upgradeIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	// Both volumes persist; the new container mounts them as-is. No seed —
 	// the workspace already holds the clone.
-	if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
+	//
+	// resume=true: an upgrade is the textbook graceful, operator-initiated
+	// restart ResumeLaunch exists for. The operator is recreating the container
+	// under agents that were mid-conversation, and their state dirs (~/.claude et
+	// al) live on the persisted volume — so the transcript is right there and a
+	// cold start would strand it.
+	if err := s.createContainerForProject(r.Context(), p, "", true); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	// Honor the prior desired state, as reset does.
+	leftStopped := false
 	if !wasRunning && p.DesiredState == project.StateHibernated {
 		_ = s.rt.StopContainer(r.Context(), p.ContainerName())
+		leftStopped = true
 	}
 
 	p.LastUsedAt = time.Now().UTC()
@@ -2826,6 +2846,15 @@ func (s *Server) upgradeIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandUpgraded, Island: p.Name})
+	// The entrypoint relaunches only the PRIMARY agent; the rest are the daemon's
+	// job. wakeIsland has always done this and upgrade never did, so upgrading a
+	// multi-agent island silently brought back agent 0 alone and left the others
+	// with no tmux session at all. Skipped when the island was deliberately left
+	// hibernated above — there is no running container to create sessions in, and
+	// the next wake reconciles anyway.
+	if !leftStopped {
+		s.reconcileAgentsAsync(p, true)
+	}
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 

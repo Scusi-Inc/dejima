@@ -249,7 +249,7 @@ func (s *Server) wakeIslandFor(ctx context.Context, name string) {
 	}
 	switch status {
 	case runtime.StatusMissing:
-		if err := s.createContainerForProject(ctx, p, ""); err != nil {
+		if err := s.createContainerForProject(ctx, p, "", false); err != nil {
 			s.log.Warn("wake-on-message: recreate", "island", name, "err", err)
 			return
 		}

@@ -126,7 +126,7 @@ func (s *Server) startIslandIfStopped(ctx context.Context, p *project.Project, n
 	}
 	switch status {
 	case runtime.StatusMissing:
-		if err := s.createContainerForProject(ctx, p, ""); err != nil {
+		if err := s.createContainerForProject(ctx, p, "", false); err != nil {
 			s.log.Warn("scheduled-wake: recreate", "island", p.Name, "err", err)
 			return
 		}
@@ -138,7 +138,7 @@ func (s *Server) startIslandIfStopped(ctx context.Context, p *project.Project, n
 	}
 	p.DesiredState = project.StateRunning
 	p.LastUsedAt = now.UTC()
-	s.reconcileAgentsAsync(p) // the entrypoint relaunches the primary; restore the rest
+	s.reconcileAgentsAsync(p, false) // the entrypoint relaunches the primary; restore the rest
 }
 
 // deliverScheduledTask injects a schedule's task into the target agent once it's
