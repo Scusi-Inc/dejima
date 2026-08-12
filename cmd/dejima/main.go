@@ -2125,9 +2125,10 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 	// actually supports instead of advertising them to everything — see
 	// image/tmux.conf. Later resizes omit it; the terminal doesn't change mid-session.
 	if rows, cols, err := terminalSize(stdinFd); err == nil {
+		clientTerm, clientColorTerm := clientTerminal()
 		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{
 			Type: "resize", Rows: rows, Cols: cols,
-			Term: os.Getenv("TERM"), ColorTerm: os.Getenv("COLORTERM"),
+			Term: clientTerm, ColorTerm: clientColorTerm,
 		})
 	}
 	watchTerminalResize(connCtx, stdinFd, func(rows, cols uint16) {
