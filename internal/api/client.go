@@ -28,6 +28,7 @@ import (
 	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/secrets"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // Client is a thin HTTP client for the Dejima API.
@@ -58,6 +59,38 @@ func NewUnixClient() (*Client, error) {
 			},
 		},
 		// The host portion is ignored by the unix dialer but http.Client requires it.
+		base: "http://dejimad",
+	}, nil
+}
+
+// NewWSLClient returns a Client that talks to a dejimad running inside a WSL2
+// distro, tunnelling its Unix socket through `wsl.exe … socat`. This is the
+// "local host on Windows" path: Windows itself can't run dejimad, but WSL2 can,
+// and this reaches it without giving the daemon a TCP listener.
+//
+// No token: the transport inherits the Unix socket's trust (whoever can run
+// commands in the distro as that user could open the socket directly anyway),
+// exactly like NewUnixClient.
+func NewWSLClient(distro string) (*Client, error) {
+	if !wsl.Supported() {
+		return nil, wsl.ErrUnsupported
+	}
+	distro = wsl.Distro(wsl.Host(distro))
+	return &Client{
+		httpc: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return wsl.Dial(ctx, distro)
+				},
+				// Each pooled conn holds a live wsl.exe + socat pair, so don't let
+				// idle ones accumulate across a long TUI session.
+				MaxIdleConns:        4,
+				MaxIdleConnsPerHost: 4,
+				IdleConnTimeout:     60 * time.Second,
+			},
+		},
+		// Ignored by the dialer, but http.Client requires a host in the URL.
 		base: "http://dejimad",
 	}, nil
 }

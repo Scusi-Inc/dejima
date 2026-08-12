@@ -34,6 +34,7 @@ import (
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/service"
 	"github.com/aoos/dejima/internal/version"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // execLookPath is a small indirection so resolveDaemonBinary stays testable.
@@ -275,6 +276,7 @@ func newRootCmd() *cobra.Command {
 		newGithubCmd(),
 		newProviderCmd(),
 		newLocalCmd(),
+		newWSLCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),
 		newOverviewCmd(),
@@ -1165,6 +1167,12 @@ func clientForHost(host string) (*api.Client, error) {
 			fmt.Fprintln(os.Stderr, "warning: DEJIMA_TOKEN is ignored over the local socket — you act as the trusted owner. A token applies only to a remote/in-island target (set DEJIMA_HOST).")
 		}
 		return api.NewUnixClient()
+	}
+	// `wsl://<distro>` — a dejimad inside WSL2, reached by tunnelling its Unix
+	// socket through wsl.exe. Like the local socket it is filesystem-trusted and
+	// carries no bearer token, so this branch sits ahead of the token lookup.
+	if wsl.IsHost(host) {
+		return api.NewWSLClient(wsl.Distro(host))
 	}
 	// Guard the choke point: a host carrying a control character (e.g. a stray
 	// NUL that slipped through an input field) would otherwise be spliced into a

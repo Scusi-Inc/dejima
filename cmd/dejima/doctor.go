@@ -174,6 +174,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkSSHFacade(r)
 
 	// --- Connection & self-heal -----------------------------------------
+	checkWSLHost(ctx, r)
 	checkConnection(r)
 	checkInstallMeta(r)
 	checkStateOwnership(r)

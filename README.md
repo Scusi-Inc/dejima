@@ -118,7 +118,7 @@ Both pull the prebuilt binary from the latest [GitHub Release](https://github.co
 
 > Both are **live** as of `v0.7.1` (npm `dejima`, the `aoos/homebrew-dejima` tap) and are kept current automatically by the release workflow on every tag. `brew install --HEAD aoos/dejima/dejima` builds from source off `master`. Full checklist in [`docs/distribution.md`](docs/distribution.md).
 
-> v1 targets macOS (Mac mini priority) and Linux as **hosts** (the machines running `dejimad` + Docker). The `dejima` **client** CLI builds and runs on macOS, Linux, and **Windows** — see *Install (client only)* below.
+> v1 targets macOS (Mac mini priority) and Linux as **hosts** (the machines running `dejimad` + Docker). The `dejima` **client** CLI builds and runs on macOS, Linux, and **Windows** — see *Install (client only)* below. On Windows the daemon can run locally inside **WSL2** (`dejima wsl setup`) — see *Windows: running a host locally* below.
 >
 > **macOS**: the installer will offer to install [Docker Desktop](https://www.docker.com/products/docker-desktop/) via Homebrew if Docker isn't present. Docker Desktop is free for personal use and small businesses (<250 employees AND <$10M revenue). Faster alternatives if you prefer to install one yourself first: [OrbStack](https://orbstack.dev) (personal-license only) or [colima](https://github.com/abiosoft/colima) (CLI-only, OSS).
 >
@@ -181,6 +181,40 @@ The script:
 Close + reopen PowerShell to pick up the new PATH and env var, then run `dejima`.
 
 The Windows build has full feature parity with macOS/Linux — TUI, `connect`, all verbs. Terminal-resize is polling-based on Windows (vs. SIGWINCH on Unix) but reflows the same way.
+
+### Windows: running a host locally (WSL2)
+
+Windows can't run `dejimad` — the daemon needs a Unix host with Docker. But **WSL2 is
+one**, on the same machine, so you don't need a second box to run Dejima locally:
+
+```powershell
+wsl --install          # once, in an ADMIN PowerShell; reboot afterwards
+dejima wsl setup       # creates the distro, installs Docker + dejimad, connects
+```
+
+`dejima wsl setup` provisions a WSL2 distro (named `dejima` by default) with the Docker
+engine, `socat`, and `dejimad`, starts the daemon, and saves a `wsl://dejima` connection
+profile as your active target. It's idempotent — re-run it after a failed or partial
+setup, or after `wsl --shutdown`.
+
+The Windows client reaches that daemon by tunnelling its Unix socket through
+`wsl.exe … socat`. **The daemon gets no TCP listener and no token**: its `0600` socket
+stays the only operator surface, exactly as on a native Unix host. No Tailscale needed
+either — this path never leaves the machine.
+
+| Command | |
+|---|---|
+| `dejima wsl status` | distro health: WSL version, Docker, dejimad, socket |
+| `dejima wsl start` | bring dejimad back up (e.g. after `wsl --shutdown`) |
+| `dejima wsl stop` | stop the daemon; `--shutdown` also frees the VM's memory |
+| `dejima wsl setup --distro <name>` | use an existing distro instead of creating one |
+
+> Your repos live on the Windows filesystem, but islands clone from git, so that's fine.
+> Working directly off `/mnt/c` is slow — prefer a git remote.
+
+If you'd rather point at a server than run one here, that's still the other branch of
+`dejima` first-run: `dejima join <invite>`, or
+`dejima profile add <name> <host>:7273`.
 
 ### If you already know the host and want to skip the wizard
 

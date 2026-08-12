@@ -55,6 +55,12 @@ func TestNormalizeHost(t *testing.T) {
 		"  100.77.85.107  ":  "100.77.85.107:7273",
 		"minion:9999":        "minion:9999", // a non-default port is preserved
 		"":                   "",
+		// A WSL distro is a name, not an address. Appending :7273 to it would
+		// produce a target the wsl:// dialer can't resolve.
+		"wsl://dejima":  "wsl://dejima",
+		"wsl://Ubuntu":  "wsl://Ubuntu",
+		"  wsl://dev  ": "wsl://dev",
+		"wsl://":        "wsl://dejima", // shorthand fills in the default distro
 	}
 	for in, want := range cases {
 		if got := normalizeHost(in); got != want {

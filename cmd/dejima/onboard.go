@@ -26,6 +26,7 @@ import (
 	"github.com/aoos/dejima/internal/invite"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/vmmem"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // newOnboardCmd is the explicit re-entry into the wizard. Always runs,
@@ -154,7 +155,14 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 	fmt.Println()
 	fmt.Println(bold("First time — set up Dejima on this machine, or join one that already exists?"))
 	fmt.Println()
-	fmt.Println("    s) Set up Dejima on this machine (run a daemon here)")
+	if kind == firstRunWindowsClient {
+		// Be honest about the shape of "here" on Windows: the daemon can't run on
+		// Windows itself, so "set up here" means WSL2. Saying that up front beats
+		// letting the user pick "s" and then discovering the constraint.
+		fmt.Println("    s) Set up Dejima on this machine — in WSL2 (Windows can't run the daemon directly)")
+	} else {
+		fmt.Println("    s) Set up Dejima on this machine (run a daemon here)")
+	}
 	fmt.Println("    j) Join an existing server — paste an invite from your team")
 	fmt.Println("    n) Not now — ask me again next time")
 	fmt.Println("    N) Never ask again")
@@ -185,11 +193,64 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 	if kind == firstRunFreshHost {
 		return firstRunSetUpHost(ctx)
 	}
+	if kind == firstRunWindowsClient {
+		return firstRunSetUpWSL(ctx)
+	}
 	if err := runOnboarding(ctx); err != nil {
 		return false, err
 	}
 	markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up
 	return true, nil
+}
+
+// firstRunSetUpWSL is the "set up here" branch on Windows. dejimad needs a Unix
+// host with Docker, which Windows isn't — but WSL2 is one, on this same machine,
+// so "locally" is achievable after all. The client then reaches the daemon by
+// tunnelling its Unix socket through wsl.exe, leaving the daemon's trust model
+// untouched (no TCP listener, no token).
+//
+// Reached only after the router's "set up" choice, so it doesn't re-ask the
+// set-up-vs-join question — it explains the WSL2 requirement and offers to do it.
+func firstRunSetUpWSL(ctx context.Context) (bool, error) {
+	fmt.Println()
+	fmt.Println("  Dejima's daemon needs Linux + Docker, so on Windows it runs inside WSL2 —")
+	fmt.Println("  still local, still your hardware. Setup installs Docker and dejimad into a")
+	fmt.Printf("  WSL2 distro (%q) and connects this client to it.\n", wsl.DefaultDistro)
+	fmt.Println()
+	if !wsl.Available() {
+		// WSL itself is missing; `wsl --install` needs admin AND a reboot, so we
+		// can't just do it. Give the exact command rather than a wizard that
+		// would fail two steps in.
+		fmt.Println("  WSL isn't installed yet. In an " + bold("administrator") + " PowerShell:")
+		fmt.Println()
+		fmt.Println("      wsl --install")
+		fmt.Println()
+		fmt.Println("  Reboot, then run:  dejima wsl setup")
+		fmt.Println()
+		fmt.Println("  Prefer a server instead? `dejima join <invite>`, or")
+		fmt.Println("  `dejima profile add <name> <host>:7273`.")
+		fmt.Println()
+		fmt.Println("Opening the dashboard.")
+		return true, nil
+	}
+	fmt.Println("    y) Yes, set up the WSL2 host now (dejima wsl setup)")
+	fmt.Println("    n) Not now")
+	fmt.Println()
+	switch readSingleKey("Choice [y/n]: ") {
+	case "y", "Y", "yes", "":
+		if err := runWSLSetup(ctx, "", false); err != nil {
+			// A failed provision shouldn't strand the user at an error with no way
+			// forward — the dashboard still works against any other target.
+			fmt.Fprintf(os.Stderr, "\nWSL setup didn't finish: %v\n", err)
+			fmt.Println("Re-run `dejima wsl setup` after fixing that, or point at a server with `dejima join <invite>`.")
+			return true, nil
+		}
+		markSetupDoneIfHealthy(ctx)
+		return true, nil
+	default:
+		fmt.Println("OK — opening the dashboard. Run `dejima wsl setup` anytime.")
+		return true, nil
+	}
 }
 
 // firstRunSetUpHost is the "set up here" branch on a fresh Mac: offer full host
@@ -299,6 +360,7 @@ const (
 	firstRunConfigured                               // a daemon is already reachable
 	firstRunClientUnreachable                        // DEJIMA_HOST set but daemon down → troubleshoot
 	firstRunFreshHost                                // macOS, no daemon, looks like a host to provision
+	firstRunWindowsClient                            // Windows: can't host dejimad here; WSL2 or a server
 )
 
 // detectFirstRunContext does a cheap classification of this machine. It avoids
@@ -326,8 +388,15 @@ func detectFirstRunContext(ctx context.Context) firstRunContext {
 	if _, _, source := resolveTarget(); source != "local" {
 		return firstRunClientUnreachable
 	}
-	// No reachable daemon and no connection target at all. On macOS with no daemon
-	// installed, this is the fresh-Mac-mini-host case the provisioning wizard targets.
+	// No reachable daemon and no connection target at all. On Windows that's a
+	// distinct situation from every Unix one: this machine CAN'T host dejimad, so
+	// the "set up a daemon here" branch would be a dead end. The local answer is
+	// a daemon in WSL2 — see firstRunSetUpWSL.
+	if runtime.GOOS == "windows" {
+		return firstRunWindowsClient
+	}
+	// On macOS with no daemon installed, this is the fresh-Mac-mini-host case the
+	// provisioning wizard targets.
 	if runtime.GOOS == "darwin" {
 		if _, err := exec.LookPath("dejimad"); err != nil {
 			return firstRunFreshHost

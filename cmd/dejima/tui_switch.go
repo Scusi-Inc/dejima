@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/invite"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // normalizeHost trims the entered daemon address and appends the default port
@@ -19,6 +20,11 @@ func normalizeHost(host string) string {
 	host = strings.TrimSpace(host)
 	if host == "" {
 		return ""
+	}
+	// `wsl://<distro>` is a distro name, not an address — it has no port to
+	// default, and appending one would make it undialable.
+	if wsl.IsHost(host) {
+		return wsl.Host(wsl.Distro(host))
 	}
 	if _, _, err := net.SplitHostPort(host); err != nil {
 		return net.JoinHostPort(host, "7273")

@@ -146,6 +146,63 @@ func TestCompactStepsDropsEmpty(t *testing.T) {
 	}
 }
 
+// The Windows local-target diagnosis. Before this existed, a Windows user whose
+// client fell back to "local" got the generic advice — `dejimad --foreground`,
+// `dejima service install`, `dejima onboard` — none of which can work there:
+// the daemon needs a Unix host with Docker, so the socket it names can never
+// appear. The regression to guard is any of those commands coming back.
+func TestDiagnoseWindowsClient(t *testing.T) {
+	d := diagnosisWindowsClient()
+
+	if !strings.Contains(d.Cause, "Windows can't run the Dejima daemon") {
+		t.Errorf("cause should name the platform limit; got %q", d.Cause)
+	}
+	// The steps must route somewhere that actually works.
+	if !hasStepContaining(d.Steps, "dejima wsl setup") {
+		t.Errorf("should offer the WSL2 local host; got %v", d.Steps)
+	}
+	if !hasStepContaining(d.Steps, "dejima profile add") {
+		t.Errorf("should offer pointing at a server; got %v", d.Steps)
+	}
+	if !hasStepContaining(d.Steps, "dejima join") {
+		t.Errorf("should offer joining via invite; got %v", d.Steps)
+	}
+	// Impossible-on-Windows remedies must not appear.
+	for _, dead := range []string{"dejimad --foreground", "dejima service install", "systemctl", "launchd"} {
+		if hasStepContaining(d.Steps, dead) {
+			t.Errorf("step offers %q, which can't work on Windows; got %v", dead, d.Steps)
+		}
+	}
+	// The default closing tells the user to run the fix "on the host shell" —
+	// there is no host shell here, the commands run right where they are.
+	if d.Closing == "" || strings.Contains(d.Closing, "host shell") {
+		t.Errorf("closing should be Windows-appropriate, got %q", d.Closing)
+	}
+	if d.Remote {
+		t.Error("this is the local-target diagnosis, not the remote one")
+	}
+}
+
+// renderDaemonHelp must honour a diagnosis's own closing line, falling back to
+// the local/remote defaults when it has none.
+func TestRenderDaemonHelpClosing(t *testing.T) {
+	custom := renderDaemonHelp(daemonDiagnosis{Cause: "c", Closing: "run it in PowerShell"})
+	if !strings.Contains(custom, "run it in PowerShell") {
+		t.Errorf("custom closing not rendered:\n%s", custom)
+	}
+	if strings.Contains(custom, "host shell") {
+		t.Errorf("custom closing should replace the default, not add to it:\n%s", custom)
+	}
+	local := renderDaemonHelp(daemonDiagnosis{Cause: "c"})
+	if !strings.Contains(local, "host shell") {
+		t.Errorf("default local closing missing:\n%s", local)
+	}
+	remote := renderDaemonHelp(daemonDiagnosis{Cause: "c", Remote: true})
+	if !strings.Contains(remote, "keeps retrying") {
+		t.Errorf("default remote closing missing:\n%s", remote)
+	}
+}
+
 func hasStepContaining(steps []string, sub string) bool {
 	for _, s := range steps {
 		if strings.Contains(s, sub) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -14,7 +15,69 @@ import (
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/service"
 	"github.com/aoos/dejima/internal/version"
+	"github.com/aoos/dejima/internal/wsl"
 )
+
+// checkWSLHost reports the health of the WSL2 host on Windows — the only way to
+// run a daemon locally there. It's a no-op everywhere else, and stays quiet on a
+// Windows box that has deliberately chosen a remote server (no WSL profile, no
+// WSL installed): the point is to diagnose a WSL host someone is trying to use,
+// not to nag every Windows client toward one.
+func checkWSLHost(ctx context.Context, r *doctorReport) {
+	if !wsl.Supported() {
+		return
+	}
+	host, _, _ := resolveTarget()
+	targeted := wsl.IsHost(host)
+	if !targeted {
+		if !wsl.Available() {
+			return // no WSL, not targeting it — nothing to say
+		}
+		// WSL exists but isn't the target. One INFO line, since a Windows user
+		// staring at an unreachable "local" needs to know this door exists.
+		if host == "" {
+			r.add("Connection", "wsl", "INFO",
+				"Windows can't run dejimad; WSL2 is available on this machine",
+				"run a local host there: dejima wsl setup")
+		}
+		return
+	}
+	if !wsl.Available() {
+		r.add("Connection", "wsl", "FAIL",
+			"the active target is "+host+" but wsl.exe isn't available",
+			"install WSL (admin PowerShell): wsl --install")
+		return
+	}
+	rep, err := wsl.Probe(ctx, wsl.Distro(host))
+	if err != nil {
+		r.add("Connection", "wsl", "WARN", "couldn't inspect the distro: "+err.Error(), "dejima wsl status")
+		return
+	}
+	switch {
+	case !rep.Exists:
+		r.add("Connection", "wsl", "FAIL",
+			fmt.Sprintf("distro %q doesn't exist", rep.Distro), "dejima wsl setup")
+	case rep.Version == 1:
+		r.add("Connection", "wsl", "FAIL",
+			fmt.Sprintf("distro %q is WSL 1 — no kernel, so Docker can't run", rep.Distro),
+			fmt.Sprintf("wsl --set-version %s 2", rep.Distro))
+	case !rep.HasSocat:
+		r.add("Connection", "wsl", "FAIL",
+			"socat isn't installed in the distro — the client tunnels the daemon socket through it",
+			"dejima wsl setup")
+	case !rep.HasDejima:
+		r.add("Connection", "wsl", "FAIL", "dejimad isn't installed in the distro", "dejima wsl setup")
+	case !rep.HasDocker:
+		r.add("Connection", "wsl", "FAIL",
+			"the Docker engine isn't responding in the distro — islands can't start",
+			fmt.Sprintf("wsl -d %s -- sudo service docker start", rep.Distro))
+	case !rep.SocketUp:
+		r.add("Connection", "wsl", "FAIL", "dejimad isn't running in the distro", "dejima wsl start")
+	default:
+		r.add("Connection", "wsl", "OK",
+			fmt.Sprintf("distro %q: WSL2, Docker up, dejimad running", rep.Distro), "")
+	}
+}
 
 // checkConnection reports where the client connects and why, and offers to fix a
 // saved profile whose host lost its port (the bug that silently dials :80).
@@ -39,7 +102,10 @@ func checkConnection(r *doctorReport) {
 	// A saved profile with a port-less host would dial :80 — fixable in place.
 	cfg, _ := clientcfg.Load()
 	for _, p := range cfg.Profiles {
-		if p.Host == "" || normalizeHost(p.Host) == p.Host {
+		// `wsl://<distro>` has no port by design; normalizeHost leaves it alone,
+		// so it can never trip this check — the guard is belt-and-braces against a
+		// hand-edited client.json.
+		if p.Host == "" || wsl.IsHost(p.Host) || normalizeHost(p.Host) == p.Host {
 			continue
 		}
 		name := p.Name

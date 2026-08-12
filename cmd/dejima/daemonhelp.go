@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/service"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // daemonDiagnosis is an actionable read of *why* the local dejimad can't be
@@ -21,6 +22,10 @@ type daemonDiagnosis struct {
 	Cause  string   // one-line "what's actually wrong"
 	Steps  []string // ordered remediation, most-likely fix first
 	Remote bool     // target is a remote host (changes the render's closing line)
+	// Closing overrides the render's trailing hint. The default assumes the fix
+	// is run "on the host shell", which is wrong on Windows — there is no host
+	// shell there, the commands run right where the client is.
+	Closing string
 }
 
 // diagnoseRemoteDaemon builds calm, numbered recovery guidance for when the
@@ -68,6 +73,15 @@ func pingTarget(host string) string {
 // steps. It is read-only but does shell out (service.Detect), so callers should
 // compute it once when the error occurs — never on every render frame.
 func diagnoseLocalDaemon() daemonDiagnosis {
+	// Windows can't host dejimad at all — the generic advice below ("run
+	// dejimad --foreground", "dejima service install") names binaries and
+	// service managers that don't exist there, sending the user to fix
+	// something unfixable. Answer the real question instead: where should the
+	// daemon live?
+	if runtime.GOOS == "windows" {
+		return diagnosisWindowsClient()
+	}
+
 	sockPath := "~/.dejima/dejimad.sock"
 	sockMissing, permDenied := false, false
 	if p, err := paths.SocketPath(); err == nil {
@@ -100,6 +114,39 @@ func diagnoseLocalDaemon() daemonDiagnosis {
 		// Socket present (or unknowable) but the dial still failed: connection
 		// refused / timeout / a stale socket → dejimad stopped or crashed.
 		return diagnosisStopped(sup)
+	}
+}
+
+// diagnosisWindowsClient is the local-target diagnosis on Windows, where
+// "local" can never work: dejimad needs a Unix host with Docker (scripts/setup.sh
+// refuses anything but Darwin/Linux, and internal/service only implements
+// launchd + systemd), so the socket this client is looking for will never appear.
+//
+// The steps are ordered by what most users actually want. WSL2 comes first
+// because it is a genuinely local answer — a real Linux kernel with a real
+// Docker on this same machine — and `dejima wsl setup` provisions it end to
+// end. Pointing at an existing server is second; both beat "install a daemon
+// here," which is impossible.
+func diagnosisWindowsClient() daemonDiagnosis {
+	cause := "Windows can't run the Dejima daemon — dejimad needs a Unix host with Docker, so there's no local socket to connect to. " +
+		"You want either a daemon in WSL2 (local, on this machine) or a server to point at."
+	steps := []string{
+		"set up a local host in WSL2:  dejima wsl setup   (installs Docker + dejimad in a WSL2 distro and connects to it)",
+	}
+	if wsl.Available() {
+		// WSL is already installed, so the setup step is a much shorter trip —
+		// say so, since "set up WSL2" otherwise reads as a big-ticket detour.
+		steps[0] = "set up a local host in WSL2 (WSL is already installed here):  dejima wsl setup"
+	}
+	steps = append(steps,
+		"or point at an existing server:  dejima profile add <name> <host>:7273   (then `dejima profile switch <name>`)",
+		"or, in the TUI:  press [s] → Connection target",
+		"joining someone else's server? paste their invite:  dejima join <invite>",
+	)
+	return daemonDiagnosis{
+		Cause:   cause,
+		Steps:   compactSteps(steps),
+		Closing: "press q to quit, then run one of the above in PowerShell",
 	}
 }
 
@@ -257,9 +304,12 @@ func renderDaemonHelp(d daemonDiagnosis) string {
 			b.WriteString("  • " + s + "\n")
 		}
 	}
-	if d.Remote {
+	switch {
+	case d.Closing != "":
+		b.WriteString("\n" + styleMuted.Render(d.Closing))
+	case d.Remote:
 		b.WriteString("\n" + styleMuted.Render("this keeps retrying on its own — press q to quit if you'd rather stop"))
-	} else {
+	default:
 		b.WriteString("\n" + styleMuted.Render("press q to quit, then run one of the above on the host shell"))
 	}
 	return b.String()
