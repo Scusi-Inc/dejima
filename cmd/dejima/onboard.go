@@ -498,7 +498,7 @@ func runNewHostGuide(ctx context.Context) error {
 
 	fmt.Println(bold("3. Get the mini on your network"))
 	fmt.Println("   Recommended — Tailscale (reachable anywhere, no port-forwarding):")
-	fmt.Println("     • Install: `brew install --cask tailscale` (or https://tailscale.com/download)")
+	fmt.Println("     • Install: `brew install --cask tailscale-app` (or https://tailscale.com/download)")
 	fmt.Println("     • HEADLESS mini (no browser to log in)? Use a pre-auth key — generate one at")
 	fmt.Println("       https://login.tailscale.com/admin/settings/keys, then on the mini:")
 	fmt.Println("         `sudo tailscale up --ssh --auth-key=tskey-auth-xxxxx`")
@@ -709,7 +709,7 @@ func printServerInstall(ctx context.Context, e *envProbe, alsoClient bool) error
 		switch e.OS {
 		case "darwin":
 			steps = append(steps,
-				"# Install Docker Desktop (free for personal + small business use):\nbrew install --cask docker\n# Launch /Applications/Docker.app once to grant macOS permissions.")
+				"# Install Docker Desktop (free for personal + small business use):\nbrew install --cask docker-desktop\n# Launch /Applications/Docker.app once to grant macOS permissions.")
 		case "linux":
 			steps = append(steps,
 				"# Install Docker engine via your distro:\n#   Debian/Ubuntu: sudo apt install docker.io\n#   Fedora:        sudo dnf install docker\n#   Arch:          sudo pacman -S docker\n# Then: sudo systemctl enable --now docker && sudo usermod -aG docker $USER")
@@ -717,7 +717,7 @@ func printServerInstall(ctx context.Context, e *envProbe, alsoClient bool) error
 	}
 	if !e.TailscalePresent {
 		steps = append(steps,
-			"# (Optional but recommended) Install Tailscale for multi-device access:\n#   macOS: brew install --cask tailscale\n#   Linux: see https://tailscale.com/download")
+			"# (Optional but recommended) Install Tailscale for multi-device access:\n#   macOS: brew install --cask tailscale-app\n#   Linux: see https://tailscale.com/download")
 	}
 
 	steps = append(steps,
@@ -774,7 +774,7 @@ func printClientInstall(ctx context.Context, e *envProbe) error {
 	if !e.TailscalePresent {
 		fmt.Println("⚠ Tailscale isn't detected here. The host accepts only tailnet peers, so")
 		fmt.Println("  install it and log into the same account first:")
-		fmt.Println("    macOS: brew install --cask tailscale")
+		fmt.Println("    macOS: brew install --cask tailscale-app")
 		fmt.Println("    Linux: https://tailscale.com/download")
 		fmt.Println()
 	}
@@ -984,13 +984,16 @@ func ensureTailscale(e *envProbe) bool {
 	switch e.OS {
 	case "darwin":
 		if e.BrewPresent {
-			if ans := readSingleKey("Install it now with `brew install --cask tailscale`? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
-				if err := execInteractive("brew", "install", "--cask", "tailscale"); err != nil {
+			if ans := readSingleKey("Install it now with `brew install --cask tailscale-app`? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
+				stopSudo := primeSudo("Installing Tailscale")
+				err := execInteractive("brew", "install", "--cask", "tailscale-app")
+				stopSudo()
+				if err != nil {
 					fmt.Printf("  ✗ install failed: %v\n", err)
 				}
 			}
 		} else {
-			fmt.Println("  Install it: brew install --cask tailscale  (or https://tailscale.com/download)")
+			fmt.Println("  Install it: brew install --cask tailscale-app  (or https://tailscale.com/download)")
 		}
 	case "linux":
 		fmt.Println("  Install it: curl -fsSL https://tailscale.com/install.sh | sh")
@@ -1192,7 +1195,7 @@ func printRemoteAccessNextSteps(fqdn, unixUser string) {
 	fmt.Println("(this part is on the other machine — it can't be done from here):")
 	fmt.Println()
 	fmt.Println("  1. Install Tailscale:")
-	fmt.Println("       macOS:   brew install --cask tailscale")
+	fmt.Println("       macOS:   brew install --cask tailscale-app")
 	fmt.Println("       Linux:   curl -fsSL https://tailscale.com/install.sh | sh")
 	fmt.Println("       Windows/iOS/Android: https://tailscale.com/download")
 	fmt.Println("  2. Log into the SAME account that owns this host:")

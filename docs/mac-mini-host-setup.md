@@ -54,11 +54,11 @@ boot before any login — the wizard does this by default).
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Tailscale (the private network your other devices use to reach this host):
-brew install --cask tailscale
+brew install --cask tailscale-app
 tailscale up --ssh --accept-dns=true     # opens a browser to log in
 
 # Docker (the container engine islands run in):
-brew install --cask docker
+brew install --cask docker-desktop
 open /Applications/Docker.app            # launch once to grant permissions + start the engine
 ```
 

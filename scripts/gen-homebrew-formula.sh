@@ -82,7 +82,7 @@ class Dejima < Formula
     <<~CAVEAT
       Dejima needs a Docker runtime to run the daemon + islands. On macOS:
 
-        brew install --cask docker        # Docker Desktop (recommended)
+        brew install --cask docker-desktop        # Docker Desktop (recommended)
         brew install --cask orbstack      # or OrbStack (personal-use license)
         brew install colima docker        # or colima (CLI-only, OSS)
 

@@ -382,7 +382,7 @@ func checkDocker(ctx context.Context, r *doctorReport) {
 func dockerInstallHint() string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "install one: `brew install --cask docker` — or colima: `brew install colima docker && colima start`"
+		return "install one: `brew install --cask docker-desktop` — or colima: `brew install colima docker && colima start`"
 	case "linux":
 		return "install Docker engine (Debian/Ubuntu: `sudo apt install docker.io`; Fedora: `sudo dnf install docker`; Arch: `sudo pacman -S docker`), then `sudo systemctl enable --now docker`"
 	default:

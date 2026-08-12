@@ -338,12 +338,15 @@ func provPhaseTooling(pc *provCtx) error {
 		fmt.Println()
 		fmt.Println("  Tailscale isn't installed (the private network other devices use to reach this host).")
 		if brewAvail && pc.confirm("  Install Tailscale now?", true) {
-			if err := execInteractive("brew", "install", "--cask", "tailscale"); err != nil {
+			stopSudo := primeSudo("Installing Tailscale")
+			err := execInteractive("brew", "install", "--cask", "tailscale-app")
+			stopSudo()
+			if err != nil {
 				fmt.Printf("  ✗ install failed: %v\n", err)
-				pc.addManual("Install Tailscale: brew install --cask tailscale (or https://tailscale.com/download)")
+				pc.addManual("Install Tailscale: brew install --cask tailscale-app (or https://tailscale.com/download)")
 			}
 		} else if !brewAvail {
-			pc.addManual("Install Tailscale: brew install --cask tailscale (after Homebrew is in place)")
+			pc.addManual("Install Tailscale: brew install --cask tailscale-app (after Homebrew is in place)")
 		}
 	} else {
 		fmt.Println("  ✓ Tailscale present")
@@ -388,9 +391,12 @@ func provPhaseTooling(pc *provCtx) error {
 		fmt.Println("  Docker isn't reachable (the container engine that runs islands).")
 		if _, err := exec.LookPath("docker"); err != nil && brewAvail {
 			if pc.confirm("  Install Docker Desktop now?", true) {
-				if err := execInteractive("brew", "install", "--cask", "docker"); err != nil {
+				stopSudo := primeSudo("Installing Docker Desktop")
+				err := execInteractive("brew", "install", "--cask", "docker-desktop")
+				stopSudo()
+				if err != nil {
 					fmt.Printf("  ✗ install failed: %v\n", err)
-					pc.addManual("Install Docker Desktop: brew install --cask docker")
+					pc.addManual("Install Docker Desktop: brew install --cask docker-desktop")
 				}
 			}
 		}

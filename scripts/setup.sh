@@ -275,9 +275,9 @@ else
                 info "                (brew install colima docker  →  colima start)"
                 info ""
                 if prompt_yn "Install Docker Desktop now via Homebrew?" "y"; then
-                    info "Running: brew install --cask docker"
-                    brew install --cask docker || {
-                        fail "brew install --cask docker failed (Gatekeeper or a previous install may be involved)"
+                    info "Running: brew install --cask docker-desktop"
+                    brew install --cask docker-desktop || {
+                        fail "brew install --cask docker-desktop failed (Gatekeeper or a previous install may be involved)"
                         info "If install dropped to /Applications/Docker.app, just open it once to finish setup."
                         info "Otherwise: download from https://www.docker.com/products/docker-desktop/ and re-run setup."
                         exit 1

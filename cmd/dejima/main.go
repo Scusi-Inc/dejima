@@ -162,7 +162,7 @@ func runConnectionTroubleshooter(ctx context.Context) {
 	// 1. Is Tailscale present and up here? The host accepts only tailnet peers.
 	if _, err := exec.LookPath("tailscale"); err != nil {
 		fmt.Fprintln(os.Stderr, "  ✗ Tailscale isn't installed here — the host accepts only tailnet peers.")
-		fmt.Fprintln(os.Stderr, "      macOS: brew install --cask tailscale   ·   Linux: https://tailscale.com/download")
+		fmt.Fprintln(os.Stderr, "      macOS: brew install --cask tailscale-app   ·   Linux: https://tailscale.com/download")
 		fmt.Fprintln(os.Stderr, "      then: tailscale up   (log into the SAME account that owns the host)")
 	} else if st := tailscaleStatus(); st.BackendState != "Running" {
 		fmt.Fprintf(os.Stderr, "  ✗ Tailscale isn't up here (state: %s) — run: tailscale up\n", st.BackendState)
