@@ -169,6 +169,7 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 	_ = clientcfg.Save(cfg)
 
 	m.client = c
+	m.gen++ // new connection: in-flight replies from the old target are now stale
 	m.activeHost = p.Host
 	m.activeLabel = p.Name
 	// An explicit pick in the switcher is profile- or local-sourced, never env —
@@ -226,6 +227,7 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 	if target.Host == m.activeHost {
 		if c, err := clientForHost(""); err == nil {
 			m.client = c
+			m.gen++ // fell back to the local socket; drop replies from the deleted host
 			m.activeHost = ""
 			m.activeLabel = "local"
 			m.activeSource = "local"
@@ -345,6 +347,7 @@ func (m tuiModel) switcherJoinSubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.client = c
+	m.gen++ // new connection: in-flight replies from the old target are now stale
 	m.activeHost = p.Host
 	m.activeLabel = name
 	m.activeSource = "profile"

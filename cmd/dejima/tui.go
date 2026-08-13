@@ -187,6 +187,14 @@ type tuiModel struct {
 
 	ticks int // tickMsg counter: drives footer-tip rotation + occasional voice re-check
 
+	// gen identifies the current connection. It is bumped every time activeHost
+	// changes, and every dashboard fetch stamps the value it was issued under, so
+	// a reply from a daemon we have since switched away from can be dropped
+	// instead of applied. Without it the previous server's islands reappear under
+	// the new server's name — and, worse, clear the diagnosis explaining why the
+	// new one is unreachable. See listMsg / overviewMsg / detailMsg.
+	gen int
+
 	help       bool            // help overlay visible (all key sections always shown)
 	helpMore   bool            // help: the collapsible reference (glyphs + CLI) is expanded
 	helpScroll int             // scroll offset (lines) for the help overlay
@@ -535,10 +543,26 @@ func (m tuiModel) toggleOwnerLens() tuiModel {
 // ---------------------------------------------------------------------------
 
 type tickMsg time.Time
-type listMsg []api.IslandInfo
+
+// The dashboard fetches carry the connection generation they were issued for.
+//
+// Without it, switching targets leaves a window in which an in-flight request to
+// the OLD daemon (up to its 8s timeout, and the poll fires every 2s) lands after
+// the switch and is applied as if fresh — repopulating the previous server's
+// islands under the new server's name, clearing lastError, and wiping the
+// daemon diagnosis. Nothing about a bare `listMsg` says which daemon produced
+// it, so the handler cannot tell. See tuiModel.gen.
+type listMsg struct {
+	gen     int
+	islands []api.IslandInfo
+}
 type terminalsMsg []hostterm.Terminal
-type overviewMsg *api.OverviewResponse
+type overviewMsg struct {
+	gen int
+	ov  *api.OverviewResponse
+}
 type detailMsg struct {
+	gen    int
 	info   *api.IslandInfo
 	events []events.Event
 }
@@ -609,9 +633,10 @@ func releaseTickCmd() tea.Cmd {
 }
 
 func (m tuiModel) fetchListCmd() tea.Cmd {
+	gen := m.gen
 	if m.demo {
 		tick := m.demoTick
-		return func() tea.Msg { return listMsg(demoIslands(tick)) }
+		return func() tea.Msg { return listMsg{gen: gen, islands: demoIslands(tick)} }
 	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -620,14 +645,15 @@ func (m tuiModel) fetchListCmd() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return listMsg(list)
+		return listMsg{gen: gen, islands: list}
 	}
 }
 
 func (m tuiModel) fetchOverviewCmd() tea.Cmd {
+	gen := m.gen
 	if m.demo {
 		tick := m.demoTick
-		return func() tea.Msg { return overviewMsg(demoOverview(tick)) }
+		return func() tea.Msg { return overviewMsg{gen: gen, ov: demoOverview(tick)} }
 	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -636,7 +662,7 @@ func (m tuiModel) fetchOverviewCmd() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return overviewMsg(o)
+		return overviewMsg{gen: gen, ov: o}
 	}
 }
 
@@ -681,11 +707,12 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 	if name == "" {
 		return nil // e.g. the trailing "+ new island" row has no island
 	}
+	gen := m.gen
 	if m.demo {
 		tick := m.demoTick
 		return func() tea.Msg {
 			if info, ok := demoIsland(name, tick); ok {
-				return detailMsg{info: info}
+				return detailMsg{gen: gen, info: info}
 			}
 			return nil
 		}
@@ -698,7 +725,7 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 			return errMsg{err}
 		}
 		evs, _ := m.client.IslandEvents(ctx, name)
-		return detailMsg{info: info, events: evs}
+		return detailMsg{gen: gen, info: info, events: evs}
 	}
 }
 
@@ -911,7 +938,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchTerminalsCmd()
 
 	case listMsg:
-		m.islands = sortIslands(msg)
+		// A reply from a daemon we have since switched away from. Applying it would
+		// repaint the previous server's islands under the new server's name and,
+		// because of the two lines below, clear the very diagnosis explaining why
+		// the new target is unreachable.
+		if msg.gen != m.gen {
+			return m, nil
+		}
+		m.islands = sortIslands(msg.islands)
 		m.lastError = ""
 		m.daemonHelp = nil // a successful load means the daemon is back
 		if n := m.rowCount(); m.selected >= n {
@@ -926,23 +960,27 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case overviewMsg:
-		m.overview = msg
+		if msg.gen != m.gen {
+			return m, nil // stale: issued against a target we've switched away from
+		}
+		ov := msg.ov
+		m.overview = ov
 		m.tipTick++ // rotate the header Tip line on the poll cadence
-		if msg != nil {
+		if ov != nil {
 			// The caller's own identity (multi-tenant "who am I") drives the
 			// ownership lens: callerOwner is what the your-islands view filters to,
 			// callerRole gates the own/all toggle to the host owner.
-			m.callerOwner, m.callerRole = msg.Owner, msg.Role
-			m.skew = versionSkew(msg.DaemonVersion, msg.APIVersion)
+			m.callerOwner, m.callerRole = ov.Owner, ov.Role
+			m.skew = versionSkew(ov.DaemonVersion, ov.APIVersion)
 			// Resolve the SSH endpoint once per distinct addr (endpointFromAddr
 			// may exec `tailscale`), not every render, so the detail panel can
 			// show a connect string cheaply.
-			if msg.SSHAddr != "" && msg.SSHAddr != m.sshResolvedFor {
-				if h, p, err := endpointFromAddr(msg.SSHAddr, m.client.DaemonHost()); err == nil {
-					m.sshHost, m.sshPort, m.sshResolvedFor = h, p, msg.SSHAddr
+			if ov.SSHAddr != "" && ov.SSHAddr != m.sshResolvedFor {
+				if h, p, err := endpointFromAddr(ov.SSHAddr, m.client.DaemonHost()); err == nil {
+					m.sshHost, m.sshPort, m.sshResolvedFor = h, p, ov.SSHAddr
 				}
 			}
-			m.daemonUpdate = daemonUpdateAvailable(m.latestRelease, msg)
+			m.daemonUpdate = daemonUpdateAvailable(m.latestRelease, ov)
 		}
 		return m, m.fetchTerminalsCmd() // nil (no-op) unless host terminals are on
 
@@ -1258,6 +1296,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case detailMsg:
+		if msg.gen != m.gen {
+			return m, nil // stale: belongs to a previous connection
+		}
 		if name := m.selectedName(); msg.info != nil && msg.info.Name == name {
 			m.detail = msg.info
 			m.events_ = msg.events

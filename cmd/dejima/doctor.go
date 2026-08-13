@@ -173,6 +173,12 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkClaudeCreds(ctx, r)
 	checkSSHFacade(r)
 
+	// --- Terminal --------------------------------------------------------
+	// Client-side and instant: no island, no attach, no tmux. It answers "will my
+	// session render in full colour, and why" — otherwise a three-hop question
+	// (client env → docker exec -e → the island's tmux gate) with no visible answer.
+	checkTerminal(r)
+
 	// --- Connection & self-heal -----------------------------------------
 	checkWSLHost(ctx, r)
 	checkConnection(r)
@@ -335,6 +341,10 @@ func checkDocker(ctx context.Context, r *doctorReport) {
 	// docker CLI itself is fine — which lets us tell "not installed" from "not
 	// started" from "can't reach the socket", and give the right fix for each
 	// instead of always "go install Docker".
+	if where, remote := daemonElsewhere(); remote {
+		r.add("System", "docker", "INFO", "runs on the daemon host ("+where+"), not here", "")
+		return
+	}
 	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Output()
 	if err == nil {
 		r.add("System", "docker", "OK", "server "+strings.TrimSpace(string(out)), "")
@@ -457,7 +467,34 @@ func checkVMMemory(ctx context.Context, r *doctorReport) {
 		fmt.Sprintf("Docker Desktop → Settings → Resources → Memory → %dGB → Apply & Restart", recGB))
 }
 
+// daemonElsewhere reports whether dejimad — and therefore Docker and the island
+// image — lives on a machine other than this one, naming it when so.
+//
+// Docker and the image are DAEMON-HOST facts. Probing them locally is only
+// meaningful when the daemon is local; a client pointed at a server was being
+// told "the docker CLI isn't installed — islands run on it" about a machine that
+// never runs islands, with a fix (`make image`) it has no source tree for. On
+// Windows that also made `dejima doctor` exit non-zero on a perfectly healthy
+// client, since there is no docker there by definition.
+//
+// A `wsl://` target counts as elsewhere too: the daemon and Docker are inside
+// the WSL2 distro, not on the Windows side where this client runs.
+func daemonElsewhere() (string, bool) {
+	host, label, source := resolveTarget()
+	if strings.TrimSpace(host) == "" {
+		return "", false
+	}
+	if source == "profile" && label != "" && label != host {
+		return fmt.Sprintf("%s (profile %q)", host, label), true
+	}
+	return host, true
+}
+
 func checkIslandImage(ctx context.Context, r *doctorReport) {
+	if where, remote := daemonElsewhere(); remote {
+		r.add("System", "island image", "INFO", "lives on the daemon host ("+where+"), not here", "")
+		return
+	}
 	out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "dejima/island:latest",
 		"--format", "{{.Id}}").Output()
 	if err != nil {
