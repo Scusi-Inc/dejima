@@ -196,6 +196,41 @@ func (m tuiModel) openGithubConnectWindow() error {
 	}
 }
 
+// openWSLSetupWindow launches `dejima wsl setup` in a separate window/tab — the
+// guided "make this Windows box a real Dejima host" flow, offered from the
+// connection switcher when picking `local` fails on Windows.
+//
+// Its own window for the same reasons `github connect` gets one: it is long
+// (an Ubuntu download plus an image build), it PROMPTS before creating the
+// distro and before installing Docker, and it must not be driven from inside a
+// Bubble Tea render loop that owns the terminal. Deliberately NOT `exec`-ed and
+// not run in-place: the TUI keeps running, so a user who changes their mind
+// still has their dashboard and their existing connection untouched.
+//
+// No DEJIMA_HOST is pinned. Every other spawned window inherits the TUI's active
+// target so it talks to the same daemon; this one is *creating* a target, and
+// setup writes and activates its own profile when it succeeds.
+func (m tuiModel) openWSLSetupWindow() error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "wsl-setup"
+	inner := fmt.Sprintf("DEJIMA_TAB_TITLE=%s %s wsl setup", shquote(title), shquote(exe))
+	switch {
+	case os.Getenv("TMUX") != "":
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "windows":
+		// verb "wsl setup" is two trusted words, like "term attach".
+		return openWindowsTerminal(exe, "wsl setup", "", "", title, nil, "")
+	default:
+		// macOS/Linux can host dejimad directly, so there is no WSL flow to open;
+		// the switcher only offers this on Windows. Named rather than silent in
+		// case a future caller forgets that gate.
+		return fmt.Errorf("`dejima wsl setup` applies to Windows only — on %s run `dejima onboard`", goruntime.GOOS)
+	}
+}
+
 // windowsRunCommand builds the `dejima <verb> …` command line for a spawned
 // Windows tab. The agent id's placement is verb-specific: `agent open` takes it
 // POSITIONALLY (`agent open <island> <id>`), while connect/logs take `--agent

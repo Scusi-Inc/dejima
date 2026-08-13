@@ -287,6 +287,23 @@ func reportSetupIncomplete() {
 
 // renderDaemonHelp formats the diagnosis for the TUI's island pane — shown in
 // place of the bare "(daemon unreachable?)" line when the local daemon is down.
+// offerWSLSetup reports whether the daemon-help panel should offer the one-key
+// WSL setup action, given the diagnosis and whether this platform has WSL.
+//
+// Split out from both callers (renderDaemonHelp and handleKey's `w`) so the
+// decision is testable off Windows. Every Windows path in this tree has to be
+// reasoned about from a Linux box — `docs/roadmap.md` records that voice already
+// shipped broken on Windows for exactly that reason — so the rule is: keep the
+// platform check at the edge and make the logic a pure function.
+//
+// Remote is excluded because a client pointed at someone else's server has no
+// business being nudged to build a local host; its diagnosis is about reaching
+// that server. The offer belongs only to the local target, which on Windows is
+// otherwise a dead end.
+func offerWSLSetup(d daemonDiagnosis, hasWSL bool) bool {
+	return hasWSL && !d.Remote
+}
+
 func renderDaemonHelp(d daemonDiagnosis) string {
 	var b strings.Builder
 	if d.Remote {
@@ -303,6 +320,15 @@ func renderDaemonHelp(d daemonDiagnosis) string {
 		for _, s := range d.Steps {
 			b.WriteString("  • " + s + "\n")
 		}
+	}
+	// On Windows the first step is `dejima wsl setup`, and there is no host shell
+	// to go run it in — the client IS on the machine that needs setting up. So
+	// offer it as a keystroke rather than something to retype in PowerShell. The
+	// key is handled in handleKey's `w`, which is otherwise "wake an island" and
+	// is free here because this panel only renders when there are none.
+	if offerWSLSetup(d, wsl.Supported()) {
+		b.WriteString("\n" + styleAccent.Render("[w]") +
+			styleMuted.Render(" set up WSL2 now — opens `dejima wsl setup` in a new window"))
 	}
 	switch {
 	case d.Closing != "":

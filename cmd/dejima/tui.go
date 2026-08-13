@@ -29,6 +29,7 @@ import (
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
@@ -1872,6 +1873,19 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.opCmd(name, "hibernate")
 		}
 	case "w":
+		// The daemon-help panel only renders when there are NO islands (see
+		// renderList), so there is nothing for "wake" to act on while it's up —
+		// which makes `w` free to mean the thing the panel is actually offering.
+		// Windows can't host dejimad, so the local target's only real fix is a
+		// host in WSL2; turn that from a command to retype into a keystroke.
+		if m.daemonHelp != nil && offerWSLSetup(*m.daemonHelp, wsl.Supported()) {
+			if err := m.openWSLSetupWindow(); err != nil {
+				m.lastError = err.Error()
+			} else {
+				m.lastNotice = "opened `dejima wsl setup` in a new window — the dashboard stays here"
+			}
+			return m, nil
+		}
 		if name := m.selectedName(); name != "" {
 			m.dirtyOps[name] = "waking"
 			return m, m.opCmd(name, "wake")
