@@ -35,6 +35,36 @@ func islandAtRisk(ctx context.Context, c *api.Client, isl api.IslandInfo) string
 	return strings.Join(risks, " and ")
 }
 
+// daemonDownNotice closes out an uninstall that ran without a reachable daemon.
+// The local teardown is done; what it could NOT do is island state, which lives
+// in Docker. Naming the exact commands matters more here than anywhere else in
+// the flow: the binary that knew how to enumerate islands has just been removed,
+// so "check your islands" would be advice the operator can no longer act on.
+func daemonDownNotice(purge bool) string {
+	var b strings.Builder
+	b.WriteString("\nDejima uninstalled locally — service, binaries")
+	if purge {
+		b.WriteString(", and ~/.dejima")
+	}
+	b.WriteString(" removed.\n\n")
+	b.WriteString("The daemon was unreachable, so no island was touched. If any still exist\n")
+	b.WriteString("they're intact — nothing of yours was deleted. To see what's left:\n\n")
+	b.WriteString("  docker ps -a --filter name=dejima\n")
+	b.WriteString("  docker volume ls | grep dejima\n\n")
+	if purge {
+		// Under --purge-all the operator asked for everything to go, and we
+		// deleted the config that tracked these volumes — so surviving volumes
+		// are now orphaned. Say that plainly instead of leaving them to find out.
+		b.WriteString("Because ~/.dejima is gone, any surviving volumes are no longer tracked:\n")
+		b.WriteString("a reinstall won't re-adopt them. Remove them by hand when you're sure\n")
+		b.WriteString("nothing in them is unpushed (`docker volume rm <name>`), or leave them\n")
+		b.WriteString("and reclaim the work from the volume directly.\n")
+	} else {
+		b.WriteString("Your config in ~/.dejima was kept, so a reinstall re-adopts them.\n")
+	}
+	return b.String()
+}
+
 // uninstallMode is the destructive scope chosen by the operator. There is no
 // default: bare `dejima uninstall` must refuse and force an explicit choice so
 // nobody nukes their islands by reflex.
@@ -116,9 +146,21 @@ func newUninstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A daemon we can't reach used to abort the whole uninstall — which
+			// meant a BROKEN install was the one thing you couldn't uninstall, at
+			// exactly the moment you most want to start clean. Degrade instead.
+			//
+			// This is safe specifically because island volumes are only ever
+			// deleted through the daemon: with it down we touch no island at all,
+			// so the unpushed-work guard has nothing left to protect. What we do
+			// tear down — the service, the binaries, ~/.dejima — is all local and
+			// needs no daemon. Anything we couldn't reach is named at the end
+			// rather than silently skipped.
 			islands, err := c.ListIslands(ctx)
+			daemonDown := ""
 			if err != nil {
-				return fmt.Errorf("list islands: %w (is the daemon running?)", err)
+				daemonDown = err.Error()
+				islands = nil
 			}
 
 			// Pre-flight the unpushed-work guard across ALL islands first, so we
@@ -126,7 +168,7 @@ func newUninstallCmd() *cobra.Command {
 			// keep-islands preserves volumes, so unpushed work isn't lost — but
 			// removing a live container still interrupts in-flight work, so we
 			// guard both modes uniformly.
-			if !force {
+			if !force && daemonDown == "" {
 				// This queries each island (a network round-trip apiece) before any
 				// output — announce it so the terminal isn't blank while it runs.
 				if len(islands) > 0 {
@@ -150,10 +192,19 @@ func newUninstallCmd() *cobra.Command {
 
 			purge := mode == uninstallModePurgeAll
 
+			if daemonDown != "" {
+				fmt.Printf("The daemon isn't reachable (%s).\n", daemonDown)
+				fmt.Println("Uninstalling anyway — but islands can only be removed through the daemon,")
+				fmt.Println("so any that exist are left ALONE, containers and volumes intact.")
+				fmt.Println()
+			}
 			fmt.Println("This will permanently:")
-			if purge {
+			switch {
+			case daemonDown != "":
+				fmt.Println("  • leave every island untouched (can't reach the daemon to enumerate them)")
+			case purge:
 				fmt.Printf("  • purge %s (deleting their volumes)\n", countNoun(len(islands), "island"))
-			} else {
+			default:
 				fmt.Printf("  • stop %s (KEEPING their volumes + config — a reinstall re-adopts them)\n", countNoun(len(islands), "island"))
 			}
 			fmt.Println("  • uninstall the dejimad service")
@@ -183,6 +234,8 @@ func newUninstallCmd() *cobra.Command {
 			//    --purge-all destroys volumes + config; --keep-islands only stops
 			//    the live container (hibernate), leaving the volume + config on
 			//    disk so a reinstall re-adopts the island by name.
+			//    With the daemon down `islands` is empty, so this loop is a no-op —
+			//    the leftovers get named in the closing notice instead.
 			for _, isl := range islands {
 				if purge {
 					// Print the action BEFORE the (slow, container-stopping) call so
@@ -249,9 +302,12 @@ func newUninstallCmd() *cobra.Command {
 				}
 			}
 
-			if purge {
+			switch {
+			case daemonDown != "":
+				fmt.Print(daemonDownNotice(purge))
+			case purge:
 				fmt.Println("\nDejima uninstalled. All islands and data removed.")
-			} else {
+			default:
 				fmt.Println("\nDejima uninstalled. Your islands' volumes + config remain; a reinstall re-adopts them.")
 			}
 			return nil
