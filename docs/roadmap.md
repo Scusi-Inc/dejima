@@ -350,6 +350,33 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   entrypoint/logs), so it wants live verification. Migration is lazy-on-recreate (interactive
   islands convert for free; headless-first need a recreate to avoid double-launch). Full
   design + migration plan: [`island-pid1-unification.md`](island-pid1-unification.md).
+
+  **Status 2026-08-13: code is written and parked, waiting on a host window, not on
+  a decision.** PR #143 implements it (5 files, +106/−108) and is green on
+  build/test/vet/lint/openapi-parity — but it is DRAFT/do-not-merge because CI only
+  compiles Go and never spins a container, so every lifecycle claim in it is reasoned
+  rather than observed. Six acceptance steps are listed on the PR and none are done;
+  they need real island create/destroy on a real host and cannot be run from inside
+  an island. Three things to settle when it's picked up, in this order:
+  1. **Rebase and reconcile with a0bd706.** Both edit the same regions of
+     `internal/api/server.go`. The PR deletes `DEJIMA_LAUNCH`, which is exactly what
+     a0bd706's resume threads through — so `createContainerForProject`'s
+     `LaunchFor(resume)` becomes dead code and `reconcileAgents(…, resume)` becomes
+     the whole mechanism. That is a better end state, not a conflict to paper over.
+  2. **Repoint `dejima logs <island>`** (no agent id) — the PR flags, and does not
+     fix, that a headless-first island's output moves to `headlessLogPath(id)`. It is
+     a knowing regression until done.
+  3. **Rebuild the image + fleet upgrade**, since `image/start.sh` changes.
+
+  Doing this also closes **#333** (wake can't resume an agent's conversation) for free
+  and in the right way: #333 is blocked because `DEJIMA_LAUNCH` is frozen into
+  container env at creation and wake reuses the container, and Path B removes that env
+  entirely — resume becomes a launch-time parameter, so the problem stops existing
+  rather than being worked around. Note the priority shifted on 2026-08-12: a0bd706
+  made `dejima upgrade` relaunch *and* resume every agent, so the only remaining gap
+  is wake, which fires far less often than upgrade. This went from "fixes what's
+  biting us" to "deletes a special case and closes a corner" — still worth doing,
+  no longer urgent.
 - **Multi-host / distributed (discuss later)** — running agents across *multiple* hosts
   (several Mac minis / servers / cloud). Today Dejima manages one host, so a fleet-of-hosts
   is a wrapper-app concern. Open question worth a deliberate decision: should the substrate
