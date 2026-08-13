@@ -72,8 +72,8 @@
     <p>Every agent's status at a glance in one dashboard. Jump between projects and agents with a keystroke, so switching context costs you nothing.</p>
   </div>
   <div class="proof-tile">
-    <h3>It pings you when an agent needs you</h3>
-    <p>Get a notification the moment an agent finishes or is waiting on your input, so you're not watching a terminal to catch the handoff.</p>
+    <h3>Files go in without <code>scp</code></h3>
+    <p>Drag a file onto a session and it uploads into the island; the agent gets the path. <kbd>Ctrl-V</kbd> sends a screenshot straight from your clipboard.</p>
   </div>
   <div class="proof-tile">
     <h3>Many agents, no collisions</h3>
@@ -178,22 +178,41 @@
 <p class="small">Both get the same isolation, lifecycle, events, and one-API management — bring your own keys and mix vendors freely.</p>
 
 <h2 id="features">Everything you need to run a fleet safely</h2>
-<ul>
-  <li><strong>Isolated islands</strong> — one container per project; own <code>$HOME</code>, credentials, network. Islands can't see each other.</li>
-  <li><strong>Multiple agents per island</strong> — N agents share workspace + tool-auth, each on its own git worktree.</li>
-  <li><strong>Terminal &amp; headless agents</strong> — attach to CLIs (Claude Code, Codex) or run background loops/workers.</li>
-  <li><strong>Persistent sessions</strong> — survive disconnect, sleep, device switch; multiple devices share one screen.</li>
-  <li><strong>Lifecycle verbs</strong> — <code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>.</li>
-  <li><strong>Egress gate</strong> — island outbound traffic routes through a daemon-run proxy: see every destination each island reaches, allow/deny by host, no restart. Observe-first by default.</li>
-  <li><strong>Per-island secrets</strong> — managed storage for the tokens an island's tools need (EAS, npm, API keys), injected as environment variables. Out of your repo, one place to rotate and revoke, scoped to the island.</li>
-  <li><strong>Brokered host-file access (Port)</strong> — grant an island scoped, read-only host folders; deny-all by default.</li>
-  <li><strong>Brokered MCP servers</strong> — grant an island host-curated MCP servers through a fixed method allow-list; deny-all, every call ledgered.</li>
-  <li><strong>Tamper-evident ledger</strong> — every brokered file crossing is hash-chained; verify with <code>dejima audit --verify</code>.</li>
-  <li><strong>Home Islands</strong> — run a 24/7 assistant daemon contained, not naked on the host.</li>
-  <li><strong>HTTP/WebSocket API</strong> — one control surface for CLI, TUI, dashboards, bots.</li>
-  <li><strong>Webhook events</strong> — island/agent lifecycle + agent-state pushed to your tooling.</li>
-  <li><strong>Self-hosted</strong> — Mac mini / VPS / cloud VM; identical behavior, over Tailscale.</li>
-</ul>
+<div class="featgrid">
+  <div class="feat">
+    <h3>Session resume</h3>
+    <p>Close the laptop, the agent keeps working. Reattach from any device, same screen.</p>
+  </div>
+  <div class="feat">
+    <h3>Repo isolation</h3>
+    <p>One container per project, one git worktree per agent. No collisions in a shared repo.</p>
+  </div>
+  <div class="feat">
+    <h3>Agent monitoring</h3>
+    <p>State, CPU, and memory for the whole fleet on one screen.</p>
+  </div>
+  <div class="feat">
+    <h3>Images and files</h3>
+    <p>Drag a file in, or <kbd>Ctrl-V</kbd> a screenshot. The agent gets the path.</p>
+  </div>
+  <div class="feat">
+    <h3>Agent messaging</h3>
+    <p>Agents in an island hand off work to each other with <code>dejima msg</code>.</p>
+  </div>
+  <div class="feat">
+    <h3>Per-island secrets</h3>
+    <p>Tokens arrive as env vars, out of your repo. One place to rotate.</p>
+  </div>
+  <div class="feat">
+    <h3>Egress control</h3>
+    <p>See every host an island reaches. Allow or deny by name.</p>
+  </div>
+  <div class="feat">
+    <h3>Audit trail</h3>
+    <p>Every brokered crossing is hash-chained, and verifiable after the fact.</p>
+  </div>
+</div>
+<p class="small">Also in the box: <strong>brokered host-file access (Port)</strong>, read-only and deny-all by default · <strong>brokered MCP servers</strong> behind a fixed method allow-list · <strong>headless agents</strong> (OpenClaw, Letta, your own loop) alongside terminal ones · <strong>lifecycle verbs</strong> (<code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>) · <strong>Home Islands</strong> for a contained 24/7 assistant · an <strong>HTTP/WebSocket API</strong> and <strong>webhook events</strong> to build on.</p>
 
 <h2 id="quality-of-life">The small stuff, handled</h2>
 <p>The day-to-day frictions of driving agents in a terminal — moving files in, keeping context, jumping around — already solved, so you stay in flow.</p>

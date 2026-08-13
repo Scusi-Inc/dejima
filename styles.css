@@ -103,6 +103,17 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .qol { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.8rem 0 1.1rem; }
 .qol-more { color: var(--muted); font-size: 0.9rem; margin: 0 0 2.6rem; }
 
+/* Feature grid: 8 scannable boxes, 4 across, collapsing to 3 then 2. Titles
+   carry the scan; the sentence is there for the reader who stops. */
+.featgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem;
+  margin: 1.2rem 0 1rem; }
+.feat { border: 1px solid var(--border); border-radius: 8px; padding: 0.85rem 0.9rem;
+  background: transparent; min-width: 0; }
+.feat h3 { margin: 0 0 0.3rem; font-size: 0.92rem; color: var(--hover); line-height: 1.3; }
+.feat p { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+.feat code, .feat kbd { font-size: 0.8em; }
+.feat :not(pre) > code { background: transparent; border: 0; padding: 0; color: var(--accent); }
+
 /* Generic cards (used by teams/build) -------------------------------- */
 .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.4rem 0; }
 .card { border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem 1.2rem;
@@ -316,8 +327,12 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .post-more { border-top: 1px solid var(--border); margin-top: 3rem; padding-top: 1.4rem; }
 .post-more a { font-weight: 600; }
 
+@media (max-width: 860px) {
+  .featgrid { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 720px) {
   .proof, .cards, .hc-cols, .qol { grid-template-columns: 1fr; }
+  .featgrid { grid-template-columns: repeat(2, 1fr); }
   main { padding: 2.5rem 1.25rem 5rem; }
   .hero-h { font-size: 1.7rem; }
   .post-h { font-size: 1.6rem; }
