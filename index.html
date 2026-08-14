@@ -68,16 +68,16 @@
     <p>Run <code>dejima</code>, hit enter on a project, and you're in the agent. Close the laptop and it keeps working; reattach from any device and the screen is where you left it. Switching projects is another keystroke, not another SSH login.</p>
   </div>
   <div class="proof-tile">
-    <h3>Your whole fleet on one screen</h3>
-    <p>Every agent's status at a glance in one dashboard. Jump between projects and agents with a keystroke, so switching context costs you nothing.</p>
+    <h3>Fleet monitoring</h3>
+    <p>Status, CPU, and memory for every agent in one dashboard. Jump between projects and agents with a keystroke, so switching context costs you nothing.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>A better remote terminal</h3>
+    <p>A remote shell normally costs you the clipboard and drag-drop. Here <kbd>Ctrl-V</kbd> pastes a screenshot straight to the agent, dragging a file onto the window uploads it, and <code>dejima cp</code> moves work back out. No <code>scp</code>.</p>
   </div>
   <div class="proof-tile">
     <h3>Secure sandboxing</h3>
     <p>Rogue agents can't break out. Each project is sealed in its own walled-off island, with no reach to your host machine, your files, or your other projects. It runs on hardware you own, so your code and credentials never leave your perimeter.</p>
-  </div>
-  <div class="proof-tile">
-    <h3>Audit trail</h3>
-    <p>Every brokered crossing is hash-chained: which agent, which file, when. Verify the whole chain with <code>dejima audit --verify</code>. If an agent touched something, there's a record you can hand to someone else.</p>
   </div>
 </section>
 <p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
