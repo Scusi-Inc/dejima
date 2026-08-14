@@ -69,7 +69,7 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .topnav a + a::before { content: "·"; color: var(--border); margin-right: 1.1rem; }
 .nav-status { margin-left: auto; font-size: 0.8rem; color: var(--muted); }
 
-/* Hero + proof + safety --------------------------------------------- */
+/* Hero + the four-tile hook band ------------------------------------- */
 .hero { margin: 1.6rem 0 1.4rem; }
 .hero-eyebrow { color: var(--muted); font-size: 1rem; font-weight: 500; margin: 0 0 0.5rem; }
 .hero-h { font-size: 2.1rem; line-height: 1.15; letter-spacing: -0.02em;
@@ -93,13 +93,13 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .btn-ghost { color: var(--accent); text-decoration: none; border: 1px solid var(--accent);
   padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
 .btn-ghost:hover { background: var(--hover); border-color: var(--hover); color: var(--bg); }
-.proof { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem;
-  margin: 1.5rem 0 2.2rem; }
 .proof-tile { border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem;
   background: transparent; }
 .proof-tile h3 { margin: 0 0 0.4rem; font-size: 1.0rem; color: var(--hover); }
 .proof-tile p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
-/* QoL "why it's nicer" band: the emotional hook, high on the homepage. 2x2. */
+/* The hook band: four tiles, 2x2, high on the page. Why you'd want this at
+   all. What's in the box is the #features grid further down; keep these four
+   persuasive, not an inventory. */
 .qol { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.8rem 0 1.1rem; }
 .qol-more { color: var(--muted); font-size: 0.9rem; margin: 0 0 2.6rem; }
 
@@ -331,7 +331,7 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
   .featgrid { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 720px) {
-  .proof, .cards, .hc-cols, .qol { grid-template-columns: 1fr; }
+  .cards, .hc-cols, .qol { grid-template-columns: 1fr; }
   .featgrid { grid-template-columns: repeat(2, 1fr); }
   main { padding: 2.5rem 1.25rem 5rem; }
   .hero-h { font-size: 1.7rem; }

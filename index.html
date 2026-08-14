@@ -62,7 +62,7 @@
   </div>
 </section>
 
-<section class="qol" aria-label="Why Dejima is nicer to use">
+<section class="qol" aria-label="Why Dejima">
   <div class="proof-tile">
     <h3>Ditch the tmux + SSH grind</h3>
     <p>Your sessions live on the server, so you can close your laptop and the agents keep working, then reconnect from any device. It runs on tmux under the hood, so you keep the multi-window power without babysitting SSH.</p>
@@ -72,26 +72,15 @@
     <p>Every agent's status at a glance in one dashboard. Jump between projects and agents with a keystroke, so switching context costs you nothing.</p>
   </div>
   <div class="proof-tile">
-    <h3>Files go in without <code>scp</code></h3>
-    <p>Drag a file onto a session and it uploads into the island; the agent gets the path. <kbd>Ctrl-V</kbd> sends a screenshot straight from your clipboard.</p>
-  </div>
-  <div class="proof-tile">
     <h3>Many agents, no collisions</h3>
     <p>Each agent gets its own git worktree automatically, so Claude Code, Codex, and headless runs can share one repo without stepping on each other.</p>
   </div>
-</section>
-<p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
-
-<section class="proof" aria-label="Contained by design">
   <div class="proof-tile">
     <h3>Secure sandboxing</h3>
-    <p>Rogue agents can't break out. Each one is sealed in its own walled-off island, with no reach to your host machine, your files, or your other projects. Host access is deny-all, granted file by file.</p>
-  </div>
-  <div class="proof-tile">
-    <h3>Your code never leaves your box</h3>
-    <p>It all runs on hardware you own. The agents' model calls go out, but your source, your files, and your credentials stay inside your perimeter. There's no managed cloud in the loop and no vendor account holding your work.</p>
+    <p>Rogue agents can't break out. Each project is sealed in its own walled-off island, with no reach to your host machine, your files, or your other projects. It runs on hardware you own, so your code and credentials never leave your perimeter.</p>
   </div>
 </section>
+<p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
 
 <figure class="demo-shot">
   <img src="assets/dejima-screenshot1.png" width="1200" loading="lazy"
