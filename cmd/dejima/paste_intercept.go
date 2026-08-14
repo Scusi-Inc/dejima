@@ -1,7 +1,9 @@
 package main
 
 import (
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -65,6 +67,19 @@ func (s *pasteScanner) process(in []byte, onDrop func(localPath string, brackete
 		if !s.inPaste {
 			idx, kind, mlen := s.earliest(data)
 			if kind == markerNone {
+				// An unwrapped drag-drop (macOS Terminal.app types the path rather
+				// than pasting it) reaches us as a plain chunk with no markers at
+				// all. Only consider a self-contained read: `out` empty means we
+				// haven't already emitted part of this burst, so the chunk stands
+				// alone and can be judged as a whole.
+				if onDrop != nil && len(out) == 0 {
+					if path, ok := droppedUnbracketedFile(data); ok {
+						if onDrop(path, data) {
+							return out // consumed: uploaded, or a confirm was opened
+						}
+						// declined → fall through and forward it verbatim as text
+					}
+				}
 				// Forward everything except a trailing run (len ≥ 2) that could be
 				// the start of a split marker; hold that for the next call. The ≥2
 				// floor means a lone trailing ESC is forwarded immediately (never
@@ -178,8 +193,42 @@ func (s *pasteScanner) holdback(data []byte) int {
 func cleanClientPath(s string) string {
 	p := strings.TrimSpace(s)
 	p = strings.TrimSpace(strings.Trim(p, `"'`))
-	p = strings.TrimPrefix(p, "file://")
-	return p
+	if rest, ok := strings.CutPrefix(p, "file://"); ok {
+		// Finder and iTerm2 hand over a URL, so a path with a space arrives as
+		// %20 and won't Stat until it's decoded. Keep the raw form if it isn't
+		// valid encoding rather than mangling a literal '%' in a filename.
+		if dec, err := url.PathUnescape(rest); err == nil {
+			rest = dec
+		}
+		p = rest
+	}
+	return unescapeShellPath(p)
+}
+
+// shellEscaped is the set a terminal backslash-escapes when it drops a path, so
+// the result can be typed at a shell. We are not a shell — left escaped, a path
+// with a space never Stats and the drop is silently missed (the actual bug on
+// macOS Terminal.app, which emits `/Users/me/my\ file.png`).
+//
+// Only these are unescaped. A blanket "drop every backslash" would corrupt a
+// Windows path (C:\Users\me), where the backslash is a separator, not an escape.
+const shellEscaped = ` !"#$&'()*,:;<=>?@[]^` + "`" + `{|}~\`
+
+// unescapeShellPath removes backslash escapes a terminal added ahead of shell
+// metacharacters, leaving every other backslash intact.
+func unescapeShellPath(p string) string {
+	if !strings.Contains(p, `\`) {
+		return p
+	}
+	var b strings.Builder
+	b.Grow(len(p))
+	for i := 0; i < len(p); i++ {
+		if p[i] == '\\' && i+1 < len(p) && strings.IndexByte(shellEscaped, p[i+1]) >= 0 {
+			i++ // skip the backslash, take the escaped byte literally
+		}
+		b.WriteByte(p[i])
+	}
+	return b.String()
 }
 
 // droppedLocalFile reports whether content is a single existing client-local
@@ -192,6 +241,49 @@ func droppedLocalFile(content []byte) (string, bool) {
 	}
 	p = cleanClientPath(p)
 	if p == "" {
+		return "", false
+	}
+	fi, err := os.Stat(p)
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", false
+	}
+	return p, true
+}
+
+// droppedUnbracketedFile detects a drag-drop that arrives with NO bracketed-paste
+// wrapper. macOS Terminal.app inserts a dropped path as if it were typed, so the
+// bracketed-paste path above never sees it — which is why "drag a file onto a
+// session" landed a local path in the prompt instead of uploading anything.
+//
+// Detecting a bare run of bytes as a file path is only safe because of what a
+// drop looks like versus typing:
+//
+//   - it is ABSOLUTE. This is the load-bearing check. A relative fragment like
+//     "a" could Stat true against the client's cwd, so a single typed letter
+//     would vanish into an upload. Requiring an absolute path makes that
+//     impossible, and costs nothing: every terminal drops an absolute path.
+//   - it arrives in ONE read. Typing delivers a byte per read in raw mode, and
+//     one byte is never an absolute path.
+//   - it Stats to a regular file the user actually has.
+//
+// A path the user genuinely typed by hand and then... didn't press Enter on is
+// the only false positive left, and the caller still asks before uploading in a
+// plain shell (pasteConfirm).
+func droppedUnbracketedFile(content []byte) (string, bool) {
+	raw := strings.TrimSpace(string(content))
+	// Shortest plausible absolute path is "/x"; a lone byte can't qualify.
+	if len(raw) < 2 || strings.ContainsAny(raw, "\n\r") {
+		return "", false
+	}
+	// Must LOOK like a path before we touch the filesystem: this runs on every
+	// keystroke chunk, so a Stat per burst of ordinary typing is worth avoiding.
+	if !strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "~") &&
+		!strings.HasPrefix(raw, "'") && !strings.HasPrefix(raw, `"`) &&
+		!strings.HasPrefix(raw, "file://") {
+		return "", false
+	}
+	p := expandClientPath(raw)
+	if !filepath.IsAbs(p) {
 		return "", false
 	}
 	fi, err := os.Stat(p)
