@@ -64,20 +64,20 @@
 
 <section class="qol" aria-label="Why Dejima">
   <div class="proof-tile">
-    <h3>Ditch the tmux + SSH grind</h3>
-    <p>Your sessions live on the server, so you can close your laptop and the agents keep working, then reconnect from any device. It runs on tmux under the hood, so you keep the multi-window power without babysitting SSH.</p>
+    <h3>Session resume</h3>
+    <p>Run <code>dejima</code>, hit enter on a project, and you're in the agent. Close the laptop and it keeps working; reattach from any device and the screen is where you left it. Switching projects is another keystroke, not another SSH login.</p>
   </div>
   <div class="proof-tile">
     <h3>Your whole fleet on one screen</h3>
     <p>Every agent's status at a glance in one dashboard. Jump between projects and agents with a keystroke, so switching context costs you nothing.</p>
   </div>
   <div class="proof-tile">
-    <h3>Many agents, no collisions</h3>
-    <p>Each agent gets its own git worktree automatically, so Claude Code, Codex, and headless runs can share one repo without stepping on each other.</p>
-  </div>
-  <div class="proof-tile">
     <h3>Secure sandboxing</h3>
     <p>Rogue agents can't break out. Each project is sealed in its own walled-off island, with no reach to your host machine, your files, or your other projects. It runs on hardware you own, so your code and credentials never leave your perimeter.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>Audit trail</h3>
+    <p>Every brokered crossing is hash-chained: which agent, which file, when. Verify the whole chain with <code>dejima audit --verify</code>. If an agent touched something, there's a record you can hand to someone else.</p>
   </div>
 </section>
 <p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
