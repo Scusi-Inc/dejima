@@ -1,5 +1,16 @@
 # `dejimaqa` — fully-capable-tester setup (Minion)
 
+> **TORN DOWN 2026-08-16 — historical.** The `dejimaqa` account and its runner were
+> removed because the harness **crashed the operator's real `dejimad`**. Note what that
+> falsifies: the isolation principle stated below — "runs its own `dejimad` + Docker … so
+> it never touches `aoos`'s real islands" — did not hold in practice. A co-residency guard
+> (`443324e`, `scripts/clean-mac/lib.sh`) had already landed and the crash still happened,
+> so the guard is either insufficient or the mechanism is different.
+>
+> This document is kept as the rebuild recipe, but **do not follow it as-is**: diagnose the
+> co-residency failure first, or the new host takes the operator's daemon down again.
+> Prefer a disposable macOS VM or a spare Mac over a user account on the live Minion.
+
 Everything the `dejimaqa` account on the Minion Mac mini needs to run the **full** live
 test suite (Tier-2 Docker + Tier-3 macOS + Tier-4 agent). Isolation principle: `dejimaqa`
 runs **its own** `dejimad` + Docker (own state, own islands), so it never touches `aoos`'s

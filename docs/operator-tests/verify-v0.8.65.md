@@ -8,17 +8,22 @@ Compiled 2026-08-16. Companion to
 system of record — but see *Blind spots* below, because three of the areas here
 aren't in it at all.
 
-## First: what NOT to re-test
+## The clean-Mac gate is gone — nothing here is covered by it
 
-A fresh-Mac install is **already automated** and runs nightly. `nightly-live.yml`
-drives a real Mac mini as the `dejimaqa` user through the clean-Mac launch gate,
-and matrix §19 marks the curl-pipe-sh, brew --HEAD and npm client paths, the
-uninstall refusal, and `--keep-islands` as `A†` (proved on a genuinely virgin
-host). Re-running that by hand duplicates a green gate.
+**The `dejimaqa` runner was torn down (2026-08): it was crashing the operator's
+real `dejimad`.** So `nightly-live.yml` has no host, and every `A†` row in matrix
+§19 — the curl-pipe-sh, brew and npm install paths, the uninstall refusal,
+`--keep-islands`, re-adopt — is **unproven and unrunnable**, not green. It never
+earned its first virgin-Mac run.
 
-What that gate does **not** prove is the *first-run experience*: whether the
-onboarding wizard reads well, picks sane defaults, and leaves someone who has
-never seen Dejima with a working island. That's Lane B1.
+Note a co-residency guard for exactly this failure *did* land (`443324e`,
+`scripts/clean-mac/lib.sh` — refuse to run with a live daemon). The runner was
+torn down after that, so the guard is either insufficient or the crash has a
+different mechanism. **Diagnose that before rebuilding any QA host**, or the
+next one takes the operator's daemon down again.
+
+Consequence: fresh-Mac install is a **manual, high-priority** item (B1), not a
+duplicate of a passing gate. It has been having problems in the field.
 
 ---
 
@@ -53,13 +58,21 @@ broken on Windows for exactly this reason.
 
 ## Lane B — the five areas
 
-- [ ] **B1 · Fresh Mac mini, first-run UX** *(not the install itself — see
-      above)*. A person who has never used Dejima runs the one-liner and gets to
-      a working island without reading docs. Note every point they hesitate.
+- [ ] **B1 · Fresh Mac mini install — the whole thing.** Known to be having
+      problems in the field, and with `dejimaqa` gone there is no automation
+      behind it at all. Cover both halves:
+      - the **install** itself, per channel (`curl | sh`, `brew`, `npm` client),
+        on a genuinely clean box: daemon up, island image built, binaries on
+        PATH, service registered under launchd, survives a reboot;
+      - `uninstall` refuses by default, `--keep-islands` keeps the volume and
+        `~/.dejima`, and a reinstall **re-adopts** the island by name;
+      - the **first-run experience** — someone who has never seen Dejima runs the
+        one-liner and reaches a working island without reading docs. Note every
+        point they hesitate; that half was never automated even when the gate ran.
 - [ ] **B2 · Local install, macOS** — `install.sh` → daemon under launchd →
-      `local` in the switcher is a real target → `dejima init` → attach. Largely
-      covered by the gate; what's untested is that the *switcher's* `local` entry
-      behaves once a daemon exists.
+      `local` in the switcher is a real target → `dejima init` → attach. Overlaps
+      B1's install half; the distinct part is that the *switcher's* `local` entry
+      behaves once a daemon actually exists on the box.
 - [ ] **B3 · Local install, Windows** — **not in the matrix at all.** Only
       possible at all as of v0.8.64 (WSL2). Overlaps Lane A but is the
       user-facing framing: can a Windows user get isolated local islands?
@@ -68,17 +81,23 @@ broken on Windows for exactly this reason.
       reaching it from a laptop client. Given `69a8e89` (a tailnet that isn't up
       must not kill dejimad) this path is being exercised in production without
       being tested.
-- [ ] **B5 · OpenClaw** — matrix §16, every row unchecked and marked `M`:
-      `home create --agent openclaw` self-installs and idles without
+- [ ] **B5 · OpenClaw — KNOWN BROKEN.** Not untested: it has been exercised and
+      does not work. So the task is *reproduce, diagnose, fix*, then verify —
+      not "run the checklist and see". Capture the actual failure first (which
+      step, what error, which log) before touching code. Surface to cover once
+      it runs: `home create --agent openclaw` self-installs and idles without
       crash-looping; `--bind loopback` launch; the home-role attachability gate;
-      and `agent open` reaching its console (see C4 — that path has a known
-      misdiagnosis).
-- [ ] **B6 · Secrets management** — **not in the matrix at all.** `dejima secret
-      set` (prompts, never echoes), `ls` (names only, values never shown), `rm`.
-      Then the part that actually matters: a secret set *after* an agent's shell
-      started is **not** in that shell's environment until a new one — verify the
-      documented behaviour, and that a restarted agent does pick it up.
-      Also: values land in the OS keychain, not plaintext config.
+      `agent open` reaching its console — and note C4, since that path has a
+      known misdiagnosis that will send you the wrong way.
+- [ ] **B6 · Secrets management — KNOWN BROKEN.** Also exercised, also not
+      working. Reproduce and capture the failure before changing anything;
+      `dejima secret` has **no matrix row at all** (now §20), so there is no
+      prior expectation written down to check against — establish what correct
+      looks like as part of the fix. Surface: `set` (prompts, never echoes),
+      `ls` (names only), `rm`; the value reaching the agent *and* its tool
+      subprocesses via the non-login-shell path; a secret added after a shell
+      started being absent until a new one; a restarted agent picking it up;
+      keychain rather than plaintext.
 
 ## Lane C — shipped this week, thinly verified
 

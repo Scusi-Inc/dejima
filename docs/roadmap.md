@@ -58,10 +58,15 @@ The things only you can do (on Minion / as owner), in priority order:
    `macos-mini` runner with defaults → expect Tier-2 + Tier-3-safe green, Tier-4 green-or-skip.
    Add input `run_system_tests=true` for the service-install/onboard checks; `run_reboot_test=true`
    (recovery access only) for reboot survival. See [`lanes/lane-6-phase-b.md`](lanes/lane-6-phase-b.md).
-3. **Runner boot-persistence** (next week / physical access). FileVault is off, so enable
-   auto-login for `dejimaqa` (fix the `sysadminctl` error-22 via the manual `kcpassword` method)
-   + `svc.sh install`; until then the runner survives disconnects via `run.sh`-in-tmux (not
-   reboots). See [`testing/dejimaqa-runner-setup.md`](testing/dejimaqa-runner-setup.md).
+3. ~~**Runner boot-persistence**~~ — **MOOT 2026-08-16: the `dejimaqa` runner was TORN DOWN**
+   for crashing the operator's real `dejimad`. Nothing runs on it, so items 2 and 4 below no
+   longer have a host either. Rebuilding is blocked on a diagnosis, not on setup: a
+   co-residency guard already landed (`443324e`) and the crash happened anyway, so the guard
+   is insufficient or the mechanism is different. Prefer a disposable macOS VM or a spare Mac
+   over a second account on the live Minion — the "own daemon, own Docker, never touches
+   `aoos`" isolation claim in [`testing/dejimaqa-runner-setup.md`](testing/dejimaqa-runner-setup.md)
+   is exactly what failed. Until then **every Tier-3/Tier-4 and clean-Mac row is manual**, and
+   fresh-Mac install — known to be failing in the field — has no automation behind it at all.
 4. **Clear the standing Minion backlog** (onboarding wizard, terminal auto-reconnect, Keychain
    secrets, idle auto-hibernate, viewer-token scope) — see the Release-testing checklist below +
    the Operator verification queue. **Phase-B automates most of these once it's been run.**
@@ -95,6 +100,9 @@ The things only you can do (on Minion / as owner), in priority order:
    down. Further hardening still open: per-run port/`DEJIMA_HOME` isolation + teardown-on-failure.
    The operating rule is unchanged regardless: **run only on a throwaway box** (the guard is a
    backstop, not a licence to run it on a live host).
+
+*(⚠️ SUPERSEDED 2026-08-16 — the `dejimaqa` host described here was torn down; see item 3.
+Kept for the record of what was built, not as current state.)*
 
 *(✅ Done this session — the test-harness operator setup: a dedicated macOS `dejimaqa` user,
 a caged self-hosted runner, its own colima Docker, the bot GitHub account +

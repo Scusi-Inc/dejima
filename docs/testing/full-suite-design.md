@@ -1,5 +1,9 @@
 # Full-feature suite, source-of-truth, and TUI/UX testing
 
+> **Note (2026-08-16):** the `dejimaqa` runner referenced here was **torn down** for
+> crashing the operator's real `dejimad`. The design below still stands; it just has no
+> host. See `docs/testing/test-coverage-matrix.md` §19 before rebuilding one.
+
 How `dejimaqa` runs a **thorough deterministic test of every feature** (CLI + API + TUI +
 the onboarding flow), keeps that coverage **fresh as features are added**, and uses **Claude
 to judge the TUI + the setup UX**. The randomized "soak/combination" backbone is a *later*
