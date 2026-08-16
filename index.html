@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dejima — secure infrastructure for AI coding agents on hardware you own</title>
 <meta name="description" content="Dejima is self-hosted infrastructure for AI coding agents (Claude Code, Codex, and more). Each agent is sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
-<meta property="og:title" content="Dejima">
+<meta property="og:title" content="Dejima — isolated projects, persistent sessions, on your hardware">
 <meta property="og:description" content="Self-hosted infrastructure for AI coding agents. Each one sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://dejima.tech/">
@@ -54,7 +54,7 @@
 
 <section class="hero">
   <p class="hero-eyebrow">Manage a fleet of agents on your Mac mini, Linux box, local folder, or cloud.</p>
-  <h1 class="hero-h">Infrastructure for your agents.<br>None of the worry.</h1>
+  <h1 class="hero-h">Isolated projects, persistent sessions.<br>On your hardware.</h1>
   <p class="hero-sub">Run your coding agents without the tmux-and-SSH grind, and without handing them the whole machine.</p>
   <div class="hero-cta">
     <a class="btn-primary" href="quickstart.html">Run it yourself →</a>
@@ -65,22 +65,28 @@
 <section class="qol" aria-label="Why Dejima">
   <div class="proof-tile">
     <h3>Session resume</h3>
-    <p>Run <code>dejima</code>, hit enter on a project, and you're in the agent. Close the laptop and it keeps working; reattach from any device and the screen is where you left it. Switching projects is another keystroke, not another SSH login.</p>
-  </div>
-  <div class="proof-tile">
-    <h3>Fleet monitoring</h3>
-    <p>Status, CPU, and memory for every agent in one dashboard. Jump between projects and agents with a keystroke, so switching context costs you nothing.</p>
-  </div>
-  <div class="proof-tile">
-    <h3>A better remote terminal</h3>
-    <p>A remote shell normally costs you the clipboard and drag-drop. Here <kbd>Ctrl-V</kbd> pastes a screenshot straight to the agent, dragging a file onto the window uploads it, and <code>dejima cp</code> moves work back out. No <code>scp</code>.</p>
+    <p>Run <code>dejima</code>, hit enter on a project, and every agent in it opens at once, one window each. Close the laptop and they keep working; reattach from any device and the screens are where you left them. Switching projects is another keystroke, not another SSH login.</p>
   </div>
   <div class="proof-tile">
     <h3>Secure sandboxing</h3>
-    <p>Rogue agents can't break out. Each project is sealed in its own walled-off island, with no reach to your host machine, your files, or your other projects. It runs on hardware you own, so your code and credentials never leave your perimeter.</p>
+    <p>Rogue agents can't break out. Each project is sealed in its own island, with no reach to your host machine, your files, or your other projects. Run several agents inside one, each on its own git worktree, sharing secrets that are scoped to that island and never touch your repo.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>Fleet management</h3>
+    <p>Status, CPU, memory, and token cost per session, for every agent at once. Hibernate what's idle, wake what isn't, and jump between projects with a keystroke.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>Clipboard and file transfer</h3>
+    <p>A remote shell normally costs you the clipboard and drag-drop. Here <kbd>Ctrl-V</kbd> pastes a screenshot straight to the agent, dragging a file onto the window uploads it, and <code>dejima cp</code> moves work back out. No <code>scp</code>.</p>
   </div>
 </section>
+<p class="band-compat">Works with Claude Code, Codex, OpenClaw, or any command you supervise. Point it at frontier APIs, or at open-weights models running on your own box.</p>
 <p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
+
+<div class="startline">
+  <p>Every session starts the same way.</p>
+  <code>dejima</code>
+</div>
 
 <figure class="demo-shot">
   <img src="assets/dejima-screenshot1.png" width="1200" loading="lazy"
@@ -129,6 +135,7 @@
   <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>$</td><td>✓</td><td>✓</td><td>✓</td></tr>
   <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
   <tr><td>Curated MCP servers, brokered &amp; audited</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
+  <tr><td>Managed local open-weights models</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>manual</td><td>manual</td></tr>
   <tr><td>Up in minutes, nothing to build</td><td><strong>✓</strong></td><td>✗</td><td>~</td><td>~</td><td>~</td><td>✓</td></tr>
 </table>
 </div>

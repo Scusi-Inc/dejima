@@ -102,6 +102,17 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
    persuasive, not an inventory. */
 .qol { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.8rem 0 1.1rem; }
 .qol-more { color: var(--muted); font-size: 0.9rem; margin: 0 0 2.6rem; }
+/* Compatibility reassurance, tight under the band it belongs to. */
+.band-compat { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.6rem; }
+
+/* The command is the hero: one line, oversized, right before the dashboard
+   shot it produces. */
+.startline { text-align: center; margin: 2.4rem 0 1.6rem; }
+.startline p { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.7rem; }
+.startline code { display: inline-block; background: var(--code-bg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.55rem 1.8rem; font-size: 1.5rem; color: var(--hover);
+  font-weight: 600; letter-spacing: 0.01em; }
 
 /* Feature grid: 8 scannable boxes, 4 across, collapsing to 3 then 2. Titles
    carry the scan; the sentence is there for the reader who stops. */
