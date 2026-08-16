@@ -105,12 +105,15 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 /* Compatibility reassurance, tight under the band it belongs to. */
 .band-compat { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.6rem; }
 
-/* The command is the hero: one line under the hero CTA, sized between the
-   body copy and the sub so it reads as a statement, not a caption. The chip
-   matches the sentence's size — it's a word in the line, not a display block. */
-.startline { font-size: 1.1rem; color: var(--muted); margin: 1.3rem 0 0; }
+/* The command is the hero: one line, sized between the body copy and the sub
+   so it reads as a statement, not a caption. The chip matches the sentence's
+   size — it's a word in the line, not a display block. Paired with the demo
+   shot below it: the line is the command, the shot is what it produces, so
+   kill the figure's top margin and let them read as one unit. */
+.startline { font-size: 1.1rem; color: var(--muted); margin: 2.2rem 0 0.6rem; }
 .startline code { font-size: 1em; color: var(--hover); font-weight: 600;
   padding: 0.12em 0.5em; }
+.startline + .demo-shot { margin-top: 0; }
 
 /* Feature grid: 8 scannable boxes, 4 across, collapsing to 3 then 2. Titles
    carry the scan; the sentence is there for the reader who stops. */
