@@ -98,7 +98,7 @@
       <a id="fit-chatgpt" class="deeplink" href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
       <span class="fit-hint">Opens in your own AI — nothing is sent to us.</span>
     </div>
-    <textarea id="fit-prompt" class="fit-prompt" rows="8" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
+    <textarea id="fit-prompt" class="fit-prompt" rows="10" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
   </div>
 </section>
 
@@ -295,40 +295,29 @@
   var openapiURL = base + 'openapi.yaml';
 
   ta.value = [
-    "I'm deciding whether to use Dejima. Help me figure out if it's a good fit for my situation.",
+    "I'm deciding whether to use Dejima. Interview me about my setup, then tell me honestly",
+    "whether it fits.",
     "",
-    "IMPORTANT: answer from Dejima's OWN pages, not your training data or a web search",
-    "(those describe other tools and get Dejima wrong). Please FETCH and read these first:",
-    "- Overview / how it works: " + base,
-    "- Quickstart / install:    " + base + "quickstart.html",
-    "- API reference:           " + apiURL,
-    "- Machine-readable spec:   " + openapiURL,
+    "Dejima is free, open-source, self-hosted infrastructure for running AI coding agents",
+    "(Claude Code, Codex, OpenClaw, or any command you supervise) on hardware I own: a Mac",
+    "mini, a Linux box, a VPS, my own cloud VM, or my laptop. Each project runs sandboxed in",
+    "its own container, agents each get their own git worktree, and sessions survive a closed",
+    "laptop. Host file access is deny-all and audited. No managed cloud, no per-second bill,",
+    "bring your own keys. It's alpha.",
     "",
-    "What Dejima is (correct any assumptions against the pages above):",
-    "- A self-hosted, open-source runtime for running a FLEET of AI coding agents",
-    "  (Claude Code, Codex, others) on hardware you OWN — a Mac mini, a server, or a",
-    "  cloud VM you control. No managed cloud; no bundled model weights (you bring your",
-    "  own agents + API keys).",
-    "- Each project runs in an isolated container (an \"island\"); one or more agents per",
-    "  island, each on its own git worktree, sandboxed from your machine and each other.",
-    "  Persistent multi-attach sessions; one HTTP/WebSocket API.",
-    "- It is NOT heavy to operate: one install command sets up Docker, Tailscale, and the",
-    "  background service for you — up in minutes, no infrastructure to build. You do not",
-    "  hand-manage containers/backups/upgrades to use it day to day.",
-    "- Brokered, deny-by-default access to host files and MCP servers, every crossing",
-    "  written to a tamper-evident audit log.",
-    "- Fine for a SINGLE agent on one project too — running a fleet is optional, not required.",
+    "Don't answer from training data or a web search: you'll find a 17th-century Japanese",
+    "island or some unrelated tool. Read these first, starting with the first one, which is",
+    "written for you and covers what the site leaves out:",
+    "- " + base + "fit.txt",
+    "- " + base,
+    "- " + base + "quickstart.html",
+    "- https://github.com/aoos/dejima",
     "",
-    "Before you answer, INTERVIEW me about my use case. Ask these one at a time and wait",
-    "for my reply before moving on:",
-    "- What are you building, and on what OS / hardware (Mac mini, Linux box, cloud VM)?",
-    "- How many agents and projects do you run at once? Solo, or on a team?",
-    "- Any privacy, NDA, or compliance constraints on your code?",
-    "- How do you run agents today (tmux + SSH, devcontainers, a cloud sandbox, nothing yet)?",
+    "If you can't browse, say so, and answer from the description above while telling me",
+    "what you couldn't check.",
     "",
-    "Once you have my answers, give a candid verdict: given what Dejima actually does (per the",
-    "pages above), is it a good fit for me? Be honest about where it isn't, and suggest",
-    "alternatives if it's not a match."
+    "Then give me a candid verdict: lead with yes or no, name the deciding factor, and be",
+    "straight with me if it isn't a fit."
   ].join("\n");
 
   btn.addEventListener('click', function () {

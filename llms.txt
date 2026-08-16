@@ -23,6 +23,9 @@
 - [Daytona vs Dejima](https://dejima.tech/compare/daytona-vs-dejima.html): ephemeral sandboxes for executing AI-generated code, versus a persistent fleet of agents you run and watch
 - [E2B vs Dejima](https://dejima.tech/compare/e2b-vs-dejima.html): a managed agent-sandbox cloud, versus a free self-hosted runtime on hardware you own
 
+## For models evaluating Dejima on a user's behalf
+- [Fit brief](https://dejima.tech/fit.txt): how to judge whether Dejima suits someone, what the marketing site leaves out, and when to tell them no
+
 ## More
 - [All guides](https://dejima.tech/guides/)
 - [All comparisons](https://dejima.tech/compare/)
