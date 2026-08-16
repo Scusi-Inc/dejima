@@ -105,14 +105,12 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 /* Compatibility reassurance, tight under the band it belongs to. */
 .band-compat { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.6rem; }
 
-/* The command is the hero: one line, oversized, right before the dashboard
-   shot it produces. */
-.startline { text-align: center; margin: 2.4rem 0 1.6rem; }
-.startline p { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.7rem; }
-.startline code { display: inline-block; background: var(--code-bg);
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 0.55rem 1.8rem; font-size: 1.5rem; color: var(--hover);
-  font-weight: 600; letter-spacing: 0.01em; }
+/* The command is the hero: one line under the hero CTA, sized between the
+   body copy and the sub so it reads as a statement, not a caption. The chip
+   matches the sentence's size — it's a word in the line, not a display block. */
+.startline { font-size: 1.1rem; color: var(--muted); margin: 1.3rem 0 0; }
+.startline code { font-size: 1em; color: var(--hover); font-weight: 600;
+  padding: 0.12em 0.5em; }
 
 /* Feature grid: 8 scannable boxes, 4 across, collapsing to 3 then 2. Titles
    carry the scan; the sentence is there for the reader who stops. */
