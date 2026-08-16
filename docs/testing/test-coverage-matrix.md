@@ -222,10 +222,48 @@ The in-island consistency + Docker re-adopt halves are already `A` (reused, not 
 - [ ] reinstall re-adopts the island by name; marker survives the round-trip · T2/T3 · A (integration.sh) / A† (clean-mac gate, real channel)
 - [ ] teardown→provision driver leaves a virgin env (no Docker/colima/brew/`~/.dejima` history) · T3 · A† (`scripts/clean-mac/teardown.sh` + `assert_virgin`)
 
+## 20. Per-island secrets (`dejima secret`)
+Distinct from §11, which covers *credentials the daemon holds* (Claude, GitHub,
+provider keys). This is the per-island token store agents read from their own
+environment — EXPO_TOKEN, NPM_TOKEN, API keys. Added 2026-08-16: it had **no**
+coverage row at all, so a green rollup said nothing about it.
+- [ ] `secret set` — prompts, never echoes the value, rotates in place · CLI/API · T2 · M
+- [ ] `secret ls` — names only; values never returned over the API · CLI/API · T2 · M
+- [ ] `secret rm` — removed from the island's environment on next launch · T2 · M
+- [ ] value reaches the agent AND its tool subprocesses (non-login shell path) · T3 · M
+- [ ] a secret added after a shell started is absent until a new shell — documented behaviour · T3 · M
+- [ ] restarting the agent picks up a newly-set secret · T3 · M
+- [ ] stored in the OS keychain where available, never plaintext in config · T3 · M
+- [ ] deleted with the island · T2 · M
+
+## 21. Windows client + WSL2 host
+Added 2026-08-16: Windows returned **zero** hits across this matrix, while being
+the primary user's daily driver. Nothing here is exercisable from CI (compiles
+only) or from a Linux island — see `operator-tests/verify-v0.8.65.md` Lane A.
+- [ ] Windows client drives a remote daemon (attach, resize, detach) · T3 · M
+- [ ] `TERM`/`COLORTERM` inference from WT_SESSION; doctor's Terminal section reports it · T1/T3 · A (T1 `describeTerminal`) / M (live)
+- [ ] bare `xterm` (conhost) is correctly excluded from RGB/sync/extkeys · T1/T3 · A / M
+- [ ] doctor on a client reports docker/island-image as daemon-host facts and exits 0 · T1/T3 · A (`daemonElsewhere`) / M
+- [ ] `dejima wsl setup` — creates a dedicated distro, installs Docker + dejimad, activates a profile · T3 · M
+- [ ] `dejima wsl status` / `start` / `stop` · T3 · M
+- [ ] attach through a `wsl://` target over the socat tunnel · T3 · M
+- [ ] `[w]` from the daemon-help panel opens setup in a new window · T3 · M
+- [ ] console character bleed does not return (the 2026-08 regression) · T3 · M
+
+## 22. Cloud / Linux host
+Added 2026-08-16: also **zero** prior hits. §13 and §19 are macOS-only, yet the
+daemon ships for linux/amd64+arm64 and is being run that way in production.
+- [ ] `install.sh` on a clean Linux VPS (daemon + image + systemd user unit) · T3 · M
+- [ ] `service install` with `--tcp` / `--token-tcp`; survives reboot with linger · T3 · M
+- [ ] token auth over TCP from a laptop client; anonymous access refused · T2/T3 · M
+- [ ] Tailscale-reachable and non-Tailscale (bare IP + firewall) both work · T3 · M
+- [ ] a tailnet that isn't up yet doesn't kill dejimad (regression, `69a8e89`) · T3 · M
+- [ ] listener exposure warnings are accurate on a public host · T2 · M
+
 ---
 
 ## Rollup
-~160 line items across 19 areas. **T1** (CI, every PR) and **T2** (Docker) cover the bulk;
+~190 line items across 22 areas. **T1** (CI, every PR) and **T2** (Docker) cover the bulk;
 **T3** (Mac-mini runner) owns the macOS-host + live-session items currently marked `M`/`▢`;
 **T4** is the small real-agent smoke; **§19** is the Lane 0 clean-Mac launch gate (`A†` —
 wired + CI-runnable, awaiting its first virgin-Mac run on Minion). The biggest gaps today
@@ -233,3 +271,11 @@ wired + CI-runnable, awaiting its first virgin-Mac run on Minion). The biggest g
 **Keychain/idle-hibernate**, and the **framework adapters** — these are the priority for
 Lane 6 + the first Mac-mini nightly. The launch-gate (`A†`) rows are the **operator's first
 run on Minion**: the harness + the button are delivered; the green tick is theirs to earn.
+
+**Added 2026-08-16 — §20 secrets, §21 Windows/WSL2, §22 cloud/Linux.** Each returned ZERO
+hits before that date, so the rollup above was silent about them rather than reporting them
+as untested. Two are shipping surfaces (Windows is the primary user's daily driver; the
+daemon ships for linux and is run that way in production) and one is a feature with no test
+row at all. Treat the three new sections as unknown, not as low-priority: nothing in them
+has been exercised, and §21 in particular cannot be — not by CI, which only compiles, and
+not from a Linux island. See `operator-tests/verify-v0.8.65.md` for the ordered queue.
