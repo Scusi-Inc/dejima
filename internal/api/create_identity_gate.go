@@ -50,11 +50,29 @@ func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) 
 	// and the old single-sentence version buried the actual command. The client
 	// matches on "needs a GitHub identity to clone" to upgrade this into the
 	// guided TUI step — keep that substring intact.
-	return fmt.Errorf("%q needs a GitHub identity to clone (it isn't anonymously reachable), and none is configured.\n"+
+	msg := fmt.Sprintf("%q needs a GitHub identity to clone (it isn't anonymously reachable), and none is configured.\n"+
 		"  1. On a machine where the gh CLI can see the repo, sign in:  gh auth login\n"+
 		"  2. Connect it to this daemon:                                dejima github connect\n"+
 		"  3. Retry creating the island.\n"+
 		"Or pass --force to create it now and authenticate later", repo)
+	// For the HOST operator there is a second, wider route: create the island and
+	// grant it the host's own gh login. It is mentioned second and with its cost
+	// stated, because a per-island identity is the better answer and this one
+	// reads the whole account — but leaving it out entirely is what makes the
+	// deny-by-default gate feel like a dead end rather than a decision. A tenant
+	// never sees it: the daemon refuses that grant for a tenant island, so
+	// offering it would promise something that cannot happen.
+	if owner, _ := s.callerGHScope(ctx); owner == "" {
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			name = "<island>"
+		}
+		msg += fmt.Sprintf("\n\nOr, if you'd rather this island use YOUR gh login (which can read every\n"+
+			"private repo on your account):\n"+
+			"  dejima create … --force\n"+
+			"  dejima github host-credential grant %s", name)
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 // islandWillHaveGitHubIdentity reports whether the island has SOME identity to

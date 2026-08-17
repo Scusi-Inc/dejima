@@ -1121,6 +1121,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case hostGHActionMsg:
+		if m.grants == nil {
+			return m, nil
+		}
+		m.grants.applyHostGHAction(msg)
+		if msg.err != nil {
+			return m, nil
+		}
+		// Re-read from the daemon rather than assuming the mutation's shape —
+		// the pane should show what IS, not what we asked for.
+		return m, m.loadGrantsCmd(m.grants.island)
+
 	case tokensLoadedMsg:
 		if m.team != nil {
 			m.team.applyLoaded(msg)

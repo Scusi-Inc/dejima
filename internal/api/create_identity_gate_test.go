@@ -146,3 +146,36 @@ func TestCreateIslandIdentityGate(t *testing.T) {
 		t.Fatalf("forced create = %d, want 201 (body: %s)", rr.Code, rr.Body.String())
 	}
 }
+
+// The deny-by-default gate must not read as a dead end for the host operator:
+// after #334 there are two routes forward, and naming only the identity one
+// leaves "why can't I clone" unanswered for anyone who deliberately wants their
+// own login in the island.
+func TestGateOffersHostCredentialToHostOperator(t *testing.T) {
+	s := &Server{anonCloneFn: func(context.Context, string) bool { return false }}
+	err := s.blockDoomedClone(context.Background(), CreateIslandRequest{
+		Repo: "https://github.com/aoos/private.git", Name: "proj",
+	})
+	if err == nil {
+		t.Fatal("an unreachable private repo with no identity must still be gated")
+	}
+	msg := err.Error()
+	// The client keys the guided TUI step off this substring.
+	if !strings.Contains(msg, "needs a GitHub identity to clone") {
+		t.Errorf("the client's match substring must survive: %q", msg)
+	}
+	// Identity stays the primary remedy, listed first.
+	if !strings.Contains(msg, "dejima github connect") {
+		t.Errorf("the identity path must remain the headline remedy: %q", msg)
+	}
+	if !strings.Contains(msg, "dejima github host-credential grant proj") {
+		t.Errorf("the host operator should be told the second route, named for this island: %q", msg)
+	}
+	// And told what it costs, so it isn't a casual choice.
+	if !strings.Contains(msg, "every\nprivate repo") {
+		t.Errorf("the wider route must state its cost: %q", msg)
+	}
+	if strings.Index(msg, "dejima github connect") > strings.Index(msg, "host-credential") {
+		t.Error("the narrower remedy must come first")
+	}
+}
