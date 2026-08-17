@@ -58,8 +58,18 @@ func checkEgressProxy(r *doctorReport) {
 // host. This is the resource that runs out first when island egress is proxied
 // through host loopback, and nothing else in doctor would notice.
 func checkHostSocketPressure(r *doctorReport) {
-	total, toProxy, ok := timeWaitCounts()
-	if !ok {
+	total, toProxy, unavailable := timeWaitCounts()
+	if unavailable != "" {
+		// "Couldn't look" is reported, and reported as its own thing. Returning
+		// silently here made a host where the check never ran indistinguishable
+		// from a healthy one — the exact failure this check's own test was written
+		// to catch. Reporting OK with a zero count would be worse still: that
+		// manufactures a clean bill of health instead of merely implying one. So:
+		// INFO, and the text says "not measured" and carries no number.
+		r.add("Egress", "host sockets", "INFO",
+			"not measured — "+unavailable,
+			"doctor can't watch ephemeral-port pressure on this host until that's resolved; "+
+				"the check is advisory, so nothing else is blocked")
 		return
 	}
 	span, haveSpan := ephemeralPortSpan()
@@ -85,16 +95,26 @@ func checkHostSocketPressure(r *doctorReport) {
 	}
 }
 
+// netstatCommand is the test seam for the netstat shell-out.
+var netstatCommand = exec.Command
+
 // timeWaitCounts returns the number of TIME_WAIT sockets host-wide and the
-// number of those pointed at the egress proxy port. Best-effort: shells out to
-// netstat, and reports ok=false wherever that isn't available or parseable.
-func timeWaitCounts() (total, toProxy int, ok bool) {
+// number of those pointed at the egress proxy port.
+//
+// The third return is why the measurement couldn't be taken, or "" when it was.
+// It is a REASON rather than a bool because the caller has to tell the operator
+// which of two very different things happened — "I looked and the host is fine"
+// versus "I never looked" — and a bare false collapses them.
+func timeWaitCounts() (total, toProxy int, unavailable string) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		return 0, 0, false
+		return 0, 0, "host socket state isn't readable on " + runtime.GOOS
 	}
-	out, err := exec.Command("netstat", "-an", "-p", "tcp").Output()
+	out, err := netstatCommand("netstat", "-an", "-p", "tcp").Output()
 	if err != nil {
-		return 0, 0, false
+		if errors.Is(err, exec.ErrNotFound) {
+			return 0, 0, "netstat isn't installed on this host (Debian/Ubuntu: `apt install net-tools`)"
+		}
+		return 0, 0, fmt.Sprintf("netstat failed: %v", err)
 	}
 	proxySuffix := "." + defaultEgressProxyPort      // darwin: 127.0.0.1.7280
 	proxySuffixLinux := ":" + defaultEgressProxyPort // linux: 127.0.0.1:7280
@@ -113,12 +133,12 @@ func timeWaitCounts() (total, toProxy int, ok bool) {
 			}
 		}
 	}
-	// ok reflects whether netstat ran, NOT whether it found anything. Zero
-	// sockets in TIME_WAIT is the healthiest possible reading — treating it as
-	// "no data" would hide the line precisely when the host is fine, and make a
-	// healthy host indistinguishable from a check that never ran. This is the
-	// number an operator watches over days to see churn returning.
-	return total, toProxy, true
+	// Reaching here means netstat ran, whatever it found. Zero sockets in
+	// TIME_WAIT is the healthiest possible reading — treating it as "no data"
+	// would hide the line precisely when the host is fine, and make a healthy
+	// host indistinguishable from a check that never ran. This is the number an
+	// operator watches over days to see churn returning.
+	return total, toProxy, ""
 }
 
 // ephemeralPortSpan returns how many ephemeral ports the host can hand out.
