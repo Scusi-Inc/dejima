@@ -27,6 +27,12 @@ area. Keep it honest: update the status as coverage changes.
   with no pre-existing image or credentials. **M**
 - [ ] The live integration suite passes against a real engine
   (`scripts/integration.sh`). **A**
+- [ ] An island runs against a local open-weights model end to end:
+  `dejima local install` → `pull` → an agent in an island actually completing a
+  turn on it. The site's comparison table asserts this as a capability no
+  competitor has, which makes it the row a prospect is most likely to test
+  first, and it is currently the only claim on that page with no evidence of a
+  single end-to-end run behind it. **M**
 
 ---
 

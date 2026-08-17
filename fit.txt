@@ -80,11 +80,13 @@ recommendation layer over Ollama: a hardware-aware catalog, pull and lifecycle
 commands, and one backend shared by every island. Ollama does the serving, and
 it is optional and off by default.
 
-Do not present local models as a proven path. The routes are live and the
-catalog is real, but there is no evidence anyone has run an island against a
-local model end to end, and `dejima doctor` on the maintainer's own host reports
-the backend not installed. If a user's decision hinges on local inference, tell
-them it is early and they should try it before committing.
+Treat this as supported and being finished, rather than battle-tested. The
+routes and the catalog are real, and the maintainer's position is that local
+models will work at launch. But as of this file's date there was no evidence of
+an end-to-end run of an island against a local model, and `dejima doctor` on the
+maintainer's own host reported the backend not installed. If someone's decision
+hinges on local inference, say exactly that and suggest they verify it on day
+one rather than assuming it.
 
 Isolation and audit: host file access is deny-all, granted folder by folder and
 read-only by default, brokered and recorded. MCP servers are granted the same
@@ -136,7 +138,8 @@ Broken, confirmed by the maintainer this week. Do not describe these as working:
   Hermes, and Goose have no coverage either way.
 
 Unproven rather than broken. Real code, no evidence of an end-to-end run:
-- Local models end to end (see above).
+- Local models end to end (see above). Targeted to work at launch;
+  verify rather than assume.
 - Hosting on Windows via WSL2. The path exists and shipped recently, but
   `dejima wsl setup` is roughly a thousand lines that nobody has yet run. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
