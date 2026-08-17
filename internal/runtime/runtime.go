@@ -126,6 +126,16 @@ type Runtime interface {
 	// Status returns the container's current status.
 	Status(ctx context.Context, name string) (ContainerStatus, error)
 
+	// ContainerMounts returns the container paths currently mounted into the
+	// named container (bind mounts and volumes alike, by destination).
+	//
+	// Unlike Inspect, a failure here is deliberately NOT swallowed into a zero
+	// value. Callers use this to answer "is this credential actually mounted",
+	// and an empty list is the answer "nothing is mounted" — a very different
+	// statement from "I could not look". Collapsing the second into the first is
+	// how a surface comes to report containment it never verified.
+	ContainerMounts(ctx context.Context, name string) ([]string, error)
+
 	// Inspect returns crash-relevant health facts (OOM, restarts, exit code).
 	// Returns a zero Health if the container is missing or unavailable.
 	Inspect(ctx context.Context, name string) (Health, error)

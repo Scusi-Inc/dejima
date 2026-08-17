@@ -23,6 +23,13 @@ import (
 type Fake struct {
 	mu        sync.Mutex
 	StatusVal runtime.ContainerStatus
+	// MountsVal overrides what ContainerMounts reports; MountsErr forces it to
+	// fail, which is how a test exercises the "couldn't determine" path.
+	MountsVal []string
+	MountsErr error
+	// lastCreate records the most recent CreateContainer so ContainerMounts can
+	// answer consistently with what the server actually asked for.
+	lastCreate runtime.CreateRequest
 }
 
 // New returns a Fake that reports its containers as running.
@@ -48,7 +55,10 @@ func (f *Fake) VolumeSizes(context.Context) (map[string]int64, error) {
 	return map[string]int64{}, nil
 }
 
-func (f *Fake) CreateContainer(context.Context, runtime.CreateRequest) (string, error) {
+func (f *Fake) CreateContainer(_ context.Context, req runtime.CreateRequest) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastCreate = req
 	return "cid", nil
 }
 func (f *Fake) UpdateResources(context.Context, string, string) error { return nil }
@@ -66,6 +76,25 @@ func (f *Fake) Status(context.Context, string) (runtime.ContainerStatus, error) 
 }
 func (f *Fake) Inspect(context.Context, string) (runtime.Health, error) {
 	return runtime.Health{}, nil
+}
+
+// ContainerMounts reports MountsVal when set, otherwise the destinations of the
+// last CreateContainer — so a fake container is self-consistent with what was
+// asked for. MountsErr forces the "couldn't look" path.
+func (f *Fake) ContainerMounts(context.Context, string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.MountsErr != nil {
+		return nil, f.MountsErr
+	}
+	if f.MountsVal != nil {
+		return f.MountsVal, nil
+	}
+	var dests []string
+	for _, b := range f.lastCreate.BindMounts {
+		dests = append(dests, b.ContainerPath)
+	}
+	return dests, nil
 }
 
 func (f *Fake) Exec(_ context.Context, _ string, cmd []string) (string, string, int, error) {

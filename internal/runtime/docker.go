@@ -254,6 +254,24 @@ func (d *Docker) Status(ctx context.Context, name string) (ContainerStatus, erro
 	}
 }
 
+// ContainerMounts lists the destinations currently mounted into the container.
+// An error is returned (not an empty list) when the container can't be
+// inspected, so a caller can tell "not mounted" from "didn't find out".
+func (d *Docker) ContainerMounts(ctx context.Context, name string) ([]string, error) {
+	out, stderr, err := d.run(ctx, "inspect", "-f",
+		"{{range .Mounts}}{{.Destination}}\n{{end}}", name)
+	if err != nil {
+		return nil, fmt.Errorf("inspect mounts for %s: %w: %s", name, err, strings.TrimSpace(stderr))
+	}
+	var dests []string
+	for _, line := range strings.Split(out, "\n") {
+		if d := strings.TrimSpace(line); d != "" {
+			dests = append(dests, d)
+		}
+	}
+	return dests, nil
+}
+
 func (d *Docker) Inspect(ctx context.Context, name string) (Health, error) {
 	out, _, err := d.run(ctx, "inspect", "-f",
 		"{{.State.OOMKilled}}|{{.RestartCount}}|{{.State.ExitCode}}", name)

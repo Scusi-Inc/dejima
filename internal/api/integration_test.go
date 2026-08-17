@@ -188,6 +188,7 @@ type fakeRuntime struct {
 	health           runtime.Health
 	statsByName      map[string]runtime.Stats // returned by StatsAll
 	volumeSizes      map[string]int64
+	mountsErr        error // forces ContainerMounts to fail (the "couldn't look" path)
 	volumeCopies     [][2]string
 	startCalls       int
 	stopCalls        int
@@ -257,6 +258,22 @@ func (f *fakeRuntime) VolumeSizes(context.Context) (map[string]int64, error) {
 	defer f.mu.Unlock()
 	return f.volumeSizes, nil
 }
+
+// ContainerMounts answers from the last create, so the fake container agrees
+// with what the server asked for. mountsErr forces the "couldn't look" path.
+func (f *fakeRuntime) ContainerMounts(context.Context, string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.mountsErr != nil {
+		return nil, f.mountsErr
+	}
+	var dests []string
+	for _, b := range f.lastCreate.BindMounts {
+		dests = append(dests, b.ContainerPath)
+	}
+	return dests, nil
+}
+
 func (f *fakeRuntime) Inspect(context.Context, string) (runtime.Health, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
