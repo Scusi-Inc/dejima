@@ -1071,6 +1071,15 @@ func (s *Server) workspaceReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	// A repo-less island has no /workspace/.git and never will, so the probe
+	// below can only ever fail. Left to run, the caller polls for its full
+	// two-minute budget and then reports "stalled" — a working island presented
+	// as a broken one, after the slowest possible wait. There is nothing to
+	// clone, so it is ready the moment it exists.
+	if p.NoRepo {
+		writeJSON(w, http.StatusOK, WorkspaceReadyResponse{Ready: true})
+		return
+	}
 	// Bounded: this is polled in a loop and a busy container shouldn't stall it.
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -1577,8 +1586,19 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	// A seed path is a valid clone source on its own — a local-copy of a repo
 	// with no remote resolves to Repo="" + SeedPath set (origin stays unset).
-	if strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "" {
-		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed)"))
+	// no_repo is the deliberate empty-workspace mode. Kept as its own opt-in
+	// rather than letting an empty repo through: an empty Repo is far more often
+	// a shell-eaten URL than an intent, and silently booting an empty island for
+	// it is indistinguishable from a clone that failed.
+	switch {
+	case req.NoRepo && (strings.TrimSpace(req.Repo) != "" || strings.TrimSpace(req.SeedPath) != ""):
+		writeError(w, http.StatusBadRequest, errors.New("no_repo can't be combined with a repo or seed — pick one"))
+		return
+	case req.NoRepo && strings.TrimSpace(req.Name) == "":
+		writeError(w, http.StatusBadRequest, errors.New("name is required with no_repo (there's no repo to derive one from)"))
+		return
+	case !req.NoRepo && strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "":
+		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed) — or set no_repo for an island with an empty workspace"))
 		return
 	}
 	// Stop a doomed private-repo clone before it launches into an empty, repo-less
@@ -1699,7 +1719,7 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents)
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents, req.NoRepo)
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -2038,7 +2058,7 @@ func oomScoreAdjPtr(priority *int) *int {
 	return ptrInt(oomScoreAdj(*priority))
 }
 
-func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role, ghIdentity string, res Resources, seedPath string, seedAgents []AgentSpecRequest) (*project.Project, error) {
+func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role, ghIdentity string, res Resources, seedPath string, seedAgents []AgentSpecRequest, noRepo bool) (*project.Project, error) {
 	exists, err := s.rt.ImageExists(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("check image %s: %w", image, err)
@@ -2051,6 +2071,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 	p := &project.Project{
 		Name:           name,
 		RepoURL:        repo,
+		NoRepo:         noRepo,
 		Agent:          agent,
 		Image:          image,
 		Cmd:            cmd,
@@ -2552,6 +2573,12 @@ func (s *Server) ensureWorktree(ctx context.Context, p *project.Project, a *proj
 		return nil // already a worktree
 	}
 	if _, _, code, _ := s.rt.Exec(ctx, p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); code != 0 {
+		// Name the cause when it's by design. Identical symptom, opposite
+		// meaning: a repo-less island isn't missing a checkout, it never had
+		// one, and "no repo at /workspace" alone reads as a clone that failed.
+		if p.NoRepo {
+			return fmt.Errorf("island %q was created with --no-repo, so there's no /workspace repo to base a worktree on; co-located agents on a repo-less island share /workspace directly", p.Name)
+		}
 		return fmt.Errorf("no repo at /workspace to base a worktree on")
 	}
 	_, _, _, _ = s.rt.Exec(ctx, p.ContainerName(), []string{"mkdir", "-p", agentsWorktreeRoot})

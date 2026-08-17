@@ -329,6 +329,18 @@ type CreateIslandRequest struct {
 	// source (see reposrc local-copy mode). Only valid against a local daemon;
 	// Repo then holds the upstream URL to set as origin, or "" for no remote.
 	SeedPath string `json:"seed_path,omitempty"`
+	// NoRepo creates an island with no checkout at all: an empty /workspace and
+	// no origin. For the things that genuinely have no repo — assistant brains
+	// (OpenClaw, Letta, Hermes, Goose), headless task runners, scratch sandboxes,
+	// evaluating a tool before it's a project — rather than making the operator
+	// invent an empty repo to satisfy a check.
+	//
+	// It is an EXPLICIT opt-in, never inferred from an empty Repo. A repo URL
+	// eaten by the shell, or a variable that expanded to nothing, must fail
+	// loudly rather than silently produce an empty island that looks exactly
+	// like a clone that didn't happen. Name is required in this mode — there is
+	// no repo to derive one from.
+	NoRepo bool `json:"no_repo,omitempty"`
 	// Cmd is the entrypoint command for agent="headless" islands (e.g.
 	// "python my_loop.py"). Required when Agent is "headless"; ignored
 	// otherwise. The container runs the command via /bin/sh -c, so shell

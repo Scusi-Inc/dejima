@@ -99,6 +99,14 @@ type Project struct {
 	// addressed by the CLI); Title is what the user reads. Empty → show Name.
 	Title   string `toml:"title,omitempty"`
 	RepoURL string `toml:"repo"`
+	// NoRepo records that this island was created deliberately WITHOUT a repo:
+	// an empty /workspace and no origin. It exists so every surface that assumes
+	// a checkout can tell "there is no repo, by design" apart from "the clone
+	// hasn't finished, or failed" — an empty RepoURL alone cannot, and reading it
+	// as a failure is what makes a working island look broken (a workspace-ready
+	// poll that never succeeds, a git pane that reports an error, a purge guard
+	// that can't verify work it was never given).
+	NoRepo bool `toml:"no_repo,omitempty"`
 	// Agent and Cmd are the pre-multi-agent scalar fields. They are retained for
 	// backward compatibility (older daemons read them) and mirror Agents[0]. New
 	// code should read Agents; PrimaryAgent() is the accessor.
