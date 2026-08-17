@@ -159,7 +159,7 @@
     </div>
     <div class="faq-item">
       <h3>The server has to be macOS or Linux, right?</h3>
-      <p>Yes. The Dejima server (the daemon) runs on macOS or Linux, since it needs Docker. Windows is fine as a client: it can connect to and drive a server, it just can't host one.</p>
+      <p>Natively, yes: the daemon needs Docker on a Unix host, so it runs on macOS or Linux. But Windows can host too, through WSL2. <code>dejima wsl setup</code> installs Docker and the daemon into a WSL2 distro and points your native Windows client at it. Windows is also fine as a plain client driving a server elsewhere, if that's what you want. See the <a href="../quickstart.html#run-local">quickstart</a>.</p>
     </div>
     <div class="faq-item">
       <h3>Copying a login URL out of an agent doesn't work (or new agents open in separate windows)?</h3>
