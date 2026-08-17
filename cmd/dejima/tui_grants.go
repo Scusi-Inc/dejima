@@ -181,11 +181,19 @@ func (m tuiModel) renderGrantsView() string {
 	}
 
 	r := v.resp
-	total := len(r.Port) + len(r.MCP) + len(r.Links) + len(r.Capability)
-	// The host GitHub credential counts toward "is this island contained". It is
-	// the widest-reaching grant of the five (account-wide read), so an island
-	// holding it and nothing else must not be reported as fully contained.
-	if total == 0 && !r.HostGitHub.Granted {
+	// One list, consulted by everything that summarises. Both the containment
+	// claim below and the tally in the footer read from it, so a sixth grant kind
+	// is added in ONE place instead of being silently omitted from whichever
+	// summary its author didn't think to look at. That omission has already
+	// happened twice with the fifth kind (the host GitHub credential): once in
+	// the containment claim, and once — in the very commit that fixed it — in the
+	// footer tally ten lines below.
+	kinds := grantKinds(r)
+	total := 0
+	for _, k := range kinds {
+		total += k.n
+	}
+	if total == 0 {
 		// The locked-down default — make it unmistakable and reassuring. The
 		// GitHub clause is stated positively rather than omitted: a deliberate
 		// deny is a fact worth showing, not an absence to infer.
@@ -257,14 +265,47 @@ func (m tuiModel) renderGrantsView() string {
 		b.WriteString(ln + "\n")
 	}
 
-	hint := fmt.Sprintf("Port %d · MCP %d · Links %d · Capabilities %d",
-		len(r.Port), len(r.MCP), len(r.Links), len(r.Capability))
+	parts := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		parts = append(parts, fmt.Sprintf("%s %d", k.label, k.n))
+	}
+	hint := strings.Join(parts, " · ")
 	if len(lines) > visible {
 		hint = fmt.Sprintf("↕ %d/%d   ·   ", v.scroll+1, len(lines)) + hint
 	}
 	b.WriteString("\n" + styleMuted.Render(hint))
 	b.WriteString(m.renderHostGHFooter())
 	return b.String()
+}
+
+// grantKind is one category of thing an island can reach, with how many of it
+// this island holds.
+type grantKind struct {
+	label string
+	n     int
+}
+
+// grantKinds enumerates every grant category, and is the ONLY place that does.
+// Anything that summarises — "is this island contained", the footer tally —
+// derives from this, so adding a category means editing one function rather
+// than remembering every arithmetic site that should have counted it.
+//
+// The host GitHub credential is a yes/no rather than a list, so it contributes
+// 0 or 1. It belongs here regardless: it is the widest-reaching of the kinds
+// (account-wide read), and leaving it out of the sum is precisely how an island
+// holding the operator's entire account came to be reported "fully contained".
+func grantKinds(r *api.IslandGrantsResponse) []grantKind {
+	hostGH := 0
+	if r.HostGitHub.Granted {
+		hostGH = 1
+	}
+	return []grantKind{
+		{"Port", len(r.Port)},
+		{"MCP", len(r.MCP)},
+		{"Links", len(r.Links)},
+		{"Capabilities", len(r.Capability)},
+		{"GitHub", hostGH},
+	}
 }
 
 // hostGHRows renders the GitHub-credential section. The three states have to be

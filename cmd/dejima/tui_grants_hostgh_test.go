@@ -203,3 +203,65 @@ func TestGrantsViewActionNoticeNamesTheRecreate(t *testing.T) {
 type errFake struct{}
 
 func (errFake) Error() string { return "boom" }
+
+// Every summary in the pane must count every grant kind. The failure this
+// guards is not a wrong number, it's a MISSING TERM — and a missing term reads
+// as a smaller, safer island than the one in front of you.
+//
+// It has already happened twice with the same kind: the containment claim
+// omitted the host GitHub credential, and the fix for that omitted it again
+// from the tally ten lines below. Deriving both from grantKinds is what makes
+// the next kind a one-line change instead of a scavenger hunt.
+func TestGrantsSummariesCountEveryKind(t *testing.T) {
+	// A single grant of EACH kind, so a summary that drops one is visible.
+	full := &api.IslandGrantsResponse{
+		Port:       []api.PortScopeView{{Name: "vault", HostPath: "/tmp/v", Mode: "ro"}},
+		MCP:        []api.MCPGrantView{{Server: "fs"}},
+		Capability: []api.CapabilityGrantView{{Target: "notify"}},
+		HostGitHub: api.HostGitHubCredentialView{Eligible: true, Granted: true, GrantedAt: time.Now()},
+	}
+	if got, want := len(grantKinds(full)), 5; got != want {
+		t.Fatalf("grantKinds returned %d kinds, want %d — a kind was added without extending the enumeration", got, want)
+	}
+	sum := 0
+	for _, k := range grantKinds(full) {
+		if k.label == "" {
+			t.Error("every kind needs a label for the tally")
+		}
+		sum += k.n
+	}
+	if sum != 4 {
+		t.Errorf("summed %d grants, want 4 (one of each held kind)", sum)
+	}
+
+	// The footer tally must name every kind, including the one that isn't a list.
+	m := grantsModelWith(full)
+	out := plain(m.renderGrantsView())
+	for _, label := range []string{"Port", "MCP", "Links", "Capabilities", "GitHub"} {
+		if !strings.Contains(out, label+" ") {
+			t.Errorf("tally omits %q:\n%s", label, out)
+		}
+	}
+}
+
+// The GitHub credential alone must move the total off zero — the containment
+// claim is derived from the same sum, so this is the property that stops the
+// pane calling an account-wide grant "fully contained".
+func TestGrantKindsCountsHostGitHub(t *testing.T) {
+	denied := &api.IslandGrantsResponse{HostGitHub: api.HostGitHubCredentialView{Eligible: true}}
+	granted := &api.IslandGrantsResponse{HostGitHub: api.HostGitHubCredentialView{Eligible: true, Granted: true}}
+
+	sum := func(r *api.IslandGrantsResponse) int {
+		n := 0
+		for _, k := range grantKinds(r) {
+			n += k.n
+		}
+		return n
+	}
+	if sum(denied) != 0 {
+		t.Errorf("a denied credential contributes nothing, got %d", sum(denied))
+	}
+	if sum(granted) != 1 {
+		t.Errorf("a granted credential must count toward the total, got %d", sum(granted))
+	}
+}
