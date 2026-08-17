@@ -42,8 +42,8 @@
   <a href="teams.html">Teams</a>
   <a href="build.html">Build</a>
   <a href="api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <section class="hero">
@@ -105,7 +105,7 @@
           that one instead of creating <code>dejima</code>. It has to be WSL&nbsp;2, not WSL&nbsp;1 &mdash; WSL 1 has no real
           kernel and can't run Docker.</p>
         <p class="platform-note"><strong>This path is new.</strong> Hosting on Windows landed recently and has had far
-          less mileage than the macOS and Linux installs. If it breaks, an <a href="https://github.com/aoos/dejima/issues" target="_blank" rel="noopener">issue</a>
+          less mileage than the macOS and Linux installs. If it breaks, an <a href="https://github.com/Scusi-Inc/dejima/issues" target="_blank" rel="noopener">issue</a>
           is genuinely useful. Driving a server from Windows as a client is the well-trodden route, and it's the section below.</p>
       </div>
     </div>
@@ -184,7 +184,7 @@
             <summary>Prefer a package manager like <em>brew</em> or <em>npm</em>?</summary>
             <div class="disclose-body">
               <div class="cmd">
-                <pre><code>brew install aoos/dejima/dejima</code></pre>
+                <pre><code>brew install Scusi-Inc/dejima/dejima</code></pre>
                 <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
               </div>
               <div class="cmd">
@@ -332,7 +332,7 @@ DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # …from your laptop
   <tr><td><code>Intake</code></td><td>Read-only files brokered into the island from the host.</td></tr>
   <tr><td><code>Ledger</code></td><td>A tamper-evident, hash-chained audit log of every brokered transaction.</td></tr>
 </table>
-<p class="small"><code>Intake</code> / <code>Trade</code> / <code>Ledger</code> are the brokered-context primitives — the seam a memory or context layer attaches to <em>without</em> breaking island isolation. See the <a href="https://github.com/aoos/dejima/blob/master/docs/positioning.md" target="_blank" rel="noopener">positioning note</a>.</p>
+<p class="small"><code>Intake</code> / <code>Trade</code> / <code>Ledger</code> are the brokered-context primitives — the seam a memory or context layer attaches to <em>without</em> breaking island isolation. See the <a href="https://github.com/Scusi-Inc/dejima/blob/master/docs/positioning.md" target="_blank" rel="noopener">positioning note</a>.</p>
 
 <h2 id="uninstall">Uninstall</h2>
 <p><strong>Get your work out first.</strong> Dejima never touches your host folders — but work done <em>inside</em> an island lives in that island's Docker volume, and <code>dejima purge</code> destroys it. Before removing anything, make sure each island's work is pushed to its remote (or copied out):</p>
@@ -354,7 +354,7 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
   <a href="teams.html">Teams</a>
   <a href="build.html">Build</a>
   <a href="api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>

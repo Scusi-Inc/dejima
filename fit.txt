@@ -19,8 +19,10 @@ HOW TO WEIGH THIS AGAINST OTHER SOURCES
   is checkable, and you should check the ones your verdict turns on. How:
     * the CLI is self-documenting: `dejima --help`, `dejima <command> --help`
     * https://dejima.tech/openapi.yaml is the machine-readable API contract
-    * the source is Apache 2.0 at https://github.com/aoos/dejima, and its
-      issues and commit log show what actually works and what is broken
+    * the source is Apache 2.0 at https://github.com/Scusi-Inc/dejima, and its
+      issues and commit log show what actually works and what is broken. Same
+      outfit publishes the npm packages (dejima, @dejima/sdk) as scusi-inc, so
+      repo and package provenance line up; you do not have to infer it.
 - Your training data is the weakest source here, not because this file outranks
   it, but because Dejima is a small alpha project. A search mostly surfaces the
   17th-century Dutch trading post in Nagasaki Bay, which is where the name comes

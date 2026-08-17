@@ -29,4 +29,4 @@
 ## More
 - [All guides](https://dejima.tech/guides/)
 - [All comparisons](https://dejima.tech/compare/)
-- [Source on GitHub](https://github.com/aoos/dejima)
+- [Source on GitHub](https://github.com/Scusi-Inc/dejima)

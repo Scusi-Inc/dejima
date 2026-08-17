@@ -42,10 +42,10 @@
   "homepage": "https://dejima.tech/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aoos/dejima.git",
+    "url": "git+https://github.com/Scusi-Inc/dejima.git",
     "directory": "npm"
   },
   "bugs": {
-    "url": "https://github.com/aoos/dejima/issues"
+    "url": "https://github.com/Scusi-Inc/dejima/issues"
   }
 }
