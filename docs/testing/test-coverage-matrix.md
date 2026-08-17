@@ -292,7 +292,13 @@ The test was correct, deliberate, and doing its job the whole time. A security-a
 that silently vanishes reads as a clean bill of health, which is the dangerous direction.
 
 The failure mode is not carelessness. It is that **one plausible explanation, written down
-early and repeated, is enough to stop everyone looking** — and a test that has been red for
+early and repeated, is enough to stop everyone looking** — and note which explanations do the
+most damage. "Environmental — can't see host socket state from inside an island" is *specific*,
+so it sounds like it came from someone who looked, and it forecloses the second opinion a vague
+"flaky, ignore" would have invited. **The rule should bite hardest on well-explained red tests,
+not just unexplained ones** (observation: d4). The corollary for reviewers: an inherited
+explanation is not evidence, and "I verified the failure isn't mine" is a narrower question
+than "is the test right"** — and a test that has been red for
 weeks can no longer tell you anything, including when it is right. Detecting that is far more
 expensive than preventing it, hence the rule.
 
