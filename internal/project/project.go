@@ -164,6 +164,16 @@ type Project struct {
 	// then falls back to its deterministic per-name default. Set/cleared by the
 	// operator via PUT/DELETE /v1/islands/{name}/identity. Cosmetic only.
 	Identity Identity `toml:"identity,omitempty"`
+	// HostGitHubGrant, when set, lets this island mount the HOST operator's own
+	// ~/.config/gh — a credential whose read scope is the operator's entire
+	// account. Nil means denied, which is the default for every island created
+	// under the grant model. See github_host.go.
+	HostGitHubGrant *HostGitHubGrant `toml:"host_github_grant,omitempty"`
+	// HostGitHubReviewed records that the deny-by-default decision has been made
+	// for this island — by creation under the grant model, by an operator
+	// grant/revoke, or by the one-time migration. It is what stops a revoke from
+	// being undone by re-grandfathering on the next Load.
+	HostGitHubReviewed bool `toml:"host_github_reviewed,omitempty"`
 }
 
 // Identity is a per-island visual override: a hex color (#rgb or #rrggbb) and a
@@ -596,6 +606,12 @@ func Load(name string) (*Project, error) {
 	// the operator and private from teammates.
 	if strings.TrimSpace(p.Owner) == "" {
 		p.Owner = HostOwner()
+		changed = true
+	}
+	// Deny-by-default cutover for the host operator's gh credential. Runs AFTER
+	// the ownership backfill above, which it depends on to tell a host island
+	// from a tenant one.
+	if p.migrateHostGitHub() {
 		changed = true
 	}
 	if changed {

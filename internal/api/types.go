@@ -31,6 +31,11 @@ type IslandInfo struct {
 	// operator/member can re-connect (docs/github-identities.md), not a silent
 	// break. Not set for islands that name no identity.
 	GitHubCredMissing bool `json:"github_cred_missing,omitempty"`
+	// GitHubHostCredential reports whether this island may use the HOST
+	// operator's own gh login (account-wide read). Nil on list responses that
+	// don't compute it. Grandfathered marks an island still carrying the grant
+	// the deny-by-default migration wrote, i.e. one nobody has decided about.
+	GitHubHostCredential *HostGitHubCredentialView `json:"github_host_credential,omitempty"`
 	// SecretsCount is how many secrets the island has. Read from the per-island
 	// metadata only — never the keychain — so listing stays cheap enough for the
 	// dashboard's poll. A count, never the names' values.

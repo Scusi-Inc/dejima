@@ -93,6 +93,49 @@ credential over the island socket instead of mounting it, or minting per-repo
 scoped tokens) is tracked as future hardening and reuses the same per-island
 token machinery as the macOS autonomy path.
 
+## The host operator's own login is a grant, not a default
+
+The host's `~/.config/gh` reads **every private repo on that account**. Write is
+separately scoped by the token itself, so the exposure is exfiltration rather
+than tampering — but an island holding it can read all of your private source,
+and an island may be running several autonomous agents.
+
+So it is deny-by-default, like Port, capability, MCP, link, spawn and egress:
+
+```bash
+dejima github host-credential status <island>   # granted / denied / grandfathered
+dejima github host-credential grant  <island>   # opt in
+dejima github host-credential revoke <island>   # opt back out
+```
+
+Grants and revokes are ledgered (`github.host-credential.grant` / `.revoke`) and
+appear in `GET /v1/islands/<name>/grants` alongside every other grant. The
+credential is a bind mount, so a change takes effect when the container is next
+created — `dejima upgrade <island>` applies it immediately.
+
+**Prefer a per-island identity.** Selecting one (above) overrides this grant
+entirely and scopes the island to a credential you chose, which is strictly
+better than handing it your whole account.
+
+### What happened to islands that already existed
+
+Every host island created before this predates the grant model and was relying
+on the old silent inheritance. A hard cutover would have broken clone/push
+across an operator's whole fleet with no error naming the cause, so those
+islands were **grandfathered**: the same access, recorded as an explicit grant
+and marked `grandfathered`.
+
+That is deliberately not a decision — it preserves what was there and makes it
+enumerable. Those islands are as exposed as they were; the difference is you can
+now find them and close them one at a time:
+
+```bash
+dejima github host-credential status <island>   # says "grandfathered" if nobody has decided
+```
+
+A grant or revoke you make yourself clears the marker, because then somebody
+*has* decided.
+
 ## Commit author vs. push identity
 
 The push/clone identity comes from the selected GitHub identity. Commit
@@ -145,10 +188,11 @@ agents commit) + `read:org`, surfaced in the flow (never silent).
   `Store.ResolveForIsland`: a tenant island resolves only its owner's identities
   plus host-**shared** ones. An operator's token is **never** materialized into
   another tenant's island.
-- The host's own `~/.config/gh` is a **host-island-only** fallback. A tenant
-  island that resolves no identity gets **no** credential (recover with the
-  self-serve paths above) rather than silently inheriting the host operator's
-  login — the over-mount this scoping closes.
+- The host's own `~/.config/gh` is a **host-island-only** fallback, and since
+  #334 an **explicitly granted** one. A tenant island that resolves no identity
+  gets **no** credential (recover with the self-serve paths above) rather than
+  silently inheriting the host operator's login. A *host* island gets it only
+  where the operator granted it — see below.
 - **Security note (device-flow / captured tokens):** a connected token is
   materialized into the owner's **own** islands (the read-only `gh` config mount),
   so a compromised agent inside one of their islands could use it to reach GitHub

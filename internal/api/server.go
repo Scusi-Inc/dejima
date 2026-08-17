@@ -746,6 +746,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/islands/{name}/port/scopes", s.handleListPortScopes)
 	mux.HandleFunc("POST /v1/islands/{name}/port/scopes", s.handleGrantPortScope)
 	mux.HandleFunc("DELETE /v1/islands/{name}/port/scopes/{scope}", s.handleRevokePortScope)
+	mux.HandleFunc("GET /v1/islands/{name}/github/host-credential", s.handleGetHostGitHubCredential)
+	mux.HandleFunc("POST /v1/islands/{name}/github/host-credential", s.handleGrantHostGitHubCredential)
+	mux.HandleFunc("DELETE /v1/islands/{name}/github/host-credential", s.handleRevokeHostGitHubCredential)
 	// Capability broker — grant surface (operator-only; absent from
 	// tokenRouteAccess, so a contained brain can never self-grant). Execution
 	// lands in a later phase. See internal/api/capability.go.
@@ -1762,6 +1765,11 @@ func cloneProjectConfig(src *project.Project, newName string, now time.Time) *pr
 		DesiredState:   project.StateRunning,
 		CreatedAt:      now,
 		LastUsedAt:     now,
+		// Grants are deliberately NOT cloned (Ports/Capabilities aren't either): a
+		// copy starts deny-all and the operator re-grants what it needs. Marking it
+		// reviewed keeps the migration from quietly re-granting what the clone was
+		// just denied.
+		HostGitHubReviewed: true,
 	}
 	if len(src.Agents) > 0 {
 		dst.Agents = make([]project.AgentSpec, len(src.Agents))
@@ -2061,6 +2069,11 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		// against. Compared later (doctor / ls / detail) to the running daemon to
 		// flag an island built from a stale image whose /opt shims may be old.
 		BuiltVersion: version.Version,
+		// Born under the grant model, so the deny-by-default decision is already
+		// made: no host gh credential unless the operator grants one. Without this
+		// the load-time migration would grandfather every new island and the
+		// default would never actually change.
+		HostGitHubReviewed: true,
 	}
 	p.EnsureAgents()                             // mirror the scalar agent into Agents[0] for new islands
 	p.SetPrimaryID(project.PrimaryAgentID(name)) // fresh island: island-letter primary id (p1), not the legacy a1 back-fill
@@ -2963,6 +2976,14 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 			}
 		}
 	}
+	// Host-gh grant state, so a host island that now has NO GitHub credential
+	// says so here — the same surface a tenant island uses — instead of failing
+	// opaquely at the first clone/push. It also carries the Grandfathered flag,
+	// which is how "islands still on the old inherited credential" stays a
+	// question with an answer after the deny-by-default migration.
+	if v := hostGitHubView(p); v.Eligible {
+		info.GitHubHostCredential = &v
+	}
 	// Secret COUNT for the dashboard's per-island row. Reads the island's
 	// metadata file only — never the keychain — so it stays cheap enough for the
 	// poll and can't trigger a keychain access prompt.
@@ -3225,12 +3246,15 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		binds = append(binds, runtime.BindMount{
 			HostPath: dir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
 		})
-	} else if ghOwner(p.Owner) == "" {
-		// v1b containment: the host's own ~/.config/gh is a HOST-island-only
-		// fallback. A tenant island that resolves no identity gets NO gh credential
-		// (surfaced via health + the self-serve "connect GitHub" prompt) rather than
-		// silently inheriting the host operator's login — that inheritance was the
-		// over-mount finding this feature closes.
+	} else if ghOwner(p.Owner) == "" && p.HostGitHubAllowed() {
+		// The host's own ~/.config/gh is a HOST-island-only fallback, and now also
+		// an EXPLICITLY GRANTED one. A tenant island that resolves no identity gets
+		// no gh credential (surfaced via health + the self-serve "connect GitHub"
+		// prompt) rather than silently inheriting the host operator's login; a host
+		// island gets it only where the operator granted it, because that login
+		// reads the operator's whole account and an island may hold several
+		// autonomous agents. See project/github_host.go for the grant model and the
+		// migration that converted the old silent inheritance into explicit grants.
 		if ghDir, err := paths.HostGHConfigDir(); err == nil {
 			if _, statErr := os.Stat(ghDir); statErr == nil {
 				binds = append(binds, runtime.BindMount{
