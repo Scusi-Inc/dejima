@@ -193,7 +193,12 @@ func (m tuiModel) renderGrantsView() string {
 	for _, k := range kinds {
 		total += k.n
 	}
-	if total == 0 {
+	// "Fully contained" is the strongest claim this pane makes, so it requires
+	// the strongest evidence: nothing granted AND the running container
+	// confirmed to match. A revoked-but-still-mounted credential must not reach
+	// this branch, and neither must an island we couldn't inspect — an unasked
+	// question is not a clean answer.
+	if total == 0 && r.Credentials.Known && len(r.Credentials.Drift()) == 0 {
 		// The locked-down default — make it unmistakable and reassuring. The
 		// GitHub clause is stated positively rather than omitted: a deliberate
 		// deny is a fact worth showing, not an absence to infer.
@@ -251,6 +256,10 @@ func (m tuiModel) renderGrantsView() string {
 
 	section("GitHub credential", hostGHRows(r.HostGitHub))
 
+	if rows := credentialDriftRows(r.Credentials); len(rows) > 0 {
+		section("Live container", rows)
+	}
+
 	// Window the body to the pane height; the cursor scrolls it.
 	const chrome = 6 // title, subtitle, two blanks, footer hint, pane border
 	visible := m.height - chrome
@@ -306,6 +315,45 @@ func grantKinds(r *api.IslandGrantsResponse) []grantKind {
 		{"Capabilities", len(r.Capability)},
 		{"GitHub", hostGH},
 	}
+}
+
+// credentialDriftRows reports where the running container disagrees with the
+// record, and returns nothing when they agree.
+//
+// Credential mounts are fixed at container create, so a grant or revoke is a
+// statement of intent until the container is recreated. Everything else in this
+// pane answers from the record; without this section the pane would say
+// "denied" about a credential every agent in the island can still use — which
+// is the reassuring direction to be wrong in, on the surface built for checking
+// containment.
+//
+// The unknown case gets its own row rather than silence. An unasked question
+// rendered as agreement is the same defect as a doctor check that vanishes when
+// its tool is missing: it reads as a clean bill of health nobody issued.
+func credentialDriftRows(rep api.CredentialMountReport) []string {
+	if !rep.Known {
+		reason := rep.Reason
+		if reason == "" {
+			reason = "the container couldn't be inspected"
+		}
+		return []string{
+			"  " + styleMuted.Render("not determined — "+reason),
+			"  " + styleMuted.Render("the rows above describe the configuration, not the running container"),
+		}
+	}
+	var rows []string
+	for _, d := range rep.Drift() {
+		if d.Configured {
+			// Over-reports access: wrong, but fails toward caution.
+			rows = append(rows,
+				"  "+styleMuted.Render(d.Label+": granted, but NOT yet mounted — takes effect on recreate"))
+			continue
+		}
+		// Under-reports access: the dangerous direction, so it is flagged.
+		rows = append(rows,
+			"  "+styleWaiting.Render("⚠ "+d.Label+": revoked, but STILL mounted in the running container"))
+	}
+	return rows
 }
 
 // hostGHRows renders the GitHub-credential section. The three states have to be

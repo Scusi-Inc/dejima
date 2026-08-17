@@ -265,3 +265,65 @@ func TestGrantKindsCountsHostGitHub(t *testing.T) {
 		t.Errorf("a granted credential must count toward the total, got %d", sum(granted))
 	}
 }
+
+// The pane must show the running container's disagreement with the record.
+// Without this the pane says "denied" about a credential every agent in the
+// island can still use.
+func TestGrantsViewShowsCredentialDrift(t *testing.T) {
+	revokedButLive := api.CredentialMountReport{
+		Known: true,
+		States: []api.CredentialMountState{
+			{Label: "GitHub credential", Path: "/opt/host/gh-config", Configured: false, Mounted: true},
+			{Label: "secrets", Path: "/opt/host/secrets.env"},
+		},
+	}
+	m := grantsModelWith(&api.IslandGrantsResponse{
+		HostGitHub:  api.HostGitHubCredentialView{Eligible: true},
+		Credentials: revokedButLive,
+	})
+	out := plain(m.renderGrantsView())
+	if !strings.Contains(out, "STILL mounted") {
+		t.Errorf("a revoked-but-live credential must be flagged:\n%s", out)
+	}
+	// And the pane must not simultaneously claim containment.
+	if strings.Contains(out, "fully contained") {
+		t.Errorf("an island still holding a revoked credential is not contained:\n%s", out)
+	}
+}
+
+// The mirror renders too, but without the warning — it fails toward caution.
+func TestGrantsViewShowsPendingGrant(t *testing.T) {
+	pending := api.CredentialMountReport{
+		Known: true,
+		States: []api.CredentialMountState{
+			{Label: "GitHub credential", Path: "/opt/host/gh-config", Configured: true, Mounted: false},
+		},
+	}
+	m := grantsModelWith(&api.IslandGrantsResponse{
+		HostGitHub:  api.HostGitHubCredentialView{Eligible: true, Granted: true, GrantedAt: time.Now()},
+		Credentials: pending,
+	})
+	out := plain(m.renderGrantsView())
+	if !strings.Contains(out, "NOT yet mounted") {
+		t.Errorf("a pending grant should be shown as pending:\n%s", out)
+	}
+}
+
+// "Couldn't inspect" must render as its own thing, and must suppress the
+// containment claim — the same rule the doctor check now follows.
+func TestGrantsViewUnknownCredentialsSuppressesContainmentClaim(t *testing.T) {
+	m := grantsModelWith(&api.IslandGrantsResponse{
+		HostGitHub:  api.HostGitHubCredentialView{Eligible: true},
+		Credentials: api.CredentialMountReport{Reason: "engine unreachable"},
+	})
+	out := plain(m.renderGrantsView())
+	if strings.Contains(out, "fully contained") {
+		t.Errorf("we didn't look, so we can't claim containment:\n%s", out)
+	}
+	if !strings.Contains(out, "not determined") {
+		t.Errorf("the unknown state must say so:\n%s", out)
+	}
+	if !strings.Contains(out, "engine unreachable") {
+		t.Errorf("the reason must be shown so it's actionable:\n%s", out)
+	}
+}

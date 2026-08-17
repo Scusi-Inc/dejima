@@ -11,10 +11,31 @@ import (
 )
 
 func grantsModelWith(resp *api.IslandGrantsResponse) tuiModel {
+	// Default to a DETERMINED credential report that agrees with the record —
+	// an ordinary healthy island. Left zero, Known is false, which now means
+	// "we couldn't inspect the container" and deliberately suppresses the
+	// fully-contained claim; tests that want that path set it explicitly.
+	if !resp.Credentials.Known && resp.Credentials.Reason == "" {
+		resp.Credentials = agreeingCredentials(resp)
+	}
 	m := initialTUIModel(nil)
 	m.width, m.height = 100, 30
 	m.grants = &grantsView{island: "myrepo", resp: resp}
 	return m
+}
+
+// agreeingCredentials builds a report where the running container matches the
+// record, derived from the response so it stays consistent with whatever the
+// test granted.
+func agreeingCredentials(resp *api.IslandGrantsResponse) api.CredentialMountReport {
+	return api.CredentialMountReport{
+		Known: true,
+		States: []api.CredentialMountState{
+			{Label: "GitHub credential", Path: "/opt/host/gh-config",
+				Configured: resp.HostGitHub.Granted, Mounted: resp.HostGitHub.Granted},
+			{Label: "secrets", Path: "/opt/host/secrets.env"},
+		},
+	}
 }
 
 // TestGrantsFullyContained: when nothing is granted, the view says so loudly —
