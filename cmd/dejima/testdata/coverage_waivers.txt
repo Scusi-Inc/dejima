@@ -23,7 +23,6 @@
 
 cli auth push         # pushes host Claude/GitHub creds — needs a logged-in host
 cli service uninstall # removes the launchd/systemd daemon service (tier3)
-cli ssh enroll        # writes client SSH keys + ~/.ssh/config on the host
 
 # Local-model endpoints that shell out to the backend CLI (ollama / install
 # script) — side-effectful, so not hit in surface tests. Backend logic is covered

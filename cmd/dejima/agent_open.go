@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoos/dejima/internal/project"
@@ -34,6 +39,137 @@ func probeGatewayToken(ctx context.Context, khArgs []string, sshPort, island, ho
 		}
 	}
 	return raw, err
+}
+
+// errForwardExited / errForwardTimeout distinguish the two ways the -L forward
+// can fail to come up. Both mean "there is no tunnel", but only the first has an
+// exit status and ssh diagnostics to classify.
+var (
+	errForwardExited  = errors.New("ssh exited before the forward was listening")
+	errForwardTimeout = errors.New("timed out waiting for the forward to listen")
+)
+
+// forwardReadyBudget bounds how long we wait for ssh to bind the local end. The
+// bind happens after auth, so this covers a slow tailnet handshake, not a slow
+// gateway — the remote side isn't dialled until something connects.
+const forwardReadyBudget = 15 * time.Second
+
+// waitForForward blocks until the local end of the `-L` forward accepts a
+// connection, the ssh process exits, or the budget runs out.
+//
+// Everything downstream — the token probe, the browser — is only meaningful if
+// the tunnel actually came up, and `sshCmd.Start()` cannot tell us that: it
+// forks successfully and auth fails afterwards, so a publickey rejection looks
+// identical to a healthy start until Wait() returns. Sleeping a fixed interval
+// and hoping (what this used to do) races: lose the race and we hand the user a
+// browser pointed at a dead port, plus a token diagnosis for a container we
+// never reached.
+//
+// A successful dial only proves ssh is listening locally, which is exactly the
+// question — with ExitOnForwardFailure=yes, ssh has authenticated and accepted
+// the forward by the time it binds.
+func waitForForward(ctx context.Context, port int, exited <-chan struct{}, budget time.Duration) error {
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	deadline := time.Now().Add(budget)
+	for {
+		// Exit is checked BEFORE the dial, and beats it. If ssh is gone there is no
+		// tunnel, so a port that still answers is someone else's service — exactly
+		// what happens when `--port` collides and ssh dies on "Address already in
+		// use". Dialling first would call that ready and point the browser at a
+		// stranger.
+		select {
+		case <-exited:
+			return errForwardExited
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errForwardTimeout
+		}
+		select {
+		case <-exited:
+			return errForwardExited
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// sshFailureHint turns an ssh-layer failure into the remedy that actually fixes
+// it, or "" when the failure isn't ssh's (i.e. the command ran in the container
+// and failed on its own terms).
+//
+// This distinction is the whole point. A façade that refuses our key and a
+// gateway with no token pinned both surface as "no token came back", and
+// conflating them told operators to run `dejima upgrade <island>` — recreating
+// the container and restarting every agent in it — to fix an unenrolled SSH key,
+// which it cannot do.
+//
+// ssh reserves exit 255 for its own errors, so that's the backstop when the text
+// doesn't match a known shape; a remote command's own 255 is possible but far
+// less likely than the ssh-layer case, and the hint is worded to stay true either
+// way.
+func sshFailureHint(output string, err error) string {
+	if err == nil {
+		return ""
+	}
+	low := strings.ToLower(output)
+	switch {
+	case strings.Contains(low, "permission denied (publickey"),
+		strings.Contains(low, "too many authentication failures"),
+		strings.Contains(low, "no supported authentication methods"):
+		return "this device isn't enrolled with the SSH façade — run `dejima ssh enroll`, then retry"
+	case strings.Contains(low, "host key verification failed"),
+		strings.Contains(low, "remote host identification has changed"):
+		return "the façade's host key didn't verify — run `dejima doctor`"
+	case strings.Contains(low, "connection refused"):
+		return "nothing is listening on the façade port — check `dejima ssh info`"
+	case strings.Contains(low, "connection timed out"),
+		strings.Contains(low, "operation timed out"),
+		strings.Contains(low, "no route to host"),
+		strings.Contains(low, "network is unreachable"):
+		return "couldn't reach the façade host — check that your tailnet is up"
+	case strings.Contains(low, "could not resolve hostname"):
+		return "couldn't resolve the façade hostname — check `dejima ssh info`"
+	}
+	if isSSHOwnFailure(err) {
+		return "ssh failed before reaching the island — check `dejima ssh info` and `dejima ssh enroll`"
+	}
+	return ""
+}
+
+// isSSHOwnFailure reports whether err is ssh's reserved 255, meaning ssh failed
+// rather than the remote command.
+func isSSHOwnFailure(err error) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 255
+}
+
+// lockedBuffer tees ssh's stderr so we can classify it while it still reaches
+// the user's terminal. Locked because the timeout path reads it while ssh is
+// still running and writing.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // extractGatewayToken pulls a gateway auth token out of dashboard output or a
@@ -217,9 +353,44 @@ func newAgentOpenCmd() *cobra.Command {
 			fmt.Printf("forwarding %s/%s gateway → %s  (Ctrl-C to stop)\n", island, agentID, url)
 
 			sshCmd := exec.CommandContext(cmd.Context(), "ssh", sshArgs...)
-			sshCmd.Stdout, sshCmd.Stderr, sshCmd.Stdin = os.Stdout, os.Stderr, os.Stdin
+			// Tee ssh's stderr: the user still sees it live, and we keep a copy to
+			// turn "Permission denied (publickey)" into the remedy for it.
+			sshErr := &lockedBuffer{}
+			sshCmd.Stdout, sshCmd.Stdin = os.Stdout, os.Stdin
+			sshCmd.Stderr = io.MultiWriter(os.Stderr, sshErr)
 			if err := sshCmd.Start(); err != nil {
 				return fmt.Errorf("start ssh forward: %w", err)
+			}
+
+			// Wait() exactly once, in one place; everything else observes `exited`.
+			exited := make(chan struct{})
+			var waitErr error
+			go func() {
+				waitErr = sshCmd.Wait()
+				close(exited)
+			}()
+
+			// Nothing below is meaningful without a live tunnel, so establish that
+			// first and fail with the real reason instead of probing a container we
+			// never reached.
+			if err := waitForForward(cmd.Context(), localPort, exited, forwardReadyBudget); err != nil {
+				// Ctrl-C (or any parent deadline) isn't a forward failure — ssh is
+				// being torn down deliberately, so report its own status.
+				if cmd.Context().Err() != nil {
+					<-exited
+					return waitErr
+				}
+				if errors.Is(err, errForwardTimeout) {
+					_ = sshCmd.Process.Kill()
+				}
+				<-exited
+				if hint := sshFailureHint(sshErr.String(), waitErr); hint != "" {
+					return fmt.Errorf("couldn't open the forward to %s: %s", island, hint)
+				}
+				if waitErr != nil {
+					return fmt.Errorf("couldn't open the forward to %s: %w", island, waitErr)
+				}
+				return fmt.Errorf("couldn't open the forward to %s: %w", island, err)
 			}
 
 			// A gateway whose console needs an auth token (OpenClaw) can't be reached
@@ -245,6 +416,18 @@ func newAgentOpenCmd() *cobra.Command {
 					fmt.Println("form instead, paste:")
 					fmt.Printf("    WebSocket URL:  ws://localhost:%d\n", localPort)
 					fmt.Printf("    Gateway Token:  %s\n", token)
+					fmt.Println()
+				} else if hint := sshFailureHint(raw, derr); hint != "" {
+					// The probe never reached the container, so we know nothing about
+					// whether a token is pinned. Say only what's true. Emphatically do
+					// NOT offer `dejima upgrade` here: recreating the container restarts
+					// every agent in the island and cannot fix an ssh-layer fault.
+					fmt.Println()
+					fmt.Println("The tunnel is up, but couldn't read this agent's console token.")
+					fmt.Printf("  %s\n", hint)
+					fmt.Println()
+					fmt.Println("  Opening the console without a token — if it shows a connect form,")
+					fmt.Println("  fix the above and re-run to have the token filled in automatically.")
 					fmt.Println()
 				} else {
 					// No token yet → this container was created before the token was
@@ -274,13 +457,11 @@ func newAgentOpenCmd() *cobra.Command {
 				}
 			}
 			if !noOpen && !printOnly {
-				// Give the forward a moment to come up, then open the browser.
-				go func() {
-					time.Sleep(800 * time.Millisecond)
-					_ = openURL(openTarget)
-				}()
+				// The forward is confirmed listening, so no sleep-and-hope: open it.
+				go func() { _ = openURL(openTarget) }()
 			}
-			return sshCmd.Wait()
+			<-exited
+			return waitErr
 		},
 	}
 	cmd.Flags().IntVar(&localPort, "port", 0, "local port to bind (default: a free port)")
