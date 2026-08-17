@@ -34,6 +34,11 @@ type IslandGrantsResponse struct {
 	Capability []CapabilityGrantView `json:"capability"`
 	MCP        []MCPGrantView        `json:"mcp"`
 	Links      []link.Grant          `json:"links"`
+	// HostGitHub is the host-operator gh credential grant. Unlike the four
+	// above it is a single yes/no rather than a list, and it is the one grant
+	// that used to be implicit — it appears here so "what does this island
+	// hold" has one answer instead of four plus a special case.
+	HostGitHub HostGitHubCredentialView `json:"host_github"`
 }
 
 // handleListGrants returns every grant type for one island in a single shape.
@@ -70,6 +75,7 @@ func (s *Server) handleListGrants(w http.ResponseWriter, r *http.Request) {
 		Capability: capabilityViews(p.Capabilities),
 		MCP:        mcpGrantViews(mcpGrants),
 		Links:      links,
+		HostGitHub: hostGitHubView(p),
 	})
 }
 

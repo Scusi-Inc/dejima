@@ -68,31 +68,32 @@ func (c roleCap) String() string {
 // to the capOwner zero value.
 var roleRouteCap = map[string]roleCap{
 	// --- read + observe (viewer and up) ---
-	"GET /v1/healthz":                          capRead,
-	"GET /metrics":                             capRead,
-	"GET /v1/islands":                          capRead,
-	"GET /v1/islands/{name}":                   capRead,
-	"GET /v1/islands/{name}/workspace-ready":   capRead,
-	"GET /v1/islands/{name}/agents":            capRead,
-	"GET /v1/islands/{name}/agents/{id}":       capRead,
-	"GET /v1/islands/{name}/events":            capRead,
-	"GET /v1/islands/{name}/logs":              capRead,
-	"GET /v1/islands/{name}/port/scopes":       capRead,
-	"GET /v1/islands/{name}/capability/grants": capRead,
-	"GET /v1/islands/{name}/mcp/grants":        capRead,
-	"GET /v1/islands/{name}/grants":            capRead, // unified per-island grants view (Lane C)
-	"GET /v1/credentials/claude":               capRead, // status only, no secret
-	"GET /v1/credentials/github":               capRead, // identities, no tokens
-	"GET /v1/credentials/github/{name}/repos":  capRead,
-	"GET /v1/credentials/providers":            capRead, // masked, no keys
-	"GET /v1/agent-types":                      capRead,
-	"GET /v1/events/subscriptions":             capRead,
-	"GET /v1/clients":                          capRead,
-	"GET /v1/overview":                         capRead,
-	"GET /v1/aggregate":                        capRead, // host-wide rollup (no names); any authed caller
-	"GET /v1/audit":                            capRead,
-	"GET /v1/activity":                         capRead, // team activity feed (curated audit view)
-	"GET /v1/panic":                            capRead, // status (engage/clear are owner)
+	"GET /v1/healthz":                               capRead,
+	"GET /metrics":                                  capRead,
+	"GET /v1/islands":                               capRead,
+	"GET /v1/islands/{name}":                        capRead,
+	"GET /v1/islands/{name}/workspace-ready":        capRead,
+	"GET /v1/islands/{name}/agents":                 capRead,
+	"GET /v1/islands/{name}/agents/{id}":            capRead,
+	"GET /v1/islands/{name}/events":                 capRead,
+	"GET /v1/islands/{name}/logs":                   capRead,
+	"GET /v1/islands/{name}/port/scopes":            capRead,
+	"GET /v1/islands/{name}/github/host-credential": capRead,
+	"GET /v1/islands/{name}/capability/grants":      capRead,
+	"GET /v1/islands/{name}/mcp/grants":             capRead,
+	"GET /v1/islands/{name}/grants":                 capRead, // unified per-island grants view (Lane C)
+	"GET /v1/credentials/claude":                    capRead, // status only, no secret
+	"GET /v1/credentials/github":                    capRead, // identities, no tokens
+	"GET /v1/credentials/github/{name}/repos":       capRead,
+	"GET /v1/credentials/providers":                 capRead, // masked, no keys
+	"GET /v1/agent-types":                           capRead,
+	"GET /v1/events/subscriptions":                  capRead,
+	"GET /v1/clients":                               capRead,
+	"GET /v1/overview":                              capRead,
+	"GET /v1/aggregate":                             capRead, // host-wide rollup (no names); any authed caller
+	"GET /v1/audit":                                 capRead,
+	"GET /v1/activity":                              capRead, // team activity feed (curated audit view)
+	"GET /v1/panic":                                 capRead, // status (engage/clear are owner)
 
 	// --- island lifecycle + interaction (operator and up; never purge) ---
 	"POST /v1/islands":                         capOperate, // create (scoped tokens denied — no {name})
@@ -115,27 +116,31 @@ var roleRouteCap = map[string]roleCap{
 	// returned); writes need operate, and an island token is refused outright in
 	// the handler — an agent that can plant a value its peers trust is an
 	// escalation path.
-	"GET /v1/islands/{name}/secrets":                       capRead,
-	"PUT /v1/islands/{name}/secrets/{key}":                 capOperate,
-	"DELETE /v1/islands/{name}/secrets/{key}":              capOperate,
-	"POST /v1/islands/{name}/agents/{id}/move":             capOperate,
-	"POST /v1/islands/{name}/agents/{id}/restart":          capOperate,
-	"PATCH /v1/islands/{name}/agents/{id}/config":          capOperate,
-	"PATCH /v1/islands/{name}/egress/policy":               capOperate, // set island egress allow/deny (operator)
-	"GET /v1/islands/{name}/spawn-grant":                   capRead,    // read the spawn budget (operator/viewer)
-	"POST /v1/islands/{name}/spawn-grant":                  capOperate, // grant ephemeral-sub-agent spawn budget (operator-only; never an in-island token)
-	"DELETE /v1/islands/{name}/spawn-grant":                capOperate, // revoke spawn grant (operator)
-	"GET /v1/islands/{name}/session":                       capOperate, // interactive attach (control)
-	"GET /v1/islands/{name}/shell/session":                 capOperate, // in-island contained shell at /workspace
-	"GET /v1/islands/{name}/agents/{id}/session":           capOperate,
-	"POST /v1/islands/{name}/exec":                         capOperate,
-	"GET /v1/islands/{name}/files/{path...}":               capOperate, // reading workspace files is beyond "observe"
-	"PUT /v1/islands/{name}/files/{path...}":               capOperate,
-	"POST /v1/islands/{name}/port/intake":                  capOperate,
-	"POST /v1/islands/{name}/port/export":                  capOperate,
-	"POST /v1/islands/{name}/port/write":                   capOperate,
-	"POST /v1/islands/{name}/port/scopes":                  capOperate, // grant host access (operator act)
-	"DELETE /v1/islands/{name}/port/scopes/{scope}":        capOperate,
+	"GET /v1/islands/{name}/secrets":                capRead,
+	"PUT /v1/islands/{name}/secrets/{key}":          capOperate,
+	"DELETE /v1/islands/{name}/secrets/{key}":       capOperate,
+	"POST /v1/islands/{name}/agents/{id}/move":      capOperate,
+	"POST /v1/islands/{name}/agents/{id}/restart":   capOperate,
+	"PATCH /v1/islands/{name}/agents/{id}/config":   capOperate,
+	"PATCH /v1/islands/{name}/egress/policy":        capOperate, // set island egress allow/deny (operator)
+	"GET /v1/islands/{name}/spawn-grant":            capRead,    // read the spawn budget (operator/viewer)
+	"POST /v1/islands/{name}/spawn-grant":           capOperate, // grant ephemeral-sub-agent spawn budget (operator-only; never an in-island token)
+	"DELETE /v1/islands/{name}/spawn-grant":         capOperate, // revoke spawn grant (operator)
+	"GET /v1/islands/{name}/session":                capOperate, // interactive attach (control)
+	"GET /v1/islands/{name}/shell/session":          capOperate, // in-island contained shell at /workspace
+	"GET /v1/islands/{name}/agents/{id}/session":    capOperate,
+	"POST /v1/islands/{name}/exec":                  capOperate,
+	"GET /v1/islands/{name}/files/{path...}":        capOperate, // reading workspace files is beyond "observe"
+	"PUT /v1/islands/{name}/files/{path...}":        capOperate,
+	"POST /v1/islands/{name}/port/intake":           capOperate,
+	"POST /v1/islands/{name}/port/export":           capOperate,
+	"POST /v1/islands/{name}/port/write":            capOperate,
+	"POST /v1/islands/{name}/port/scopes":           capOperate, // grant host access (operator act)
+	"DELETE /v1/islands/{name}/port/scopes/{scope}": capOperate,
+	// Granting the host operator's own gh login is an operator act with the widest
+	// blast radius of any grant here — account-wide read of every private repo.
+	"POST /v1/islands/{name}/github/host-credential":       capOperate,
+	"DELETE /v1/islands/{name}/github/host-credential":     capOperate,
 	"POST /v1/islands/{name}/capability/grants":            capOperate,
 	"DELETE /v1/islands/{name}/capability/grants/{target}": capOperate,
 	"POST /v1/islands/{name}/mcp/grants":                   capOperate, // grant an MCP server (operator act)
