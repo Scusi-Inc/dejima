@@ -69,7 +69,7 @@
   </div>
   <div class="proof-tile">
     <h3>Secure sandboxing</h3>
-    <p>Rogue agents can't break out. Each project is sealed in its own island, with no reach to your host machine, your files, or your other projects. Run several agents inside one, each on its own git worktree, sharing secrets that are scoped to that island and never touch your repo.</p>
+    <p>Rogue agents can't break out. Each project is sealed in its own island, with no reach to your host machine, your files, or your other projects. Run several agents inside one, each on its own git worktree. Host files, MCP servers, and network egress are all gated: deny-all by default, opened one grant at a time.</p>
   </div>
   <div class="proof-tile">
     <h3>Fleet management</h3>
@@ -80,7 +80,7 @@
     <p>A remote shell normally costs you the clipboard and drag-drop. Here <kbd>Ctrl-V</kbd> pastes a screenshot straight to the agent, dragging a file onto the window uploads it, and <code>dejima cp</code> moves work back out. No <code>scp</code>.</p>
   </div>
 </section>
-<p class="band-compat">Works with Claude Code, Codex, OpenClaw, or any command you supervise. Point it at frontier APIs, or at open-weights models running on your own box.</p>
+<p class="band-compat">Works with Claude Code, Codex, OpenClaw, or any command you supervise. Point it at frontier APIs, or at open-weights models running on your own box through Ollama.</p>
 <p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
 
 <p class="startline">Every session starts the same way: <code>dejima</code></p>
@@ -131,7 +131,6 @@
   <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>$</td><td>✓</td><td>✓</td><td>✓</td></tr>
   <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
   <tr><td>Curated MCP servers, brokered &amp; audited</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
-  <tr><td>Managed local open-weights models</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>manual</td><td>manual</td></tr>
   <tr><td>Up in minutes, nothing to build</td><td><strong>✓</strong></td><td>✗</td><td>~</td><td>~</td><td>~</td><td>✓</td></tr>
 </table>
 </div>
@@ -192,8 +191,8 @@
     <p>Agents in an island hand off work to each other with <code>dejima msg</code>.</p>
   </div>
   <div class="feat">
-    <h3>Per-island secrets</h3>
-    <p>Tokens arrive as env vars, out of your repo. One place to rotate.</p>
+    <h3>Brokered host access</h3>
+    <p>Grant an island one host folder, read-only. Everything else stays invisible.</p>
   </div>
   <div class="feat">
     <h3>Egress control</h3>
@@ -204,7 +203,7 @@
     <p>Every brokered crossing is hash-chained, and verifiable after the fact.</p>
   </div>
 </div>
-<p class="small">Also in the box: <strong>brokered host-file access (Port)</strong>, read-only and deny-all by default · <strong>brokered MCP servers</strong> behind a fixed method allow-list · <strong>headless agents</strong> (OpenClaw, Letta, your own loop) alongside terminal ones · <strong>lifecycle verbs</strong> (<code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>) · <strong>Home Islands</strong> for a contained 24/7 assistant · an <strong>HTTP/WebSocket API</strong> and <strong>webhook events</strong> to build on.</p>
+<p class="small">Also in the box: <strong>brokered host-file access (Port)</strong>, read-only and deny-all by default · <strong>brokered MCP servers</strong> behind a fixed method allow-list · <strong>headless agents</strong> (OpenClaw, Letta, your own loop) alongside terminal ones · <strong>lifecycle verbs</strong> (<code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>) · <strong>per-island secrets</strong> and <strong>scheduled agents</strong> · an <strong>HTTP/WebSocket API</strong> and <strong>webhook events</strong> to build on.</p>
 
 <h2 id="quality-of-life">The small stuff, handled</h2>
 <p>The day-to-day frictions of driving agents in a terminal — moving files in, keeping context, jumping around — already solved, so you stay in flow.</p>
@@ -213,7 +212,6 @@
   <li><strong>Paste a clipboard image</strong> — <code>Ctrl-V</code> sends the image straight to the agent (great for screenshots and mockups).</li>
   <li><strong>Attach any local file</strong> — <code>Ctrl-]</code>, type or paste a path, it uploads and the agent gets the in-island path.</li>
   <li><strong>Jump to the dashboard mid-session</strong> — <code>Ctrl-\</code> summons the fleet view without killing the agent; drop back in when you're done.</li>
-  <li><strong>Per-island secrets in a keystroke</strong> — a secrets row on every island; add or rotate a token inline, injected as an env var the island's tools read.</li>
   <li><strong>One-key updates</strong> — <code>U</code> updates the client and the daemon together, with a clear warning before it restarts anything.</li>
   <li><strong>Guided from zero</strong> — run <code>dejima</code> and the TUI walks you from an empty host to a sandboxed agent, no config file to write.</li>
 </ul>
