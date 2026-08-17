@@ -272,6 +272,38 @@ daemon ships for linux/amd64+arm64 and is being run that way in production.
 
 ---
 
+## Standing rule: no test stays red
+
+**A failing test gets a fix or an issue with a named owner before the next merge. Never a
+third state.**
+
+This is written down because it already cost us. `TestHostSocketPressureReportsZero` failed
+continuously for days across roughly eight merges. It was explained early as "a doctor check
+that can't see host socket state from inside an island — environmental, unrelated", that
+explanation was repeated in commit message after commit message, and everyone inherited it.
+
+It was wrong. `checkHostSocketPressure` does `if !ok { return }` and emits **no row at all**
+when it can't read the socket table. The test comment says exactly why that's a bug:
+
+> hiding the line at zero makes a healthy host look identical to a check that never ran, and
+> this is the metric an operator watches over days to catch churn coming back.
+
+The test was correct, deliberate, and doing its job the whole time. A security-adjacent check
+that silently vanishes reads as a clean bill of health, which is the dangerous direction.
+
+The failure mode is not carelessness. It is that **one plausible explanation, written down
+early and repeated, is enough to stop everyone looking** — and a test that has been red for
+weeks can no longer tell you anything, including when it is right. Detecting that is far more
+expensive than preventing it, hence the rule.
+
+Corollary for the checks themselves: **"couldn't determine" must render differently from
+"determined, and it's fine."** Both are non-failures, so the temptation is to collapse them.
+An `INFO` row saying the probe was unavailable is honest; an `OK` row reporting a healthy
+number nobody measured manufactures a clean bill of health, which is worse than emitting
+nothing. Tracked in #337.
+
+---
+
 ## Rollup
 ~190 line items across 22 areas. **T1** (CI, every PR) and **T2** (Docker) cover the bulk;
 **T3** (Mac-mini runner) owns the macOS-host + live-session items currently marked `M`/`▢`;
