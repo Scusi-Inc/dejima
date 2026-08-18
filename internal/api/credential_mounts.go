@@ -49,6 +49,20 @@ type credentialMount struct {
 // recreate — which is exactly true, and is the only way they get the fix.
 const secretsMountPath = "/opt/host/secrets.d"
 
+// legacySecretsMountPath is where the secrets FILE used to be mounted, and is
+// still mounted alongside the directory above.
+//
+// Not politeness — it closes a silent data-loss window during rollout.
+// `dejima upgrade` recreates a container against WHATEVER image is already on
+// the host; it does not rebuild one. So an operator who updates dejimad without
+// re-running `make image` gets a new daemon mounting secrets.d and an old image
+// whose load-secrets.sh only ever looks at secrets.env — and every secret in
+// that island silently disappears. Mounting both means an old image keeps
+// behaving exactly as it does today (stale, which is the bug, but not absent)
+// while a new image prefers the directory and is correct. Removable once no
+// island can still be running a pre-secrets.d image.
+const legacySecretsMountPath = "/opt/host/secrets.env"
+
 func credentialMounts() []credentialMount {
 	return []credentialMount{
 		{"GitHub credential", "/opt/host/gh-config"},

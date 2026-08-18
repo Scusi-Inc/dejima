@@ -141,3 +141,56 @@ func TestOnlyTheMountSubdirIsExposed(t *testing.T) {
 		}
 	}
 }
+
+// `dejima upgrade` recreates a container against whatever island image is
+// already on the host — it does NOT rebuild one. So there is a window where a
+// new daemon meets an old image, and in that window the old image's
+// load-secrets.sh only knows /opt/host/secrets.env. Dropping that mount would
+// have turned "secrets are stale" into "secrets are gone", silently, for anyone
+// who updated dejimad without re-running `make image`.
+//
+// Asserted on the bind list rather than the constants, because the constants
+// agreeing with each other proves nothing about what the container gets.
+func TestBothSecretsMountsArePresentDuringRollout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(secrets.BackendEnvVar, "file")
+	store, err := secrets.OpenIsland()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Set("wildfire", "EXPO_TOKEN", "tok-abc", "aoos"); err != nil {
+		t.Fatal(err)
+	}
+
+	binds, err := credentialBindMounts(&project.Project{Name: "wildfire"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var dirMount, fileMount string
+	for _, b := range binds {
+		switch b.ContainerPath {
+		case secretsMountPath:
+			dirMount = b.HostPath
+		case legacySecretsMountPath:
+			fileMount = b.HostPath
+		}
+	}
+
+	if dirMount == "" {
+		t.Fatalf("no bind at %s — the directory mount is the fix", secretsMountPath)
+	}
+	if fileMount == "" {
+		t.Fatalf("no bind at %s — an island still running a pre-secrets.d image "+
+			"would lose every secret instead of merely seeing a stale one", legacySecretsMountPath)
+	}
+
+	// The compat mount must be the file INSIDE the mounted directory, not some
+	// other copy that could drift away from it.
+	if want := filepath.Join(dirMount, secretsFileName); fileMount != want {
+		t.Errorf("legacy mount points at %q, want the file inside the mounted dir %q", fileMount, want)
+	}
+	if fi, err := os.Stat(fileMount); err != nil || fi.IsDir() {
+		t.Errorf("the legacy mount must be an existing FILE (old images read it directly): %v", err)
+	}
+}

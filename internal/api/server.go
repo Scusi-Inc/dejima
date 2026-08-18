@@ -3274,6 +3274,14 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		binds = append(binds, runtime.BindMount{
 			HostPath: secretsPath, ContainerPath: secretsMountPath, ReadOnly: true,
 		})
+		// And the old file path alongside it, for an island image built before
+		// secrets.d existed — see legacySecretsMountPath. Without this, updating
+		// the daemon without rebuilding the image makes every secret vanish
+		// rather than merely go stale.
+		binds = append(binds, runtime.BindMount{
+			HostPath:      filepath.Join(secretsPath, secretsFileName),
+			ContainerPath: legacySecretsMountPath, ReadOnly: true,
+		})
 	}
 
 	claudeDir, err := paths.HostClaudeDir()
