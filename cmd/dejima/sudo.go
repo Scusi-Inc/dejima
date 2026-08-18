@@ -7,8 +7,6 @@ import (
 	"os/exec"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
 // Homebrew cask installs need root partway through, not up front: the Docker
@@ -35,22 +33,31 @@ func primeSudo(reason string) (stop func()) {
 	if _, err := exec.LookPath("sudo"); err != nil {
 		return noop
 	}
-	// No tty means no place to prompt. Let the child fail its own way rather
-	// than blocking a scripted run on a password that can never be typed.
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
+	// No CONTROLLING TERMINAL means no place to prompt. Let the child fail its
+	// own way rather than blocking a scripted run on a password that can never
+	// be typed.
+	//
+	// Deliberately not `term.IsTerminal(os.Stdin)`, which is what this used to
+	// be: piped stdin does not mean nobody is present. `curl -fsSL … | bash`
+	// makes stdin a pipe while a person watches from the keyboard, and reading
+	// that as "no human" is what made the shell installer skip its own priming
+	// and let Homebrew's sudo take the operator's password with echo on (#341).
+	tty := openTTY()
+	if tty == nil {
 		return noop
 	}
 
-	if !sudoTimestampWarm() {
+	if !sudoTimestampWarm(tty) {
 		fmt.Println()
 		fmt.Printf("  %s needs your macOS password partway through (Homebrew links\n", reason)
 		fmt.Println("  binaries into /usr/local, which is root-owned). Asking now, once, so")
 		fmt.Println("  the installer doesn't stop to ask in the middle of its own output:")
-		if err := execInteractive("sudo", "-v"); err != nil {
+		if err := sudoValidate(tty); err != nil {
 			// Declined, mistyped, or not a sudoer. Not fatal — brew will ask on
 			// its own terms, which is exactly the path this avoids but still
 			// beats refusing to continue.
 			fmt.Printf("  ⚠ couldn't pre-authorize sudo (%v) — the installer may prompt mid-run\n", err)
+			tty.Close()
 			return noop
 		}
 	}
@@ -69,7 +76,7 @@ func primeSudo(reason string) (stop func()) {
 			case <-done:
 				return
 			case <-t.C:
-				_ = sudoTimestampWarm()
+				_ = sudoTimestampWarm(tty)
 			}
 		}
 	}()
@@ -79,8 +86,35 @@ func primeSudo(reason string) (stop func()) {
 		once.Do(func() {
 			close(done)
 			wg.Wait()
+			tty.Close()
 		})
 	}
+}
+
+// openTTY returns the controlling terminal, or nil when there isn't one.
+//
+// A var so tests can substitute it: the case that matters most — a human at the
+// keyboard while stdin is a pipe — cannot be produced by running a test the
+// ordinary way, and CI has no controlling terminal at all.
+var openTTY = func() *os.File {
+	// O_RDWR because sudo wants to both prompt and read on it. Fails with ENXIO
+	// when the process has no controlling terminal, and ENOENT on Windows —
+	// both of which correctly mean "nobody to ask".
+	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return nil
+	}
+	return f
+}
+
+// sudoValidate runs `sudo -v`, prompting on the terminal rather than on
+// whatever stdin happens to be.
+func sudoValidate(tty *os.File) error {
+	c := exec.Command("sudo", "-v")
+	c.Stdin = tty
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
 }
 
 // sudoKeepaliveInterval is well inside sudo's default 5-minute timestamp
@@ -89,12 +123,13 @@ var sudoKeepaliveInterval = 60 * time.Second
 
 // sudoTimestampWarm refreshes the sudo timestamp without prompting, reporting
 // whether it's currently valid. `-n` makes sudo fail rather than ask, so this
-// never reads a byte of stdin — but it still gets os.Stdin so sudo resolves the
-// same tty our child will use (macOS enables tty_tickets, which key the
-// timestamp by terminal).
-func sudoTimestampWarm() bool {
+// never reads a byte of it — but it still gets the terminal so sudo resolves
+// the same tty our child will use (macOS enables tty_tickets, which key the
+// timestamp by terminal). Handing it a pipe instead would warm a ticket keyed
+// to something Homebrew's own sudo never looks up.
+func sudoTimestampWarm(tty *os.File) bool {
 	c := exec.Command("sudo", "-n", "-v")
-	c.Stdin = os.Stdin
+	c.Stdin = tty
 	c.Stdout = io.Discard
 	c.Stderr = io.Discard
 	return c.Run() == nil

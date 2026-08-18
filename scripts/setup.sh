@@ -102,9 +102,29 @@ else
 fi
 
 if [[ "$TAILSCALE_PRESENT" == "1" ]]; then
+    # "not signed in" and "the daemon isn't running" are different problems with
+    # different fixes, and `tailscale status` fails the same way for both. On
+    # macOS `brew install tailscale` is the CLI ONLY — there is no tailscaled
+    # behind it — so `tailscale up` cannot work no matter how many times it is
+    # run, and asking for a sudo password first only spends the operator's
+    # goodwill on a command that is going to fail. Tell them apart.
+    ts_err=""
+    if ! ts_err="$(tailscale status 2>&1 >/dev/null)"; then :; fi
     if tailscale status >/dev/null 2>&1; then
         TAILSCALE_RUNNING=1
         ok "Tailscale is signed in"
+    elif [[ "$ts_err" == *"is Tailscale running"* || "$ts_err" == *"failed to connect"* ]]; then
+        warn "the tailscale CLI is installed but the Tailscale service isn't running"
+        if [[ "$OS" == "Darwin" ]]; then
+            info "On macOS the Homebrew 'tailscale' formula is the CLI only — it ships no"
+            info "background service, so 'tailscale up' cannot connect. Install the app:"
+            info "  brew install --cask tailscale-app   (then open it and sign in)"
+        else
+            info "Start the service, then sign in:"
+            info "  sudo systemctl enable --now tailscaled && sudo tailscale up"
+        fi
+        info "Not asking for your password — it wouldn't help until the service is up."
+        info "Dejima will finish setting up; the daemon will listen on its local socket."
     else
         warn "Tailscale installed but not signed in"
         if have_tty; then
@@ -302,7 +322,8 @@ else
                         # hang — which is what prompted a Ctrl-C last time, and
                         # the Ctrl-C is what left Docker.app half-linked.
                         if (( i % 30 == 0 )); then
-                            info "  …still waiting (${i}s) — Docker Desktop is finishing first-run setup"
+                            info "  …still waiting (${i}s) — CHECK THIS MAC'S SCREEN: first launch"
+                            info "     shows a licence agreement that must be accepted"
                         fi
                         sleep 1
                     done
@@ -310,8 +331,23 @@ else
                         ok "Docker is now reachable"
                     else
                         fail "Docker still not reachable after 5 minutes"
-                        info "Finish Docker Desktop's first-run setup (licence + permissions),"
-                        info "then re-run the installer — it is idempotent and will pick up here:"
+                        # "Docker Desktop is open, waiting to be clicked" and "Docker
+                        # Desktop never started" look identical from here but need
+                        # opposite actions, so say which one it is.
+                        if pgrep -f "Docker Desktop" >/dev/null 2>&1 || pgrep -x Docker >/dev/null 2>&1; then
+                            info "Docker Desktop IS running — it is waiting for you ON THE SCREEN."
+                            info "First launch shows a licence agreement and asks to install a"
+                            info "privileged helper. The daemon does not exist until both are done,"
+                            info "and neither can be accepted over SSH."
+                            info "Go to this Mac's display (or screen-share in) and click through."
+                        else
+                            info "Docker Desktop is NOT running. Open it once:"
+                            info "  open -a Docker"
+                            info "If macOS refuses with error -10673, it is quarantined:"
+                            info "  xattr -dr com.apple.quarantine /Applications/Docker.app"
+                        fi
+                        info ""
+                        info "Then re-run the installer — it is idempotent and picks up here:"
                         info "  curl -fsSL https://dejima.tech/install.sh | bash"
                         exit 1
                     fi
@@ -456,10 +492,26 @@ bold "Setup complete."
 info "Try:  dejima init --repo git@github.com:you/repo.git"
 info "Then: dejima connect <name>"
 
+# The address is the one piece of state that has to travel from this machine to
+# every other device, and there is no way to look it up from the other end. It
+# used to print only when Tailscale was up, so a run where Tailscale failed
+# ended on "Setup complete" with the remote-access section silently absent —
+# nothing told the operator that the thing they need was missing, or why.
+printf '\n'
+bold "To drive this server from another device:"
 if [[ -n "$TAILSCALE_IP" ]]; then
-    printf '\n'
-    bold "To drive this server from another device:"
     info "Install the dejima client on the other machine, then set:"
-    info "  export DEJIMA_HOST=${TAILSCALE_IP}:7273"
-    info "(Recorded in ~/.dejima/host.json.)"
+    printf '\n'
+    bold "    export DEJIMA_HOST=${TAILSCALE_IP}:7273"
+    [[ -n "$TAILSCALE_NAME" ]] && info "    (or by name: ${TAILSCALE_NAME}:7273)"
+    printf '\n'
+    info "That line is the whole handoff — copy it now. Also saved to"
+    info "$HOME/.dejima/host.json, and printed by 'dejima doctor' on this host."
+else
+    warn "no remote address yet — Tailscale isn't up on this machine."
+    info "Dejima is installed and working LOCALLY; this only affects reaching it"
+    info "from your laptop or phone. Nothing here needs redoing."
+    info ""
+    info "To finish it: bring Tailscale up (see the Tailscale step above), then"
+    info "run 'dejima doctor' here — it prints the DEJIMA_HOST to copy."
 fi
