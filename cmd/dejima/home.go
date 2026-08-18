@@ -34,10 +34,10 @@ func newHomeCreateCmd() *cobra.Command {
 	var (
 		repo, name, image, cmdStr, agent string
 		memory, cpus, disk               string
-		localCopy, explainNative         bool
+		localCopy, explainNative, noRepo bool
 	)
 	cmd := &cobra.Command{
-		Use:   "create (--agent openclaw | --cmd \"<brain launch>\") --repo <url>",
+		Use:   "create (--agent openclaw | --cmd \"<brain launch>\") (--repo <url> | --no-repo --name <name>)",
 		Short: "Create a Home Island running an assistant brain (headless).",
 		Long: "Provisions a persistent, headless island that runs an assistant brain. Pick the " +
 			"brain with --agent (e.g. \"openclaw\", which self-installs and runs its gateway), or " +
@@ -65,15 +65,31 @@ func newHomeCreateCmd() *cobra.Command {
 			if agent != api.AgentHeadless && cmdStr != "" {
 				return fmt.Errorf("--cmd can't be combined with --agent %s (it has its own launch); use --agent headless for a raw command", agent)
 			}
-			if repo == "" {
-				return fmt.Errorf("--repo is required (the brain's config/workspace repo); repo-less home islands are a follow-up")
+			// A brain that keeps no config in git is the ordinary case here, not an
+			// edge one — openclaw self-installs and writes its own state. But an
+			// EMPTY --repo still has to fail: a URL the shell ate looks identical to
+			// a deliberate choice, and the difference only shows up later as a brain
+			// with none of its config. Hence the explicit flag.
+			switch {
+			case noRepo && repo != "":
+				return fmt.Errorf("--no-repo can't be combined with --repo — pick one")
+			case noRepo && name == "":
+				return fmt.Errorf("--name is required with --no-repo (there's no repo to derive it from)")
+			case !noRepo && repo == "":
+				return fmt.Errorf("--repo is required (the brain's config/workspace repo), or --no-repo to start it with an empty workspace")
 			}
-			res, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
-			if err != nil {
-				return err
-			}
-			if name == "" {
-				name = project.DeriveNameFromRepo(repo)
+			// --no-repo has nothing to resolve: no URL, no local path, no seed.
+			// Skip the resolver rather than feed it "" and rely on it declining.
+			res := reposrc.Resolution{Note: "no repo — /workspace starts empty"}
+			if !noRepo {
+				resolved, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
+				if err != nil {
+					return err
+				}
+				res = resolved
+				if name == "" {
+					name = project.DeriveNameFromRepo(repo)
+				}
 			}
 			c, err := client()
 			if err != nil {
@@ -94,6 +110,7 @@ func newHomeCreateCmd() *cobra.Command {
 				Agent:     agent,
 				Image:     image,
 				Cmd:       cmdStr,
+				NoRepo:    noRepo,
 				Role:      project.RoleHome,
 				Resources: api.Resources{Memory: memory, CPUs: cpus, Disk: disk},
 			})
@@ -111,7 +128,8 @@ func newHomeCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", `the brain to run: a headless agent like "openclaw" (self-installs), or "headless" with --cmd`)
 	cmd.Flags().StringVar(&cmdStr, "cmd", "", `raw launch command for --agent headless (e.g. "openclaw gateway")`)
-	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL or local path for the brain's config/workspace (required)")
+	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL or local path for the brain's config/workspace (required, unless --no-repo)")
+	cmd.Flags().BoolVar(&noRepo, "no-repo", false, "start the brain with an empty /workspace and no origin — for brains that self-install and keep no config in git (requires --name)")
 	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk instead of cloning from origin")
 	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")
 	cmd.Flags().StringVar(&image, "image", "", "island image (default: dejima/island:latest)")
