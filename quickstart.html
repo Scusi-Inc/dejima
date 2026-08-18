@@ -42,8 +42,8 @@
   <a href="teams.html">Teams</a>
   <a href="build.html">Build</a>
   <a href="api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <section class="hero">
@@ -85,6 +85,9 @@
         </div>
         <p class="small">Sets up Tailscale, the island image, and the background daemon (and Docker, on macOS).
           Idempotent, so it's safe to re-run.</p>
+        <p class="small">First time on a Mac? It asks before installing anything, and Docker Desktop's first launch
+          has a licence screen you need to accept before it can finish. See
+          <a href="#macos-first-run">what the macOS installer asks you</a>.</p>
       </div>
       <div class="os-panel" data-os="win">
         <p class="small">Two commands. Open <strong>PowerShell</strong> (<kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em>)
@@ -105,7 +108,7 @@
           that one instead of creating <code>dejima</code>. It has to be WSL&nbsp;2, not WSL&nbsp;1 &mdash; WSL 1 has no real
           kernel and can't run Docker.</p>
         <p class="platform-note"><strong>This path is new.</strong> Hosting on Windows landed recently and has had far
-          less mileage than the macOS and Linux installs. If it breaks, an <a href="https://github.com/aoos/dejima/issues" target="_blank" rel="noopener">issue</a>
+          less mileage than the macOS and Linux installs. If it breaks, an <a href="https://github.com/Scusi-Inc/dejima/issues" target="_blank" rel="noopener">issue</a>
           is genuinely useful. Driving a server from Windows as a client is the well-trodden route, and it's the section below.</p>
       </div>
     </div>
@@ -146,6 +149,8 @@
             <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
           </div>
           <p class="small">macOS: turns a fresh Mac mini into a server in one command (never-sleep power, Tailscale, Docker, the daemon). On Linux the installer already registered the service, so just run <code>dejima</code> to confirm it's up. Either way, note the <code>DEJIMA_HOST</code> it prints (e.g. <code>100.84.12.7:7273</code>).</p>
+          <p class="small">On a fresh Mac, step 1 stops to ask you a couple of questions and waits on Docker Desktop's
+            licence screen. <a href="#macos-first-run">Here's what to expect</a>, including the pause that looks like a hang.</p>
         </div>
       </div>
 
@@ -184,7 +189,7 @@
             <summary>Prefer a package manager like <em>brew</em> or <em>npm</em>?</summary>
             <div class="disclose-body">
               <div class="cmd">
-                <pre><code>brew install aoos/dejima/dejima</code></pre>
+                <pre><code>brew install Scusi-Inc/dejima/dejima</code></pre>
                 <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
               </div>
               <div class="cmd">
@@ -225,6 +230,20 @@
   <div class="disclose-body">
     <p>macOS Terminal.app can't open agents as tabs (you get a new window per agent) and doesn't accept the clipboard sequence agents use, so copying an auth URL out of an agent silently fails. Run Dejima in <a href="https://iterm2.com/" target="_blank" rel="noopener">iTerm2</a>, <a href="https://wezterm.org/" target="_blank" rel="noopener">WezTerm</a>, <a href="https://sw.kovidgoyal.net/kitty/" target="_blank" rel="noopener">kitty</a>, or <a href="https://ghostty.org/" target="_blank" rel="noopener">Ghostty</a> instead — all support tabs and clipboard.</p>
     <p class="small">Details, and how to copy a URL out of an agent by hand: <a href="connect/#faq">connect to a server</a>.</p>
+  </div>
+</details>
+
+<details class="disclose" id="macos-first-run">
+  <summary>What the macOS installer asks you, and the pause that isn't a hang</summary>
+  <div class="disclose-body">
+    <p>On a Mac with nothing on it yet, the installer stops and asks before it changes anything. It's worth knowing what's coming, because one of the steps looks like a freeze and isn't.</p>
+    <p><strong>It asks first.</strong> Installing Tailscale and installing Docker Desktop are both prompts, not something it does behind your back. Answer no to either and it carries on: skip Tailscale and the daemon listens on a local socket only.</p>
+    <p><strong>One password prompt, up front.</strong> It asks for your sudo password once, at the point it needs it, and tells you what it's for. Your typing won't echo, which is normal. If a bare <code>Password:</code> ever appears partway through with no explanation, that's a bug worth reporting.</p>
+    <p><strong>Docker Desktop's first launch is the slow part.</strong> A freshly installed Docker Desktop has no daemon until it has been opened once, and its first run puts a licence screen in front of you. The installer opens it for you, so there's nothing to go click, but <em>you do have to accept that licence</em> before anything can continue. Until you do, the installer sits and waits.</p>
+    <p>It waits up to five minutes and prints a line every 30 seconds so you can see it's still alive. <strong>Don't Ctrl-C it.</strong> Interrupting here is what leaves Docker.app half-installed, and the error you get afterwards (<code>-10673</code>) is macOS refusing to open a quarantined app rather than anything to do with Dejima. If you hit it:</p>
+    <pre><code>xattr -dr com.apple.quarantine /Applications/Docker.app</code></pre>
+    <p>If the five minutes run out, finish Docker's first-run setup by hand and run the installer again. It's idempotent and picks up where it stopped:</p>
+    <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
   </div>
 </details>
 
@@ -332,7 +351,7 @@ DEJIMA_HOST=mac-mini.tailnet:7273 dejima connect foo   # …from your laptop
   <tr><td><code>Intake</code></td><td>Read-only files brokered into the island from the host.</td></tr>
   <tr><td><code>Ledger</code></td><td>A tamper-evident, hash-chained audit log of every brokered transaction.</td></tr>
 </table>
-<p class="small"><code>Intake</code> / <code>Trade</code> / <code>Ledger</code> are the brokered-context primitives — the seam a memory or context layer attaches to <em>without</em> breaking island isolation. See the <a href="https://github.com/aoos/dejima/blob/master/docs/positioning.md" target="_blank" rel="noopener">positioning note</a>.</p>
+<p class="small"><code>Intake</code> / <code>Trade</code> / <code>Ledger</code> are the brokered-context primitives — the seam a memory or context layer attaches to <em>without</em> breaking island isolation. See the <a href="https://github.com/Scusi-Inc/dejima/blob/master/docs/positioning.md" target="_blank" rel="noopener">positioning note</a>.</p>
 
 <h2 id="uninstall">Uninstall</h2>
 <p><strong>Get your work out first.</strong> Dejima never touches your host folders — but work done <em>inside</em> an island lives in that island's Docker volume, and <code>dejima purge</code> destroys it. Before removing anything, make sure each island's work is pushed to its remote (or copied out):</p>
@@ -354,7 +373,7 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
   <a href="teams.html">Teams</a>
   <a href="build.html">Build</a>
   <a href="api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>
@@ -406,6 +425,22 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
   });
   var ua = (navigator.userAgent || '') + ' ' + (navigator.platform || '');
   if (/Win/i.test(ua)) select('win');
+})();
+</script>
+<script>
+// Linking to a collapsed <details> scrolls to it but leaves it shut, so the
+// answer you were sent to is still hidden. Open it.
+(function () {
+  function openTarget() {
+    var id = (location.hash || '').slice(1);
+    if (!id) return;
+    var el = document.getElementById(id);
+    if (!el) return;
+    var d = el.closest ? el.closest('details') : null;
+    if (d) { d.open = true; d.scrollIntoView(); }
+  }
+  openTarget();
+  window.addEventListener('hashchange', openTarget);
 })();
 </script>
 <script src="walkthrough.js" defer></script>

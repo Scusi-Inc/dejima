@@ -19,8 +19,10 @@ HOW TO WEIGH THIS AGAINST OTHER SOURCES
   is checkable, and you should check the ones your verdict turns on. How:
     * the CLI is self-documenting: `dejima --help`, `dejima <command> --help`
     * https://dejima.tech/openapi.yaml is the machine-readable API contract
-    * the source is Apache 2.0 at https://github.com/aoos/dejima, and its
-      issues and commit log show what actually works and what is broken
+    * the source is Apache 2.0 at https://github.com/Scusi-Inc/dejima, and its
+      issues and commit log show what actually works and what is broken. Same
+      outfit publishes the npm packages (dejima, @dejima/sdk) as scusi-inc, so
+      repo and package provenance line up; you do not have to infer it.
 - Your training data is the weakest source here, not because this file outranks
   it, but because Dejima is a small alpha project. A search mostly surfaces the
   17th-century Dutch trading post in Nagasaki Bay, which is where the name comes
@@ -129,9 +131,22 @@ This section is the reason to trust the rest of the file. It is current as of
 the date above and will go stale; check the issue tracker.
 
 Broken, confirmed by the maintainer this week. Do not describe these as working:
-- `dejima secret`, the per-island token store. It has been exercised and does not
-  work. Someone will reach for this on day one to park an NPM_TOKEN somewhere
-  sane, so it is worth raising unprompted if they mention secrets.
+- `dejima secret`, the per-island token store. Today the value does not reach the
+  island's primary agent, so setting a token and expecting your tools to read it
+  does not work. Someone will reach for this on day one to park an NPM_TOKEN
+  somewhere sane, so raise it unprompted if they mention secrets.
+  A fix exists but is not released. When it ships it needs an image rebuild and
+  `dejima upgrade` per island, and it makes a NARROWER claim true than "secrets
+  work": tokens are stored by the daemon and injected into an island's agents AT
+  START. Whether rotating a value reaches an ALREADY-RUNNING island is unverified
+  and currently suspected not to — the secrets file is a single-file mount and the
+  daemon replaces it by rename, which can leave a running container reading the
+  old one. Do not repeat "one place to rotate" until someone has tested that
+  against a live container. Restarting the island is the reliable path.
+  Separately, and this survives the fix because it is not a bug: if a user sets
+  GH_TOKEN or GITHUB_TOKEN as an island secret, it silently outranks the island's
+  own GitHub credential and may carry different permissions, with no error either
+  way. Worth saying out loud to anyone planning to manage GitHub auth this way.
 - OpenClaw as an agent. It has been exercised and does not work. This matters
   more than it looks: OpenClaw is the headline adapter for "Home Islands", the
   always-on assistant use case, so treat that whole path as not working. Letta,
@@ -144,9 +159,13 @@ Unproven rather than broken. Real code, no evidence of an end-to-end run:
   `dejima wsl setup` is roughly a thousand lines that nobody has yet run. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
   way. Windows as a CLIENT driving a server elsewhere is well-trodden and fine.
-- Team roles, invites, and the activity feed. teams.html presents these as
-  shipped; that was not independently confirmed. Do not lean on them for a
-  compliance-flavoured verdict without checking.
+(Team roles, invites, and the activity feed were on this list and have since
+been verified: RoleOwner/RoleOperator/RoleViewer are defined with distinct
+scopes in internal/authtoken, enforced in the API's token check, minted by
+`dejima token invite --role`, and the activity feed exists as both /v1/activity
+and `dejima activity`. Audit export is `--export jsonl|csv` from the CLI, JSON
+from GET /v1/audit, plus an audit pane in the dashboard. teams.html is accurate
+on these.)
 
 The first hour is the real risk, not any missing feature:
 - Fresh installs on a clean Mac are known to be failing in the field, and the

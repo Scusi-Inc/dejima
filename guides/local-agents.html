@@ -29,7 +29,7 @@
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Why run agents in a container on my own machine?","acceptedAnswer":{"@type":"Answer","text":"An agent running loose on your machine can read every repo, your SSH keys, and your shell history, with no record of what it touched. A container walls it off: it sees only its own island, and reaches your files only through folders you grant, read-only, with every crossing logged."}},
 {"@type":"Question","name":"Can an agent mess up my local repo?","acceptedAnswer":{"@type":"Answer","text":"No, if you use dejima init --local-copy. The island gets its own copy of your working tree, so an agent experimenting inside it cannot touch your real checkout. When you like the result, pull it out through git or dejima cp. Your original directory stays as you left it."}},
-{"@type":"Question","name":"Do I need Tailscale to run Dejima locally?","acceptedAnswer":{"@type":"Answer","text":"No. Running on your own machine is all local, so there is no remote box and no Tailscale needed. You just need Docker, which the installer sets up, and the TUI talks to the daemon on localhost. Tailscale only matters when you reach a separate server."}}
+{"@type":"Question","name":"Do I need Tailscale to run Dejima locally?","acceptedAnswer":{"@type":"Answer","text":"No. Running on your own machine is all local, so there is no remote box and no Tailscale needed. You just need Docker: on macOS the installer offers to set it up, on Linux you install it first. The TUI then talks to the daemon on localhost. Tailscale only matters when you reach a separate server."}}
 ]}
 ]}
 </script>
@@ -48,14 +48,14 @@
   <a href="index.html" aria-current="page">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <article class="post">
   <p class="post-meta">Guide · 4 min read</p>
   <h1 class="post-h">Run AI coding agents locally, contained</h1>
-  <p class="lede">You don't need a separate box to get the isolation. Dejima runs on the laptop or workstation you already work on, putting each agent in its own container instead of loose on the machine you keep your life on. No remote server, no cloud, just walls around the agents.</p>
+  <p class="lede">You don't need a separate box to get the isolation. Dejima runs on the laptop or workstation you already work on, putting each project in its own container instead of letting agents run loose on the machine you keep your life on. No remote server, no cloud, just walls around the work.</p>
 
   <h2>Why contain an agent on your own machine</h2>
   <p>It's tempting to skip isolation when the agent is running right where you're sitting. That's exactly where the risk is highest, though, because your daily machine is where everything lives.</p>
@@ -63,7 +63,7 @@
 
   <h2>What you need</h2>
   <ul>
-    <li>Your Mac or Linux machine. On macOS and Windows that means Docker Desktop; on Linux, Docker. The installer sets this up if it's missing.</li>
+    <li>Your Mac or Linux machine. On macOS the installer offers to install Docker Desktop for you if it's missing, and asks before it does. On Linux, install Docker yourself first: the installer won't, and it stops with instructions if it's absent.</li>
     <li><code>git</code> and <code>curl</code>. That's it. No Tailscale, no remote anything, since everything is local.</li>
     <li>API keys for the agents you run.</li>
   </ul>
@@ -71,6 +71,7 @@
   <h2>Install and run</h2>
   <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
   <p>This installs the binaries and runs the daemon as a local service. Then just start the TUI, which talks to the daemon on localhost with no host variable to set.</p>
+  <p class="small">On a Mac that has never run Docker, the installer stops to ask a couple of questions and then waits on Docker Desktop's licence screen, which can take a few minutes and looks like a hang if you aren't expecting it. <a href="../quickstart.html#macos-first-run">Here's what to expect</a>.</p>
   <pre><code>dejima</code></pre>
 
   <h2>Work against your local repos</h2>
@@ -95,7 +96,7 @@ dejima agent add my-project --type codex</code></pre>
     </div>
     <div class="faq-item">
       <h3>Do I need Tailscale to run Dejima locally?</h3>
-      <p>No. Running on your own machine is all local, so there's no remote box and no Tailscale needed. You just need Docker, which the installer sets up, and the TUI talks to the daemon on localhost. Tailscale only matters when you reach a separate server.</p>
+      <p>No. Running on your own machine is all local, so there's no remote box and no Tailscale needed. You just need Docker: on macOS the installer offers to set it up, on Linux you install it first. The TUI then talks to the daemon on localhost. Tailscale only matters when you reach a separate server.</p>
     </div>
   </div>
 
@@ -122,7 +123,7 @@ Then walk me through it:
 - Show me how to point an island at my local code with `dejima init --local-copy`, and explain how my real working tree stays untouched.
 - Give exact commands, explain each, and help me debug any failures.
 
-Goal: agents running on my own machine, each walled off in its own island from my files and keys, working on a copy of my local repo.</textarea>
+Goal: agents running on my own machine, walled off from my files and keys in a per-project island, working on a copy of my local repo.</textarea>
     </div>
   </section>
 
@@ -138,7 +139,7 @@ Goal: agents running on my own machine, each walled off in its own island from m
   <a href="index.html">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>

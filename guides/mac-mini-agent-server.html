@@ -48,8 +48,8 @@
   <a href="index.html" aria-current="page">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <article class="post">
@@ -60,16 +60,18 @@
   <h2>What you need</h2>
   <ul>
     <li>A Mac mini. An M1 from 2020 is plenty; an old Intel one works too.</li>
-    <li>About five minutes of your attention. The installer does the slow part, downloading Docker and building the binaries, on its own while you do something else.</li>
+    <li>About five minutes, and you do need to stay with it. The installer asks before it installs Docker and Tailscale, asks for your password once, and on a Mac that has never run Docker it waits for you to accept Docker Desktop's licence screen. Walk away at that point and it's still sitting there when you come back. <a href="../quickstart.html#macos-first-run">What to expect</a>.</li>
     <li>A <a href="https://tailscale.com" target="_blank" rel="noopener">Tailscale</a> account, so you can reach the mini from your laptop without opening any ports. Free for personal use.</li>
     <li>API keys for whatever agents you want to run. You bring your own; Dejima never holds them in a cloud.</li>
   </ul>
   <p>You can do all of this sitting at the mini, or over SSH. After setup you won't need to SSH in again.</p>
+  <p class="small"><strong>One difference if you're on SSH and Docker isn't installed yet.</strong> Docker Desktop needs a first-launch click at the machine itself, which you can't give it remotely, so the installer notices you're on SSH and offers <a href="https://github.com/abiosoft/colima" target="_blank" rel="noopener">colima</a> instead. It's CLI-only and needs no GUI, and Dejima works the same on it. If you'd rather have Docker Desktop, install it while sitting at the mini (or over screen sharing) and then run the installer.</p>
 
   <h2>Step 1: install Dejima</h2>
   <p>One command. Run it on the mini.</p>
   <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
-  <p>This isn't a toy script that drops a binary and wishes you luck. It checks prerequisites and names the fix for anything missing, installs Docker if you don't have it, builds the <code>dejima</code> and <code>dejimad</code> binaries, and registers the background service as a launchd unit so it comes back after a reboot. When it finishes, the daemon is running.</p>
+  <p>This isn't a toy script that drops a binary and wishes you luck. It checks prerequisites and names the fix for anything missing, offers to install Docker and Tailscale if they're absent, builds the <code>dejima</code> and <code>dejimad</code> binaries, and registers the background service as a launchd unit so it comes back after a reboot. When it finishes, the daemon is running.</p>
+  <p class="small">It's idempotent, so if anything goes wrong you can just run it again and it picks up where it stopped.</p>
 
   <h2>Step 2: make your first island</h2>
   <p>An island is one container with its own home, credentials, and network. Your agents live inside; your Mac mini's files stay outside. Point one at a repo.</p>
@@ -165,7 +167,7 @@ Goal: a Mac mini I can leave running, with my agents each contained in their own
   <a href="index.html">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>

@@ -42,8 +42,8 @@
   <a href="teams.html">Teams</a>
   <a href="build.html" aria-current="page">Build</a>
   <a href="api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <section class="hero">
@@ -52,7 +52,7 @@
   <p class="lede">Your control plane on top, your compute underneath, isolation in between. Target one HTTP/WebSocket API from any language — the same one the CLI uses — instead of reinventing container lifecycle, PTY multiplexing, session management, and per-agent auth.</p>
   <div class="hero-cta">
     <a class="btn-primary" href="api.html">Read the API reference →</a>
-    <a class="btn-ghost" href="https://github.com/aoos/dejima" target="_blank" rel="noopener">Source on GitHub</a>
+    <a class="btn-ghost" href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">Source on GitHub</a>
   </div>
 </section>
 
@@ -79,7 +79,7 @@ POST   /v1/events/subscribe { "url": "https://yourapp.example.com/events" }
 <p class="small">The substrate — container lifecycle, PTY multiplexing, credential injection, events, remote access — is done and open source. Full surface at <a href="api.html">the API reference</a>.</p>
 
 <h2 id="sdks">SDKs</h2>
-<p>Official thin clients wrap the REST surface and the WebSocket PTY stream, so you don't hand-roll envelope framing. Both are <span class="pill">alpha</span> (0.x — fields may change until 1.0) and mirror <a href="https://github.com/aoos/dejima/blob/master/openapi.yaml" target="_blank" rel="noopener"><code>openapi.yaml</code></a>.</p>
+<p>Official thin clients wrap the REST surface and the WebSocket PTY stream, so you don't hand-roll envelope framing. Both are <span class="pill">alpha</span> (0.x — fields may change until 1.0) and mirror <a href="https://github.com/Scusi-Inc/dejima/blob/master/openapi.yaml" target="_blank" rel="noopener"><code>openapi.yaml</code></a>.</p>
 <div class="cards">
   <div class="card">
     <h3>Python</h3>
@@ -111,10 +111,10 @@ s.sendText("ls -la\n");
 s.onData(bytes =&gt; process.stdout.write(bytes));</code></pre>
   </div>
 </div>
-<p class="small">Source: <a href="https://github.com/aoos/dejima/tree/master/sdk/python" target="_blank" rel="noopener"><code>sdk/python</code></a> · <a href="https://github.com/aoos/dejima/tree/master/sdk/ts" target="_blank" rel="noopener"><code>sdk/ts</code></a>. Prefer another language? The whole surface is one HTTP/WebSocket API — generate a client from the spec.</p>
+<p class="small">Source: <a href="https://github.com/Scusi-Inc/dejima/tree/master/sdk/python" target="_blank" rel="noopener"><code>sdk/python</code></a> · <a href="https://github.com/Scusi-Inc/dejima/tree/master/sdk/ts" target="_blank" rel="noopener"><code>sdk/ts</code></a>. Prefer another language? The whole surface is one HTTP/WebSocket API — generate a client from the spec.</p>
 
 <h2>Webhooks</h2>
-<p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code>) emitted by the per-agent shims — Claude Code and Codex today, headless agents on their own via <code>POST /v1/internal/agent-event</code>. This is how mobile push, Slack notifications, and custom dashboards integrate. See <a href="https://github.com/aoos/dejima/blob/master/docs/agent-adapters.md" target="_blank" rel="noopener"><code>docs/agent-adapters.md</code></a> for adding your own.</p>
+<p>Subscribe a URL to get JSON POSTs on lifecycle events (<code>island.hibernated</code>, <code>island.woken</code>, …), presence (<code>client.attached</code>, <code>client.detached</code>), and agent-specific events (<code>agent.waiting-for-input</code>, <code>agent.task-complete</code>) emitted by the per-agent shims — Claude Code and Codex today, headless agents on their own via <code>POST /v1/internal/agent-event</code>. This is how mobile push, Slack notifications, and custom dashboards integrate. See <a href="https://github.com/Scusi-Inc/dejima/blob/master/docs/agent-adapters.md" target="_blank" rel="noopener"><code>docs/agent-adapters.md</code></a> for adding your own.</p>
 <pre><code>dejima webhook subscribe --url https://ntfy.sh/your-private-topic</code></pre>
 
 <h2 id="architecture">Architecture</h2>
@@ -130,7 +130,7 @@ s.onData(bytes =&gt; process.stdout.write(bytes));</code></pre>
 │   └────────────────────────┘    └────────────────────────┘     │
 │                                                                │
 │ per island: one container · shared home + credentials          │
-│ per agent:  own git worktree · sandboxed from host & others    │
+│ per agent:  own git worktree · shares the island with its peers│
 └────────────────────────────────────────────────────────────────┘</code></pre>
 <p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your dashboard, bot, or CLI targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
 
@@ -146,7 +146,7 @@ s.onData(bytes =&gt; process.stdout.write(bytes));</code></pre>
   <a href="quickstart.html">Quickstart</a>
   <a href="teams.html">Teams</a>
   <a href="api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>

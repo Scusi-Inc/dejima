@@ -198,6 +198,55 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/IslandInfo" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/github/host-credential:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: Whether this island may use the host operator's GitHub login
+      description: >
+        Host-owned islands do not inherit the operator's `gh` login; it is an
+        explicit, revocable grant like every other gate. Tenant islands are never
+        eligible — they use a per-island GitHub identity instead.
+      operationId: getHostGitHubCredential
+      responses:
+        "200":
+          description: OK — the island's host-GitHub grant state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostGitHubCredential" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [islands]
+      summary: Grant this island the host operator's GitHub login
+      description: >
+        Operator-only, and account-wide in effect — the island gets whatever the
+        host's `gh` credential can reach. Refused for a tenant island, which
+        should use a per-island identity. Takes effect when the container is next
+        created, since the credential is a bind mount.
+      operationId: grantHostGitHubCredential
+      responses:
+        "200":
+          description: OK — the resulting grant state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostGitHubCredential" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [islands]
+      summary: Revoke this island's host-GitHub grant
+      description: >
+        The record is updated immediately; the mount survives until the container
+        is recreated, so the grants view reports configured-vs-effective rather
+        than implying the credential is already gone.
+      operationId: revokeHostGitHubCredential
+      responses:
+        "200":
+          description: OK — the resulting grant state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostGitHubCredential" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/schedules:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -2337,6 +2386,32 @@ components:
       properties:
         color: { type: string, description: "hex color: #rgb or #rrggbb" }
         glyph: { type: string, description: exactly one rune }
+    HostGitHubCredential:
+      type: object
+      description: >
+        Whether an island may use the HOST operator's `gh` login. This is a grant,
+        not an inheritance: host-owned islands are denied by default and an
+        operator grants explicitly, matching every other gate (Port, capability,
+        MCP, link, spawn, egress).
+      required: [granted, eligible]
+      properties:
+        granted:
+          type: boolean
+          description: can this island use the host operator's login
+        granted_at: { type: string, format: date-time }
+        granted_by: { type: string }
+        grandfathered:
+          type: boolean
+          description: >
+            written by the deny-by-default migration to preserve an island's
+            existing access. Means nobody has actually decided about this island
+            yet — the flag a surface should nag on, as distinct from a grant an
+            operator chose.
+        eligible:
+          type: boolean
+          description: >
+            false for a tenant island, where this grant does not apply at all —
+            tenants use a per-island GitHub identity, never the host's login.
     AgentInfo:
       type: object
       properties:

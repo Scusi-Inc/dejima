@@ -48,15 +48,25 @@ jobs:
   # Tier-3/Tier-4 scripts run on the Mac-mini runner) lint-clean on every PR even
   # though CI can't execute them — a broken edit is caught here, not later on the
   # runner. The tier3/tier4 scripts `source` lib.sh, so point shellcheck at it.
+  #
+  # install.sh and scripts/setup.sh are here because they were NOT, and they are
+  # the two scripts every new user runs. The first lint of setup.sh found three
+  # error-path messages using backticks inside double quotes — one of which ran
+  # `colima delete` on the user's VM as a side effect of printing advice about
+  # it. -x so the setup.sh → lib/tty.sh source is followed.
   shellcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: shellcheck the live test suites
+      - name: shellcheck the installer and the live test suites
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
-          shellcheck scripts/integration.sh \
+          shellcheck -x install.sh \
+            scripts/setup.sh \
+            scripts/lib/tty.sh \
+            scripts/lib/tty_test.sh \
+            scripts/integration.sh \
             scripts/install-channels-check.sh \
             scripts/metrics/install-totals.sh \
             scripts/lib/report.sh \
@@ -70,3 +80,14 @@ jobs:
             scripts/clean-mac/lib.sh \
             scripts/clean-mac/proof-loop.sh \
             scripts/clean-mac/teardown.sh
+
+  # The installer's "is anyone home?" logic, exercised under a real pty. This is
+  # the only automated coverage the fresh-install path has: the clean-Mac runner
+  # was torn down, so nothing else executes any of it. Runs anywhere — it stubs
+  # nothing and installs nothing, it just drives the terminal decisions.
+  installer-tty:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: installer terminal detection (#341)
+        run: ./scripts/lib/tty_test.sh

@@ -13,79 +13,13 @@
 
 set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# Terminal helpers
-# ---------------------------------------------------------------------------
-bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
-info()   { printf '  %s\n' "$*"; }
-ok()     { printf '  \033[32m✓\033[0m %s\n' "$*"; }
-warn()   { printf '  \033[33m!\033[0m %s\n' "$*"; }
-fail()   { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; }
-
-prompt_yn() {
-    local prompt="$1"
-    local default="${2:-y}"
-    if [[ "${AUTO_INSTALL_DOCKER:-}" == "1" || ! -t 0 ]]; then
-        # Non-interactive: honor the default.
-        [[ "$default" == "y" ]]
-        return $?
-    fi
-    local reply
-    read -r -p "$prompt [Y/n] " reply
-    reply=${reply:-$default}
-    case "$reply" in
-        [Yy]|[Yy][Ee][Ss]) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# sudo pre-authorization
-# ---------------------------------------------------------------------------
-# Homebrew cask installs ask for a password PARTWAY THROUGH, not up front: the
-# Docker cask links its CLI into /usr/local, which on Apple Silicon is outside
-# the /opt/homebrew prefix and root-owned. That prompt lands on a terminal
-# Homebrew is already capturing for its own `==>` output, and the observed
-# result on a fresh Mac mini is the password echoed in the clear followed by an
-# apparent hang. sudo's timestamp is per-tty and brew inherits ours, so priming
-# it here means brew's own sudo calls find a warm ticket and never prompt.
-SUDO_KEEPALIVE_PID=""
-
-prime_sudo() {
-    local reason="$1"
-    if [[ "$(id -u)" == "0" ]]; then return 0; fi
-    if ! command -v sudo >/dev/null 2>&1; then return 0; fi
-    # No tty means no place to prompt. Let the child fail on its own terms
-    # rather than blocking a scripted run on a password nobody can type.
-    if [[ ! -t 0 ]]; then return 0; fi
-
-    if ! sudo -n -v 2>/dev/null; then
-        info ""
-        info "$reason needs your password partway through (Homebrew links binaries"
-        info "into root-owned /usr/local). Asking now, once, so the installer doesn't"
-        info "stop to ask in the middle of its own output:"
-        if ! sudo -v; then
-            warn "couldn't pre-authorize sudo — the installer may prompt mid-run"
-            return 0
-        fi
-    fi
-
-    # A cask download can outlast sudo's 5-minute timestamp, so hold it open.
-    # The loop exits on its own if this script dies without calling the stop.
-    ( while kill -0 "$$" 2>/dev/null; do
-          sudo -n -v 2>/dev/null || true
-          sleep 60
-      done ) &
-    SUDO_KEEPALIVE_PID=$!
-}
-
-stop_sudo_keepalive() {
-    if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
-        kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-        SUDO_KEEPALIVE_PID=""
-    fi
-}
+# Terminal detection, prompting, and sudo pre-authorization. Split into a lib
+# so it can be exercised by scripts/lib/tty_test.sh under a real pty — this is
+# the logic that broke the fresh-Mac install in #341, and it cannot be tested
+# in place because the rest of this file installs Docker and writes /usr/local.
+SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/tty.sh
+. "$SETUP_DIR/lib/tty.sh"
 trap stop_sudo_keepalive EXIT
 
 OS=$(uname -s)
@@ -121,11 +55,12 @@ TAILSCALE_NAME=""
 
 ts_install_prompt() {
     # Same logic as prompt_yn but keyed off AUTO_INSTALL_TS for clarity.
-    if [[ "${AUTO_INSTALL_TS:-}" == "1" || ! -t 0 ]]; then
-        return 0  # default-yes for non-interactive
+    if [[ "${AUTO_INSTALL_TS:-}" == "1" ]] || ! have_tty; then
+        return 0  # default-yes when there's nobody to ask
     fi
     local reply
-    read -r -p "$1 [Y/n] " reply
+    printf '%s [Y/n] ' "$1" >/dev/tty
+    read -r -u "$TTY_FD" reply || reply=""
     reply=${reply:-y}
     [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
@@ -153,6 +88,7 @@ else
             fi
         else
             info "Running: curl -fsSL https://tailscale.com/install.sh | sh"
+            prime_sudo "Installing Tailscale"
             if curl -fsSL https://tailscale.com/install.sh | sh; then
                 TAILSCALE_PRESENT=1
                 ok "Tailscale installed"
@@ -166,15 +102,37 @@ else
 fi
 
 if [[ "$TAILSCALE_PRESENT" == "1" ]]; then
+    # "not signed in" and "the daemon isn't running" are different problems with
+    # different fixes, and `tailscale status` fails the same way for both. On
+    # macOS `brew install tailscale` is the CLI ONLY — there is no tailscaled
+    # behind it — so `tailscale up` cannot work no matter how many times it is
+    # run, and asking for a sudo password first only spends the operator's
+    # goodwill on a command that is going to fail. Tell them apart.
+    ts_err=""
+    if ! ts_err="$(tailscale status 2>&1 >/dev/null)"; then :; fi
     if tailscale status >/dev/null 2>&1; then
         TAILSCALE_RUNNING=1
         ok "Tailscale is signed in"
+    elif [[ "$ts_err" == *"is Tailscale running"* || "$ts_err" == *"failed to connect"* ]]; then
+        warn "the tailscale CLI is installed but the Tailscale service isn't running"
+        if [[ "$OS" == "Darwin" ]]; then
+            info "On macOS the Homebrew 'tailscale' formula is the CLI only — it ships no"
+            info "background service, so 'tailscale up' cannot connect. Install the app:"
+            info "  brew install --cask tailscale-app   (then open it and sign in)"
+        else
+            info "Start the service, then sign in:"
+            info "  sudo systemctl enable --now tailscaled && sudo tailscale up"
+        fi
+        info "Not asking for your password — it wouldn't help until the service is up."
+        info "Dejima will finish setting up; the daemon will listen on its local socket."
     else
         warn "Tailscale installed but not signed in"
-        if [[ -t 0 ]]; then
+        if have_tty; then
             info "Running 'sudo tailscale up' — a browser tab opens for sign-in."
             info "(Ctrl-C to skip; you can sign in later with 'sudo tailscale up'.)"
-            if sudo tailscale up; then
+            prime_sudo "Signing in to Tailscale"
+            # shellcheck disable=SC2024  # deliberate: sudo should read our terminal
+            if sudo tailscale up </dev/tty; then
                 # Wait up to 60s for backend to report Running.
                 for _ in $(seq 1 60); do
                     if tailscale status >/dev/null 2>&1; then
@@ -297,16 +255,24 @@ else
                         exit 1
                     }
                     info "Starting colima (downloads a small Linux VM the first time; ~1 min)…"
+                    # The single quotes below are load-bearing, and SC2016's
+                    # "did you mean to expand?" is exactly backwards here. In
+                    # double quotes the shell RUNS what's inside backticks: this
+                    # line used to delete the user's colima VM as a side effect
+                    # of printing advice about deleting it, then print the
+                    # sentence with a hole where the command name had been.
+                    # shellcheck disable=SC2016
                     colima start || {
                         fail "colima start failed"
-                        info "Try `colima delete && colima start` to reset, then re-run scripts/setup.sh."
+                        info 'Try `colima delete && colima start` to reset, then re-run scripts/setup.sh.'
                         exit 1
                     }
+                    # shellcheck disable=SC2016
                     if docker version >/dev/null 2>&1; then
                         ok "Docker is now reachable (via colima)"
                     else
-                        fail "colima started but `docker version` is not reachable"
-                        info "Check `colima status` and re-run scripts/setup.sh."
+                        fail 'colima started but `docker version` is not reachable'
+                        info 'Check `colima status` and re-run scripts/setup.sh.'
                         exit 1
                     fi
                 else
@@ -326,7 +292,7 @@ else
                 if prompt_yn "Install Docker Desktop now via Homebrew?" "y"; then
                     info "Running: brew install --cask docker-desktop"
                     prime_sudo "Installing Docker Desktop"
-                    brew install --cask docker-desktop || {
+                    with_tty brew install --cask docker-desktop || {
                         stop_sudo_keepalive
                         fail "brew install --cask docker-desktop failed (Gatekeeper or a previous install may be involved)"
                         info "If install dropped to /Applications/Docker.app, just open it once to finish setup."
@@ -334,18 +300,55 @@ else
                         exit 1
                     }
                     stop_sudo_keepalive
-                    info "Now open /Applications/Docker.app once to grant macOS permissions."
-                    info "Setup will wait up to 90s for the Docker daemon to come up."
-                    for _ in $(seq 1 90); do
-                        if docker version >/dev/null 2>&1; then
-                            ok "Docker is now reachable"
-                            break
+                    # A freshly-installed Docker Desktop has no daemon until it
+                    # has been launched once: first run installs a privileged
+                    # helper and puts a licence screen in front of the user. This
+                    # step used to *tell* the operator to open it and then count
+                    # silently to 90 without opening anything — which on a fresh
+                    # Mac mini timed out and exited 1 while Docker sat waiting to
+                    # be clicked. Open it, and allow for a human in the loop.
+                    info "Launching Docker Desktop — accept its licence prompt if one appears."
+                    if ! open -a Docker 2>/dev/null; then
+                        warn "couldn't launch Docker Desktop automatically"
+                        info "Open /Applications/Docker.app by hand and leave this running."
+                        info "If macOS refuses with error -10673, the app is quarantined:"
+                        info "  xattr -dr com.apple.quarantine /Applications/Docker.app"
+                    fi
+                    info "Waiting for the Docker daemon (up to 5 min; first launch is slow)…"
+                    docker_up=0
+                    for i in $(seq 1 300); do
+                        if docker version >/dev/null 2>&1; then docker_up=1; break; fi
+                        # A silent multi-minute pause is indistinguishable from a
+                        # hang — which is what prompted a Ctrl-C last time, and
+                        # the Ctrl-C is what left Docker.app half-linked.
+                        if (( i % 30 == 0 )); then
+                            info "  …still waiting (${i}s) — CHECK THIS MAC'S SCREEN: first launch"
+                            info "     shows a licence agreement that must be accepted"
                         fi
                         sleep 1
                     done
-                    if ! docker version >/dev/null 2>&1; then
-                        fail "Docker still not reachable after 90s"
-                        info "Launch Docker Desktop manually, then re-run scripts/setup.sh"
+                    if [[ "$docker_up" == "1" ]]; then
+                        ok "Docker is now reachable"
+                    else
+                        fail "Docker still not reachable after 5 minutes"
+                        # "Docker Desktop is open, waiting to be clicked" and "Docker
+                        # Desktop never started" look identical from here but need
+                        # opposite actions, so say which one it is.
+                        if pgrep -f "Docker Desktop" >/dev/null 2>&1 || pgrep -x Docker >/dev/null 2>&1; then
+                            info "Docker Desktop IS running — it is waiting for you ON THE SCREEN."
+                            info "First launch shows a licence agreement and asks to install a"
+                            info "privileged helper. The daemon does not exist until both are done,"
+                            info "and neither can be accepted over SSH."
+                            info "Go to this Mac's display (or screen-share in) and click through."
+                        else
+                            info "Docker Desktop is NOT running. Open it once:"
+                            info "  open -a Docker"
+                            info "If macOS refuses with error -10673, it is quarantined:"
+                            info "  xattr -dr com.apple.quarantine /Applications/Docker.app"
+                        fi
+                        info ""
+                        info "Then re-run the installer — it is idempotent and picks up here:"
+                        info "  curl -fsSL https://dejima.tech/install.sh | bash"
                         exit 1
                     fi
                 else
@@ -393,7 +396,14 @@ ok "Go toolchain ready"
 # 3. Install to /usr/local/bin (or $PREFIX)
 # ---------------------------------------------------------------------------
 bold "4. Build & install binaries"
-make install
+# `make install` falls back to `sudo install` when the prefix isn't writable, and
+# /usr/local/bin is root-owned on Apple Silicon. Prime first so the prompt lands
+# here with a reason attached instead of partway through make's own output, where
+# an unexplained `Password:` reads as a hang.
+if [[ ! -w "${PREFIX:-/usr/local}/bin" ]]; then
+    prime_sudo "Installing dejima + dejimad to ${PREFIX:-/usr/local}/bin"
+fi
+with_tty make install
 ok "installed dejima + dejimad"
 
 # ---------------------------------------------------------------------------
@@ -482,10 +492,26 @@ bold "Setup complete."
 info "Try:  dejima init --repo git@github.com:you/repo.git"
 info "Then: dejima connect <name>"
 
+# The address is the one piece of state that has to travel from this machine to
+# every other device, and there is no way to look it up from the other end. It
+# used to print only when Tailscale was up, so a run where Tailscale failed
+# ended on "Setup complete" with the remote-access section silently absent —
+# nothing told the operator that the thing they need was missing, or why.
+printf '\n'
+bold "To drive this server from another device:"
 if [[ -n "$TAILSCALE_IP" ]]; then
-    printf '\n'
-    bold "To drive this server from another device:"
     info "Install the dejima client on the other machine, then set:"
-    info "  export DEJIMA_HOST=${TAILSCALE_IP}:7273"
-    info "(Recorded in ~/.dejima/host.json.)"
+    printf '\n'
+    bold "    export DEJIMA_HOST=${TAILSCALE_IP}:7273"
+    [[ -n "$TAILSCALE_NAME" ]] && info "    (or by name: ${TAILSCALE_NAME}:7273)"
+    printf '\n'
+    info "That line is the whole handoff — copy it now. Also saved to"
+    info "$HOME/.dejima/host.json, and printed by 'dejima doctor' on this host."
+else
+    warn "no remote address yet — Tailscale isn't up on this machine."
+    info "Dejima is installed and working LOCALLY; this only affects reaching it"
+    info "from your laptop or phone. Nothing here needs redoing."
+    info ""
+    info "To finish it: bring Tailscale up (see the Tailscale step above), then"
+    info "run 'dejima doctor' here — it prints the DEJIMA_HOST to copy."
 fi

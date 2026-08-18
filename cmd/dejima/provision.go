@@ -118,16 +118,29 @@ func (pc *provCtx) addManual(s string) { pc.manual = append(pc.manual, s) }
 // defYes without prompting, so a non-interactive run never blocks — but a step
 // that should never be auto-taken passes defYes=false.
 func (pc *provCtx) confirm(prompt string, defYes bool) bool {
+	return pc.confirmUnattended(prompt, defYes, defYes)
+}
+
+// confirmUnattended splits the two defaults `confirm` conflates: what an
+// interactive prompt should RECOMMEND, and what a --yes run should DO when
+// nobody is asked. Those are not always the same answer.
+//
+// Local models forced the split. It is worth recommending to a person — running
+// open-weights models on the host is much of the point of this machine — but it
+// must never happen unattended, because it is a multi-GB download. Tying both
+// to one flag meant the only way to keep `--yes` from pulling gigabytes was to
+// show a person `[y/N]`, which reads as "we advise against this".
+func (pc *provCtx) confirmUnattended(prompt string, defInteractive, defUnattended bool) bool {
 	if pc.yes {
-		return defYes
+		return defUnattended
 	}
 	suffix := "[y/N]"
-	if defYes {
+	if defInteractive {
 		suffix = "[Y/n]"
 	}
 	ans := strings.TrimSpace(readSingleKey(prompt + " " + suffix + ": "))
 	if ans == "" {
-		return defYes
+		return defInteractive
 	}
 	return strings.EqualFold(ans, "y")
 }
@@ -678,7 +691,7 @@ func provPhaseLocalModels(pc *provCtx) error {
 	fmt.Println("  your isolated agents can use them — no per-token cloud cost, nothing leaves")
 	fmt.Println("  the machine. The model loads once here; islands share it as an OpenAI-")
 	fmt.Println("  compatible endpoint. (You can always do this later with `dejima local`.)")
-	if !pc.confirm("  Set up local models now (installs Ollama + a recommended model)?", false) {
+	if !pc.confirmUnattended("  Set up local models now (installs Ollama + a recommended model)?", true, false) {
 		pc.addManual("Local models (optional): `dejima local install`, then `dejima local pull <model>`")
 		return nil
 	}

@@ -232,6 +232,18 @@ consistency + Docker re-adopt halves remain `A` (reused, not rebuilt).
 - [ ] reinstall re-adopts the island by name; marker survives the round-trip · T2/T3 · A (integration.sh) / M (was clean-mac gate; no runner)
 - [ ] teardown→provision driver leaves a virgin env (no Docker/colima/brew/`~/.dejima` history) · T3 · M (harness kept: `scripts/clean-mac/teardown.sh` + `assert_virgin`)
 
+**The one automated row this section has (added 2026-08-18, #341).** Everything
+above needs a Mac. The installer's *terminal* decisions do not, and they are what
+actually broke in the field: `curl … | bash` leaves stdin a pipe, the installer
+read that as "nobody is here", and it skipped every prompt and the sudo priming.
+`scripts/lib/tty_test.sh` drives all three stdin/terminal shapes under a real pty
+(`scripts/lib/ptyrun.py`) and runs anywhere — it installs nothing.
+- [x] `curl \| bash` is recognised as interactive; prompts are asked and answers honored · T1 · A (`tty_test.sh`, CI job `installer-tty`)
+- [x] genuinely headless (no controlling terminal) still takes the defaults without blocking · T1 · A (`tty_test.sh`)
+- [x] sudo pre-authorization is attempted under `curl \| bash`, skipped when headless · T1 · A (`tty_test.sh`)
+- [x] `install.sh` + `scripts/setup.sh` are shellcheck-clean · T1 · A (CI `shellcheck` job; first lint found a live command-substitution bug that ran `colima delete`)
+- [ ] the *rest* of the install — daemon, image, launchd, PATH, reboot survival — still needs a Mac · T3 · M
+
 ## 20. Per-island secrets (`dejima secret`)
 Distinct from §11, which covers *credentials the daemon holds* (Claude, GitHub,
 provider keys). This is the per-island token store agents read from their own
@@ -307,6 +319,46 @@ Corollary for the checks themselves: **"couldn't determine" must render differen
 An `INFO` row saying the probe was unavailable is honest; an `OK` row reporting a healthy
 number nobody measured manufactures a clean bill of health, which is worse than emitting
 nothing. Tracked in #337.
+
+## Standing rule: prove the check can see a failure
+
+**Before trusting a check's negative, establish that the check can observe its subject at
+all.** Feed it a known positive and confirm it flinches.
+
+A clean result and a check that never ran produce the same output — silence. So "no output"
+is only evidence once you have shown the instrument was pointed at the right thing and could
+have spoken. Eight instances in one week, five different tools, one failure:
+
+| The check | What it could not see |
+|---|---|
+| `checkHostSocketPressure` | emitted no row when netstat was missing — indistinguishable from a healthy host |
+| a mutation regex | did not match a string spanning two lines, so a green suite ran against an unmutated file |
+| a `grep -E '^--- FAIL'` | could not match `FAIL … [build failed]`, so a compile error read as a pass |
+| `git log @{u}..HEAD` | compared against the wrong upstream; and errored "no upstream" where a silent `0` was equally possible |
+| a `$REPO` regex | `$` read as an end-anchor, so the pattern could never match |
+| a mailbox poll | directed messages never appear in the sender's own poll |
+| a malformed-body write probe | returned `422` from body validation on an endpoint where validation precedes authorization, so it answered a question about the body while appearing to answer one about permission |
+| `gh run list --workflow=ci.yml` | could not see the `sdk` workflow, which had been red for three merges |
+
+Two corollaries worth keeping:
+
+- **A right answer held for a weak reason is not safe, it is unfalsified** (d5). Reaching the
+  correct conclusion by an argument that would fold under pressure leaves you exposed the
+  moment the pressure arrives. When you find yourself right, check *why*.
+- **A bad instrument you keep is a bug; a bad instrument you distribute is a standard** (d5).
+  The write probe above was validated on two endpoints and handed to four agents as a rule
+  before anyone tested the third. Distributing a check raises the bar on validating it.
+
+**Why it recurs is habituation, not incompetence** (d5). These checks fail toward the exact
+output we are trained to read as good news, so a blind check and a clean run feel identical
+at the moment you most want to move on. The author of the rule above hit a sixth instance
+ten seconds after writing it — a case-sensitive grep against a line they had typed in
+capitals — and nearly let it pass, because by then a `0` from that check *felt like the
+normal shape of a clean run*. Assume you are habituated; the discipline has to be mechanical,
+not attentive.
+
+The practical form is one extra step: run the check against a state you know is bad, before
+you trust it against a state you hope is good.
 
 ---
 

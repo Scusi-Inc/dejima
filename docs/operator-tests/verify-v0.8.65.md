@@ -60,7 +60,18 @@ broken on Windows for exactly this reason.
 
 - [ ] **B1 · Fresh Mac mini install — the whole thing.** Known to be having
       problems in the field, and with `dejimaqa` gone there is no automation
-      behind it at all. Cover both halves:
+      behind it at all.
+      **Field failure #341, fixed 2026-08-18 (`f2119b4`) — verify this first.**
+      `curl … | bash` leaves stdin a pipe, and the installer used `[[ -t 0 ]]`
+      to decide whether anyone was present. On a fresh Mac mini it therefore
+      installed Docker Desktop and Tailscale without asking, and skipped sudo
+      pre-authorization — so Homebrew's own sudo appeared mid-cask as a bare
+      `Password:`, took the password with echo on, and hung. Now resolved
+      against `/dev/tty`. Pass = the one-liner asks before installing Docker,
+      and the single password prompt arrives up front with a reason attached
+      and is hidden. `scripts/lib/tty_test.sh` covers the decision; the rest of
+      this item still needs a real Mac.
+      Cover both halves:
       - the **install** itself, per channel (`curl | sh`, `brew`, `npm` client),
         on a genuinely clean box: daemon up, island image built, binaries on
         PATH, service registered under launchd, survives a reboot;
