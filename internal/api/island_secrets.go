@@ -21,18 +21,47 @@ import (
 // command injection into every new shell. Writing it in a fixed, unambiguous
 // format is half of that guarantee; the in-island parser is the other half.
 //
-// Bind mounts reflect host writes live, so rotating a secret updates the island
-// without recreating the container — though a process already running keeps the
-// environment it started with, which is why callers surface a restart notice.
+// A DIRECTORY is bind-mounted, not the file — and that distinction is the whole
+// reason `dejima secret set` and `secret rm` used to report success while
+// changing nothing the island could see.
+//
+// A file bind mount binds the INODE the path resolved to at container-create
+// time. materializeIslandSecrets writes via CreateTemp + Rename, which puts a
+// NEW inode at that path. So a container created against the file went on
+// reading the ORIGINAL inode for its entire life: every later set and remove was
+// invisible inside the island while the daemon reported success — the same
+// says-contained-but-isn't shape as the grants pane. Mounting the directory
+// makes the container resolve `secrets.env` on each access, so the rename is
+// seen immediately and the atomic replace is kept.
+//
+// Only the mount subdirectory is exposed, not the island's whole secrets dir,
+// which also holds meta.json. meta.json carries no values (names, timestamps
+// and a sha256 fingerprint), so this is not plugging a leak — it is keeping the
+// mount surface to exactly what is meant to cross, so a file added to that dir
+// later doesn't silently become island-visible.
 
-// secretsFileName is the materialized file, inside the island's secrets dir so
-// island teardown removes it along with everything else.
+// secretsFileName is the materialized file. It lives in secretsMountDirName
+// inside the island's secrets dir, so island teardown removes it along with
+// everything else.
 const secretsFileName = "secrets.env"
+
+// secretsMountDirName is the ONLY thing bind-mounted into the island.
+const secretsMountDirName = "mount"
+
+// islandSecretsMountDir returns the host directory bind-mounted into the island
+// WITHOUT creating anything.
+func islandSecretsMountDir(island string) (string, error) {
+	dir, err := paths.IslandSecretsPath(island)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, secretsMountDirName), nil
+}
 
 // islandSecretsFile returns the host path of an island's materialized secrets
 // file WITHOUT creating anything.
 func islandSecretsFile(island string) (string, error) {
-	dir, err := paths.IslandSecretsPath(island)
+	dir, err := islandSecretsMountDir(island)
 	if err != nil {
 		return "", err
 	}
@@ -95,8 +124,11 @@ func materializeIslandSecrets(store *secrets.IslandStore, island string) (string
 		return "", err
 	}
 
-	// Ensure the 0700 dir exists (this is a write path, unlike reads).
+	// Ensure the 0700 dirs exist (this is a write path, unlike reads).
 	if _, err := paths.IslandSecretsDir(island); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
 	// Write 0600 via a temp file in the same directory, so the mount never
@@ -123,15 +155,23 @@ func materializeIslandSecrets(store *secrets.IslandStore, island string) (string
 	return path, nil
 }
 
-// islandSecretsMount returns the host path to bind at /opt/host/secrets.env,
-// refreshing the file first so a container start always carries current values.
-// The file (and thus the mount) is ALWAYS present — header-only when the island
-// has no secrets yet — so a secret added later reaches the running container
-// through the live mount instead of needing a recreate to gain the mount.
+// islandSecretsMount returns the host DIRECTORY to bind at secretsMountPath,
+// refreshing the file inside it first so a container start always carries
+// current values. The directory (and thus the mount) is ALWAYS present —
+// secrets.env is header-only when the island has no secrets yet — so a secret
+// added later reaches the running container through the live mount instead of
+// needing a recreate to gain the mount.
 func islandSecretsMount(p *project.Project) (string, error) {
 	store, err := secrets.OpenIsland()
 	if err != nil {
 		return "", err
 	}
-	return materializeIslandSecrets(store, p.Name)
+	file, err := materializeIslandSecrets(store, p.Name)
+	if err != nil {
+		return "", err
+	}
+	if file == "" {
+		return "", nil
+	}
+	return filepath.Dir(file), nil
 }

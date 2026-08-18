@@ -102,11 +102,18 @@ nuisance than protection.)
 
 ## Delivery into the island
 
-A `KEY=VALUE` file bind-mounted read-only, mirroring `/opt/host/gh-config`:
+A `KEY=VALUE` file inside a **directory** bind-mounted read-only, mirroring
+`/opt/host/gh-config`:
 
 ```
-~/.dejima/secrets/<island>/secrets.env  →  /opt/host/secrets.env  (ro)
+~/.dejima/secrets/<island>/mount/  →  /opt/host/secrets.d/  (ro)
+                          └─ secrets.env
 ```
+
+The **directory** is mounted, not the file: a file bind binds the inode, and the
+file is replaced by rename, so a container would read the original inode for its
+whole life (every later set/remove silently invisible). `meta.json` stays outside
+`mount/` so the bind carries only what is meant to cross.
 
 **Parsed, never sourced.** A file sourced by bash *executes* what it reads, so a
 value containing a backtick or `$(...)` would be command injection into every
