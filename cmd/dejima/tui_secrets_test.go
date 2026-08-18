@@ -107,8 +107,9 @@ func TestSecretsRemoveTargetsCursor(t *testing.T) {
 }
 
 // TestSecretsRestartOpensChecklist: [R] in the Secrets pane opens the
-// "which agents to restart" checklist (which loads a newly-added secret into
-// running agents) and closes the pane.
+// "which agents to restart" checklist and closes the pane. Note what this no
+// longer claims: a restart does not load a newly-added secret — see
+// TestSecretsPaneLeadsWithRecreate for why.
 func TestSecretsRestartOpensChecklist(t *testing.T) {
 	m := tuiModel{secretsPane: &secretsView{island: "wildfire", restartPending: true}}
 	m = feedSecrets(m, "R")
@@ -117,5 +118,49 @@ func TestSecretsRestartOpensChecklist(t *testing.T) {
 	}
 	if m.restartPane == nil || m.restartPane.island != "wildfire" {
 		t.Fatalf("[R] should open the restart checklist for the island; got %+v", m.restartPane)
+	}
+}
+
+// A secret set on a RUNNING island never reaches it. The secrets file is
+// bind-mounted as a file and every write replaces it via os.Rename, so the
+// container keeps resolving the pre-rename inode for its whole life. No restart
+// of a process inside that container changes which file it is reading — only a
+// new container does.
+//
+// So the pane has to lead with recreate. Offering restart as the remedy would be
+// reassuring copy that does not deliver, which is the same defect the reset
+// confirm had, one layer down: the operator acts, sees no error, and concludes
+// it worked. And the remedy that works has to be reachable in one key — it used
+// to be [R] then [!], i.e. three keystrokes behind the one that doesn't.
+func TestSecretsPaneLeadsWithRecreate(t *testing.T) {
+	m := tuiModel{secretsPane: &secretsView{island: "wildfire", restartPending: true}}
+	out := m.secretsPane.view(100)
+	if !strings.Contains(out, "RECREATE THE ISLAND TO APPLY") {
+		t.Errorf("pending banner must lead with recreate; got %q", out)
+	}
+	if !strings.Contains(out, "Restarting an agent does NOT change that") {
+		t.Errorf("pending banner must say restart is not the remedy; got %q", out)
+	}
+
+	got := feedSecrets(m, "!")
+	if got.secretsPane != nil {
+		t.Errorf("[!] should close the secrets pane; got %+v", got.secretsPane)
+	}
+	if got.confirm == nil || got.confirm.verb != "recreate-island" || got.confirm.island != "wildfire" {
+		t.Fatalf("[!] should arm recreate-island for the island in one key; got %+v", got.confirm)
+	}
+}
+
+// The checklist is still reachable, so it must not repeat the promise the pane
+// just retracted. It used to say it relaunches agents "so they pick up new
+// secrets" — true-sounding, and wrong for the case an operator arrives from.
+func TestRestartChecklistDoesNotPromiseSecrets(t *testing.T) {
+	m := seededModel(t, island("alpha", "a1")).openRestartView("alpha")
+	out := m.restartPane.view(100)
+	if !strings.Contains(out, "Does NOT apply a secret set while this island was running") {
+		t.Errorf("checklist must retract the secrets promise; got %q", out)
+	}
+	if strings.Contains(out, "so they pick up new secrets") {
+		t.Errorf("checklist still promises restart applies secrets; got %q", out)
 	}
 }

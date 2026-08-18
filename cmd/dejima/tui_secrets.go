@@ -148,11 +148,21 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		v.loading, v.notice, v.err = true, "", ""
 		return m, m.loadSecretsCmd(v.island)
+	case "!":
+		// Recreate the island — the ONLY thing that applies a secret set on a
+		// running island (the file bind holds the pre-rename inode; see the
+		// restartPending banner). It was reachable only as [!] inside the restart
+		// checklist, which put the remedy that works three keys behind the one
+		// that doesn't. Same key as in that checklist, so the two agree.
+		island := v.island
+		m.secretsPane = nil
+		m.confirm = &confirmPrompt{verb: "recreate-island", island: island}
+		return m, nil
 	case "R":
 		// Open the restart checklist: choose which agents to relaunch so they pick
-		// up the change (a detach/reattach of the client does NOT — the process
-		// keeps its old env). The checklist also offers [!] recreate-island for the
-		// first-secret case, where no mount exists yet.
+		// up an environment change (a detach/reattach of the client does NOT — the
+		// process keeps its old env). NOT sufficient for a secret set on a running
+		// island; that needs [!] above.
 		island := v.island
 		m.secretsPane = nil
 		return m.openRestartView(island), nil
@@ -287,19 +297,24 @@ func (v *secretsView) view(width int) string {
 
 	if v.restartPending {
 		// Loud on purpose: this is the single thing most likely to make the
-		// feature look broken when it is working correctly. Ask the question the
-		// operator is actually facing — restart now? — and lead with the answer,
-		// since the heading used to say RECREATE while the only offered action was
-		// a restart, which left them choosing between two words for one intent.
+		// feature look broken when it is working correctly.
 		//
-		// Be precise about the mechanism: "restart the terminal" (detach/reattach
-		// the client) does NOT work; the agent PROCESS has to relaunch. And say
-		// what a restart costs, because it isn't free — an agent mid-task loses
-		// the turn it's in. The checklist won't pre-select those, but the decision
-		// is the operator's and they should meet it before they press the key.
-		b.WriteString(styleWaiting.Render("⚠  RESTART AGENTS TO APPLY THIS?   press [R]"))
+		// LEAD WITH RECREATE, because restart genuinely does not apply this. The
+		// secrets file is bind-mounted as a FILE (server.go, ContainerPath
+		// /opt/host/secrets.env) and every write replaces it via os.Rename
+		// (island_secrets.go). A rename puts a NEW INODE at the path; a file bind
+		// resolves the inode, not the path. So a running container goes on reading
+		// the file it started with for its whole life, and no restart of a process
+		// inside it changes which file that is. Only a new container re-resolves.
+		//
+		// Offering restart first here would be reassuring copy that does not
+		// deliver — the same defect this pane exists to avoid, one layer down.
+		// Restart is still listed because it is the right remedy for everything
+		// else an agent picks up from its environment, and because it becomes the
+		// cheap remedy the moment the mount is fixed.
+		b.WriteString(styleWaiting.Render("⚠  RECREATE THE ISLAND TO APPLY THIS   press [!]"))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("   A running agent keeps the environment it launched with. Closing and\n   reopening a terminal does NOT reload it — the process must relaunch.\n   [R] lists the agents so you pick: resume is on by default (conversations\n   continue), and anything that looks mid-task is left unticked, because a\n   restart costs it the turn it's working on.\n   Still stale after a restart? The island's secrets mount predates this\n   change — [!] in that list recreates the island, which always applies."))
+		b.WriteString(styleMuted.Render("   A running island keeps the secrets file it started with — writing a\n   secret replaces that file, and the container is still holding the old\n   one. Restarting an agent does NOT change that, and neither does closing\n   and reopening a terminal. Recreating is what applies it: workspace and\n   agent state are preserved, running sessions restart.\n   [R] restarts individual agents without recreating. Right for a model or\n   setting change; it will NOT pick up the secret you just set."))
 		b.WriteString("\n\n")
 	}
 
@@ -315,6 +330,6 @@ func (v *secretsView) view(width int) string {
 		b.WriteString(styleRunning.Render("✓ " + v.notice))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [R] restart to apply   [r] reload   [esc] back"))
+	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [!] recreate to apply   [R] restart agents   [r] reload   [esc] back"))
 	return b.String()
 }

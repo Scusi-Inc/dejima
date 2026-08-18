@@ -207,11 +207,20 @@ func (m tuiModel) restartAgentsCmd(island string, ids []string, resume bool) tea
 
 func (v *restartView) view(width int) string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Restart agents to apply — " + v.island))
+	b.WriteString(styleHeader.Render("Restart agents — " + v.island))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("Relaunches the selected agents in a fresh shell so they pick up new secrets."))
+	b.WriteString(styleMuted.Render("Relaunches the selected agents in a fresh shell, so they pick up changes to"))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("Needs the island's secrets mount. First-ever secret here? Press [!] to recreate instead."))
+	b.WriteString(styleMuted.Render("the environment they launched with."))
+	b.WriteString("\n")
+	// The header used to promise this picks up new secrets. It doesn't: a running
+	// container holds the pre-rename inode of the secrets file for its whole life,
+	// so the value a restarted agent reads is the old one. Say that here rather
+	// than let the operator restart, see no change, and conclude secrets are
+	// broken — or worse, conclude it worked.
+	b.WriteString(styleWaiting.Render("Does NOT apply a secret set while this island was running — press [!] to"))
+	b.WriteString("\n")
+	b.WriteString(styleWaiting.Render("recreate the island for that. Recreating preserves workspace + agent state."))
 	b.WriteString("\n\n")
 
 	if len(v.items) == 0 {
