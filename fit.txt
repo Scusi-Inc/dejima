@@ -172,6 +172,17 @@ The first hour is the real risk, not any missing feature:
   automated clean-machine test host was torn down, so that path is currently
   unverified rather than passing. If someone is deciding today, tell them to
   budget for a rough install and to have the GitHub issues open.
+- On Linux and on a cloud VM, the installer does NOT install Docker. It checks,
+  prints the distro command, and exits. So Docker has to be in place first:
+  `sudo apt install docker.io && sudo systemctl enable --now docker`, plus
+  `usermod -aG docker $USER` and a re-login. Tell anyone heading for a VPS or a
+  Linux box this up front, because the installer stops rather than continuing.
+  This channel also has no automated coverage at all, which makes it the
+  least-proven of the install paths despite Linux being the obvious server.
+- Skipping or failing Tailscale during install is safe and costs REMOTE access
+  only. The daemon comes up on a local socket and can be reached from the same
+  machine; Tailscale can be added later. Worth saying, because a failed Tailscale
+  step looks fatal and is not.
 - Do not repeat any "tested on every release" claim. It is not true right now.
 
 One known credential gap, tracked and being fixed rather than hidden: `gh` is
