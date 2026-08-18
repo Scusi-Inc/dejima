@@ -207,20 +207,19 @@ func (m tuiModel) restartAgentsCmd(island string, ids []string, resume bool) tea
 
 func (v *restartView) view(width int) string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Restart agents — " + v.island))
+	b.WriteString(styleHeader.Render("Restart agents to apply — " + v.island))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("Relaunches the selected agents in a fresh shell, so they pick up changes to"))
+	b.WriteString(styleMuted.Render("Relaunches the selected agents in a fresh shell so they pick up new secrets."))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("the environment they launched with."))
+	// Not a hedge — the two cases are real and coexist. An island created after the
+	// secrets-mount fix has the DIRECTORY bound, so a restart genuinely applies.
+	// One created before it holds the original file's inode for the container's
+	// whole life, and no restart of a process inside changes that. Name the second
+	// case so the operator who restarts and sees nothing has somewhere to go, and
+	// doesn't conclude either that secrets are broken or that it worked.
+	b.WriteString(styleMuted.Render("Still stale afterwards, or this is the island's first-ever secret? Then it"))
 	b.WriteString("\n")
-	// The header used to promise this picks up new secrets. It doesn't: a running
-	// container holds the pre-rename inode of the secrets file for its whole life,
-	// so the value a restarted agent reads is the old one. Say that here rather
-	// than let the operator restart, see no change, and conclude secrets are
-	// broken — or worse, conclude it worked.
-	b.WriteString(styleWaiting.Render("Does NOT apply a secret set while this island was running — press [!] to"))
-	b.WriteString("\n")
-	b.WriteString(styleWaiting.Render("recreate the island for that. Recreating preserves workspace + agent state."))
+	b.WriteString(styleMuted.Render("predates the secrets-mount fix — press [!] to recreate, which always applies."))
 	b.WriteString("\n\n")
 
 	if len(v.items) == 0 {

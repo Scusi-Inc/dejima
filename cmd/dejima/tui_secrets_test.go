@@ -121,46 +121,52 @@ func TestSecretsRestartOpensChecklist(t *testing.T) {
 	}
 }
 
-// A secret set on a RUNNING island never reaches it. The secrets file is
-// bind-mounted as a file and every write replaces it via os.Rename, so the
-// container keeps resolving the pre-rename inode for its whole life. No restart
-// of a process inside that container changes which file it is reading — only a
-// new container does.
+// Two container generations exist at once and the pane has to be true for both.
 //
-// So the pane has to lead with recreate. Offering restart as the remedy would be
-// reassuring copy that does not deliver, which is the same defect the reset
-// confirm had, one layer down: the operator acts, sees no error, and concludes
-// it worked. And the remedy that works has to be reachable in one key — it used
-// to be [R] then [!], i.e. three keystrokes behind the one that doesn't.
-func TestSecretsPaneLeadsWithRecreate(t *testing.T) {
+// An island created after the secrets-mount fix (4826773) has its secrets
+// DIRECTORY bound at /opt/host/secrets.d, so the daemon's CreateTemp+Rename
+// lands live and a relaunched login shell reads the new file — restart applies.
+// An island created before it has the old single-FILE bind, which holds the
+// inode a rename replaces, so that container reads the original file for its
+// whole life however many times a process inside restarts — only a recreate
+// re-resolves. load-secrets.sh reads the new path first and falls back to the
+// old one, so an operator cannot tell which generation they are on from in here.
+//
+// Hence restart first (right for every island created from here on) with the
+// stale case NAMED rather than left to be discovered. Leading with recreate
+// would be wrong for every new island; omitting the fallback would leave the
+// operator on an old island restarting into silence.
+func TestSecretsPaneOffersBothRemedies(t *testing.T) {
 	m := tuiModel{secretsPane: &secretsView{island: "wildfire", restartPending: true}}
 	out := m.secretsPane.view(100)
-	if !strings.Contains(out, "RECREATE THE ISLAND TO APPLY") {
-		t.Errorf("pending banner must lead with recreate; got %q", out)
+	if !strings.Contains(out, "RESTART AGENTS TO APPLY") {
+		t.Errorf("pending banner must lead with restart; got %q", out)
 	}
-	if !strings.Contains(out, "Restarting an agent does NOT change that") {
-		t.Errorf("pending banner must say restart is not the remedy; got %q", out)
+	if !strings.Contains(out, "Still stale after a restart?") || !strings.Contains(out, "[!] recreates") {
+		t.Errorf("pending banner must name the stale case and its remedy; got %q", out)
 	}
 
+	// The fallback has to be actionable where it is read — not only from inside
+	// the restart checklist the operator has just been told didn't help.
 	got := feedSecrets(m, "!")
 	if got.secretsPane != nil {
 		t.Errorf("[!] should close the secrets pane; got %+v", got.secretsPane)
 	}
 	if got.confirm == nil || got.confirm.verb != "recreate-island" || got.confirm.island != "wildfire" {
-		t.Fatalf("[!] should arm recreate-island for the island in one key; got %+v", got.confirm)
+		t.Fatalf("[!] should arm recreate-island for the island; got %+v", got.confirm)
 	}
 }
 
-// The checklist is still reachable, so it must not repeat the promise the pane
-// just retracted. It used to say it relaunches agents "so they pick up new
-// secrets" — true-sounding, and wrong for the case an operator arrives from.
-func TestRestartChecklistDoesNotPromiseSecrets(t *testing.T) {
+// The checklist carries the same two-generation truth: it does apply a secret,
+// and it doesn't on an island that predates the mount fix. Both halves, or the
+// operator who restarts into silence has nowhere to go.
+func TestRestartChecklistNamesTheStaleCase(t *testing.T) {
 	m := seededModel(t, island("alpha", "a1")).openRestartView("alpha")
 	out := m.restartPane.view(100)
-	if !strings.Contains(out, "Does NOT apply a secret set while this island was running") {
-		t.Errorf("checklist must retract the secrets promise; got %q", out)
+	if !strings.Contains(out, "pick up new secrets") {
+		t.Errorf("checklist should say a restart applies secrets; got %q", out)
 	}
-	if strings.Contains(out, "so they pick up new secrets") {
-		t.Errorf("checklist still promises restart applies secrets; got %q", out)
+	if !strings.Contains(out, "predates the secrets-mount fix") || !strings.Contains(out, "[!]") {
+		t.Errorf("checklist must name the stale island and its remedy; got %q", out)
 	}
 }
