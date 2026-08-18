@@ -26,15 +26,31 @@ func driveKeys(t *testing.T, m tuiModel, keys ...string) tuiModel {
 	return m
 }
 
-// TestTUIResetConfirm: 'r' on an island arms a reset confirm (y/Enter to apply,
-// workspace preserved).
+// TestTUIResetConfirm: 'r' on an island arms a reset confirm, and that confirm
+// has to say what it DESTROYS. It used to read "Clear agent state (workspace
+// preserved)" — which names the survivor and not the casualty, so it reassured.
+// An operator pressed r meaning "restart it so it picks up my new secret" and
+// lost the session. The prompt must name the loss and point at the restart they
+// actually wanted; the id gate lives in TestUnmatchedConfirmReportsWhatWasExpected.
 func TestTUIResetConfirm(t *testing.T) {
 	m := driveKeys(t, seededModel(t, island("alpha")), "r")
 	if m.confirm == nil || m.confirm.verb != "reset" || m.confirm.island != "alpha" {
 		t.Fatalf("r should arm a reset confirm on alpha, got %+v", m.confirm)
 	}
-	if !strings.Contains(m.renderConfirm(), "Clear agent state") {
-		t.Errorf("reset confirm prompt: %q", m.renderConfirm())
+	got := m.renderConfirm()
+	for _, want := range []string{
+		"ERASE",           // the loss, in the operator's words
+		"conversation",    // ...specifically their history
+		"logins",          // ...and their tool auth
+		"Restart",         // the thing they probably meant
+		"the island name", // typing it, not a single keystroke
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reset confirm must mention %q; got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Clear agent state") {
+		t.Errorf("reset confirm still uses the reassuring old wording: %q", got)
 	}
 }
 
@@ -272,8 +288,10 @@ func TestTUIActionMenuFullVerbs(t *testing.T) {
 	waitForAll(t, tm, "alpha")
 
 	tm.Send(key("s")) // contextual settings menu
-	// A running island offers hibernate; reset/upgrade/rename/purge are always there.
-	waitForAll(t, tm, "Hibernate", "Reset agent state", "Upgrade", "Rename", "Purge island")
+	// A running island offers hibernate; reset/upgrade/rename/purge are always
+	// there. The reset line is named for what it erases, not for the state it
+	// "resets" — the old label read like a restart and sat next to one.
+	waitForAll(t, tm, "Hibernate", "Erase all agent memory", "Upgrade", "Rename", "Purge island")
 
 	tm.Send(key("esc"))
 	tm.Send(key("q"))

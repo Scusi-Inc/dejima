@@ -378,7 +378,7 @@ dejima ls        List all islands.
 dejima status    Detail view of a single island, including presence.
 dejima hibernate Stop the container, preserve volumes.
 dejima wake      Start a hibernated island.
-dejima reset     Clear agent state. Preserves workspace.
+dejima reset     Erase every agent's memory (conversations + tool logins). Keeps the workspace.
 dejima upgrade   Recreate container(s) on the current island image; all state kept.
 dejima purge     Destroy island and volumes.
 dejima exec      Run a one-shot command inside an island.

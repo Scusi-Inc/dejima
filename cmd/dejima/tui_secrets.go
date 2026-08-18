@@ -287,13 +287,19 @@ func (v *secretsView) view(width int) string {
 
 	if v.restartPending {
 		// Loud on purpose: this is the single thing most likely to make the
-		// feature look broken when it is working correctly. And be precise about
-		// the mechanism — "restart the terminal" (detach/reattach the client) does
-		// NOT work; only a container recreate adds/refreshes the mount and
-		// relaunches agents with the new environment.
-		b.WriteString(styleWaiting.Render("⚠  RECREATE TO APPLY TO RUNNING AGENTS"))
+		// feature look broken when it is working correctly. Ask the question the
+		// operator is actually facing — restart now? — and lead with the answer,
+		// since the heading used to say RECREATE while the only offered action was
+		// a restart, which left them choosing between two words for one intent.
+		//
+		// Be precise about the mechanism: "restart the terminal" (detach/reattach
+		// the client) does NOT work; the agent PROCESS has to relaunch. And say
+		// what a restart costs, because it isn't free — an agent mid-task loses
+		// the turn it's in. The checklist won't pre-select those, but the decision
+		// is the operator's and they should meet it before they press the key.
+		b.WriteString(styleWaiting.Render("⚠  RESTART AGENTS TO APPLY THIS?   press [R]"))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("   A running agent keeps the environment it launched with. Closing and\n   reopening a terminal does NOT reload it — the agent must relaunch.\n   Press [R] to pick which agents to restart (resume supported), with a\n   recreate-island option for a first-ever secret."))
+		b.WriteString(styleMuted.Render("   A running agent keeps the environment it launched with. Closing and\n   reopening a terminal does NOT reload it — the process must relaunch.\n   [R] lists the agents so you pick: resume is on by default (conversations\n   continue), and anything that looks mid-task is left unticked, because a\n   restart costs it the turn it's working on.\n   Still stale after a restart? The island's secrets mount predates this\n   change — [!] in that list recreates the island, which always applies."))
 		b.WriteString("\n\n")
 	}
 
