@@ -232,6 +232,18 @@ consistency + Docker re-adopt halves remain `A` (reused, not rebuilt).
 - [ ] reinstall re-adopts the island by name; marker survives the round-trip · T2/T3 · A (integration.sh) / M (was clean-mac gate; no runner)
 - [ ] teardown→provision driver leaves a virgin env (no Docker/colima/brew/`~/.dejima` history) · T3 · M (harness kept: `scripts/clean-mac/teardown.sh` + `assert_virgin`)
 
+**The one automated row this section has (added 2026-08-18, #341).** Everything
+above needs a Mac. The installer's *terminal* decisions do not, and they are what
+actually broke in the field: `curl … | bash` leaves stdin a pipe, the installer
+read that as "nobody is here", and it skipped every prompt and the sudo priming.
+`scripts/lib/tty_test.sh` drives all three stdin/terminal shapes under a real pty
+(`scripts/lib/ptyrun.py`) and runs anywhere — it installs nothing.
+- [x] `curl \| bash` is recognised as interactive; prompts are asked and answers honored · T1 · A (`tty_test.sh`, CI job `installer-tty`)
+- [x] genuinely headless (no controlling terminal) still takes the defaults without blocking · T1 · A (`tty_test.sh`)
+- [x] sudo pre-authorization is attempted under `curl \| bash`, skipped when headless · T1 · A (`tty_test.sh`)
+- [x] `install.sh` + `scripts/setup.sh` are shellcheck-clean · T1 · A (CI `shellcheck` job; first lint found a live command-substitution bug that ran `colima delete`)
+- [ ] the *rest* of the install — daemon, image, launchd, PATH, reboot survival — still needs a Mac · T3 · M
+
 ## 20. Per-island secrets (`dejima secret`)
 Distinct from §11, which covers *credentials the daemon holds* (Claude, GitHub,
 provider keys). This is the per-island token store agents read from their own
