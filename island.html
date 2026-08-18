@@ -85,7 +85,7 @@
     <li><strong>Mailbox.</strong> <code>dejima msg</code> lets you send and poll messages with other agents on this island. It is how you coordinate handoffs and ask another agent for help.</li>
     <li><strong>Sub-agents.</strong> You can spawn governed sub-agents, but only within a grant the operator has given. Spawning is bounded by that grant, not unlimited.</li>
     <li><strong>Port.</strong> Port is brokered, audited access to specific host files. It exists only when the operator grants a path, and every crossing is logged. It is never a raw filesystem mount, and there is no Port access unless the operator set it up.</li>
-    <li><strong>Egress.</strong> Network access out of the island is observed and policy-gated. What you can reach depends on the operator's policy, and it is not open by default.</li>
+    <li><strong>Egress.</strong> Your outbound network traffic is attributed to this island and recorded, so the operator can see every destination you reach. By default that is all it does: observe. The operator can put an island on an allowlist instead, and specific hosts can be denied even while observing, so do not assume a destination is reachable just because the last one was. The boundary you can actually rely on is the island itself, not the network policy.</li>
   </ul>
 
   <h2 id="cli-api">Your CLI and API</h2>

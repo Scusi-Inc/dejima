@@ -18,8 +18,26 @@
 # quote, not the file's contents, which we don't.
 set -euo pipefail
 
-SECRETS_FILE="${DEJIMA_SECRETS_FILE:-/opt/host/secrets.env}"
-[[ -r "$SECRETS_FILE" ]] || exit 0
+# /opt/host/secrets.d is a mounted DIRECTORY; /opt/host/secrets.env was a
+# mounted FILE. The file form bound the inode, and the daemon replaces the file
+# by rename, so a container created that way read the original inode for its
+# whole life — every `secret set` and `secret rm` after create was invisible
+# inside the island while the daemon reported success.
+#
+# Both are checked because the mount is fixed at container-create time: an island
+# created before that change still has the old file mount, and must keep working
+# (staleness and all) until it is recreated. New path first, so a recreated
+# island never reads a leftover copy at the old one.
+SECRETS_FILE="${DEJIMA_SECRETS_FILE:-}"
+if [[ -z "$SECRETS_FILE" ]]; then
+    for candidate in /opt/host/secrets.d/secrets.env /opt/host/secrets.env; do
+        if [[ -r "$candidate" ]]; then
+            SECRETS_FILE="$candidate"
+            break
+        fi
+    done
+fi
+[[ -n "$SECRETS_FILE" && -r "$SECRETS_FILE" ]] || exit 0
 
 
 while IFS= read -r line || [[ -n "$line" ]]; do

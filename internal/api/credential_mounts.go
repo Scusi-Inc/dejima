@@ -39,10 +39,20 @@ type credentialMount struct {
 // each surface that reports on them — the same reason grantKinds exists in the
 // TUI. gh is the widest, but `dejima secret rm` on a running island has exactly
 // the same shape, and so will the next one.
+// secretsMountPath is where an island's secrets DIRECTORY is bind-mounted. The
+// file inside it is secretsMountPath + "/secrets.env".
+//
+// A directory, and a new path: the old mount put the FILE at
+// /opt/host/secrets.env, which bound the inode and made every later set/remove
+// invisible in the island (see island_secrets.go). Containers created before
+// this still carry the old file mount, so they report drift here and need a
+// recreate — which is exactly true, and is the only way they get the fix.
+const secretsMountPath = "/opt/host/secrets.d"
+
 func credentialMounts() []credentialMount {
 	return []credentialMount{
 		{"GitHub credential", "/opt/host/gh-config"},
-		{"secrets", "/opt/host/secrets.env"},
+		{"secrets", secretsMountPath},
 	}
 }
 
