@@ -280,18 +280,39 @@ else
                         exit 1
                     }
                     stop_sudo_keepalive
-                    info "Now open /Applications/Docker.app once to grant macOS permissions."
-                    info "Setup will wait up to 90s for the Docker daemon to come up."
-                    for _ in $(seq 1 90); do
-                        if docker version >/dev/null 2>&1; then
-                            ok "Docker is now reachable"
-                            break
+                    # A freshly-installed Docker Desktop has no daemon until it
+                    # has been launched once: first run installs a privileged
+                    # helper and puts a licence screen in front of the user. This
+                    # step used to *tell* the operator to open it and then count
+                    # silently to 90 without opening anything — which on a fresh
+                    # Mac mini timed out and exited 1 while Docker sat waiting to
+                    # be clicked. Open it, and allow for a human in the loop.
+                    info "Launching Docker Desktop — accept its licence prompt if one appears."
+                    if ! open -a Docker 2>/dev/null; then
+                        warn "couldn't launch Docker Desktop automatically"
+                        info "Open /Applications/Docker.app by hand and leave this running."
+                        info "If macOS refuses with error -10673, the app is quarantined:"
+                        info "  xattr -dr com.apple.quarantine /Applications/Docker.app"
+                    fi
+                    info "Waiting for the Docker daemon (up to 5 min; first launch is slow)…"
+                    docker_up=0
+                    for i in $(seq 1 300); do
+                        if docker version >/dev/null 2>&1; then docker_up=1; break; fi
+                        # A silent multi-minute pause is indistinguishable from a
+                        # hang — which is what prompted a Ctrl-C last time, and
+                        # the Ctrl-C is what left Docker.app half-linked.
+                        if (( i % 30 == 0 )); then
+                            info "  …still waiting (${i}s) — Docker Desktop is finishing first-run setup"
                         fi
                         sleep 1
                     done
-                    if ! docker version >/dev/null 2>&1; then
-                        fail "Docker still not reachable after 90s"
-                        info "Launch Docker Desktop manually, then re-run scripts/setup.sh"
+                    if [[ "$docker_up" == "1" ]]; then
+                        ok "Docker is now reachable"
+                    else
+                        fail "Docker still not reachable after 5 minutes"
+                        info "Finish Docker Desktop's first-run setup (licence + permissions),"
+                        info "then re-run the installer — it is idempotent and will pick up here:"
+                        info "  curl -fsSL https://dejima.tech/install.sh | bash"
                         exit 1
                     fi
                 else
