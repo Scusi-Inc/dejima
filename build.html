@@ -130,7 +130,7 @@ s.onData(bytes =&gt; process.stdout.write(bytes));</code></pre>
 │   └────────────────────────┘    └────────────────────────┘     │
 │                                                                │
 │ per island: one container · shared home + credentials          │
-│ per agent:  own git worktree · sandboxed from host & others    │
+│ per agent:  own git worktree · shares the island with its peers│
 └────────────────────────────────────────────────────────────────┘</code></pre>
 <p class="plain"><em>"API" here means Dejima's HTTP/WebSocket control surface — what your dashboard, bot, or CLI targets. The LLM APIs (Anthropic, OpenAI) are reached by the agents inside islands, on their own.</em></p>
 

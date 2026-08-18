@@ -76,9 +76,14 @@
 
   <h2>Install and run</h2>
   <p>Once the VM is up, it's an ordinary Linux server, so the setup is the same one command. SSH in and run it.</p>
-  <pre><code>curl -fsSL https://dejima.tech/install.sh | bash
-loginctl enable-linger $USER          # keep the daemon up between logins
+  <pre><code>sudo apt install -y docker.io          # the installer expects Docker already there
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER          # log out and back in for this to take effect
+
+curl -fsSL https://dejima.tech/install.sh | bash
+loginctl enable-linger $USER           # keep the daemon up between logins
 dejima init --repo git@github.com:you/your-project.git</code></pre>
+  <p class="small">Docker comes first because on Linux the installer doesn't install it. It checks, and stops with instructions if it's missing.</p>
   <p>The full walkthrough, including the systemd detail and day-to-day commands, is in the <a href="linux-server-agent-server.html">Linux server guide</a>. Everything there applies here.</p>
 
   <h2>Reach it without opening a port</h2>

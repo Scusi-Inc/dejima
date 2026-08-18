@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dejima — secure infrastructure for AI coding agents on hardware you own</title>
-<meta name="description" content="Dejima is self-hosted infrastructure for AI coding agents (Claude Code, Codex, and more). Each agent is sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
+<meta name="description" content="Dejima is self-hosted infrastructure for AI coding agents (Claude Code, Codex, and more). Each project is sandboxed on hardware you own — isolated from your machine and your other projects, with no infrastructure to build. Open-source, up in minutes.">
 <meta property="og:title" content="Dejima — isolated projects, persistent sessions, on your hardware">
 <meta property="og:description" content="Self-hosted infrastructure for AI coding agents. Each one sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
 <meta property="og:type" content="website">
@@ -106,7 +106,7 @@
 <p><strong>You shouldn't have to become an infrastructure engineer to run agents safely.</strong> That usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
 <ul>
   <li><strong>Ease.</strong> One line installs it; run <code>dejima</code> and the TUI walks you to a sandboxed agent in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same one command.</li>
-  <li><strong>Security.</strong> Every agent is walled off from your machine, your files, and the other agents; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
+  <li><strong>Security.</strong> Every project is walled off from your machine, your files, and your other projects; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
   <li><strong>Audit.</strong> Every privileged crossing is written to a tamper-evident, hash-chained ledger you can read, export, and verify — so you can <em>prove</em> what an agent did, not just hope.</li>
 </ul>
 <p class="small">Running agents for a team that has to <em>prove</em> what they did? See <a href="teams.html">Dejima for teams →</a></p>
@@ -126,7 +126,7 @@
   </tr>
   <tr><td>Isolated workspace per project</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>✓</td></tr>
   <tr><td>Several agents at once, one dashboard</td><td><strong>✓</strong></td><td>$</td><td>✗</td><td>✗</td><td>manual</td><td>✗</td></tr>
-  <tr><td>Each agent walled off from host &amp; each other</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>~ (from host)</td></tr>
+  <tr><td>Agents sandboxed from your host machine</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>~ (from host)</td></tr>
   <tr><td>Survives disconnect, multi-device</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>~</td><td>✓</td><td>✗</td></tr>
   <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>$</td><td>✓</td><td>✓</td><td>✓</td></tr>
   <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
@@ -141,7 +141,7 @@
 <h2 id="architecture">One host. Many sealed islands.</h2>
 <figure class="demo-shot diagram">
   <img src="assets/architecture.png" width="1120" loading="lazy"
-       alt="How Dejima works: you drive it from a CLI, TUI, or your own app over a websocket + HTTP API on Tailscale. That reaches the Dejima host — a Mac mini, VPS, or cloud VM — which holds islands: 'web' running claude-code, openclaw, and a shell; 'api' running codex, letta, and a headless agent. Each island is one container; each agent gets its own git worktree, sandboxed from the host and the other agents.">
+       alt="How Dejima works: you drive it from a CLI, TUI, or your own app over a websocket + HTTP API on Tailscale. That reaches the Dejima host — a Mac mini, VPS, or cloud VM — which holds islands: 'web' running claude-code, openclaw, and a shell; 'api' running codex, letta, and a headless agent. Each island is one container, sandboxed from the host and from the other islands; the agents inside one island share it, each with its own git worktree.">
 </figure>
 <details class="ascii-fallback">
   <summary>Text version</summary>
@@ -158,7 +158,7 @@
 │   └────────────────────────┘    └────────────────────────┘     │
 │                                                                │
 │ per island: one container · shared home + credentials          │
-│ per agent:  own git worktree · sandboxed from host & others    │
+│ per agent:  own git worktree · shares the island with its peers│
 └────────────────────────────────────────────────────────────────┘</code></pre>
 </details>
 <p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other. Islands can't see each other; that blindness is the security boundary.</p>
