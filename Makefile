@@ -18,7 +18,7 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration test-tier3-safe test-tier3-system test-tier3-action-gate test-tier3-reconnect test-tier3-tui-claude test-tier3-onboard-selftest test-tier4 lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-installer test-integration test-tier3-safe test-tier3-system test-tier3-action-gate test-tier3-reconnect test-tier3-tui-claude test-tier3-onboard-selftest test-tier4 lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
@@ -119,6 +119,15 @@ dejimad:
 
 test:
 	$(GO) test ./...
+
+# The installer's terminal detection, driven under a real pty (needs python3 for
+# pty allocation; skips cleanly without it). Cheap and hermetic — it installs
+# nothing — so it runs in CI alongside the Go tests rather than with the live
+# suites below. Covers #341: `curl … | bash` leaves stdin a pipe, which the
+# installer read as "nobody is here" and used to skip every prompt and the sudo
+# pre-authorization.
+test-installer:
+	./scripts/lib/tty_test.sh
 
 # test-integration runs the DETERMINISTIC FULL-FEATURE Tier-2 suite against a
 # LIVE Docker host — one dispatch exercises every feature once with per-feature
