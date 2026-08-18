@@ -21,6 +21,13 @@ type IslandInfo struct {
 	// Cmd is the user-supplied entrypoint for headless islands; empty for
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
+	// NoRepo marks an island created with a deliberately empty /workspace and no
+	// origin. Callers need this to tell "empty on purpose" from "the clone
+	// failed" — the two look identical from outside, and the whole reason
+	// no_repo is an explicit opt-in is that they must not be confused. It also
+	// changes what deleting the island costs: with no remote, nothing inside has
+	// a copy anywhere else.
+	NoRepo bool `json:"no_repo,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
 	Role  string            `json:"role,omitempty"`
 	Owner string            `json:"owner,omitempty"`

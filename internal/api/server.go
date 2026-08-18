@@ -2981,6 +2981,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		Name:        p.Name,
 		Title:       p.Title,
 		Repo:        p.RepoURL,
+		NoRepo:      p.NoRepo,
 		Agent:       agentType,
 		Image:       p.Image,
 		Cmd:         cmd,
