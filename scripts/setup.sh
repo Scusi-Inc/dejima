@@ -363,12 +363,58 @@ else
             exit 1
         fi
     else
-        fail "Docker / Podman not installed"
-        info "On Linux: install docker via your distro's package manager, then re-run."
-        info "  Debian/Ubuntu: sudo apt install docker.io"
-        info "  Arch:          sudo pacman -S docker"
-        info "  Fedora:        sudo dnf install docker"
-        exit 1
+        # Linux used to dead-end here: the entire install-Docker path was behind
+        # `$OS == Darwin`, so a Linux user got a list of distro commands and
+        # exit 1 — on the one channel (a cloud VPS) where the machine is most
+        # likely to be brand new. Offer it, exactly as macOS does.
+        info "Dejima runs each island in a container, so it needs a container runtime."
+        info "Docker's official install script supports Debian/Ubuntu, Fedora, CentOS"
+        info "and derivatives, and picks the right packages for this distro."
+        info ""
+        if prompt_yn "Install Docker now via https://get.docker.com?" "y"; then
+            prime_sudo "Installing Docker"
+            info "Running: curl -fsSL https://get.docker.com | sh"
+            if ! curl -fsSL https://get.docker.com | sh; then
+                fail "the Docker install script failed"
+                info "Install it with your package manager and re-run:"
+                info "  Debian/Ubuntu: sudo apt install docker.io"
+                info "  Arch:          sudo pacman -S docker"
+                info "  Fedora:        sudo dnf install docker"
+                exit 1
+            fi
+            if command -v systemctl >/dev/null 2>&1; then
+                info "Enabling and starting the docker service…"
+                sudo systemctl enable --now docker || warn "couldn't enable docker via systemd"
+            fi
+            # Without this, every later docker call needs sudo — including the
+            # daemon's, which does not run as root. Takes effect on the next
+            # login, so the check below deliberately still uses sudo.
+            if ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+                info "Adding $USER to the 'docker' group…"
+                sudo usermod -aG docker "$USER" || warn "couldn't add $USER to the docker group"
+                info "  (group membership applies at your NEXT login)"
+            fi
+            if docker version >/dev/null 2>&1; then
+                ok "Docker is now reachable"
+            elif sudo docker version >/dev/null 2>&1; then
+                ok "Docker is installed and running"
+                warn "reachable only via sudo until you log out and back in"
+                info "The group change above is what fixes that. Log out and back in,"
+                info "then re-run the installer — it is idempotent and picks up here:"
+                info "  curl -fsSL https://dejima.tech/install.sh | bash"
+                exit 1
+            else
+                fail "Docker installed but the daemon isn't reachable"
+                info "Start it, then re-run: sudo systemctl start docker"
+                exit 1
+            fi
+        else
+            info "Install your preferred container runtime, then re-run scripts/setup.sh"
+            info "  Debian/Ubuntu: sudo apt install docker.io"
+            info "  Arch:          sudo pacman -S docker"
+            info "  Fedora:        sudo dnf install docker"
+            exit 1
+        fi
     fi
 fi
 
