@@ -21,7 +21,7 @@ func inodeOf(t *testing.T, path string) uint64 {
 	if err := syscall.Stat(path, &st); err != nil {
 		t.Fatalf("stat %s: %v", path, err)
 	}
-	return uint64(st.Ino)
+	return st.Ino
 }
 
 // What `dejima secret set` and `secret rm` used to do on a running island:
