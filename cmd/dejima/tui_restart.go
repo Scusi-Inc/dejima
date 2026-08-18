@@ -207,19 +207,20 @@ func (m tuiModel) restartAgentsCmd(island string, ids []string, resume bool) tea
 
 func (v *restartView) view(width int) string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Restart agents to apply — " + v.island))
+	b.WriteString(styleHeader.Render("Restart agents — " + v.island))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("Relaunches the selected agents in a fresh shell so they pick up new secrets."))
+	b.WriteString(styleMuted.Render("Relaunches the selected agents in a fresh shell, so they pick up changes to"))
 	b.WriteString("\n")
-	// Not a hedge — the two cases are real and coexist. An island created after the
-	// secrets-mount fix has the DIRECTORY bound, so a restart genuinely applies.
-	// One created before it holds the original file's inode for the container's
-	// whole life, and no restart of a process inside changes that. Name the second
-	// case so the operator who restarts and sees nothing has somewhere to go, and
-	// doesn't conclude either that secrets are broken or that it worked.
-	b.WriteString(styleMuted.Render("Still stale afterwards, or this is the island's first-ever secret? Then it"))
+	b.WriteString(styleMuted.Render("the environment they launched with."))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("predates the secrets-mount fix — press [!] to recreate, which always applies."))
+	// The header used to promise this picks up new secrets. On an island created
+	// before the secrets-mount fix — which is every island running today — it
+	// doesn't: the container holds the original file's inode for its whole life.
+	// Say so here rather than let the operator restart, see no change, and
+	// conclude either that secrets are broken or, worse, that it worked.
+	b.WriteString(styleWaiting.Render("A secret set while this island was running needs [!] recreate, not a restart"))
+	b.WriteString("\n")
+	b.WriteString(styleWaiting.Render("— unless the island has been recreated since the secrets-mount fix."))
 	b.WriteString("\n\n")
 
 	if len(v.items) == 0 {

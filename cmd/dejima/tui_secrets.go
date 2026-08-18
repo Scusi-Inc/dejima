@@ -149,21 +149,20 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		v.loading, v.notice, v.err = true, "", ""
 		return m, m.loadSecretsCmd(v.island)
 	case "!":
-		// Recreate the island — the fallback when a restart didn't take, i.e. this
-		// island predates the secrets-mount fix and is still holding the file it
-		// started with (see the restartPending banner). It was reachable only as
-		// [!] inside the restart checklist; keeping it here too means the operator
-		// who has just been told "still stale? recreate" can act on that sentence
-		// where they read it. Same key as in the checklist, so the two agree.
+		// Recreate the island — what actually applies a secret set on a running
+		// island (see the restartPending banner). It was reachable only as [!]
+		// inside the restart checklist, which put the remedy that works three
+		// keystrokes behind the one that doesn't. Same key as in that checklist,
+		// so the two surfaces agree.
 		island := v.island
 		m.secretsPane = nil
 		m.confirm = &confirmPrompt{verb: "recreate-island", island: island}
 		return m, nil
 	case "R":
 		// Open the restart checklist: choose which agents to relaunch so they pick
-		// up the change (a detach/reattach of the client does NOT — the process
-		// keeps its old env). The checklist also offers [!] for the island that is
-		// still on the old file mount.
+		// up an environment change (a detach/reattach of the client does NOT — the
+		// process keeps its old env). Sufficient for a secret only on an island
+		// already recreated since the secrets-mount fix; otherwise [!] above.
 		island := v.island
 		m.secretsPane = nil
 		return m.openRestartView(island), nil
@@ -300,26 +299,30 @@ func (v *secretsView) view(width int) string {
 		// Loud on purpose: this is the single thing most likely to make the
 		// feature look broken when it is working correctly.
 		//
-		// RESTART FIRST, with recreate as a named fallback — and the fallback is
-		// not hedging, it is the difference between two container generations that
-		// both exist right now:
+		// RECREATE FIRST — and the reason is a rollout state, not a permanent
+		// truth, so the condition that ends it is stated in the copy rather than
+		// left in a commit message where it can silently go stale.
 		//
-		//   Created AFTER 4826773: the island's secrets DIRECTORY is mounted at
-		//   /opt/host/secrets.d, so the daemon's CreateTemp+Rename lands live and a
-		//   relaunched login shell parses the new file. Restart applies it.
+		// Two container generations exist:
 		//
-		//   Created BEFORE it: the old single-FILE bind at /opt/host/secrets.env.
-		//   A file bind holds the inode, a rename installs a new one, so that
-		//   container reads the original file for its whole life no matter how many
-		//   times a process inside it restarts. Only a recreate re-resolves.
+		//   Created BEFORE 4826773 — which is EVERY island running today — has the
+		//   old single-FILE bind. A file bind holds the inode; the daemon writes
+		//   with CreateTemp+Rename, which installs a new one. So the container
+		//   reads the file it started with for its whole life, however many times a
+		//   process inside it restarts. Only a new container re-resolves.
 		//
-		// load-secrets.sh reads secrets.d first and falls back to the old path, so
-		// an operator cannot tell which generation they are on from in here. Hence
-		// both remedies, in the order that is right for every island created from
-		// here on, with the stale case named rather than left to be discovered.
-		b.WriteString(styleWaiting.Render("⚠  RESTART AGENTS TO APPLY THIS   press [R]"))
+		//   Created AFTER it: the secrets DIRECTORY is bound, the rename lands
+		//   live, and a relaunched login shell parses the new file. Restart applies.
+		//
+		// Recreate is correct for both — it always applies — so leading with it is
+		// never wrong, only sometimes heavier than needed. Leading with restart is
+		// wrong today for every island in existence. Fail toward the one that
+		// works: the cost of being over-cautious is a container recreate, and the
+		// cost of being wrong is an operator who acts, sees no error, and believes
+		// a credential was applied or revoked when it wasn't.
+		b.WriteString(styleWaiting.Render("⚠  RECREATE THE ISLAND TO APPLY THIS   press [!]"))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("   A running agent keeps the environment it launched with. Closing and\n   reopening a terminal does NOT reload it — the process must relaunch.\n   [R] lists the agents so you pick: resume is on by default (conversations\n   continue), and anything that looks mid-task is left unticked, because a\n   restart costs it the turn it's working on.\n   Still stale after a restart? Then this island predates the secrets-mount\n   fix and is holding the file it started with — [!] recreates it, which\n   always applies. Workspace and agent state are preserved."))
+		b.WriteString(styleMuted.Render("   A running island keeps the secrets file it started with — writing a\n   secret replaces that file, and the container is still holding the old\n   one. Restarting an agent does NOT change that, and neither does closing\n   and reopening a terminal. Recreating is what applies it: workspace and\n   agent state are preserved, running sessions restart.\n   [R] restarts agents without recreating. That is enough ONLY for an island\n   already recreated since the secrets-mount fix — on any older island it\n   will change nothing, without saying so."))
 		b.WriteString("\n\n")
 	}
 
@@ -335,6 +338,6 @@ func (v *secretsView) view(width int) string {
 		b.WriteString(styleRunning.Render("✓ " + v.notice))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [R] restart to apply   [!] recreate   [r] reload   [esc] back"))
+	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [!] recreate to apply   [R] restart agents   [r] reload   [esc] back"))
 	return b.String()
 }
