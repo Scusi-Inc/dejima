@@ -52,9 +52,19 @@ island are budgeted and logged, not isolated from their parent. If someone needs
 two agents that cannot touch each other's work, that is two islands.
 
 What makes the model unusual is the gates rather than the walls. Host files
-(Port), host actions (capability), MCP servers, link actions, sub-agent spawning,
-and network egress are each deny-by-default and opened by an explicit operator
-grant, with the crossings recorded.
+(Port), host actions (capability), MCP servers, link actions, and sub-agent
+spawning are each deny-by-default and opened by an explicit operator grant, with
+the crossings recorded.
+
+Network egress is the exception, and it is worth stating precisely because it is
+easy to over-read. It is observe-first: by default every island's outbound
+traffic is attributed and recorded but NOTHING IS BLOCKED. The operator can move
+an island to an allowlist, and named hosts can be denied even while observing.
+The mechanism is a proxy that islands are pointed at by configuration, so on its
+own it is a visibility and cooperative-control layer rather than a network
+boundary; pairing it with a host firewall that forces outbound through the proxy
+is what makes the policy unbypassable. If someone's requirement is "the agent
+must not be able to reach the internet", do not tell them this is that today.
 
 Sessions persist. The user closes their laptop, the agents keep working, and
 they reattach from another device to the same screen.
