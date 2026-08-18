@@ -5,9 +5,21 @@ graceful per-agent restart with resume, and the restart checklist.
 
 ## The mechanical model (why this needs care)
 
-Island secrets are **container-level**: one `secrets.env` file, bind-mounted at
-`/opt/host/secrets.env`, shared by every agent in the island. A login shell
-sources it once (via `/etc/profile.d`). Two consequences drive everything:
+Island secrets are **container-level**: one `secrets.env` file, inside a
+**directory** bind-mounted at `/opt/host/secrets.d`, shared by every agent in the
+island. A login shell parses it once (via `/etc/profile.d`).
+
+> **The directory is the fix, not an implementation detail.** This used to mount
+> the *file* at `/opt/host/secrets.env`. A file bind binds the **inode** the path
+> resolved to at container-create time, and the daemon rewrites the file with
+> `CreateTemp` + `Rename` — a *new* inode at the same path. So every `secret set`
+> and `secret rm` after container creation was invisible inside the island while
+> the daemon reported success. A directory bind resolves `secrets.env` per
+> access, so the rename lands immediately and the atomic replace is kept.
+> Containers created before this still carry the old file mount and need one
+> recreate; they report drift until then.
+
+Two consequences drive everything:
 
 1. **A running process keeps its launch-time environment.** Detaching/reattaching
    the client (closing/opening a terminal) does nothing — the agent process is

@@ -94,8 +94,9 @@ No record of what it touched.     granted read-only, every crossing logged.</cod
   </details>
 
   <h2>The fix: same instinct, contained</h2>
-  <p>You don't have to give up the part that works. You still own the hardware, you still reach it over your own network, you still have agents running while you're away. What changes is the box each agent runs in.</p>
-  <p>Dejima puts every agent in its own container it calls an island. The island can't see your host files. It can't see the other islands. Host access is off by default, and you grant folders one at a time, read-only, through a broker that writes every crossing to a tamper-evident log. Same Mac mini. Walls added.</p>
+  <p>You don't have to give up the part that works. You still own the hardware, you still reach it over your own network, you still have agents running while you're away. What changes is the box your agents run in.</p>
+  <p>Dejima puts each <em>project</em> in its own container it calls an island. The island can't see your host files. It can't see the other islands. Host access is off by default, and you grant folders one at a time, read-only, through a broker that writes every crossing to a tamper-evident log. Same Mac mini. Walls added.</p>
+  <p>The wall is around the project, not around each agent. Run several agents on one project and they share that island: its home directory, its credentials, its network. They each get their own git worktree, so they don't collide on the code, but an agent in an island can reach anything else in that island. If you want two pieces of work walled off from each other, give them two islands.</p>
   <pre><code># on the Mac mini, once
 curl -fsSL https://dejima.tech/install.sh | bash
 
@@ -107,10 +108,10 @@ dejima agent add web --type codex
 
 # run it: the TUI shows every island and agent in one place
 dejima</code></pre>
-  <p>From there you attach with <code>dejima connect web</code>, and the session survives a dropped connection and follows you to a second device. The same install sets up Docker, the background service, and your Tailscale identity, so "set up the infrastructure" isn't a project you do first.</p>
+  <p>From there you attach with <code>dejima connect web</code>, and the session survives a dropped connection and follows you to a second device. The same install offers to set up Docker and Tailscale and registers the background service, so "set up the infrastructure" isn't a project you do first.</p>
   <p>Now walk back through the five failures:</p>
   <ul>
-    <li><strong>Isolation:</strong> an agent sees its own island and nothing else. Your keys and your other repos aren't reachable from inside it.</li>
+    <li><strong>Isolation:</strong> an agent sees its own island and nothing else. Your keys and your other projects aren't reachable from inside it. Agents sharing an island can see each other, so the boundary to plan around is the project.</li>
     <li><strong>Audit:</strong> every brokered file crossing is hash-chained and verifiable with <code>dejima audit --verify</code>. You can prove what an agent touched, not guess.</li>
     <li><strong>Fleet view:</strong> the TUI lists every island and agent with status, memory, and logs, and you start, stop, or steer any of them from one screen.</li>
     <li><strong>Sessions:</strong> persistent and multi-attach by design. Disconnect, sleep the laptop, pick up on your phone.</li>

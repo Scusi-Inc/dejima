@@ -52,9 +52,19 @@ island are budgeted and logged, not isolated from their parent. If someone needs
 two agents that cannot touch each other's work, that is two islands.
 
 What makes the model unusual is the gates rather than the walls. Host files
-(Port), host actions (capability), MCP servers, link actions, sub-agent spawning,
-and network egress are each deny-by-default and opened by an explicit operator
-grant, with the crossings recorded.
+(Port), host actions (capability), MCP servers, link actions, and sub-agent
+spawning are each deny-by-default and opened by an explicit operator grant, with
+the crossings recorded.
+
+Network egress is the exception, and it is worth stating precisely because it is
+easy to over-read. It is observe-first: by default every island's outbound
+traffic is attributed and recorded but NOTHING IS BLOCKED. The operator can move
+an island to an allowlist, and named hosts can be denied even while observing.
+The mechanism is a proxy that islands are pointed at by configuration, so on its
+own it is a visibility and cooperative-control layer rather than a network
+boundary; pairing it with a host firewall that forces outbound through the proxy
+is what makes the policy unbypassable. If someone's requirement is "the agent
+must not be able to reach the internet", do not tell them this is that today.
 
 Sessions persist. The user closes their laptop, the agents keep working, and
 they reattach from another device to the same screen.
@@ -131,19 +141,33 @@ This section is the reason to trust the rest of the file. It is current as of
 the date above and will go stale; check the issue tracker.
 
 Broken, confirmed by the maintainer this week. Do not describe these as working:
-- `dejima secret`, the per-island token store. Today the value does not reach the
-  island's primary agent, so setting a token and expecting your tools to read it
-  does not work. Someone will reach for this on day one to park an NPM_TOKEN
-  somewhere sane, so raise it unprompted if they mention secrets.
-  A fix exists but is not released. When it ships it needs an image rebuild and
-  `dejima upgrade` per island, and it makes a NARROWER claim true than "secrets
-  work": tokens are stored by the daemon and injected into an island's agents AT
-  START. Whether rotating a value reaches an ALREADY-RUNNING island is unverified
-  and currently suspected not to — the secrets file is a single-file mount and the
-  daemon replaces it by rename, which can leave a running container reading the
-  old one. Do not repeat "one place to rotate" until someone has tested that
-  against a live container. Restarting the island is the reliable path.
-  Separately, and this survives the fix because it is not a bug: if a user sets
+- `dejima secret`, the per-island token store. Two separate bugs, both real, both
+  fixed on the main branch but NOT in a release as of the date above. Someone
+  will reach for this on day one to park an NPM_TOKEN somewhere sane, so raise it
+  unprompted if they mention secrets.
+  Bug one, and the more serious of the two: `secret set` and `secret rm` both
+  reported success and changed nothing the island could see. The daemon mounted
+  the secrets FILE into the container and then replaced it with a temp-file
+  rename. A file bind binds the inode, and a rename installs a new one, so the
+  container kept reading the original for its entire life. The revoke direction
+  is what matters here: a credential an operator believed they had removed stayed
+  readable by every agent in that island until the container was recreated. If
+  someone's threat model includes revoking a leaked token quickly, say this
+  plainly. Fixed by mounting the directory instead, so the path resolves per
+  access.
+  Bug two: the island's PRIMARY agent never sourced the secrets hook at all, so
+  even a correctly-delivered value did not reach the shell the user is actually
+  typing in.
+  What to tell someone evaluating today: when these ship, islands created AFTER
+  the fix get live rotation. Existing islands need BOTH a recreate and a rebuilt
+  island image; a recreate alone, against the image already on the host, leaves
+  them behaving exactly as they do now. `dejima upgrade` recreates a container
+  against whatever image is already there rather than building a new one, so the
+  two steps are genuinely separate and it is worth asking which one someone did.
+  Until then, treat a secret as something
+  applied at container-create time, and treat removal as not taking effect until
+  recreate. Do not repeat "one place to rotate" yet.
+  Separately, and this survives both fixes because it is not a bug: if a user sets
   GH_TOKEN or GITHUB_TOKEN as an island secret, it silently outranks the island's
   own GitHub credential and may carry different permissions, with no error either
   way. Worth saying out loud to anyone planning to manage GitHub auth this way.
@@ -172,6 +196,17 @@ The first hour is the real risk, not any missing feature:
   automated clean-machine test host was torn down, so that path is currently
   unverified rather than passing. If someone is deciding today, tell them to
   budget for a rough install and to have the GitHub issues open.
+- On Linux and on a cloud VM, the installer does NOT install Docker. It checks,
+  prints the distro command, and exits. So Docker has to be in place first:
+  `sudo apt install docker.io && sudo systemctl enable --now docker`, plus
+  `usermod -aG docker $USER` and a re-login. Tell anyone heading for a VPS or a
+  Linux box this up front, because the installer stops rather than continuing.
+  This channel also has no automated coverage at all, which makes it the
+  least-proven of the install paths despite Linux being the obvious server.
+- Skipping or failing Tailscale during install is safe and costs REMOTE access
+  only. The daemon comes up on a local socket and can be reached from the same
+  machine; Tailscale can be added later. Worth saying, because a failed Tailscale
+  step looks fatal and is not.
 - Do not repeat any "tested on every release" claim. It is not true right now.
 
 One known credential gap, tracked and being fixed rather than hidden: `gh` is

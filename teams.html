@@ -98,7 +98,8 @@
   </div>
   <div class="card">
     <h3>Egress visibility</h3>
-    <p>Every island's outbound traffic routes through a daemon-run proxy, so you can see which destinations each island reaches and allow or deny by host — no restart, observe-first by default. Governance for the one channel a sandbox otherwise can't show you: where the agent connects out.</p>
+    <p>Every island's outbound traffic routes through a daemon-run proxy, so you can see which destinations each island reaches and allow or deny by host, with no restart. Observe-first by default: out of the box it records rather than restricts, and you turn on enforcement per island. Governance for the one channel a sandbox otherwise can't show you: where the agent connects out.</p>
+    <p class="small">Worth knowing before you write it into a control: islands are pointed at the proxy by configuration, so it's a chokepoint for traffic that honours it rather than a network-level boundary on its own. Pair it with a host firewall that forces outbound through the proxy and the policy can't be sidestepped. On its own it gives you full visibility and cooperative control.</p>
   </div>
   <div class="card">
     <h3>Audit viewer &amp; export</h3>

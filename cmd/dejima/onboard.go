@@ -1344,6 +1344,17 @@ func offerToRunMakeSetup(e *envProbe) bool {
 func execInteractive(name string, args ...string) error {
 	c := exec.Command(name, args...)
 	c.Stdin = os.Stdin
+	// When our own stdin is a pipe but a terminal exists, hand the child the
+	// terminal. Homebrew changes how it asks for a password based on whether
+	// stdin is a tty — given a pipe it reads EOF with echo left on, which is
+	// how the operator's password ended up in the clear in #341. Callers here
+	// run brew casks, `tailscale up` and `make setup`, all of which may prompt.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		if tty := openTTY(); tty != nil {
+			defer tty.Close()
+			c.Stdin = tty
+		}
+	}
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()

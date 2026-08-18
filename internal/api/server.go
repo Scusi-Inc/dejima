@@ -3265,12 +3265,22 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 	}
 
 	// Per-island secrets: a KEY=VALUE file the island PARSES (never sources).
-	// Absent when the island has no secrets, so no mount is added.
+	// The DIRECTORY is mounted, not the file — a file bind binds the inode, and
+	// the file is replaced by rename, so the container would read the original
+	// inode forever. See island_secrets.go.
 	if secretsPath, err := islandSecretsMount(p); err != nil {
 		return nil, err
 	} else if secretsPath != "" {
 		binds = append(binds, runtime.BindMount{
-			HostPath: secretsPath, ContainerPath: "/opt/host/secrets.env", ReadOnly: true,
+			HostPath: secretsPath, ContainerPath: secretsMountPath, ReadOnly: true,
+		})
+		// And the old file path alongside it, for an island image built before
+		// secrets.d existed — see legacySecretsMountPath. Without this, updating
+		// the daemon without rebuilding the image makes every secret vanish
+		// rather than merely go stale.
+		binds = append(binds, runtime.BindMount{
+			HostPath:      filepath.Join(secretsPath, secretsFileName),
+			ContainerPath: legacySecretsMountPath, ReadOnly: true,
 		})
 	}
 

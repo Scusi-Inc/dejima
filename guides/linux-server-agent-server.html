@@ -60,7 +60,7 @@
   <h2>What you need</h2>
   <ul>
     <li>A Linux box running Ubuntu 22.04+, Debian 12+, or anything close. Two cores and 4&nbsp;GB of RAM handles a few agents; more if you run many.</li>
-    <li><code>sudo</code> on that box, and <code>git</code> plus <code>curl</code>. The installer handles the rest, including Docker.</li>
+    <li><code>sudo</code> on that box, and <code>git</code> plus <code>curl</code>. <strong>Install Docker before you start</strong> (<code>sudo apt install docker.io &amp;&amp; sudo systemctl enable --now docker</code>, then <code>sudo usermod -aG docker $USER</code> and log back in). On Linux the installer does not install Docker for you: it stops and tells you the command if it's missing.</li>
     <li><a href="https://tailscale.com" target="_blank" rel="noopener">Tailscale</a> on the server and your laptop, so you can reach it without opening a port to the internet.</li>
     <li>API keys for the agents you'll run. You bring your own.</li>
   </ul>
@@ -68,7 +68,7 @@
   <h2>Step 1: install Dejima</h2>
   <p>SSH into the server and run the one-liner.</p>
   <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
-  <p>It checks prerequisites and names a fix for anything missing, installs Docker if it's absent, builds the <code>dejima</code> and <code>dejimad</code> binaries, and registers <code>dejimad</code> as a systemd user service. When it's done, the daemon is running under your user.</p>
+  <p>It checks prerequisites and names a fix for anything missing, offers to install Tailscale, builds the <code>dejima</code> and <code>dejimad</code> binaries, and registers <code>dejimad</code> as a systemd user service. When it's done, the daemon is running under your user. If Docker isn't there it stops at that check rather than installing it, so get Docker in place first.</p>
 
   <h2>Step 2: make it survive logout and reboots</h2>
   <p>This is the one step that's specific to a headless Linux server, and it's easy to miss. A systemd <em>user</em> service stops when your login session ends, which on a server you mostly stay logged out of, means the daemon would stop the moment you close SSH. Turn on lingering so it keeps running.</p>
@@ -141,7 +141,7 @@ Then walk me through it:
 - Don't skip making the daemon survive logout: remind me to run `loginctl enable-linger $USER`, then have me check with `dejima doctor`.
 - Give the exact command for my setup, say what it does, and how to know it worked. If something fails, help me debug it before continuing.
 
-Goal: a headless Linux server running my agents, each contained in its own island, that I reach from my laptop over Tailscale.</textarea>
+Goal: a headless Linux server running my agents, contained in per-project islands, that I reach from my laptop over Tailscale.</textarea>
     </div>
   </section>
 
