@@ -191,6 +191,22 @@ func runConnectionTroubleshooter(ctx context.Context) {
 	fmt.Fprintln(os.Stderr, "  More: dejima doctor   ·   dejima onboard")
 }
 
+// newVersionCmd exists because `dejima version` is what people type first, and
+// cobra only wires `--version`. The bare word returned `unknown command
+// "version"` and pointed at --help, which does not itself mention the flag — so
+// the obvious guess failed and the remedy it offered did not contain the answer.
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the dejima version.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Printf("dejima version %s\n", version.Version)
+			return nil
+		},
+	}
+}
+
 func newRootCmd() *cobra.Command {
 	var demoMode bool
 	cmd := &cobra.Command{
@@ -281,6 +297,7 @@ func newRootCmd() *cobra.Command {
 		newClientsCmd(),
 		newOverviewCmd(),
 		newDoctorCmd(),
+		newVersionCmd(),
 		newOnboardCmd(),
 		newAdoptCmd(),
 		newUpdateCmd(),
