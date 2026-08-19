@@ -340,7 +340,19 @@ func newAgentOpenCmd() *cobra.Command {
 				return err
 			}
 
-			sshArgs := []string{"-N", "-o", "ExitOnForwardFailure=yes"}
+			// Keepalives, because this tunnel's whole job is to be LEFT OPEN. A
+			// console is something you open and come back to, so the traffic
+			// profile is long idle gaps — exactly what NAT tables and firewalls
+			// reap. Without ServerAlive, ssh sends nothing during those gaps, the
+			// path is silently dropped, and the browser tab reports the GATEWAY as
+			// disconnected. The gateway is fine; the tunnel under it is gone.
+			// ServerAliveInterval also bounds how long a dead tunnel masquerades as
+			// a live one: 3 × 30s, rather than until the OS notices.
+			sshArgs := []string{"-N",
+				"-o", "ExitOnForwardFailure=yes",
+				"-o", "ServerAliveInterval=30",
+				"-o", "ServerAliveCountMax=3",
+			}
 			sshArgs = append(sshArgs, khArgs...)
 			sshArgs = append(sshArgs,
 				"-L", fmt.Sprintf("%d:127.0.0.1:%d", localPort, gw),
@@ -461,6 +473,19 @@ func newAgentOpenCmd() *cobra.Command {
 				go func() { _ = openURL(openTarget) }()
 			}
 			<-exited
+			// The tunnel came up and has now ended. Say so, because the browser
+			// tab is still open and pointing at a port nothing is listening on —
+			// and every console renders that as ITS OWN disconnection. Without
+			// this line the most common outcome (ssh exits 0 on a dropped path)
+			// prints nothing at all, and the user is left reading a gateway error
+			// for a gateway that never failed.
+			//
+			// Deliberately not printed when the user stopped it themselves: they
+			// know, and telling them their Ctrl-C worked is noise.
+			if cmd.Context().Err() == nil {
+				fmt.Fprintf(os.Stderr, "\nthe forward to %s/%s has closed — the console in your browser is now pointing at nothing.\n", island, agentID)
+				fmt.Fprintf(os.Stderr, "re-run `dejima agent open %s %s` to bring it back.\n", island, agentID)
+			}
 			return waitErr
 		},
 	}
