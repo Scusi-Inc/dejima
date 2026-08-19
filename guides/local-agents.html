@@ -29,7 +29,7 @@
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Why run agents in a container on my own machine?","acceptedAnswer":{"@type":"Answer","text":"An agent running loose on your machine can read every repo, your SSH keys, and your shell history, with no record of what it touched. A container walls it off: it sees only its own island, and reaches your files only through folders you grant, read-only, with every crossing logged."}},
 {"@type":"Question","name":"Can an agent mess up my local repo?","acceptedAnswer":{"@type":"Answer","text":"No, if you use dejima init --local-copy. The island gets its own copy of your working tree, so an agent experimenting inside it cannot touch your real checkout. When you like the result, pull it out through git or dejima cp. Your original directory stays as you left it."}},
-{"@type":"Question","name":"Do I need Tailscale to run Dejima locally?","acceptedAnswer":{"@type":"Answer","text":"No. Running on your own machine is all local, so there is no remote box and no Tailscale needed. You just need Docker: on macOS the installer offers to set it up, on Linux you install it first. The TUI then talks to the daemon on localhost. Tailscale only matters when you reach a separate server."}}
+{"@type":"Question","name":"Do I need Tailscale to run Dejima locally?","acceptedAnswer":{"@type":"Answer","text":"No. Running on your own machine is all local, so there is no remote box and no Tailscale needed. You just need Docker, and the installer offers to set it up on either platform if it's missing. The TUI then talks to the daemon on localhost. Tailscale only matters when you reach a separate server."}}
 ]}
 ]}
 </script>
@@ -63,7 +63,7 @@
 
   <h2>What you need</h2>
   <ul>
-    <li>Your Mac or Linux machine. On macOS the installer offers to install Docker Desktop for you if it's missing, and asks before it does. On Linux, install Docker yourself first: the installer won't, and it stops with instructions if it's absent.</li>
+    <li>Your Mac or Linux machine. The installer offers to install Docker if it's missing, and asks before it does: Docker Desktop on macOS, Docker's official script on Linux. On Linux it also adds you to the <code>docker</code> group, which needs a fresh login before it counts.</li>
     <li><code>git</code> and <code>curl</code>. That's it. No Tailscale, no remote anything, since everything is local.</li>
     <li>API keys for the agents you run.</li>
   </ul>
@@ -96,7 +96,7 @@ dejima agent add my-project --type codex</code></pre>
     </div>
     <div class="faq-item">
       <h3>Do I need Tailscale to run Dejima locally?</h3>
-      <p>No. Running on your own machine is all local, so there's no remote box and no Tailscale needed. You just need Docker: on macOS the installer offers to set it up, on Linux you install it first. The TUI then talks to the daemon on localhost. Tailscale only matters when you reach a separate server.</p>
+      <p>No. Running on your own machine is all local, so there's no remote box and no Tailscale needed. You just need Docker, and the installer offers to set it up on either platform if it's missing. The TUI then talks to the daemon on localhost. Tailscale only matters when you reach a separate server.</p>
     </div>
   </div>
 
