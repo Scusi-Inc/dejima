@@ -179,6 +179,17 @@ func TestHelperProcess(t *testing.T) {
 	case "socat-missing":
 		fmt.Fprintln(os.Stderr, "sh: 1: socat: not found")
 		os.Exit(127)
+	case "socat-missing-late":
+		// The same failure with the race forced open: stdout is closed FIRST, so
+		// the reader's EOF is available while stderr is still unwritten. Without
+		// the drain in newProcConn this fails every time rather than 1 run in 200,
+		// which is what makes it a usable control. It is not a contrived ordering
+		// — wsl.exe's stderr crosses a virtualization boundary and arriving after
+		// the pipe closes is exactly the case a Windows user hits.
+		_ = os.Stdout.Close()
+		time.Sleep(100 * time.Millisecond)
+		fmt.Fprintln(os.Stderr, "sh: 1: socat: not found")
+		os.Exit(127)
 	case "echo":
 		io.Copy(os.Stdout, os.Stdin)
 	}
@@ -222,6 +233,16 @@ func dialForTest(t *testing.T, mode string) *procConn {
 	return pc
 }
 
+// dialForTestNoDrain is dialForTest with the diagnosis drain disabled, so a test
+// can observe the pre-fix ordering deliberately.
+func dialForTestNoDrain(t *testing.T, mode string) *procConn {
+	t.Helper()
+	prev := drainBudget
+	drainBudget = 0
+	t.Cleanup(func() { drainBudget = prev })
+	return dialForTest(t, mode)
+}
+
 // A full HTTP round-trip over the subprocess transport — the thing the client
 // actually does.
 func TestTransportCarriesHTTP(t *testing.T) {
@@ -250,27 +271,66 @@ func TestTransportCarriesHTTP(t *testing.T) {
 // A missing socat presents to net/http as a bare EOF. The conn must translate
 // that into the actionable message instead — this is the failure a Windows user
 // is most likely to hit after a partial setup.
+//
+// The FIRST error a caller sees has to carry the diagnosis. net/http reads once
+// and reports what it got; there is no second attempt in which a late-arriving
+// stderr could still be spliced in. This test used to poll until any non-timeout
+// error appeared, which meant it accepted a bare EOF as "the read errored" and
+// then failed on the message — the flake in #338, reproduced here at 2 runs in
+// 400 before the fix.
 func TestReadErrorNamesMissingSocat(t *testing.T) {
-	pc := dialForTest(t, "socat-missing")
-	// Give the helper a moment to write stderr and exit.
-	deadline := time.Now().Add(5 * time.Second)
-	var err error
-	for time.Now().Before(deadline) {
-		buf := make([]byte, 64)
-		_ = pc.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-		_, err = pc.Read(buf)
-		if err != nil && !strings.Contains(err.Error(), "deadline") {
-			break
-		}
-	}
+	assertNamesMissingSocat(t, "socat-missing")
+}
+
+// The same contract with the race forced open — see the socat-missing-late
+// helper. Deterministic where the test above is probabilistic, so removing the
+// drain from newProcConn fails this one every run rather than once in a few
+// hundred. A fix for a rare race needs a test that isn't rare.
+func TestReadErrorNamesMissingSocatWhenStderrArrivesAfterEOF(t *testing.T) {
+	assertNamesMissingSocat(t, "socat-missing-late")
+}
+
+func assertNamesMissingSocat(t *testing.T, mode string) {
+	t.Helper()
+	pc := dialForTest(t, mode)
+	buf := make([]byte, 64)
+	// Generous, and a deadline rather than a poll: the read should block until
+	// the subprocess has been reaped, and what is being asserted is the content
+	// of the error that ends it, not how long it took to arrive.
+	_ = pc.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, err := pc.Read(buf)
 	if err == nil {
 		t.Fatal("expected a read error when socat is missing")
 	}
+	if strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("read timed out instead of ending with the subprocess: %v", err)
+	}
 	if !strings.Contains(err.Error(), "socat isn't installed") {
-		t.Errorf("error should name the missing socat and the fix, got: %v", err)
+		t.Errorf("the FIRST read error must name the missing socat, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "dejima wsl setup") {
 		t.Errorf("error should point at the remedy, got: %v", err)
+	}
+}
+
+// The control on the control: the late helper must actually produce an EOF that
+// arrives before its stderr. If it ever stops doing that — a change to the
+// helper, a runtime that flushes differently — the deterministic test above
+// silently degrades into a duplicate of the probabilistic one and keeps passing.
+//
+// Asserted without the fix in the way: read straight from the pipe machinery
+// with the drain budget set to zero, which is what the old code did.
+func TestLateHelperReallyRacesTheDiagnosis(t *testing.T) {
+	pc := dialForTestNoDrain(t, "socat-missing-late")
+	buf := make([]byte, 64)
+	_ = pc.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, err := pc.Read(buf)
+	if err == nil {
+		t.Fatal("expected a read error")
+	}
+	if strings.Contains(err.Error(), "socat isn't installed") {
+		t.Error("the late helper's stderr arrived BEFORE the reader's EOF even with no drain — " +
+			"TestReadErrorNamesMissingSocatWhenStderrArrivesAfterEOF is no longer testing the race it names")
 	}
 }
 

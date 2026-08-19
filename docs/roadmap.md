@@ -229,6 +229,27 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **Adopting agents Dejima didn't launch** *(design written, Phase 1 approved to
+  build — see [`agent-adoption.md`](agent-adoption.md))* — changes the pitch from
+  "run your agents in containers" (a migration, which asks for a decision before
+  giving anything back) to "whatever you're already running, Dejima can see it,
+  ledger it, and gradually pull it into containment" (an adoption ramp). Someone
+  with six agents loose in terminals gets value on day one without moving
+  anything. Matters here specifically because install is our worst friction.
+  **The risk is the defect this codebase demonstrably produces**: containment
+  becomes a spectrum while every claim we make about it is binary — the same
+  shape as the grants pane, `secret rm`, and "every agent is walled off from the
+  other agents" sitting live on six pages including the homepage. So the
+  structural distinction is built FIRST: containment level as a non-optional
+  data field (never a property of which source answered), a separate section
+  rather than a badge, a grants view that says "observed, not gated" instead of
+  four empty arrays that read as sealed, and ledger entries marked
+  **self-reported** — an adopted agent's ledger is its own account of itself and
+  omission is trivial. Phase 2 (graduation into an island) is specified but not
+  started; it depends on a preflight diff of what the agent will lose and on the
+  dirty-worktree guard, since a graduation that clones fresh destroys uncommitted
+  work exactly the way `agent rm` did.
+
 - **Dejima running locally on Windows** *(research done, see
   [`windows-native-daemon.md`](windows-native-daemon.md))* — today `local` in the
   connection switcher dead-ends on Windows: `dejimad` ships for darwin/linux only
