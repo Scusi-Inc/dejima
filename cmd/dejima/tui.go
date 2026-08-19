@@ -577,6 +577,10 @@ type opCompleteMsg struct {
 	verb   string
 	err    error
 	notice string // optional success notice to surface (e.g. an auto-renamed label)
+	// agent carries the target of a per-agent op, so a guard rejection can arm a
+	// follow-up confirm for the SAME agent rather than the highlighted row (which
+	// a refresh may have moved out from under the operator).
+	agent string
 }
 
 // renameNotice returns an operator notice when the daemon auto-incremented a
@@ -1358,6 +1362,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// A purge blocked by the unpushed-work guard ends with "...--force...".
 			// Offer a force-purge confirmation instead of just surfacing the error,
 			// so the operator can override from the TUI without dropping to the CLI.
+			// Same shape for an agent removal the worktree guard refused: offer the
+			// override in place rather than making the operator drop to the CLI.
+			// Note it is armed with msg.agent, not the highlighted row — a list
+			// refresh between the request and this reply could otherwise point the
+			// override at a different agent than the one that was refused.
+			if msg.verb == "remove-agent" && strings.Contains(msg.err.Error(), "--force") {
+				m.lastError = msg.err.Error()
+				m.confirm = &confirmPrompt{verb: "force-remove-agent", island: msg.name, agent: msg.agent}
+				return m, nil
+			}
 			if msg.verb == "purge" && strings.Contains(msg.err.Error(), "--force") {
 				m.lastError = msg.err.Error()
 				m.confirm = &confirmPrompt{verb: "force-purge", island: msg.name}
@@ -2056,7 +2070,14 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			return m, m.opCmd(c.island, "purge")
 		}
 	case "force-purge":
-		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+		// The island name, not "y" — the escalated verb must not be the cheaper
+		// one. Plain purge already types the name; force-purge is purge PLUS
+		// overriding the guard, and it is offered at the exact moment the daemon
+		// has PROVEN there is unpushed or uncommitted work to lose. That is when a
+		// confirmation is most worth asking, not least. The operator has typed the
+		// name once already, which makes this the cheapest possible ask and the
+		// best-justified one in the app.
+		if strings.TrimSpace(c.answer) == c.island {
 			m.lastError = ""
 			m.dirtyOps[c.island] = "purging"
 			return m, m.opCmd(c.island, "purge-force")
@@ -2066,7 +2087,20 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		// a destructive op shouldn't go through on a single keystroke.
 		if strings.TrimSpace(c.answer) == c.agent {
 			m.dirtyOps[c.island] = "removing agent"
-			return m, m.removeAgentCmd(c.island, c.agent)
+			return m, m.removeAgentCmd(c.island, c.agent, false)
+		}
+	case "force-remove-agent":
+		// The override after the worktree guard refused. It types the agent id
+		// AGAIN rather than dropping to "y", because the escalated variant must not
+		// be the cheaper one: force-purge made exactly that mistake until finding B
+		// of the same sweep (plain purge typed the island name while forcing it
+		// took one key), and this is the same moment — the daemon has just PROVEN
+		// there is work to lose, which is when a confirmation is most worth asking,
+		// not least.
+		if strings.TrimSpace(c.answer) == c.agent {
+			m.lastError = ""
+			m.dirtyOps[c.island] = "removing agent"
+			return m, m.removeAgentCmd(c.island, c.agent, true)
 		}
 	case "remove-secret":
 		// Typing the NAME, like purge types the island name — removing a secret
@@ -2082,9 +2116,14 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			return m, m.removeTerminalCmd(c.agent) // c.agent carries the terminal id
 		}
 	case "approve-action":
-		// Approving a DESTRUCTIVE cross-island action: require a typed "y" so it
-		// can't be rubber-stamped. (c.agent carries the action id.)
-		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+		// The action id, not "y". The comment here used to say "require a typed
+		// 'y' so it can't be rubber-stamped" over a gate that a single keystroke
+		// satisfied — a containment claim in a source file that the code didn't
+		// support. Resolved toward the comment, because this is the only verb in
+		// the app that EXECUTES something on another island, and `remove-secret`
+		// (far less consequential) already asks for a typed name.
+		// (c.agent carries the action id.)
+		if strings.TrimSpace(c.answer) == c.agent {
 			return m, m.approveActionCmd(c.agent)
 		}
 	case "deny-action":
@@ -2151,19 +2190,21 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 // a verb missing here degrades to silence, so keep the two together.
 func confirmExpectation(c confirmPrompt) string {
 	switch c.verb {
-	case "purge", "reset":
+	case "purge", "reset", "force-purge":
 		return fmt.Sprintf("type the island name %q exactly", c.island)
-	case "remove-agent":
+	case "remove-agent", "force-remove-agent":
 		return fmt.Sprintf("type the agent id %q exactly", c.agent)
 	case "remove-secret":
 		return fmt.Sprintf("type the secret name %q exactly", c.agent)
+	case "approve-action":
+		return fmt.Sprintf("type the action id %q exactly", c.agent)
 	case "restart-agent", "restart-agent-cold":
 		if c.strict {
 			return fmt.Sprintf("type the agent id %q exactly — it looks mid-task", c.agent)
 		}
 		return `type "y" to confirm`
-	case "upgrade", "recreate-island", "build-image", "force-purge",
-		"remove-terminal", "approve-action", "open-all-agents", "setup-ssh",
+	case "upgrade", "recreate-island", "build-image",
+		"remove-terminal", "open-all-agents", "setup-ssh",
 		"update-client", "update-daemon":
 		return `type "y" to confirm`
 	}
@@ -2254,13 +2295,14 @@ func (m tuiModel) relabelAgentCmd(name, agentID, label string) tea.Cmd {
 	}
 }
 
-// removeAgentCmd removes an agent from an island.
-func (m tuiModel) removeAgentCmd(name, agentID string) tea.Cmd {
+// removeAgentCmd removes an agent from an island. force skips the daemon's
+// worktree guard, which refuses when the agent has uncommitted work.
+func (m tuiModel) removeAgentCmd(name, agentID string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		err := m.client.RemoveAgent(ctx, name, agentID)
-		return opCompleteMsg{name: name, verb: "remove-agent", err: err}
+		err := m.client.RemoveAgent(ctx, name, agentID, force)
+		return opCompleteMsg{name: name, verb: "remove-agent", err: err, agent: agentID}
 	}
 }
 
@@ -4923,6 +4965,7 @@ func (m tuiModel) renderConfirm() string {
 		input = "the island name (" + c.island + ")"
 	case "force-purge":
 		prompt = fmt.Sprintf("%q has unpushed/uncommitted work that will be LOST. Force-purge anyway?", c.island)
+		input = "the island name (" + c.island + ") again"
 	case "remove-agent":
 		who := c.agent
 		if isl, ok := m.islandByName(c.island); ok {
@@ -4930,15 +4973,57 @@ func (m tuiModel) renderConfirm() string {
 				who = lbl
 			}
 		}
-		prompt = fmt.Sprintf("Remove agent %q (id %s) from island %q — destroys its worktree + agent state.", who, c.agent, c.island)
+		// "destroys its worktree" reads as "removes a directory". Say what is IN
+		// the directory, and say what survives only after that — the branch really
+		// is kept, and putting it first is how the CLI's "(keeps its branch)"
+		// managed to be true and reassuring at the same time.
+		prompt = fmt.Sprintf("Remove agent %q (id %s) from island %q — deletes its worktree, DISCARDING anything uncommitted or untracked in it. Its branch and commits are kept.", who, c.agent, c.island)
 		input = "the agent id (" + c.agent + ")"
+	case "force-remove-agent":
+		who := c.agent
+		if isl, ok := m.islandByName(c.island); ok {
+			if lbl := agentByID(isl, c.agent).Label; lbl != "" {
+				who = lbl
+			}
+		}
+		prompt = fmt.Sprintf("The worktree guard refused: agent %q has uncommitted work. Remove it anyway and DISCARD that work permanently? Its branch and commits are kept; only what was never committed is lost.", who)
+		input = "the agent id (" + c.agent + ") again"
 	case "remove-secret":
 		prompt = fmt.Sprintf("Remove secret %q from island %q — tools using it will start failing.", c.agent, c.island)
 		input = "the secret name (" + c.agent + ")"
 	case "remove-terminal":
 		prompt = fmt.Sprintf("Close host terminal %s? (kills the shell on the daemon host)", c.agent)
 	case "approve-action":
-		prompt = fmt.Sprintf("⚠ Approve this DESTRUCTIVE cross-island action (%s)? It runs once approved.", c.agent)
+		// The confirm used to name the action by ID alone — and it REPLACES the
+		// approvals pane rather than overlaying it (see View), so the description
+		// the operator was reading is off-screen by the time they answer. The one
+		// verb in the app that executes something on another island was the one
+		// whose confirm said least about what it was approving, and the only way to
+		// re-read it was to cancel. The pane already says "never approve blind";
+		// this is what that has to mean here.
+		prompt = "⚠ Approve this DESTRUCTIVE cross-island action? It runs once approved.\n"
+		if a, ok := m.findPendingAction(c.agent); ok {
+			fromName := a.FromLabel
+			if fromName == "" {
+				fromName = m.agentDisplayIn(a.From, a.FromAgent)
+			}
+			toName := a.ToLabel
+			if toName == "" {
+				toName = m.agentDisplayIn(a.To, a.ToAgent)
+			}
+			params := a.Params
+			if params == "" {
+				params = "(none)"
+			}
+			prompt += fmt.Sprintf("\n  action:  %s\n  from:    %s/%s\n  to:      %s/%s\n  topic:   %s\n  params:  %s\n",
+				a.Action, a.From, fromName, a.To, toName, a.Topic, truncate(params, 200))
+		} else {
+			// The queue is in-memory and TTL-expires; an action can vanish between
+			// arming the confirm and rendering it. Say that rather than render a
+			// confident-looking prompt with the detail silently missing.
+			prompt += fmt.Sprintf("\n  action %s is no longer in the pending queue — it may have expired.\n  Cancel and refresh rather than approving something you can't see.\n", c.agent)
+		}
+		input = "the action id (" + c.agent + ")"
 	case "deny-action":
 		prompt = fmt.Sprintf("Deny action %s.", c.agent)
 		input = "an optional reason (or leave blank)"
@@ -4973,7 +5058,7 @@ func (m tuiModel) renderConfirm() string {
 	// obvious, not buried.
 	title := styleHeader.Render("Confirm")
 	switch c.verb {
-	case "purge", "force-purge", "reset", "remove-agent", "remove-terminal":
+	case "purge", "force-purge", "reset", "remove-agent", "force-remove-agent", "remove-terminal":
 		title = styleErrored.Render("⚠  Confirm")
 	}
 	// Wrap the question so a long one doesn't run off the box.

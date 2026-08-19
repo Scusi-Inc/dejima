@@ -1318,6 +1318,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 // agent cannot be removed.
 func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 	name, id := r.PathValue("name"), r.PathValue("id")
+	force := r.URL.Query().Get("force") == "true"
 	lock := s.projectLock(name)
 	lock.Lock()
 	defer lock.Unlock()
@@ -1358,6 +1359,22 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, errors.New(
 			"this agent is the island's main process (PID 1) — hibernate or purge the island instead"))
 		return
+	}
+	// Guard the agent's worktree, unless forced. Deliberately AFTER the PID-1 and
+	// self-reap checks (those are about whether the removal is allowed at all)
+	// and BEFORE anything is persisted — a guard that fires after the config is
+	// saved would leave the agent half-removed.
+	//
+	// An island token's self-reap is exempt: an ephemeral sub-agent tearing itself
+	// down is the designed teardown path, its worktree is scratch by construction,
+	// and there is no operator present to read a message or pass a flag. Blocking
+	// it would strand sub-agents and make the operator the GC — the exact thing
+	// self-reap exists to avoid.
+	if !force && !isTokenReap {
+		if riskErr := s.agentRemovalRiskError(r.Context(), p, a); riskErr != nil {
+			writeError(w, http.StatusConflict, riskErr)
+			return
+		}
 	}
 	// Persist the removal first (the source of truth), then clean up the agent's
 	// tmux session + worktree best-effort. The cleanup execs into the container,
@@ -1962,6 +1979,60 @@ func (s *Server) purgeRiskError(ctx context.Context, p *project.Project) error {
 	return fmt.Errorf("island %q has %s on branch %s — purging destroys it permanently; "+
 		"commit/push first, or re-run with --force to purge anyway",
 		p.Name, strings.Join(risks, " and "), branch)
+}
+
+// agentRemovalRiskError returns a non-nil error describing at-risk work in an
+// agent's worktree when removing it without --force would be unsafe, or nil when
+// there is nothing to guard.
+//
+// This is the purge guard's sibling, and the asymmetry it closes was the bug:
+// purging an island REFUSES on uncommitted work, while removing a single agent
+// destroyed the same class of work silently — with no confirm, no flag and no
+// guard — via `git worktree remove --force` in removeAgentSession. The careful
+// gate was on the surface a human drives and the ungated one on the surface
+// automation drives.
+//
+// It guards UNCOMMITTED work only, and that precision is the point rather than
+// laziness. `git worktree remove --force` deletes the working directory; it does
+// not delete the branch, so commits — pushed or not — survive in the shared
+// repository and can be checked out again. Tested rather than reasoned:
+// committed work is recoverable afterwards, uncommitted and untracked files are
+// not. Warning about unpushed commits here would be crying wolf, and a guard
+// that overstates the loss teaches people to pass --force by reflex.
+func (s *Server) agentRemovalRiskError(ctx context.Context, p *project.Project, a *project.AgentSpec) error {
+	// No worktree of its own means nothing is removed — removeAgentSession skips
+	// the worktree step for "" and /workspace, so there is no loss to guard.
+	if a.Worktree == "" || a.Worktree == "/workspace" {
+		return nil
+	}
+	status, _ := s.rt.Status(ctx, p.ContainerName())
+	if status != runtime.StatusRunning {
+		return fmt.Errorf("island %q is not running, so agent %q's worktree can't be checked for "+
+			"uncommitted work; wake it (`dejima wake %s`) to let the guard verify, "+
+			"or re-run with --force to remove it anyway", p.Name, a.ID, p.Name)
+	}
+	// Bounded, for the same reason purgeRiskError bounds its check: a wedged
+	// container must fail fast with an actionable message rather than hang a
+	// client that is holding this island's lock.
+	ictx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	git := s.gitStatusIn(ictx, p.ContainerName(), a.Worktree)
+	if ictx.Err() != nil {
+		return fmt.Errorf("agent %q's worktree didn't respond to a check within 5s "+
+			"(the container may be wedged) — re-run with --force to remove it anyway", a.ID)
+	}
+	if git == nil || git.Clean || git.DirtyFiles == 0 {
+		// Not a git worktree, or nothing uncommitted in it. Nothing to lose.
+		return nil
+	}
+	branch := git.Branch
+	if branch == "" {
+		branch = "HEAD"
+	}
+	return fmt.Errorf("agent %q has %s in its worktree on branch %s — removing the agent "+
+		"discards them permanently (its branch and commits are kept); commit them first, "+
+		"or re-run with --force to remove it anyway",
+		a.ID, countNoun(git.DirtyFiles, "uncommitted change"), branch)
 }
 
 // normalizeModel makes the model string forgiving: a bare model with no
