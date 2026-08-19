@@ -11,9 +11,9 @@ import (
 // was "That's a lot of steps" — while most of them were optional.
 func TestProvManualSeparatesRequiredFromOptional(t *testing.T) {
 	pc := &provCtx{}
-	pc.addManualFor(whyReboot, "Enable auto-login", "System Settings → Users & Groups")
+	pc.addManualFor(whyHost, "Enable auto-login", "System Settings → Users & Groups")
 	pc.addManualFor(whyRemote, "Bring Tailscale up", "sudo tailscale up --ssh --accept-dns=true")
-	pc.addManualFor(whyPerf, "Right-size the Docker VM", "Docker Desktop → Settings → Resources")
+	pc.addManual("Authenticate gh (only needed for private repos)", "gh auth login")
 	pc.addManual("Retry the local-models install", "dejima local install")
 	out := renderProvManual(pc)
 

@@ -126,12 +126,91 @@ type manualStep struct {
 }
 
 // Why-groups, ordered by how much they matter. Blocking first, taste last.
+//
+// There is no "performance, not urgent" tier any more. Right-sizing the Docker
+// VM was in one, and the operator's correction was that it is worth doing BEFORE
+// the host is in use rather than tuned afterwards — the whole point of a
+// dedicated machine. Auto-login and Remote Login got the same correction. If a
+// step is worth printing at all it is worth doing; the only genuinely
+// take-it-or-leave-it category left is things Dejima can do later from its own
+// UI, and those should not be in this list at all.
 const (
 	whyBlocking = "Dejima is NOT usable until these are done"
 	whyRemote   = "To reach this Mac from your other devices"
-	whyReboot   = "To keep running unattended (survive a reboot)"
-	whyPerf     = "Performance — worth doing, not urgent"
+	whyHost     = "To finish setting this Mac up as a server"
 )
+
+// guidedStep is one thing the wizard cannot do itself but CAN check.
+//
+// The old model collected every such step into a checklist at the end, which is
+// the wizard giving up: it stated an action, never confirmed it, and left the
+// operator holding a dozen equal-weight bullets with no way to tell which had
+// taken effect. The field report was "That's a lot of steps ... the process just
+// isn't buttoned up", and that is exactly right — a list is not a process.
+//
+// A step that can be VERIFIED should be walked, not listed: say what and why,
+// wait, then check. The end-of-run list becomes the exception (skipped, or
+// non-interactive) rather than the norm.
+type guidedStep struct {
+	why    string
+	title  string
+	detail string      // the command, or the click path; may be multi-line
+	verify func() bool // nil = cannot be checked, so it can only be listed
+	done   string      // what to say once verify passes
+	notYet string      // what to say when it still isn't detected
+}
+
+// guide walks one step: skip it if already satisfied, otherwise explain, wait,
+// and re-check until the operator is done or chooses to skip.
+func (pc *provCtx) guide(g guidedStep) {
+	if g.verify != nil && g.verify() {
+		fmt.Printf("  ✓ %s\n", g.done)
+		return
+	}
+	// Nobody to walk: --yes, or a step we cannot confirm either way. Fall back to
+	// the checklist, which is what it is for.
+	if pc.yes || g.verify == nil {
+		pc.addManualFor(g.why, g.title, g.detail)
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("  %s\n", bold(g.title))
+	fmt.Printf("    %s\n", g.why)
+	for _, line := range strings.Split(g.detail, "\n") {
+		if strings.TrimSpace(line) != "" {
+			fmt.Printf("      %s\n", line)
+		}
+	}
+	for {
+		ans := strings.TrimSpace(readSingleKey("    Enter when done · [s]kip: "))
+		if strings.EqualFold(ans, "s") {
+			// Skipped deliberately — record it so the end-of-run list is the set
+			// of things the operator CHOSE to leave, not a pile of unknowns.
+			pc.addManualFor(g.why, g.title, g.detail)
+			fmt.Println("    skipped — it'll be in the list at the end")
+			return
+		}
+		if g.verify() {
+			fmt.Printf("    ✓ %s\n", g.done)
+			return
+		}
+		fmt.Printf("    ✗ %s\n", g.notYet)
+	}
+}
+
+// autoLoginUser returns the account macOS is configured to log in automatically,
+// or "" if auto-login is off. The plist is world-readable, so this needs no sudo
+// — which matters, because a check that needs a password is a check that gets
+// skipped.
+func autoLoginUser() string {
+	out, err := exec.Command("defaults", "read",
+		"/Library/Preferences/com.apple.loginwindow", "autoLoginUser").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // addManual records an OPTIONAL step. Prefer addManualFor when the step has a
 // consequence worth naming; the default here is deliberately the weakest claim.
@@ -272,14 +351,14 @@ func provPhaseSystemConfig(pc *provCtx) error {
 			if err := execInteractive("sudo", "pmset", "-a",
 				"sleep", "0", "disablesleep", "1", "womp", "1", "autorestart", "1"); err != nil {
 				fmt.Printf("  ✗ pmset failed: %v\n", err)
-				pc.addManualFor(whyReboot, "Disable sleep", "sudo pmset -a sleep 0 disablesleep 1 womp 1 autorestart 1")
+				pc.addManualFor(whyHost, "Disable sleep", "sudo pmset -a sleep 0 disablesleep 1 womp 1 autorestart 1")
 			} else if after := pmsetValues(); after["sleep"] == "0" {
 				fmt.Println("  ✓ power settings applied (verified: sleep is off)")
 			} else {
 				fmt.Println("  ⚠ pmset ran but sleep still isn't 0 — check `pmset -g`")
 			}
 		} else {
-			pc.addManualFor(whyReboot, "Disable sleep", "sudo pmset -a sleep 0 disablesleep 1 womp 1 autorestart 1")
+			pc.addManualFor(whyHost, "Disable sleep", "sudo pmset -a sleep 0 disablesleep 1 womp 1 autorestart 1")
 		}
 	}
 
@@ -291,7 +370,14 @@ func provPhaseSystemConfig(pc *provCtx) error {
 	fmt.Println("    System Settings → Users & Groups → Automatically log in as → <your user>")
 	fmt.Println("    (Optional if you installed the daemon as a --system LaunchDaemon, which")
 	fmt.Println("     starts at boot before any login.)")
-	pc.addManualFor(whyReboot, "Enable auto-login", "System Settings → Users & Groups → Automatically log in as")
+	pc.guide(guidedStep{
+		why:    whyHost,
+		title:  "Enable auto-login",
+		detail: "System Settings → Users & Groups → Automatically log in as → this account",
+		verify: func() bool { return autoLoginUser() != "" },
+		done:   "auto-login is on — this Mac comes back by itself after a reboot",
+		notYet: "auto-login still reads as off (macOS may need the panel closed first)",
+	})
 	return nil
 }
 
@@ -544,7 +630,7 @@ func provPhaseVMRightsize(pc *provCtx) error {
 			if pc.yes {
 				fmt.Println("  --yes: proceeding with the resize (this bounces running islands).")
 			} else if !pc.confirm(fmt.Sprintf("  Resize to %dGB now and bounce running islands?", gb), false) {
-				pc.addManualFor(whyPerf, fmt.Sprintf("Resize the Docker VM to %dGB (when islands are idle)", gb), fmt.Sprintf("colima start --memory %d", gb))
+				pc.addManualFor(whyHost, fmt.Sprintf("Resize the Docker VM to %dGB (when islands are idle)", gb), fmt.Sprintf("colima start --memory %d", gb))
 				return nil
 			}
 		}
@@ -552,7 +638,7 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		// Omit --cpu/--disk so colima keeps its saved values for those.
 		if err := execInteractive("colima", "start", "--memory", strconv.Itoa(gb)); err != nil {
 			fmt.Printf("  ✗ colima start --memory %d: %v\n", gb, err)
-			pc.addManualFor(whyPerf, "Right-size the Docker VM", fmt.Sprintf("colima start --memory %d", gb))
+			pc.addManualFor(whyHost, "Right-size the Docker VM", fmt.Sprintf("colima start --memory %d", gb))
 			return nil
 		}
 		fmt.Printf("  ✓ ran: colima start --memory %d\n", gb)
@@ -565,11 +651,18 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		if self, err := os.Executable(); err == nil {
 			if err := execInteractive(self, "doctor", "--fix"); err != nil {
 				fmt.Printf("  ✗ doctor --fix: %v\n", err)
-				pc.addManualFor(whyPerf, "Right-size the Docker VM", fmt.Sprintf("Docker Desktop → Settings → Resources   (or: colima start --memory %d)", recGB))
+				pc.guide(guidedStep{
+					why:    whyHost,
+					title:  fmt.Sprintf("Right-size the Docker VM to ~%dGB", recGB),
+					detail: fmt.Sprintf("Docker Desktop → Settings → Resources → Memory   (or: colima start --memory %d)", recGB),
+					verify: func() bool { return !vmmem.Undersized(vmmem.HostMemoryBytes(), dockerVMMemoryBytes()) },
+					done:   "the Docker VM has enough memory for islands",
+					notYet: fmt.Sprintf("still reads as under %dGB — Docker Desktop restarts its VM when you apply", recGB),
+				})
 			}
 		}
 	} else {
-		pc.addManualFor(whyPerf, fmt.Sprintf("Right-size the Docker VM to ~%dGB", recGB), "Docker Desktop → Settings → Resources")
+		pc.addManualFor(whyHost, fmt.Sprintf("Right-size the Docker VM to ~%dGB", recGB), "Docker Desktop → Settings → Resources → Memory")
 	}
 	return nil
 }
@@ -640,12 +733,26 @@ func provPhaseShellSSH(pc *provCtx) error {
 		if pc.confirm("  Enable Remote Login now (sudo)?", true) {
 			if err := execInteractive("sudo", "systemsetup", "-setremotelogin", "on"); err != nil {
 				fmt.Printf("  ✗ couldn't enable Remote Login: %v\n", err)
-				pc.addManualFor(whyRemote, "Enable Remote Login", "System Settings → General → Sharing → Remote Login")
+				pc.guide(guidedStep{
+					why:    whyRemote,
+					title:  "Enable Remote Login (SSH)",
+					detail: "System Settings → General → Sharing → Remote Login\n(or: sudo systemsetup -setremotelogin on)",
+					verify: remoteLoginOn,
+					done:   "Remote Login is on",
+					notYet: "still reads as off",
+				})
 			} else {
 				fmt.Println("  ✓ Remote Login enabled")
 			}
 		} else {
-			pc.addManualFor(whyRemote, "Enable Remote Login", "System Settings → General → Sharing → Remote Login")
+			pc.guide(guidedStep{
+				why:    whyRemote,
+				title:  "Enable Remote Login (SSH)",
+				detail: "System Settings → General → Sharing → Remote Login\n(or: sudo systemsetup -setremotelogin on)",
+				verify: remoteLoginOn,
+				done:   "Remote Login is on",
+				notYet: "still reads as off",
+			})
 		}
 	}
 	return nil
@@ -710,7 +817,7 @@ func provPhaseDejimaInstall(pc *provCtx) error {
 			"--no-tcp-prompt", "--no-notify-prompt"}
 		if err := execInteractive(self, args...); err != nil {
 			fmt.Printf("  ✗ service install: %v\n", err)
-			pc.addManualFor(whyReboot, "Register dejimad as a service", svcHint)
+			pc.addManualFor(whyHost, "Register dejimad as a service", svcHint)
 			return nil
 		}
 		fmt.Println("  ✓ daemon installed and supervised")
@@ -720,7 +827,7 @@ func provPhaseDejimaInstall(pc *provCtx) error {
 				tailscaleUpCmdHint)
 		}
 	} else {
-		pc.addManualFor(whyReboot, "Register dejimad as a service", svcHint)
+		pc.addManualFor(whyHost, "Register dejimad as a service", svcHint)
 	}
 	return nil
 }
@@ -740,32 +847,32 @@ func provPhaseLocalModels(pc *provCtx) error {
 	fmt.Println("  the machine. The model loads once here; islands share it as an OpenAI-")
 	fmt.Println("  compatible endpoint. (You can always do this later with `dejima local`.)")
 	if !pc.confirmUnattended("  Set up local models now (installs Ollama + a recommended model)?", true, false) {
-		pc.addManual("Set up local models", "dejima local install, then dejima local pull <model>")
+		fmt.Println("  Skipped. Set them up any time from the TUI: run `dejima`, Local models.")
 		return nil
 	}
 	c, err := client()
 	if err != nil {
-		pc.addManual("Set up local models (the daemon was not up yet)", "dejima local install")
+		fmt.Println("  The daemon wasn't up yet. Set them up from the TUI later: run `dejima`, Local models.")
 		return nil
 	}
 	fmt.Println("  Installing the inference backend (Ollama)…")
 	if err := c.LocalInstall(pc.ctx, os.Stdout); err != nil {
-		pc.addManual("Retry the local-models install — it did not finish ("+err.Error()+")", "dejima local install")
+		fmt.Printf("  Install didn't finish (%v). Retry any time from the TUI: run `dejima`, Local models.\n", err)
 		return nil
 	}
 	st, err := c.LocalStatus(pc.ctx)
 	if err != nil || st.Recommend.Top == nil {
-		pc.addManual("Pick and pull a local model", "dejima local models, then dejima local pull <model>")
+		fmt.Println("  Pick a model from the TUI when you want one: run `dejima`, Local models.")
 		return nil
 	}
 	top := st.Recommend.Top
 	if !pc.confirm(fmt.Sprintf("  Pull the recommended model for this host — %s (%s)?", top.Alias, top.Params), true) {
-		pc.addManual("Pull a local model", "dejima local pull <model>")
+		fmt.Println("  Pull one from the TUI when you want it: run `dejima`, Local models.")
 		return nil
 	}
 	fmt.Printf("  Pulling %s…\n", top.Alias)
 	if err := c.PullLocalModel(pc.ctx, top.Alias, os.Stdout); err != nil {
-		pc.addManual("Retry the model pull — it did not finish", "dejima local pull "+top.Alias)
+		fmt.Printf("  The %s pull didn't finish. Retry from the TUI: run `dejima`, Local models.\n", top.Alias)
 		return nil
 	}
 	fmt.Println("  ✓ local models ready — point an agent at the `local` provider (the `v` model editor).")
@@ -793,11 +900,19 @@ func provPhaseVerify(pc *provCtx) error {
 	}
 	user := currentUnixUser()
 
-	// A teammate dials the tailnet IP (MagicDNS may not resolve for them yet), so
-	// prefer it as the reachable address; fall back to the FQDN.
-	remote := fqdn
-	if ip != "" {
-		remote = ip
+	// Two audiences, two right answers, and the old code served only the second.
+	//
+	// YOUR OWN devices are on this tailnet with MagicDNS, so the NAME is the
+	// better address: it survives the IP changing, which it will. A TEAMMATE
+	// whose node was only just shared may not resolve MagicDNS yet, so they want
+	// the IP. Leading with the IP for everyone meant the operator copied an
+	// address that quietly rots, and the name appeared as a footnote nobody read.
+	//
+	// So: lead with the name when there is one, and give the IP as the labelled
+	// fallback rather than the headline.
+	remote := ip
+	if fqdn != "" {
+		remote = fqdn
 	}
 
 	fmt.Println()
@@ -812,14 +927,21 @@ func provPhaseVerify(pc *provCtx) error {
 			fmt.Printf("    ⚠ %s:7273 isn't answering yet — confirm the service is running\n", remote)
 			fmt.Println("      (`dejima service install --system --tcp :7273 …`) and Tailscale is up.")
 		}
-		if fqdn != "" {
-			fmt.Printf("    This host's Tailscale name: %s\n", fqdn)
-		}
 		fmt.Println()
 		fmt.Println("    On a laptop (same Tailscale account):")
 		fmt.Println("      go install github.com/aoos/dejima/cmd/dejima@latest")
 		fmt.Printf("      export DEJIMA_HOST=%s:7273\n", remote)
 		fmt.Println("      dejima ls")
+		if fqdn != "" && ip != "" {
+			fmt.Println()
+			fmt.Printf("    That name (%s) is this Mac's MagicDNS name — Tailscale's own DNS.\n", fqdn)
+			fmt.Println("    Prefer it over the IP: it keeps working when the address changes.")
+			fmt.Printf("    If a device can't resolve it yet, use the IP instead: %s:7273\n", ip)
+		} else if fqdn == "" && ip != "" {
+			fmt.Println()
+			fmt.Println("    No MagicDNS name yet — that's Tailscale admin console → DNS → enable")
+			fmt.Println("    MagicDNS. Worth doing: the name survives the IP changing, and it will.")
+		}
 		if user != "" && fqdn != "" {
 			fmt.Printf("    Or open a shell on the host:  ssh %s@%s\n", user, fqdn)
 		}
@@ -850,7 +972,7 @@ func renderProvManual(pc *provCtx) string {
 	// version put a dozen equal-weight bullets in front of a new operator with
 	// the command buried mid-sentence, and the field report was "That's a lot of
 	// steps". Most of them were optional; nothing said so.
-	order := []string{whyBlocking, whyRemote, whyReboot, whyPerf, ""}
+	order := []string{whyBlocking, whyRemote, whyHost, ""}
 	groups := map[string][]manualStep{}
 	for _, m := range pc.manual {
 		groups[m.why] = append(groups[m.why], m)
