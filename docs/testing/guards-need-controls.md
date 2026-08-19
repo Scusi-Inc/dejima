@@ -79,14 +79,32 @@ through the other.
 ### 3. The guard nothing can violate — needs a lethal mutation
 
 If no realistic change makes the guard fail, it isn't a guard. Mutation testing
-is the control, with two traps of its own:
+is the control — and it has three traps of its own, each found the hard way:
 
 - **Assert the mutation applied.** `assert s != before, "MUTATION DID NOT APPLY"`
   in the script. A regex that quietly doesn't match, or a `git diff` blind to an
   untracked file, both produce a clean "survived".
+- **Assert it hit the site you meant.** `assert s.count(old) == 1` before
+  replacing. The weaker check above passes happily when your pattern matches in
+  two places and you mutate the wrong one — the file changed, the mutation is
+  real, and it is somewhere else entirely.
 - **Compile the mutant before reading the result.** Run `go vet` on the mutated
   tree and abort if it fails. Otherwise a broken build gives you a red that looks
   like the guard working.
+
+**The second trap failed in a new direction, which is why it earns its own
+line.** Reviewing a fail-safe path, a string that appeared twice in `server.go`
+was mutated in the *purge* guard while the *agent-removal* guard was the one
+under test. Zero failures, honestly obtained — and the conclusion forming was
+not "my method is broken" but "the author's fail-safe path is untested". Every
+other trap in this document fails toward *all clear*; this one fails toward
+**accusing someone else's work**, which is at least as easy to act on and much
+harder to walk back. Upgrading the assertion from "something changed" to
+"exactly one site matched" caught it immediately.
+
+Both of the first two are one line in the mutation script. Write them before you
+need them; you will not think to add them at the moment you are reading a
+surprising zero.
 
 → `internal/api/background_join_wiring_test.go`,
   `internal/api/primary_launch_parity_test.go`
@@ -188,6 +206,10 @@ Two corollaries:
 Everything above assumes the control itself is sound. It has the same failure
 mode one layer up, and this one is worth its own heading because the instinct
 that catches it runs backwards from the usual one.
+
+The three mutation traps in shape 3 are the mechanical version of this; what
+follows is the same failure where no mechanical check would have helped, because
+nothing was wrong with the tooling.
 
 **What happened.** Two things were fixed at once: a wrong boolean pair, and a
 hardcoded path literal that should have come from a canonical table. A mutation
