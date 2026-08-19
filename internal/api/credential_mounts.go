@@ -34,11 +34,18 @@ type credentialMount struct {
 	path  string
 }
 
-// credentialMounts enumerates every credential handed to an island as a mount.
-// One list, so adding a credential means editing here rather than remembering
-// each surface that reports on them — the same reason grantKinds exists in the
-// TUI. gh is the widest, but `dejima secret rm` on a running island has exactly
-// the same shape, and so will the next one.
+// GitHubCredentialMountPath is where an island's GitHub credential is mounted.
+//
+// Exported because a caller OUTSIDE the daemon needs it: `dejima secret set`
+// warns when GH_TOKEN would override this credential, and has to pick this
+// entry out of a CredentialMountReport to know whether there is one. It did
+// that by comparing against its own copy of the string, which is a warning that
+// stops firing the moment this path moves — silently, since finding no match
+// reads as "this island has no GitHub credential".
+//
+// So the identifier crosses the package boundary rather than the value.
+const GitHubCredentialMountPath = "/opt/host/gh-config"
+
 // secretsMountPath is where an island's secrets DIRECTORY is bind-mounted. The
 // file inside it is secretsMountPath + "/secrets.env".
 //
@@ -63,9 +70,14 @@ const secretsMountPath = "/opt/host/secrets.d"
 // island can still be running a pre-secrets.d image.
 const legacySecretsMountPath = "/opt/host/secrets.env"
 
+// credentialMounts enumerates every credential handed to an island as a mount.
+// One list, so adding a credential means editing here rather than remembering
+// each surface that reports on them — the same reason grantKinds exists in the
+// TUI. gh is the widest, but `dejima secret rm` on a running island has exactly
+// the same shape, and so will the next one.
 func credentialMounts() []credentialMount {
 	return []credentialMount{
-		{"GitHub credential", "/opt/host/gh-config"},
+		{"GitHub credential", GitHubCredentialMountPath},
 		{"secrets", secretsMountPath},
 	}
 }

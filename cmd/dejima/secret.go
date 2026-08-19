@@ -207,15 +207,38 @@ func warnGitHubTokenPrecedence(ctx context.Context, c *api.Client, island, name 
 // container recreate is one the operator has decided to have, and staying quiet
 // now would mean the override lands silently at the next restart — the warning
 // would be exactly one recreate too late.
+// The mount is identified by api.GitHubCredentialMountPath, not by a copy of
+// the string. A local copy silently stops matching if the daemon's path moves,
+// and "no entry matched" is indistinguishable from "this island has no GitHub
+// credential" — so the warning would go quiet rather than go wrong.
+//
+// And no entry matching is UNKNOWN, not NO. Returning known=true there would
+// assert something this function did not find out, and the caller's early
+// return for known-and-absent prints nothing at all — not even the conditional
+// form. That is the one path in here that fails toward silence, which the doc
+// above explicitly promises it won't.
 func islandHasGitHubCredential(ctx context.Context, c *api.Client, island string) (has, known bool) {
 	g, err := c.ListGrants(ctx, island)
-	if err != nil || !g.Credentials.Known {
+	if err != nil {
 		return false, false
 	}
-	for _, s := range g.Credentials.States {
-		if s.Path == "/opt/host/gh-config" {
+	return gitHubCredentialFrom(g.Credentials)
+}
+
+// gitHubCredentialFrom is the decision itself, split out from the fetch so the
+// not-found case is reachable in a test. It cannot be reached through a real
+// daemon — credentialMounts() always enumerates the gh entry, so a live report
+// carries it with Configured/Mounted false — which is exactly why the branch
+// needs a test: it only ever runs when the two sides have drifted apart, i.e.
+// when nobody is watching.
+func gitHubCredentialFrom(rep api.CredentialMountReport) (has, known bool) {
+	if !rep.Known {
+		return false, false
+	}
+	for _, s := range rep.States {
+		if s.Path == api.GitHubCredentialMountPath {
 			return s.Configured || s.Mounted, true
 		}
 	}
-	return false, true
+	return false, false
 }
