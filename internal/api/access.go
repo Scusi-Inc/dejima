@@ -355,22 +355,31 @@ func (s *Server) handleIslandEvents(w http.ResponseWriter, r *http.Request) {
 // guard. Returns nil on any failure or if the workspace isn't a git repo
 // (best-effort).
 func (s *Server) gitStatusOf(ctx context.Context, containerName string) *GitInfo {
+	return s.gitStatusIn(ctx, containerName, "/workspace")
+}
+
+// gitStatusIn is gitStatusOf for an arbitrary directory in the container —
+// an agent's worktree as well as the island's /workspace. Split out for the
+// agent-removal guard: removing an agent runs `git worktree remove --force` on
+// ITS directory, so the question "is there work here to lose" has to be asked
+// about that directory and not about the island's.
+func (s *Server) gitStatusIn(ctx context.Context, containerName, dir string) *GitInfo {
 	if status, _ := s.rt.Status(ctx, containerName); status != runtime.StatusRunning {
 		return nil
 	}
-	// Quick check: is /workspace a git repo at all?
+	// Quick check: is dir a git repo at all?
 	if _, _, code, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "rev-parse", "--git-dir"}); code != 0 {
+		[]string{"git", "-C", dir, "rev-parse", "--git-dir"}); code != 0 {
 		return nil
 	}
 	info := &GitInfo{}
 
 	if out, _, _, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "rev-parse", "--abbrev-ref", "HEAD"}); out != "" {
+		[]string{"git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD"}); out != "" {
 		info.Branch = strings.TrimSpace(out)
 	}
 	if out, _, code, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "status", "--porcelain"}); code == 0 {
+		[]string{"git", "-C", dir, "status", "--porcelain"}); code == 0 {
 		out = strings.TrimSpace(out)
 		if out == "" {
 			info.Clean = true
@@ -379,13 +388,13 @@ func (s *Server) gitStatusOf(ctx context.Context, containerName string) *GitInfo
 		}
 	}
 	if out, _, code, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "rev-list", "--count", "@{u}..HEAD"}); code == 0 {
+		[]string{"git", "-C", dir, "rev-list", "--count", "@{u}..HEAD"}); code == 0 {
 		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
 			info.Ahead = n
 		}
 	}
 	if out, _, code, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "rev-list", "--count", "HEAD..@{u}"}); code == 0 {
+		[]string{"git", "-C", dir, "rev-list", "--count", "HEAD..@{u}"}); code == 0 {
 		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
 			info.Behind = n
 		}

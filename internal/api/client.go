@@ -1440,8 +1440,14 @@ func (c *Client) AddAgent(ctx context.Context, name string, req AgentSpecRequest
 }
 
 // RemoveAgent removes an agent from an island by id.
-func (c *Client) RemoveAgent(ctx context.Context, name, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/agents/"+id, nil, nil)
+// force skips the worktree guard, which otherwise refuses when the agent has
+// uncommitted work that removal would discard.
+func (c *Client) RemoveAgent(ctx context.Context, name, id string, force bool) error {
+	path := "/v1/islands/" + name + "/agents/" + id
+	if force {
+		path += "?force=true"
+	}
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // RelabelAgent sets an agent's cosmetic label (its id and type are immutable).

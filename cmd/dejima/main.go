@@ -2877,10 +2877,22 @@ func newAgentRenameCmd() *cobra.Command {
 }
 
 func newAgentRmCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "rm <island> <agent-id>",
-		Short: "Remove an agent from an island (keeps its branch).",
-		Args:  cobra.ExactArgs(2),
+	var force bool
+	cmd := &cobra.Command{
+		Use: "rm <island> <agent-id>",
+		// "(keeps its branch)" was the whole of the old summary. It is TRUE — the
+		// branch and its commits survive — which is exactly what made it dangerous:
+		// it named the survivor, so an operator read it as "my work is safe" and
+		// the sentence was not even wrong. The worktree is deleted with
+		// `git worktree remove --force`, and uncommitted work goes with it.
+		Short: "Remove an agent (keeps its branch; DISCARDS uncommitted work in its worktree).",
+		Long: "Removes the agent from the island: kills its session and deletes its git " +
+			"worktree. Its BRANCH and every commit on it are kept — you can check the branch " +
+			"out again. Anything uncommitted or untracked in that worktree is destroyed and " +
+			"cannot be recovered.\n\n" +
+			"The daemon refuses if the worktree has uncommitted changes; commit them, or pass " +
+			"--force to remove the agent and discard them.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
 			if err != nil {
@@ -2890,13 +2902,16 @@ func newAgentRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.RemoveAgent(cmd.Context(), args[0], id); err != nil {
+			if err := c.RemoveAgent(cmd.Context(), args[0], id, force); err != nil {
 				return err
 			}
 			fmt.Printf("removed agent %s from %s\n", id, args[0])
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false,
+		"remove even if the worktree has uncommitted work (discards it)")
+	return cmd
 }
 
 // --- status ---------------------------------------------------------------
