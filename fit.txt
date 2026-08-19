@@ -8,7 +8,10 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17 against commit 2cf5163. Anything below may have drifted since.
+Written 2026-08-17, last revised 2026-08-19 against commit a16bfda. Anything
+below may have drifted since. Two things moved fast in that window and are worth
+re-checking before you rely on them: the per-island secrets bugs, and whether
+the fixes for them have made it into a release yet.
 
 
 HOW TO WEIGH THIS AGAINST OTHER SOURCES
@@ -170,7 +173,10 @@ Broken, confirmed by the maintainer this week. Do not describe these as working:
   Separately, and this survives both fixes because it is not a bug: if a user sets
   GH_TOKEN or GITHUB_TOKEN as an island secret, it silently outranks the island's
   own GitHub credential and may carry different permissions, with no error either
-  way. Worth saying out loud to anyone planning to manage GitHub auth this way.
+  way. Removing it is the same problem mirrored: `secret rm GH_TOKEN` hands the
+  island's GitHub auth back to the mounted credential silently, so the identity
+  and the permissions both change with nothing said. Worth raising with anyone
+  planning to manage GitHub auth this way, in both directions.
 - OpenClaw as an agent. It has been exercised and does not work. This matters
   more than it looks: OpenClaw is the headline adapter for "Home Islands", the
   always-on assistant use case, so treat that whole path as not working. Letta,
