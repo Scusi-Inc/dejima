@@ -91,6 +91,76 @@ is the control, with two traps of its own:
 → `internal/api/background_join_wiring_test.go`,
   `internal/api/primary_launch_parity_test.go`
 
+### 4. The guard that only *sometimes* sees — needs a deterministic reproduction
+
+The guard is correct. It is simply under-powered: the condition it watches for
+occurs on some fraction of runs, so most runs are green and the occasional red
+is indistinguishable from noise.
+
+This is the most expensive shape in the file, and the cost is not technical.
+
+**The tell.** *It survives a mutation that should kill it.* Break the thing the
+guard exists to protect and run the guard: if it still passes, it is not
+watching what you think. That check takes a minute and nobody thinks to run it
+on a test already labelled flaky — which is exactly the test that most needs it.
+
+**Real case (#338).** `internal/wsl` translated a bare `EOF` into "socat isn't
+installed". The translation raced: the diagnosis is read from the subprocess's
+stderr, which `exec` copies on its own goroutine, while the reader's EOF was
+released immediately. About one run in two hundred, the caller got the raw EOF
+the code existed to replace.
+
+The test could see it — and did, at roughly one run in two hundred. With the fix
+removed, and each mutation compile-checked first:
+
+| | 30 runs, fix removed | measured by |
+| --- | --- | --- |
+| the deterministic test | 30 failures | both of us |
+| the original test | 0 failures | first observer |
+| the original test | 1 failure | second observer |
+
+Those last two rows are the point, not a discrepancy to tidy away. **The
+original guard's signal is weak enough that two people measuring the same broken
+code got different answers**, and either could reasonably round theirs to
+"flaky". A guard you have to sample repeatedly to hear is one that will be
+misread by whoever samples it once.
+
+**The control.** A fixture that forces the ordering rather than hoping for it.
+Here, a fake subprocess that closes stdout *before* writing stderr, making the
+race certain instead of occasional. Pick an ordering the real system genuinely
+produces — `wsl.exe`'s stderr crosses a virtualization boundary, so arriving
+after the pipe closes is the actual case, not a contrivance. Then add the
+now-familiar control on the control: assert the fixture still produces the
+ordering it is named for, or the deterministic test quietly degrades into a
+duplicate of the probabilistic one and keeps passing.
+
+→ `internal/wsl/wsl_test.go` — `socat-missing-late`,
+  `TestLateHelperReallyRacesTheDiagnosis`
+
+**The social failure mode, which is the part that actually costs weeks.** The
+technical defect in #338 was one missing `drain` call. The expensive part was
+the label. "Flaky" is a diagnosis that *ends investigation*: once applied, the
+test stops being read as a signal and starts being read as weather. It gets
+applied by whoever is in a hurry, which is everyone, and it is self-sealing —
+the next red confirms the label instead of challenging it.
+
+The issue itself carried an under-powered negative in good faith: *"not
+reproducible on demand"*, supported by three runs. At a 0.5% rate, three runs
+had a ~98.5% chance of looking clean. `-count=400` produced two failures in
+about a second. Nothing was done wrong there except sampling too little and then
+believing the result — the same species as an instrument that fails silently,
+except this one fails toward *"there is no bug"*, which is the direction that
+closes tickets.
+
+Two practical rules:
+
+- **Before calling anything flaky, run it `-count` in the hundreds.** It costs a
+  second and it is the difference between "not reproducible" and a failure you
+  can read.
+- **Never let "flaky" be a resting state.** A flaky test gets a fix or an issue
+  with a named owner. The third state — known-flaky, tolerated, unowned — is
+  where a real defect hides in plain sight with a green suite around it.
+
 ## Instruments get the same treatment
 
 A measurement you are about to publish is a guard pointed at reality, and it
@@ -130,6 +200,7 @@ different?* If the honest answer is no, write the control.
 | `cmd/dejima/cli_secrets_isolation_test.go` | `TestKeychainStubMakesTheKeychainBackendReachable` | the keychain is genuinely selectable, so `"file"` means the guard worked |
 | `internal/api/background_join_wiring_test.go` | `TestJoinWiringGuardRecognisesAnUnwrappedCall` + `seen == 0` fatal | the matcher still fires, AND it is still matching something |
 | `cmd/dejima/background_join_test.go` | `seen == 0` fatal | the guard is still reading the package it guards |
+| `internal/wsl/wsl_test.go` | the `socat-missing-late` fixture + `TestLateHelperReallyRacesTheDiagnosis` | the race is forced rather than hoped for, and the fixture still forces it |
 
 ## The one-line version
 
