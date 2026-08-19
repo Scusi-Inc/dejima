@@ -73,11 +73,11 @@
   </div>
   <div class="proof-tile">
     <h3>Fleet management</h3>
-    <p>Status, CPU, memory, and token cost per session, for every agent at once. Hibernate what's idle, wake what isn't, and jump between projects with a keystroke.</p>
+    <p>Status, CPU, memory, and token cost per session, for every agent at once. Summon it from inside a session to see what else is running, then drop back in; the agent never notices. Hibernate what's idle, wake what isn't, and jump between projects with a keystroke.</p>
   </div>
   <div class="proof-tile">
     <h3>Clipboard and file transfer</h3>
-    <p>A remote shell normally costs you the clipboard and drag-drop. Here <kbd>Ctrl-V</kbd> pastes a screenshot straight to the agent, dragging a file onto the window uploads it, and <code>dejima cp</code> moves work back out. No <code>scp</code>.</p>
+    <p>A remote shell normally costs you the clipboard and drag-drop. Here <kbd>Ctrl-V</kbd> pastes a screenshot straight to the agent, dragging a file onto the window uploads it, and pointing it at any local path does the same. The agent gets the in-island path; <code>dejima cp</code> moves work back out. No <code>scp</code>.</p>
   </div>
 </section>
 <p class="band-compat">Works with Claude Code, Codex, OpenClaw, or any command you supervise. Point it at frontier APIs, or at open-weights models running on your own box through Ollama.</p>
@@ -147,7 +147,7 @@
     <p>Wake a hibernated island on a timer and hand its agent the task to run.</p>
   </div>
 </div>
-<p class="small">Also in the box: <strong>headless agents</strong> (OpenClaw, Letta, your own loop) alongside terminal ones · <strong>lifecycle verbs</strong> (<code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>) · <strong>roles and invites</strong> for a shared server · an <strong>HTTP/WebSocket API</strong> and <strong>webhook events</strong> to build on.</p>
+<p class="small">Also in the box: <strong>headless agents</strong> (OpenClaw, Letta, your own loop) alongside terminal ones · <strong>lifecycle verbs</strong> (<code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>) · <strong>roles and invites</strong> for a shared server · <strong>one-key updates</strong> that move the client and daemon together · an <strong>HTTP/WebSocket API</strong> and <strong>webhook events</strong> to build on.</p>
 
 <h2>The isolation of a cloud sandbox, on hardware you own</h2>
 <p>You're probably weighing Dejima against however you run agents today. Here's where it lands:</p>
@@ -207,17 +207,6 @@
 </ul>
 <p class="small">Both get the same isolation, lifecycle, events, and one-API management — bring your own keys and mix vendors freely.</p>
 
-
-<h2 id="quality-of-life">The small stuff, handled</h2>
-<p>The day-to-day frictions of driving agents in a terminal — moving files in, keeping context, jumping around — already solved, so you stay in flow.</p>
-<ul class="qol-features">
-  <li><strong>Drag a file onto an agent</strong> — drop it into the session and it uploads into the island; the agent reads the in-island path. No <code>scp</code>, no manual copy.</li>
-  <li><strong>Paste a clipboard image</strong> — <code>Ctrl-V</code> sends the image straight to the agent (great for screenshots and mockups).</li>
-  <li><strong>Attach any local file</strong> — <code>Ctrl-]</code>, type or paste a path, it uploads and the agent gets the in-island path.</li>
-  <li><strong>Jump to the dashboard mid-session</strong> — <code>Ctrl-\</code> summons the fleet view without killing the agent; drop back in when you're done.</li>
-  <li><strong>One-key updates</strong> — <code>U</code> updates the client and the daemon together, with a clear warning before it restarts anything.</li>
-  <li><strong>Guided from zero</strong> — run <code>dejima</code> and the TUI walks you from an empty host to a sandboxed agent, no config file to write.</li>
-</ul>
 
 <h2 id="guides">Guides</h2>
 <p>Short, practical walkthroughs for getting a fleet running on your own box.</p>
