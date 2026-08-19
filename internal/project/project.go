@@ -581,7 +581,7 @@ func Load(name string) (*Project, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, fmt.Errorf("invalid island name %q: %w", name, err)
 	}
-	path, err := paths.ProjectConfigPath(name)
+	path, err := paths.ProjectConfigPathRead(name)
 	if err != nil {
 		return nil, err
 	}
@@ -669,7 +669,7 @@ func List() ([]*Project, error) {
 
 // Exists reports whether a project with this name has a config on disk.
 func Exists(name string) bool {
-	path, err := paths.ProjectConfigPath(name)
+	path, err := paths.ProjectConfigPathRead(name)
 	if err != nil {
 		return false
 	}
