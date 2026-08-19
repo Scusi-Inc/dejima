@@ -33,7 +33,7 @@ func twoAgentServer(t *testing.T) (http.Handler, *fakeRuntime) {
 		t.Fatal(err)
 	}
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	return srv.Handler(), f
 }
 

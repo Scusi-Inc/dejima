@@ -18,8 +18,8 @@ func newEventsServer(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := NewServer(&fakeRuntime{status: runtime.StatusRunning},
-		slog.New(slog.NewTextHandler(io.Discard, nil)), em)
+	srv := joinBackground(t, NewServer(&fakeRuntime{status: runtime.StatusRunning},
+		slog.New(slog.NewTextHandler(io.Discard, nil)), em))
 	return srv.Handler()
 }
 

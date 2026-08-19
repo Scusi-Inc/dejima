@@ -24,7 +24,7 @@ func newAuditServer(t *testing.T) *Server {
 	t.Setenv("HOME", t.TempDir())
 	ledger.ResetDefault()
 	t.Cleanup(ledger.ResetDefault)
-	return NewServer(&fakeRuntime{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	return joinBackground(t, NewServer(&fakeRuntime{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 }
 
 func appendN(t *testing.T, entries ...ledger.Entry) {
