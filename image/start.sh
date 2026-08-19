@@ -195,10 +195,36 @@ if [[ -z "$LAUNCH" ]]; then
     LAUNCH="$AGENT"
 fi
 
+# Source the island's Dejima-managed secrets into the PRIMARY agent's own
+# environment before exec, so they reach it and every tool subprocess it spawns.
+#
+# This mirrors agentLaunchScript in internal/api/server.go, which does the same
+# for co-located agents. It has to be done in both places because they are two
+# different launch paths: the daemon launches agents 1..N, this entrypoint
+# launches the primary. Secrets normally load via /etc/profile.d, but ONLY for
+# login shells — and tmux runs this command under a non-login shell, so without
+# this the primary agent never sees them. Since most islands have exactly one
+# agent and that agent IS the primary, the common case was the broken one: the
+# "my secret isn't there" report, where the value is visibly present under
+# `bash -lc` and absent in the agent's own tool shell.
+#
+# `bash -c`, not `bash -lc`: a login shell re-runs /etc/profile and resets PATH,
+# dropping /opt/dejima/npm-global/bin where the agent binary lives. bash rather
+# than sh because load-secrets.sh emits %q-quoted output that only bash evals
+# correctly. A missing hook (older image) is a harmless no-op.
+#
+# printf %q quotes $LAUNCH's expansion for re-parsing, the same job
+# shSingleQuote does on the daemon side — a launch command containing a quote
+# would otherwise break out of the nesting.
+launch_with_secrets() {
+    local inner=". /etc/profile.d/10-dejima-secrets.sh 2>/dev/null || true; exec $1"
+    printf 'exec bash -c %q' "$inner"
+}
+
 # CLI agents run under tmux so multiple clients can attach to the same screen
 # and the session survives client disconnects.
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux new-session -d -s "$SESSION" -c "$WORKSPACE" "$LAUNCH"
+    tmux new-session -d -s "$SESSION" -c "$WORKSPACE" "$(launch_with_secrets "$LAUNCH")"
 fi
 
 echo "dejima island '${PROJECT}' ready; tmux session '${SESSION}' running ${LAUNCH}"

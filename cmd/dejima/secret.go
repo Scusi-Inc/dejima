@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aoos/dejima/internal/api"
 	"golang.org/x/term"
 )
 
@@ -93,6 +96,7 @@ func newSecretSetCmd() *cobra.Command {
 			fmt.Println("⚠  RESTART TERMINALS TO APPLY")
 			fmt.Printf("   It's live in NEW shells in %s; anything already running still has the\n", island)
 			fmt.Println("   old environment. Restart the agent to pick it up.")
+			warnGitHubTokenPrecedence(cmd.Context(), c, island, meta.Name)
 			return nil
 		},
 	}
@@ -158,4 +162,60 @@ func newSecretRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// warnGitHubTokenPrecedence flags the one secret name that can silently change
+// how an island authenticates to GitHub.
+//
+// gh prefers GH_TOKEN/GITHUB_TOKEN from the environment over the credential in
+// its config dir. So setting one of those names on an island that already has a
+// mounted GitHub credential swaps which identity — and which PERMISSIONS — every
+// clone, push and `gh` call uses, with no error and no visible change. That is
+// worth one line at the moment it becomes true, especially while operators are
+// narrowing PAT scopes: the two tokens can differ in what they can reach.
+//
+// Best-effort by design, but never SILENTLY skipped: if the island's credential
+// state can't be determined we still say the conditional form, because "I
+// couldn't check" must not render as "there's nothing to tell you".
+func warnGitHubTokenPrecedence(ctx context.Context, c *api.Client, island, name string) {
+	switch strings.ToUpper(name) {
+	case "GH_TOKEN", "GITHUB_TOKEN":
+	default:
+		return
+	}
+	has, known := islandHasGitHubCredential(ctx, c, island)
+	if known && !has {
+		return // no credential to conflict with — nothing to warn about
+	}
+	fmt.Println()
+	if known {
+		fmt.Printf("⚠  %s OVERRIDES THIS ISLAND'S GITHUB CREDENTIAL\n", name)
+	} else {
+		fmt.Printf("⚠  IF THIS ISLAND HAS A GITHUB CREDENTIAL, %s OVERRIDES IT\n", name)
+		fmt.Println("   (couldn't check this island's credential state, so this may not apply)")
+	}
+	fmt.Println("   gh reads this variable in preference to its config, so clone/push and every")
+	fmt.Println("   `gh` call will now authenticate as this token instead — with whatever")
+	fmt.Println("   permissions it has, which may be more or fewer than before. No error is")
+	fmt.Printf("   raised either way. Check with: dejima github host-credential status %s\n", island)
+}
+
+// islandHasGitHubCredential reports whether the island has a GitHub credential
+// that GH_TOKEN would override, and whether that could be determined at all.
+//
+// Configured OR mounted, deliberately: a credential granted but pending a
+// container recreate is one the operator has decided to have, and staying quiet
+// now would mean the override lands silently at the next restart — the warning
+// would be exactly one recreate too late.
+func islandHasGitHubCredential(ctx context.Context, c *api.Client, island string) (has, known bool) {
+	g, err := c.ListGrants(ctx, island)
+	if err != nil || !g.Credentials.Known {
+		return false, false
+	}
+	for _, s := range g.Credentials.States {
+		if s.Path == "/opt/host/gh-config" {
+			return s.Configured || s.Mounted, true
+		}
+	}
+	return false, true
 }
