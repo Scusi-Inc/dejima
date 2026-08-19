@@ -191,7 +191,8 @@ func (m tuiModel) approvalsPendingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if a.Tier == link.TierDestructive {
-			// Loud typed confirm — never rubber-stamp a destructive action.
+			// Typed confirm on the action id — never rubber-stamp a destructive
+			// action. The gate matches this sentence now; it used to be a single "y".
 			m.confirm = &confirmPrompt{verb: "approve-action", agent: a.ID}
 			return m, nil
 		}

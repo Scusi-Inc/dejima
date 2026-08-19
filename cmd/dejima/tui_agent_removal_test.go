@@ -50,9 +50,10 @@ func TestGuardedAgentRemovalOffersTheOverrideForTheRightAgent(t *testing.T) {
 
 // The escalation must not be cheaper than the thing it escalates. Removing an
 // agent already costs a typed agent id; forcing it past a guard that has just
-// PROVEN there is work to lose must cost at least as much. force-purge gets this
-// backwards today (plain purge types the island name, forcing it takes one "y"),
-// and repeating that here would have been the easy thing to do.
+// PROVEN there is work to lose must cost at least as much. force-purge got this
+// backwards until finding B of the same sweep fixed it — plain purge typed the
+// island name while forcing it took one "y" — and repeating that here would have
+// been the easy thing to do.
 func TestForcedAgentRemovalStillCostsTheTypedID(t *testing.T) {
 	m := seededModel(t, island("alpha", "a1"))
 	m.dirtyOps = map[string]string{}
