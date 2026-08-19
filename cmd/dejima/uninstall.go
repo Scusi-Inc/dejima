@@ -19,6 +19,15 @@ import (
 // when it's safe to purge.
 func islandAtRisk(ctx context.Context, c *api.Client, isl api.IslandInfo) string {
 	if isl.Container != "running" {
+		if isl.NoRepo {
+			// "unpushed work can't be verified" is a category error here, and the
+			// remedy the caller is offered ("commit/push, or `dejima wake` to
+			// verify") is an errand that cannot succeed: there is no git and no
+			// remote, so waking it verifies nothing. Say what's actually true —
+			// this is the one kind of island whose contents exist in exactly one
+			// place — and point at a check that can actually be run.
+			return "no repo, so nothing in it is backed up anywhere — start it and copy out anything you want to keep"
+		}
 		return "not running — unpushed work can't be verified"
 	}
 	d, err := c.GetIsland(ctx, isl.Name)

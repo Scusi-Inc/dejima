@@ -28,7 +28,7 @@ import (
 func TestHostTerminalsAPI(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	h := srv.Handler()
 
 	// Off by default → 403 with a hint.
@@ -95,7 +95,7 @@ func TestDeleteGitHubIdentityWarnsAffectedIslands(t *testing.T) {
 	}
 
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	h := srv.Handler()
 
 	rr := do(t, h, http.MethodDelete, "/v1/credentials/github/work", "")
@@ -130,7 +130,7 @@ func TestGitHubReposHandler(t *testing.T) {
 	}
 
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	var gotName string
 	srv.reposFetch = func(_ context.Context, id githubid.Identity, _ int) (githubid.RepoList, error) {
 		gotName = id.Name
@@ -359,7 +359,7 @@ func newTestServer(t *testing.T) (http.Handler, *fakeRuntime) {
 	t.Setenv("HOME", t.TempDir()) // redirect ~/.dejima to a temp dir
 	ledger.ResetDefault()         // re-resolve the ledger under this test's HOME
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	// Tests must not reach the network: treat every repo as anonymously cloneable
 	// so the create-time identity gate never fires here. Gate behavior is covered
 	// explicitly in create_identity_gate_test.go by stubbing this false.
@@ -942,7 +942,7 @@ func TestControlSocketNeverMountedIntoIsland(t *testing.T) {
 func TestAutonomyEnvAndExtraHosts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	srv.EnableAutonomy("host.docker.internal:7274")
 	h := srv.Handler()
 

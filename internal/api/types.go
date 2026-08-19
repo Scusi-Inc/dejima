@@ -21,6 +21,13 @@ type IslandInfo struct {
 	// Cmd is the user-supplied entrypoint for headless islands; empty for
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
+	// NoRepo marks an island created with a deliberately empty /workspace and no
+	// origin. Callers need this to tell "empty on purpose" from "the clone
+	// failed" — the two look identical from outside, and the whole reason
+	// no_repo is an explicit opt-in is that they must not be confused. It also
+	// changes what deleting the island costs: with no remote, nothing inside has
+	// a copy anywhere else.
+	NoRepo bool `json:"no_repo,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
 	Role  string            `json:"role,omitempty"`
 	Owner string            `json:"owner,omitempty"`
@@ -329,6 +336,18 @@ type CreateIslandRequest struct {
 	// source (see reposrc local-copy mode). Only valid against a local daemon;
 	// Repo then holds the upstream URL to set as origin, or "" for no remote.
 	SeedPath string `json:"seed_path,omitempty"`
+	// NoRepo creates an island with no checkout at all: an empty /workspace and
+	// no origin. For the things that genuinely have no repo — assistant brains
+	// (OpenClaw, Letta, Hermes, Goose), headless task runners, scratch sandboxes,
+	// evaluating a tool before it's a project — rather than making the operator
+	// invent an empty repo to satisfy a check.
+	//
+	// It is an EXPLICIT opt-in, never inferred from an empty Repo. A repo URL
+	// eaten by the shell, or a variable that expanded to nothing, must fail
+	// loudly rather than silently produce an empty island that looks exactly
+	// like a clone that didn't happen. Name is required in this mode — there is
+	// no repo to derive one from.
+	NoRepo bool `json:"no_repo,omitempty"`
 	// Cmd is the entrypoint command for agent="headless" islands (e.g.
 	// "python my_loop.py"). Required when Agent is "headless"; ignored
 	// otherwise. The container runs the command via /bin/sh -c, so shell
