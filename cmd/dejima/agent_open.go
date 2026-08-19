@@ -102,6 +102,88 @@ func waitForForward(ctx context.Context, port int, exited <-chan struct{}, budge
 	}
 }
 
+// gatewayReady reports whether something inside the island is actually serving
+// on the far end of the forward.
+//
+// waitForForward answers a strictly smaller question, and its own comment says
+// so: ssh binds the LOCAL end after auth and does not dial the remote until a
+// connection arrives. So a forward can be "ready" with nothing behind it, and
+// the browser we open lands on a port that accepts and immediately closes. That
+// is not a corner case — an openclaw agent's first launch runs `npm install -g
+// openclaw`, so the gateway is absent for minutes on exactly the run where a new
+// operator is watching.
+//
+// The check is framework-agnostic on purpose: send the least surprising HTTP
+// request there is (the same GET the browser is about to make) and require at
+// least one byte back. Any HTTP server answers something — 200, 404, 401 — while
+// ssh's accept-then-fail gives EOF with nothing read. We deliberately do not ask
+// for a health endpoint or interpret the status: this separates "something is
+// listening" from "nothing is listening", and nothing more.
+//
+// What it explicitly does NOT answer: whether the gateway is healthy, and
+// whether it has a provider key. A gateway that is up and keyless serves this
+// request perfectly and fails every task. Those are different states with
+// different remedies, and a probe that conflated them would confidently name the
+// wrong one — the operator would be told to wait for something already present.
+func gatewayReady(ctx context.Context, port int) bool {
+	d := net.Dialer{}
+	dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.WriteString(conn, "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n"); err != nil {
+		return false
+	}
+	var buf [1]byte
+	n, err := conn.Read(buf[:])
+	// One byte is the whole assertion. Anything the far end says means a server
+	// is there; err with n == 0 is ssh reporting that its remote dial failed.
+	return n > 0 && (err == nil || err == io.EOF)
+}
+
+// waitForGateway blocks until gatewayReady, ssh exits, the budget runs out, or
+// the context is cancelled. It reports whether the gateway came up.
+//
+// notify is called once when the first attempt fails, so a wait that is about to
+// last minutes says what it is waiting for. A silent wait is indistinguishable
+// from a hang, and an operator who Ctrl-Cs a working npm install gets a
+// half-installed agent — which is how this failure compounds.
+func waitForGateway(ctx context.Context, port int, exited <-chan struct{}, budget time.Duration, notify func()) bool {
+	if gatewayReady(ctx, port) {
+		return true
+	}
+	if notify != nil {
+		notify()
+	}
+	deadline := time.Now().Add(budget)
+	for {
+		select {
+		case <-exited:
+			return false
+		case <-ctx.Done():
+			return false
+		case <-time.After(time.Second):
+		}
+		if gatewayReady(ctx, port) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+}
+
+// gatewayReadyBudget is generous because the thing it waits for is a package
+// install, not a process start: an openclaw agent's first launch fetches the
+// framework from npm inside the container. Too short and we tell the operator
+// their gateway is absent while it is still arriving — the same wrong-cause
+// diagnosis this file already exists to stop.
+const gatewayReadyBudget = 5 * time.Minute
+
 // sshFailureHint turns an ssh-layer failure into the remedy that actually fixes
 // it, or "" when the failure isn't ssh's (i.e. the command ran in the container
 // and failed on its own terms).
@@ -403,6 +485,45 @@ func newAgentOpenCmd() *cobra.Command {
 					return fmt.Errorf("couldn't open the forward to %s: %w", island, waitErr)
 				}
 				return fmt.Errorf("couldn't open the forward to %s: %w", island, err)
+			}
+
+			// The forward is up. That is not the same as the gateway being up — see
+			// gatewayReady. Establish it before opening anything, or the browser
+			// lands on a port that accepts and immediately closes, and every
+			// diagnosis printed below is about a service that isn't there yet.
+			gatewayUp := true
+			if !printOnly {
+				gatewayUp = waitForGateway(cmd.Context(), localPort, exited, gatewayReadyBudget, func() {
+					fmt.Println()
+					fmt.Printf("The tunnel is up, but nothing is serving on port %d inside %s yet.\n", gw, island)
+					fmt.Println("  Waiting for the gateway to start. A first launch installs the framework")
+					fmt.Println("  inside the container, which can take a few minutes — this is normal.")
+					fmt.Println("  (Ctrl-C stops the tunnel; the install keeps running.)")
+					fmt.Println()
+				})
+			}
+			if !gatewayUp {
+				// Deliberately not an error, and deliberately not a browser tab. The
+				// tunnel works; it is the far end that hasn't arrived. Holding it open
+				// means the console works the moment the gateway starts, which is
+				// strictly better than a dead tab the operator has to remember to
+				// reload. Say only what we know: nothing here can tell whether the
+				// agent is still installing, crashed, or came up without a provider
+				// key, and naming the wrong one of those is worse than naming none.
+				if cmd.Context().Err() != nil {
+					<-exited
+					return waitErr
+				}
+				fmt.Println()
+				fmt.Printf("Gave up waiting for the gateway after %s. The tunnel is still open.\n", gatewayReadyBudget)
+				fmt.Println()
+				fmt.Println("  Not opening a browser: it would land on a port with nothing behind it.")
+				fmt.Printf("  Open %s yourself once the agent is serving.\n", url)
+				fmt.Println()
+				fmt.Printf("  To see what the agent is doing:  dejima attach %s %s\n", island, agentID)
+				fmt.Println()
+				<-exited
+				return waitErr
 			}
 
 			// A gateway whose console needs an auth token (OpenClaw) can't be reached
