@@ -79,17 +79,105 @@ through the other.
 ### 3. The guard nothing can violate — needs a lethal mutation
 
 If no realistic change makes the guard fail, it isn't a guard. Mutation testing
-is the control, with two traps of its own:
+is the control — and it has three traps of its own, each found the hard way:
 
 - **Assert the mutation applied.** `assert s != before, "MUTATION DID NOT APPLY"`
   in the script. A regex that quietly doesn't match, or a `git diff` blind to an
   untracked file, both produce a clean "survived".
+- **Assert it hit the site you meant.** `assert s.count(old) == 1` before
+  replacing. The weaker check above passes happily when your pattern matches in
+  two places and you mutate the wrong one — the file changed, the mutation is
+  real, and it is somewhere else entirely.
 - **Compile the mutant before reading the result.** Run `go vet` on the mutated
   tree and abort if it fails. Otherwise a broken build gives you a red that looks
   like the guard working.
 
+**The second trap failed in a new direction, which is why it earns its own
+line.** Reviewing a fail-safe path, a string that appeared twice in `server.go`
+was mutated in the *purge* guard while the *agent-removal* guard was the one
+under test. Zero failures, honestly obtained — and the conclusion forming was
+not "my method is broken" but "the author's fail-safe path is untested". Every
+other trap in this document fails toward *all clear*; this one fails toward
+**accusing someone else's work**, which is at least as easy to act on and much
+harder to walk back. Upgrading the assertion from "something changed" to
+"exactly one site matched" caught it immediately.
+
+Both of the first two are one line in the mutation script. Write them before you
+need them; you will not think to add them at the moment you are reading a
+surprising zero.
+
 → `internal/api/background_join_wiring_test.go`,
   `internal/api/primary_launch_parity_test.go`
+
+### 4. The guard that only *sometimes* sees — needs a deterministic reproduction
+
+The guard is correct. It is simply under-powered: the condition it watches for
+occurs on some fraction of runs, so most runs are green and the occasional red
+is indistinguishable from noise.
+
+This is the most expensive shape in the file, and the cost is not technical.
+
+**The tell.** *It survives a mutation that should kill it.* Break the thing the
+guard exists to protect and run the guard: if it still passes, it is not
+watching what you think. That check takes a minute and nobody thinks to run it
+on a test already labelled flaky — which is exactly the test that most needs it.
+
+**Real case (#338).** `internal/wsl` translated a bare `EOF` into "socat isn't
+installed". The translation raced: the diagnosis is read from the subprocess's
+stderr, which `exec` copies on its own goroutine, while the reader's EOF was
+released immediately. About one run in two hundred, the caller got the raw EOF
+the code existed to replace.
+
+The test could see it — and did, at roughly one run in two hundred. With the fix
+removed, and each mutation compile-checked first:
+
+| | 30 runs, fix removed | measured by |
+| --- | --- | --- |
+| the deterministic test | 30 failures | both of us |
+| the original test | 0 failures | first observer |
+| the original test | 1 failure | second observer |
+
+Those last two rows are the point, not a discrepancy to tidy away. **The
+original guard's signal is weak enough that two people measuring the same broken
+code got different answers**, and either could reasonably round theirs to
+"flaky". A guard you have to sample repeatedly to hear is one that will be
+misread by whoever samples it once.
+
+**The control.** A fixture that forces the ordering rather than hoping for it.
+Here, a fake subprocess that closes stdout *before* writing stderr, making the
+race certain instead of occasional. Pick an ordering the real system genuinely
+produces — `wsl.exe`'s stderr crosses a virtualization boundary, so arriving
+after the pipe closes is the actual case, not a contrivance. Then add the
+now-familiar control on the control: assert the fixture still produces the
+ordering it is named for, or the deterministic test quietly degrades into a
+duplicate of the probabilistic one and keeps passing.
+
+→ `internal/wsl/wsl_test.go` — `socat-missing-late`,
+  `TestLateHelperReallyRacesTheDiagnosis`
+
+**The social failure mode, which is the part that actually costs weeks.** The
+technical defect in #338 was one missing `drain` call. The expensive part was
+the label. "Flaky" is a diagnosis that *ends investigation*: once applied, the
+test stops being read as a signal and starts being read as weather. It gets
+applied by whoever is in a hurry, which is everyone, and it is self-sealing —
+the next red confirms the label instead of challenging it.
+
+The issue itself carried an under-powered negative in good faith: *"not
+reproducible on demand"*, supported by three runs. At a 0.5% rate, three runs
+had a ~98.5% chance of looking clean. `-count=400` produced two failures in
+about a second. Nothing was done wrong there except sampling too little and then
+believing the result — the same species as an instrument that fails silently,
+except this one fails toward *"there is no bug"*, which is the direction that
+closes tickets.
+
+Two practical rules:
+
+- **Before calling anything flaky, run it `-count` in the hundreds.** It costs a
+  second and it is the difference between "not reproducible" and a failure you
+  can read.
+- **Never let "flaky" be a resting state.** A flaky test gets a fix or an issue
+  with a named owner. The third state — known-flaky, tolerated, unowned — is
+  where a real defect hides in plain sight with a green suite around it.
 
 ## Instruments get the same treatment
 
@@ -113,6 +201,53 @@ Two corollaries:
   that. Treat disagreement as information about the instrument first and the
   subject second.
 
+### The control that passed for the wrong reason
+
+Everything above assumes the control itself is sound. It has the same failure
+mode one layer up, and this one is worth its own heading because the instinct
+that catches it runs backwards from the usual one.
+
+The three mutation traps in shape 3 are the mechanical version of this; what
+follows is the same failure where no mechanical check would have helped, because
+nothing was wrong with the tooling.
+
+**What happened.** Two things were fixed at once: a wrong boolean pair, and a
+hardcoded path literal that should have come from a canonical table. A mutation
+of the path was expected to fail the test. It passed. That surprise prompted a
+control — put the old literal back, drift the path again, expect a failure this
+time. **It passed too**, and the conclusion "the coupling is fine, the test is
+sound" was one sentence from being written up.
+
+The control had reverted the literal but kept the boolean fix, so the mismatch
+degraded into a different warning — one containing the exact word the test
+greps for. Two things changed; the result was attributed to one.
+
+Re-run properly against unmutated `master` in a throwaway worktree, drifting the
+path *does* fail the test, in both directions. **The original claim was right and
+the method used to confirm it was not**, which is the combination that survives
+review.
+
+**Why this needs its own rule.** A control that fails makes you look harder. A
+control that *passes* makes you stop and write the conclusion. So a
+non-isolating control is at its most dangerous exactly when it agrees with you —
+it doesn't produce no answer, it produces a confident answer about a different
+question.
+
+> **A surprising pass deserves the same suspicion as a surprising failure, and
+> reliably gets less, because it feels like confirmation.**
+
+And the counterfactual is the part worth sitting with, in the words of the
+person it happened to: *if the first mutation had failed, I would have accepted
+it and moved on with an invalid method still in my hands — and used that method
+again on something where nothing surprising happened to interrupt me.*
+
+The remedy is the one this whole document keeps arriving at, applied to the
+control instead of the guard: **change one thing, and prove the control can
+register a failure before trusting the pass.** A throwaway worktree off an
+unmutated base is usually the cheapest way to guarantee the first half.
+
+*(Incident from d2, written up here at their request.)*
+
 ## When not to do this
 
 This is not "double every test". A control earns its place only when the guard's
@@ -130,6 +265,7 @@ different?* If the honest answer is no, write the control.
 | `cmd/dejima/cli_secrets_isolation_test.go` | `TestKeychainStubMakesTheKeychainBackendReachable` | the keychain is genuinely selectable, so `"file"` means the guard worked |
 | `internal/api/background_join_wiring_test.go` | `TestJoinWiringGuardRecognisesAnUnwrappedCall` + `seen == 0` fatal | the matcher still fires, AND it is still matching something |
 | `cmd/dejima/background_join_test.go` | `seen == 0` fatal | the guard is still reading the package it guards |
+| `internal/wsl/wsl_test.go` | the `socat-missing-late` fixture + `TestLateHelperReallyRacesTheDiagnosis` | the race is forced rather than hoped for, and the fixture still forces it |
 
 ## The one-line version
 
