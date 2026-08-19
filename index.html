@@ -170,41 +170,42 @@
 <p class="small">Both get the same isolation, lifecycle, events, and one-API management — bring your own keys and mix vendors freely.</p>
 
 <h2 id="features">Everything you need to run a fleet safely</h2>
+<p class="feat-lede">Past the four above, this is what you get for running agents on your own box.</p>
 <div class="featgrid">
   <div class="feat">
-    <h3>Session resume</h3>
-    <p>Close the laptop, the agent keeps working. Reattach from any device, same screen.</p>
+    <h3>Brokered host access</h3>
+    <p>Grant an island one host folder, read-only. Everything else stays invisible.</p>
   </div>
   <div class="feat">
-    <h3>Repo isolation</h3>
-    <p>One container per project, one git worktree per agent. No collisions in a shared repo.</p>
+    <h3>Brokered MCP servers</h3>
+    <p>You curate which MCP servers exist. An island reaches one only once you grant it.</p>
   </div>
   <div class="feat">
-    <h3>Agent monitoring</h3>
-    <p>State, CPU, and memory for the whole fleet on one screen.</p>
+    <h3>Egress visibility</h3>
+    <p>See every host an island reaches. Put it on an allowlist when you want one.</p>
   </div>
   <div class="feat">
-    <h3>Images and files</h3>
-    <p>Drag a file in, or <kbd>Ctrl-V</kbd> a screenshot. The agent gets the path.</p>
+    <h3>Audit trail</h3>
+    <p>Every brokered crossing is hash-chained, and verifiable after the fact.</p>
   </div>
   <div class="feat">
     <h3>Agent messaging</h3>
     <p>Agents in an island hand off work to each other with <code>dejima msg</code>.</p>
   </div>
   <div class="feat">
-    <h3>Brokered host access</h3>
-    <p>Grant an island one host folder, read-only. Everything else stays invisible.</p>
+    <h3>Cost and token tracking</h3>
+    <p>Spend and token counts per agent, for the session it's in, next to everything else.</p>
   </div>
   <div class="feat">
-    <h3>Egress control</h3>
-    <p>See every host an island reaches. Allow or deny by name.</p>
+    <h3>Local open-weights models</h3>
+    <p>A curated, hardware-aware catalog. Islands share one Ollama backend on your box.</p>
   </div>
   <div class="feat">
-    <h3>Audit trail</h3>
-    <p>Every brokered crossing is hash-chained, and verifiable after the fact.</p>
+    <h3>Scheduled wakes</h3>
+    <p>Wake a hibernated island on a timer and hand its agent the task to run.</p>
   </div>
 </div>
-<p class="small">Also in the box: <strong>brokered host-file access (Port)</strong>, read-only and deny-all by default · <strong>brokered MCP servers</strong> behind a fixed method allow-list · <strong>headless agents</strong> (OpenClaw, Letta, your own loop) alongside terminal ones · <strong>lifecycle verbs</strong> (<code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>) · <strong>scheduled agents</strong> · an <strong>HTTP/WebSocket API</strong> and <strong>webhook events</strong> to build on.</p>
+<p class="small">Also in the box: <strong>headless agents</strong> (OpenClaw, Letta, your own loop) alongside terminal ones · <strong>lifecycle verbs</strong> (<code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>) · <strong>roles and invites</strong> for a shared server · an <strong>HTTP/WebSocket API</strong> and <strong>webhook events</strong> to build on.</p>
 
 <h2 id="quality-of-life">The small stuff, handled</h2>
 <p>The day-to-day frictions of driving agents in a terminal — moving files in, keeping context, jumping around — already solved, so you stay in flow.</p>

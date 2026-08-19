@@ -116,9 +116,11 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .startline + .demo-shot { margin-top: 0; }
 
 /* Feature grid: 8 scannable boxes, 4 across, collapsing to 3 then 2. Titles
-   carry the scan; the sentence is there for the reader who stops. */
+   carry the scan; the sentence is there for the reader who stops. These are the
+   COMPLEMENT of the four hook tiles up top, never a restatement of them. */
+.feat-lede { color: var(--muted); margin: 0 0 0.2rem; }
 .featgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem;
-  margin: 1.2rem 0 1rem; }
+  margin: 0.9rem 0 1rem; }
 .feat { border: 1px solid var(--border); border-radius: 8px; padding: 0.85rem 0.9rem;
   background: transparent; min-width: 0; }
 .feat h3 { margin: 0 0 0.3rem; font-size: 0.92rem; color: var(--hover); line-height: 1.3; }

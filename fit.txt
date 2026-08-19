@@ -159,8 +159,12 @@ Broken, confirmed by the maintainer this week. Do not describe these as working:
   even a correctly-delivered value did not reach the shell the user is actually
   typing in.
   What to tell someone evaluating today: when these ship, islands created AFTER
-  the fix get live rotation, and islands created BEFORE it keep the old mount and
-  need one recreate each to pick it up. Until then, treat a secret as something
+  the fix get live rotation. Existing islands need BOTH a recreate and a rebuilt
+  island image; a recreate alone, against the image already on the host, leaves
+  them behaving exactly as they do now. `dejima upgrade` recreates a container
+  against whatever image is already there rather than building a new one, so the
+  two steps are genuinely separate and it is worth asking which one someone did.
+  Until then, treat a secret as something
   applied at container-create time, and treat removal as not taking effect until
   recreate. Do not repeat "one place to rotate" yet.
   Separately, and this survives both fixes because it is not a bug: if a user sets
