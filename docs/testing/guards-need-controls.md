@@ -183,6 +183,49 @@ Two corollaries:
   that. Treat disagreement as information about the instrument first and the
   subject second.
 
+### The control that passed for the wrong reason
+
+Everything above assumes the control itself is sound. It has the same failure
+mode one layer up, and this one is worth its own heading because the instinct
+that catches it runs backwards from the usual one.
+
+**What happened.** Two things were fixed at once: a wrong boolean pair, and a
+hardcoded path literal that should have come from a canonical table. A mutation
+of the path was expected to fail the test. It passed. That surprise prompted a
+control — put the old literal back, drift the path again, expect a failure this
+time. **It passed too**, and the conclusion "the coupling is fine, the test is
+sound" was one sentence from being written up.
+
+The control had reverted the literal but kept the boolean fix, so the mismatch
+degraded into a different warning — one containing the exact word the test
+greps for. Two things changed; the result was attributed to one.
+
+Re-run properly against unmutated `master` in a throwaway worktree, drifting the
+path *does* fail the test, in both directions. **The original claim was right and
+the method used to confirm it was not**, which is the combination that survives
+review.
+
+**Why this needs its own rule.** A control that fails makes you look harder. A
+control that *passes* makes you stop and write the conclusion. So a
+non-isolating control is at its most dangerous exactly when it agrees with you —
+it doesn't produce no answer, it produces a confident answer about a different
+question.
+
+> **A surprising pass deserves the same suspicion as a surprising failure, and
+> reliably gets less, because it feels like confirmation.**
+
+And the counterfactual is the part worth sitting with, in the words of the
+person it happened to: *if the first mutation had failed, I would have accepted
+it and moved on with an invalid method still in my hands — and used that method
+again on something where nothing surprising happened to interrupt me.*
+
+The remedy is the one this whole document keeps arriving at, applied to the
+control instead of the guard: **change one thing, and prove the control can
+register a failure before trusting the pass.** A throwaway worktree off an
+unmutated base is usually the cheapest way to guarantee the first half.
+
+*(Incident from d2, written up here at their request.)*
+
 ## When not to do this
 
 This is not "double every test". A control earns its place only when the guard's
