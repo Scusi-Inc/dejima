@@ -34,7 +34,7 @@ func capExecServer(t *testing.T, capDir string) http.Handler {
 	t.Setenv("HOME", t.TempDir())
 	ledger.ResetDefault()
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	srv.capAdapter = &capability.ScriptAdapter{Dir: capDir, Timeout: 3 * time.Second}
 	return srv.Handler()
 }

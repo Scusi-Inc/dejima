@@ -71,7 +71,7 @@ func TestSpawnReaper_TTLAndParentGone(t *testing.T) {
 	// Stopped container → agentsLive=false → no liveness exec → isolates the
 	// TTL/parent triggers (state stays "").
 	f := &fakeRuntime{status: runtime.StatusStopped}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 
 	now := time.Now()
 	saveProjectWithAgents(t, "alpha", []project.AgentSpec{
@@ -104,7 +104,7 @@ func TestSpawnReaper_TTLAndParentGone(t *testing.T) {
 func TestSpawnReaper_NoTTLBackstop(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := &fakeRuntime{status: runtime.StatusStopped} // isolate TTL trigger (state "")
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 
 	now := time.Now()
 	saveProjectWithAgents(t, "alpha", []project.AgentSpec{
@@ -133,7 +133,7 @@ func TestSpawnReaper_NoTTLBackstop(t *testing.T) {
 func TestSpawnReaper_RevokeReapsAll(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := &fakeRuntime{status: runtime.StatusStopped}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	h := srv.Handler()
 
 	saveProjectWithAgents(t, "alpha", []project.AgentSpec{

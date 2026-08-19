@@ -73,7 +73,7 @@ func TestAdoptSkipsWhenPanicked(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &fakeRuntime{status: runtime.StatusStopped} // container down, desired up
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 
 	if err := writePanicFlag("test"); err != nil {
 		t.Fatal(err)
