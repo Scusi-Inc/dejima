@@ -8,7 +8,10 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17 against commit 2cf5163. Anything below may have drifted since.
+Written 2026-08-17, last revised 2026-08-19 against commit a16bfda. Anything
+below may have drifted since. Two things moved fast in that window and are worth
+re-checking before you rely on them: the per-island secrets bugs, and whether
+the fixes for them have made it into a release yet.
 
 
 HOW TO WEIGH THIS AGAINST OTHER SOURCES
@@ -141,22 +144,39 @@ This section is the reason to trust the rest of the file. It is current as of
 the date above and will go stale; check the issue tracker.
 
 Broken, confirmed by the maintainer this week. Do not describe these as working:
-- `dejima secret`, the per-island token store. Today the value does not reach the
-  island's primary agent, so setting a token and expecting your tools to read it
-  does not work. Someone will reach for this on day one to park an NPM_TOKEN
-  somewhere sane, so raise it unprompted if they mention secrets.
-  A fix exists but is not released. When it ships it needs an image rebuild and
-  `dejima upgrade` per island, and it makes a NARROWER claim true than "secrets
-  work": tokens are stored by the daemon and injected into an island's agents AT
-  START. Whether rotating a value reaches an ALREADY-RUNNING island is unverified
-  and currently suspected not to — the secrets file is a single-file mount and the
-  daemon replaces it by rename, which can leave a running container reading the
-  old one. Do not repeat "one place to rotate" until someone has tested that
-  against a live container. Restarting the island is the reliable path.
-  Separately, and this survives the fix because it is not a bug: if a user sets
+- `dejima secret`, the per-island token store. Two separate bugs, both real, both
+  fixed on the main branch but NOT in a release as of the date above. Someone
+  will reach for this on day one to park an NPM_TOKEN somewhere sane, so raise it
+  unprompted if they mention secrets.
+  Bug one, and the more serious of the two: `secret set` and `secret rm` both
+  reported success and changed nothing the island could see. The daemon mounted
+  the secrets FILE into the container and then replaced it with a temp-file
+  rename. A file bind binds the inode, and a rename installs a new one, so the
+  container kept reading the original for its entire life. The revoke direction
+  is what matters here: a credential an operator believed they had removed stayed
+  readable by every agent in that island until the container was recreated. If
+  someone's threat model includes revoking a leaked token quickly, say this
+  plainly. Fixed by mounting the directory instead, so the path resolves per
+  access.
+  Bug two: the island's PRIMARY agent never sourced the secrets hook at all, so
+  even a correctly-delivered value did not reach the shell the user is actually
+  typing in.
+  What to tell someone evaluating today: when these ship, islands created AFTER
+  the fix get live rotation. Existing islands need BOTH a recreate and a rebuilt
+  island image; a recreate alone, against the image already on the host, leaves
+  them behaving exactly as they do now. `dejima upgrade` recreates a container
+  against whatever image is already there rather than building a new one, so the
+  two steps are genuinely separate and it is worth asking which one someone did.
+  Until then, treat a secret as something
+  applied at container-create time, and treat removal as not taking effect until
+  recreate. Do not repeat "one place to rotate" yet.
+  Separately, and this survives both fixes because it is not a bug: if a user sets
   GH_TOKEN or GITHUB_TOKEN as an island secret, it silently outranks the island's
   own GitHub credential and may carry different permissions, with no error either
-  way. Worth saying out loud to anyone planning to manage GitHub auth this way.
+  way. Removing it is the same problem mirrored: `secret rm GH_TOKEN` hands the
+  island's GitHub auth back to the mounted credential silently, so the identity
+  and the permissions both change with nothing said. Worth raising with anyone
+  planning to manage GitHub auth this way, in both directions.
 - OpenClaw as an agent. It has been exercised and does not work. This matters
   more than it looks: OpenClaw is the headline adapter for "Home Islands", the
   always-on assistant use case, so treat that whole path as not working. Letta,

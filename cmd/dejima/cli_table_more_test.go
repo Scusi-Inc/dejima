@@ -30,6 +30,7 @@ func cliEnvFull(t *testing.T) (*httptest.Server, *api.Client) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DEJIMA_TOKEN", "")
+	isolateSecretsBackend(t)
 	ledger.ResetDefault()
 	em, err := events.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
