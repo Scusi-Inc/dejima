@@ -151,9 +151,55 @@ func newProcConn(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.Reader, errBuf *
 	go func() {
 		_, err := io.Copy(remote, stdout)
 		pc.setReadErr(err)
+		// Reap BEFORE unblocking the reader, not after.
+		//
+		// The whole point of this type is that a caller sees "socat isn't
+		// installed" instead of "EOF". That diagnosis is read out of the
+		// subprocess's stderr — which exec copies into errBuf on its own
+		// goroutine, and only guarantees complete once Wait returns. Closing
+		// `remote` here hands the caller its EOF immediately, so without this the
+		// caller can be told the connection ended before anyone has read what the
+		// subprocess said about why. It then gets the bare EOF this code exists to
+		// replace, on the exact path a Windows user with a half-finished setup
+		// hits first.
+		//
+		// io.Copy has returned, so all reads from the stdout pipe are done — which
+		// is the ordering cmd.Wait requires of a StdoutPipe caller.
+		pc.drain(drainBudget)
 		_ = remote.Close()
 	}()
 	return pc
+}
+
+// drainBudget bounds the wait above. A subprocess that has closed stdout is
+// normally already exiting, so this costs microseconds; the bound is only here
+// so that a child which closes stdout and then lingers cannot wedge the reader
+// forever. Losing the diagnosis is bad, never surfacing the EOF is worse.
+//
+// A var, not a const, only so a test can set it to zero and reproduce the
+// pre-fix behaviour — see TestLateHelperReallyRacesTheDiagnosis. Nothing in
+// production writes it.
+var drainBudget = 2 * time.Second
+
+// drain waits for the subprocess to be reaped, giving up after d.
+func (c *procConn) drain(d time.Duration) {
+	go c.reap()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-c.reaped:
+	case <-timer.C:
+	}
+}
+
+// reap waits on the subprocess exactly once and closes reaped. Both the stdout
+// pump (on a clean exit) and Close (after killing) call it, so it must be
+// idempotent: a second cmd.Wait returns an error and races the first.
+func (c *procConn) reap() {
+	c.reapOnce.Do(func() {
+		_ = c.cmd.Wait()
+		close(c.reaped)
+	})
 }
 
 // procConn is a net.Conn backed by a wsl.exe subprocess's stdio.
@@ -167,6 +213,8 @@ type procConn struct {
 	// is observable (tests assert no wsl.exe is left behind; a long TUI session
 	// would otherwise accumulate one per dropped connection).
 	reaped chan struct{}
+
+	reapOnce sync.Once
 
 	mu      sync.Mutex
 	readErr error
@@ -231,11 +279,9 @@ func (c *procConn) Close() error {
 		_ = c.cmd.Process.Kill()
 	}
 	// Reap so we don't leak zombies across a long TUI session. The pumps hold the
-	// pipes; Wait closes them, which is what we want on a dead conn.
-	go func() {
-		_ = c.cmd.Wait()
-		close(c.reaped)
-	}()
+	// pipes; Wait closes them, which is what we want on a dead conn. Shared with
+	// the stdout pump's drain — whichever gets there first does the Wait.
+	go c.reap()
 	return err
 }
 
