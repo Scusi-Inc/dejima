@@ -3272,7 +3272,7 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		return nil, err
 	} else if dir != "" {
 		binds = append(binds, runtime.BindMount{
-			HostPath: dir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
+			HostPath: dir, ContainerPath: GitHubCredentialMountPath, ReadOnly: true,
 		})
 	} else if ghOwner(p.Owner) == "" && p.HostGitHubAllowed() {
 		// The host's own ~/.config/gh is a HOST-island-only fallback, and now also
@@ -3286,7 +3286,7 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		if ghDir, err := paths.HostGHConfigDir(); err == nil {
 			if _, statErr := os.Stat(ghDir); statErr == nil {
 				binds = append(binds, runtime.BindMount{
-					HostPath: ghDir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
+					HostPath: ghDir, ContainerPath: GitHubCredentialMountPath, ReadOnly: true,
 				})
 			}
 		}

@@ -27,8 +27,22 @@ func TestUnmatchedConfirmReportsWhatWasExpected(t *testing.T) {
 		},
 		{
 			name:   "y/n gate answered with something else",
-			prompt: confirmPrompt{verb: "reset", island: "wildfire", answer: "sure"},
+			prompt: confirmPrompt{verb: "upgrade", island: "wildfire", answer: "sure"},
 			want:   []string{`"y"`, "sure"},
+		},
+		{
+			// reset erases every agent's memory island-wide, so it types the island
+			// name like purge does — it used to ride on a single "y".
+			name:   "reset island name mistyped",
+			prompt: confirmPrompt{verb: "reset", island: "wildfire", answer: "wildfyre"},
+			want:   []string{"wildfire", "wildfyre"},
+		},
+		{
+			// Restarting an idle agent is a y/n; restarting one mid-task costs the
+			// turn it's working on, so it escalates to typing the id.
+			name:   "mid-task restart answered with y",
+			prompt: confirmPrompt{verb: "restart-agent", island: "wildfire", agent: "w1", answer: "y", strict: true},
+			want:   []string{"w1", "mid-task"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

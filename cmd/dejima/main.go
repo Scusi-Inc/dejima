@@ -1034,19 +1034,32 @@ func newResetCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "reset <name>",
-		Short: "Clear agent state. Preserves workspace.",
-		Long: "Wipes the agent's on-disk state volume (chat history, scratch files) but " +
-			"leaves the workspace untouched. The container is recreated; credentials are " +
-			"re-mounted on next start. Useful for \"fresh conversation, same code.\"",
+		Short: "Erase every agent's memory in an island. Keeps the workspace.",
+		// Say what dies before saying what survives. The old wording ("clear agent
+		// state… credentials are re-mounted on next start") named only the survivor
+		// and implied logins came back; the home volume holds tool auth the agent
+		// did itself (gh, npm), and that does not come back. To pick up a new
+		// secret you want `dejima agent restart --resume`, not this.
+		Long: "Destroys the island's home volume: EVERY agent's conversation history, " +
+			"their scratch files, and any tool logins made inside the island (gh, npm, …). " +
+			"Agents come back blank. The workspace volume — your code and git history — is " +
+			"untouched, and daemon-managed credentials are re-seeded on the next start; " +
+			"anything an agent authenticated itself is not. Cannot be undone.\n\n" +
+			"If you want an agent to pick up a new secret or setting, you want " +
+			"`dejima agent restart <island> <agent> --resume`, which keeps the conversation.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if !force {
-				fmt.Printf("This will clear agent state for island %q (chat history, scratch files).\n", name)
-				fmt.Printf("Workspace will be preserved. Continue? [y/N]: ")
+				fmt.Printf("This ERASES agent memory for every agent in island %q:\n", name)
+				fmt.Printf("  · all conversation history\n")
+				fmt.Printf("  · any tool logins made inside the island (gh, npm, …)\n")
+				fmt.Printf("The workspace (code + git history) is preserved. This cannot be undone.\n")
+				fmt.Printf("To pick up a new secret instead, use: dejima agent restart %s <agent> --resume\n", name)
+				fmt.Printf("Type the island name (%s) to confirm: ", name)
 				var confirm string
 				_, _ = fmt.Scanln(&confirm)
-				if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+				if strings.TrimSpace(confirm) != name {
 					return fmt.Errorf("aborted")
 				}
 			}

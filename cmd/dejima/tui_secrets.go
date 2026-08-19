@@ -148,11 +148,21 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		v.loading, v.notice, v.err = true, "", ""
 		return m, m.loadSecretsCmd(v.island)
+	case "!":
+		// Recreate the island — what actually applies a secret set on a running
+		// island (see the restartPending banner). It was reachable only as [!]
+		// inside the restart checklist, which put the remedy that works three
+		// keystrokes behind the one that doesn't. Same key as in that checklist,
+		// so the two surfaces agree.
+		island := v.island
+		m.secretsPane = nil
+		m.confirm = &confirmPrompt{verb: "recreate-island", island: island}
+		return m, nil
 	case "R":
 		// Open the restart checklist: choose which agents to relaunch so they pick
-		// up the change (a detach/reattach of the client does NOT — the process
-		// keeps its old env). The checklist also offers [!] recreate-island for the
-		// first-secret case, where no mount exists yet.
+		// up an environment change (a detach/reattach of the client does NOT — the
+		// process keeps its old env). Sufficient for a secret only on an island
+		// already recreated since the secrets-mount fix; otherwise [!] above.
 		island := v.island
 		m.secretsPane = nil
 		return m.openRestartView(island), nil
@@ -287,13 +297,32 @@ func (v *secretsView) view(width int) string {
 
 	if v.restartPending {
 		// Loud on purpose: this is the single thing most likely to make the
-		// feature look broken when it is working correctly. And be precise about
-		// the mechanism — "restart the terminal" (detach/reattach the client) does
-		// NOT work; only a container recreate adds/refreshes the mount and
-		// relaunches agents with the new environment.
-		b.WriteString(styleWaiting.Render("⚠  RECREATE TO APPLY TO RUNNING AGENTS"))
+		// feature look broken when it is working correctly.
+		//
+		// RECREATE FIRST — and the reason is a rollout state, not a permanent
+		// truth, so the condition that ends it is stated in the copy rather than
+		// left in a commit message where it can silently go stale.
+		//
+		// Two container generations exist:
+		//
+		//   Created BEFORE 4826773 — which is EVERY island running today — has the
+		//   old single-FILE bind. A file bind holds the inode; the daemon writes
+		//   with CreateTemp+Rename, which installs a new one. So the container
+		//   reads the file it started with for its whole life, however many times a
+		//   process inside it restarts. Only a new container re-resolves.
+		//
+		//   Created AFTER it: the secrets DIRECTORY is bound, the rename lands
+		//   live, and a relaunched login shell parses the new file. Restart applies.
+		//
+		// Recreate is correct for both — it always applies — so leading with it is
+		// never wrong, only sometimes heavier than needed. Leading with restart is
+		// wrong today for every island in existence. Fail toward the one that
+		// works: the cost of being over-cautious is a container recreate, and the
+		// cost of being wrong is an operator who acts, sees no error, and believes
+		// a credential was applied or revoked when it wasn't.
+		b.WriteString(styleWaiting.Render("⚠  RECREATE THE ISLAND TO APPLY THIS   press [!]"))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("   A running agent keeps the environment it launched with. Closing and\n   reopening a terminal does NOT reload it — the agent must relaunch.\n   Press [R] to pick which agents to restart (resume supported), with a\n   recreate-island option for a first-ever secret."))
+		b.WriteString(styleMuted.Render("   A running island keeps the secrets file it started with — writing a\n   secret replaces that file, and the container is still holding the old\n   one. Restarting an agent does NOT change that, and neither does closing\n   and reopening a terminal. Recreating is what applies it: workspace and\n   agent state are preserved, running sessions restart.\n   [R] restarts agents without recreating. That is enough ONLY for an island\n   already recreated since the secrets-mount fix — on any older island it\n   will change nothing, without saying so."))
 		b.WriteString("\n\n")
 	}
 
@@ -309,6 +338,6 @@ func (v *secretsView) view(width int) string {
 		b.WriteString(styleRunning.Render("✓ " + v.notice))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [R] restart to apply   [r] reload   [esc] back"))
+	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [!] recreate to apply   [R] restart agents   [r] reload   [esc] back"))
 	return b.String()
 }

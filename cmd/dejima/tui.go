@@ -275,6 +275,11 @@ type confirmPrompt struct {
 	agent  string // for "remove-agent"
 	answer string
 	force  bool // for "update-daemon": apply even with terminals attached
+	// strict escalates a y/n gate to typing the target's id, for the case where
+	// the same action costs more than usual — restarting an agent that is
+	// mid-task throws away the turn it's working on. Decided when the prompt is
+	// built, so confirmExpectation stays a pure function of the prompt.
+	strict bool
 }
 
 // actionMenu is the per-row context menu (opened with ⏎ on an island/agent/
@@ -1999,9 +2004,27 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	switch c.verb {
 	case "reset":
-		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+		// Typing the island name, like purge. Reset destroys the shared home volume
+		// — every agent's conversation history and every tool login in the island,
+		// irreversibly — and it sits one shift-key from [R] refresh and one letter
+		// from the restart people actually want. `remove-secret` is strictly less
+		// destructive and already asks you to type a name; this should not be the
+		// cheaper keystroke of the two.
+		if strings.TrimSpace(c.answer) == c.island {
 			m.dirtyOps[c.island] = "resetting"
 			return m, m.opCmd(c.island, "reset")
+		}
+	case "restart-agent", "restart-agent-cold":
+		// Relaunch one agent's process so it picks up a new environment (a secret, a
+		// model change). --resume keeps the conversation; cold doesn't. Gated on "y"
+		// normally, and on the agent id when it looks mid-task — see confirmPrompt.strict.
+		ok := strings.ToLower(strings.TrimSpace(c.answer)) == "y"
+		if c.strict {
+			ok = strings.TrimSpace(c.answer) == c.agent
+		}
+		if ok {
+			m.dirtyOps[c.island] = "restarting agent"
+			return m, m.restartAgentCmd(c.island, c.agent, c.verb == "restart-agent")
 		}
 	case "upgrade":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
@@ -2128,13 +2151,18 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 // a verb missing here degrades to silence, so keep the two together.
 func confirmExpectation(c confirmPrompt) string {
 	switch c.verb {
-	case "purge":
+	case "purge", "reset":
 		return fmt.Sprintf("type the island name %q exactly", c.island)
 	case "remove-agent":
 		return fmt.Sprintf("type the agent id %q exactly", c.agent)
 	case "remove-secret":
 		return fmt.Sprintf("type the secret name %q exactly", c.agent)
-	case "reset", "upgrade", "recreate-island", "build-image", "force-purge",
+	case "restart-agent", "restart-agent-cold":
+		if c.strict {
+			return fmt.Sprintf("type the agent id %q exactly — it looks mid-task", c.agent)
+		}
+		return `type "y" to confirm`
+	case "upgrade", "recreate-island", "build-image", "force-purge",
 		"remove-terminal", "approve-action", "open-all-agents", "setup-ssh",
 		"update-client", "update-daemon":
 		return `type "y" to confirm`
@@ -2636,11 +2664,13 @@ func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
 		}
 		// Destructive block, grouped at the very bottom (both rendered in alarm color).
 		if isl.Container == "running" {
-			items = append(items, actionMenuItem{label: "Reset agent state", key: "r", danger: true})
+			// Named for what it destroys. "Reset agent state" sounded like a restart
+			// and sat in the same menu as one; it erases every agent's memory.
+			items = append(items, actionMenuItem{label: "Erase all agent memory (conversations + logins)", key: "r", danger: true})
 		}
 		items = append(items, actionMenuItem{label: "Purge island", key: "d", danger: true})
 	case rowAgent:
-		isl, _ := m.islandByName(row.island)
+		isl, _ := m.islandWithAgentState(row.island)
 		label := agentByID(isl, row.agentID).Label
 		if label == "" {
 			label = row.agentID
@@ -2677,6 +2707,26 @@ func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
 			)
 		}
 		agentIsland, agentRowID := row.island, row.agentID
+		// Restart, right under open/attach: the lifecycle block, mirroring the island
+		// menu's ordering. This is the action an operator wants after adding a secret
+		// or changing a model, and until now it existed only as `dejima agent restart`
+		// on the CLI and as [R] inside the secrets pane. Someone looking for it here
+		// found "Reset agent state" instead — a destructive near-homonym — which is
+		// how an operator lost a working session. Resume is listed first and named for
+		// what it preserves, because continuing the conversation is what people mean.
+		if isl.Container == "running" {
+			busy := agentIsBusy(agentByID(isl, agentRowID))
+			items = append(items,
+				actionMenuItem{label: "Restart (keeps its conversation)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					mm.confirm = &confirmPrompt{verb: "restart-agent", island: agentIsland, agent: agentRowID, strict: busy}
+					return mm, nil
+				}},
+				actionMenuItem{label: "Restart cold (starts a new conversation)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					mm.confirm = &confirmPrompt{verb: "restart-agent-cold", island: agentIsland, agent: agentRowID, strict: busy}
+					return mm, nil
+				}},
+			)
+		}
 		items = append(items,
 			actionMenuItem{label: "Model / provider / key…", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 				return mm.openModelEditor(agentIsland, agentRowID)
@@ -4681,11 +4731,11 @@ func (m tuiModel) renderHelp() string {
 		{"v", "set an agent's LLM provider / model / key (key-requiring types)"},
 		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
 		{"a", "attach here — replaces the dashboard with the agent"},
-		{"s", "settings for the highlighted row — island or agent (attach, model, grants, rename, hibernate, purge…); a nav button links up to global Dejima settings"},
+		{"s", "settings for the highlighted row — island or agent (attach, restart, model, grants, rename, hibernate, purge…); a nav button links up to global Dejima settings"},
 		{"c", "open the island in your editor over SSH, straight at /workspace"},
 		{"h", "hibernate — stop the container, keep all data"},
 		{"w", "wake a hibernated island"},
-		{"r", "reset agent state (workspace preserved) — confirms first"},
+		{"r", "ERASE agent memory island-wide — every conversation + every tool login; workspace kept. To pick up a new secret you want Restart, on the agent's [s] menu"},
 		{"d", "purge — destroy the island and its volumes — confirms first"},
 	})
 
@@ -4833,7 +4883,32 @@ func (m tuiModel) renderConfirm() string {
 	var prompt, input string
 	switch c.verb {
 	case "reset":
-		prompt = fmt.Sprintf("Clear agent state for %q? (workspace preserved)", c.island)
+		// The old copy — "Clear agent state for %q? (workspace preserved)" — named
+		// what survives and not what dies, so it read as reassurance. It isn't:
+		// this wipes the shared home volume, which is where every agent's Claude
+		// transcripts and every tool login live. An operator pressed [r] meaning
+		// "restart so it picks up my new secret" and lost a working session.
+		// Name the loss, and name the thing they probably wanted instead.
+		prompt = fmt.Sprintf("ERASE agent memory for every agent in %q — all conversation history and all tool logins (gh, npm, …). They come back as blank agents. Cannot be undone; the workspace and your git worktrees are untouched.\n\nIf you meant \"pick up a new secret / setting\", that's Restart on the agent's [s] menu — it keeps the conversation.", c.island)
+		input = "the island name (" + c.island + ")"
+	case "restart-agent", "restart-agent-cold":
+		who := c.agent
+		if isl, ok := m.islandByName(c.island); ok {
+			if lbl := agentByID(isl, c.agent).Label; lbl != "" {
+				who = lbl
+			}
+		}
+		if c.verb == "restart-agent" {
+			prompt = fmt.Sprintf("Restart agent %q in %q, continuing its conversation. It relaunches in a fresh shell, so it picks up new secrets and settings.", who, c.island)
+		} else {
+			prompt = fmt.Sprintf("Restart agent %q in %q COLD — a new conversation. Its history stays on disk but it won't be resumed; use plain Restart to continue where it left off.", who, c.island)
+		}
+		if c.strict {
+			// Mid-task: a restart kills the process and the turn it's in the middle
+			// of goes with it. Say so, and make it cost a typed id rather than a key.
+			prompt += fmt.Sprintf("\n\n⚠  %s looks like it's working right now. Restarting loses the turn it's in the middle of.", who)
+			input = "the agent id (" + c.agent + ")"
+		}
 	case "upgrade":
 		prompt = fmt.Sprintf("Recreate %q on the current island image? (all state preserved)", c.island)
 	case "recreate-island":
@@ -4898,7 +4973,7 @@ func (m tuiModel) renderConfirm() string {
 	// obvious, not buried.
 	title := styleHeader.Render("Confirm")
 	switch c.verb {
-	case "purge", "force-purge", "remove-agent", "remove-terminal":
+	case "purge", "force-purge", "reset", "remove-agent", "remove-terminal":
 		title = styleErrored.Render("⚠  Confirm")
 	}
 	// Wrap the question so a long one doesn't run off the box.
