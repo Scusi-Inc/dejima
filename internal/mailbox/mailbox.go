@@ -85,6 +85,11 @@ type Store struct {
 	arrival func(m Message)  // optional: fired (async) after each delivery, for wake-on-message
 	path    string           // "" = in-memory only (no persistence)
 	log     *slog.Logger     // optional, for persist warnings
+
+	// hooks counts arrival hooks that have been started and not yet returned.
+	// The daemon never waits on it — a hook exists precisely so the sender
+	// doesn't. Tests do: see WaitArrivalHooks.
+	hooks sync.WaitGroup
 }
 
 // NewStore returns an in-memory store retaining up to maxPerIsland messages per
@@ -199,8 +204,46 @@ func (s *Store) notify(m Message) {
 	s.mu.Lock()
 	fn := s.arrival
 	s.mu.Unlock()
-	if fn != nil {
-		go fn(m)
+	if fn == nil {
+		return
+	}
+	// Add before the go, not inside it: the counter has to be raised by the time
+	// Send returns, or a caller that sends and then waits can observe zero and
+	// walk away while the hook is still being scheduled.
+	s.hooks.Add(1)
+	go func() {
+		defer s.hooks.Done()
+		fn(m)
+	}()
+}
+
+// WaitArrivalHooks blocks until every arrival hook started so far has returned,
+// giving up after d. It reports whether they all finished.
+//
+// For tests. The hook is deliberately detached — that is the point of it, and
+// the daemon outlives any individual delivery — but a test process does not.
+// A hook that runs on past the end of its test does filesystem work against
+// whatever $HOME has become by then: the next test's t.TempDir (where creating
+// a directory during RemoveAll produces "unlinkat: directory not empty") or, if
+// no test is running, the developer's real home. Both were happening.
+//
+// The deadline is not optional, so that a hook which blocks forever surfaces as
+// a named failure in the test that started it, rather than as the whole binary
+// panicking at the ten-minute mark with the wrong test's name on it. That
+// misattribution is the exact shape of bug this method exists to close.
+func (s *Store) WaitArrivalHooks(d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		s.hooks.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 

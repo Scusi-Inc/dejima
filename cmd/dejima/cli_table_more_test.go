@@ -36,7 +36,7 @@ func cliEnvFull(t *testing.T) (*httptest.Server, *api.Client) {
 	if err != nil {
 		t.Fatalf("events.New: %v", err)
 	}
-	srv := api.NewServer(runtimetest.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), em)
+	srv := joinBackground(t, api.NewServer(runtimetest.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), em))
 	srv.EnableHostTerminals()
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

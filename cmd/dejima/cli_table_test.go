@@ -30,7 +30,7 @@ func cliEnv(t *testing.T) (*httptest.Server, *api.Client) {
 	t.Setenv("DEJIMA_TOKEN", "")
 	isolateSecretsBackend(t)
 	ledger.ResetDefault()
-	srv := api.NewServer(runtimetest.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, api.NewServer(runtimetest.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	t.Setenv("DEJIMA_HOST", ts.URL) // CLI client() reads this; ts.URL carries http://

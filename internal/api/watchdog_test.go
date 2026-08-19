@@ -17,7 +17,7 @@ func newWatchdogServer(t *testing.T, f *fakeRuntime) *Server {
 	if err := (&project.Project{Name: "isl", DesiredState: project.StateRunning}).Save(); err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	return joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 }
 
 func crashedEvents(s *Server) int {

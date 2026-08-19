@@ -360,6 +360,10 @@ not attentive.
 The practical form is one extra step: run the check against a state you know is bad, before
 you trust it against a state you hope is good.
 
+For what that looks like in code — the three shapes a blind guard takes, the control each
+one needs, and when a control is *not* worth writing — see
+[**guards-need-controls.md**](guards-need-controls.md).
+
 ---
 
 ## Rollup

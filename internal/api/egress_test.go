@@ -21,7 +21,7 @@ func TestIslandEgressReadAPI(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ledger.ResetDefault()
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	h := srv.Handler()
 
 	if rr := do(t, h, http.MethodPost, "/v1/islands",
@@ -86,7 +86,7 @@ func TestEgressPolicyAPI(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ledger.ResetDefault()
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	h := srv.Handler()
 	if rr := do(t, h, http.MethodPost, "/v1/islands",
 		`{"repo":"r","name":"alpha","agent":"claude-code"}`); rr.Code != http.StatusCreated {

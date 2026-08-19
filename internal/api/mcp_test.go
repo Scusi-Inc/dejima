@@ -35,7 +35,7 @@ func mcpServer(t *testing.T, fb *fakeBroker) http.Handler {
 	prev := newMCPBroker
 	newMCPBroker = func() (mcpbroker.Broker, error) { return fb, nil }
 	t.Cleanup(func() { newMCPBroker = prev })
-	srv := NewServer(&fakeRuntime{status: runtime.StatusRunning}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(&fakeRuntime{status: runtime.StatusRunning}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	return srv.Handler()
 }
 

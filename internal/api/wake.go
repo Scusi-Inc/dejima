@@ -87,6 +87,18 @@ func (n *wakeNotifier) pendingSince(k nudgeKey) (time.Time, bool) {
 	return t, ok
 }
 
+// WaitBackground blocks until the detached work this server has started —
+// today, the mailbox arrival hooks — has finished, giving up after d and
+// reporting whether it drained.
+//
+// Production never calls this: the hooks are detached so a sender doesn't wait
+// on a wake, and the daemon outlives them. It exists for tests that drive a real
+// in-process server, which do not outlive them. See mailbox.WaitArrivalHooks
+// for what goes wrong without it.
+func (s *Server) WaitBackground(d time.Duration) bool {
+	return s.mailbox.WaitArrivalHooks(d)
+}
+
 // onMailboxArrival is the store's arrival hook. It always emits the
 // mailbox.arrival event (the app-layer override seam), then — when soft-notify is
 // enabled — records a nudge, wakes a hibernated recipient island, and tries to

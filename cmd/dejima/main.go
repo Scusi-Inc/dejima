@@ -1324,6 +1324,7 @@ func resolveDaemonBinary() (string, error) {
 func newInitCmd() *cobra.Command {
 	var (
 		repo       string
+		noRepo     bool
 		name       string
 		agents     []string
 		image      string
@@ -1344,8 +1345,15 @@ func newInitCmd() *cobra.Command {
 			"persistent volume inside the island; the agent runs in a tmux session " +
 			"(claude-code, codex) or directly (headless, with --cmd).",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if repo == "" {
-				return fmt.Errorf("--repo is required")
+			// --no-repo is deliberate; an empty --repo is not. Requiring the flag
+			// means a URL the shell ate can't quietly become an empty island.
+			switch {
+			case noRepo && repo != "":
+				return fmt.Errorf("--no-repo can't be combined with --repo — pick one")
+			case noRepo && name == "":
+				return fmt.Errorf("--name is required with --no-repo (there's no repo to derive it from)")
+			case !noRepo && repo == "":
+				return fmt.Errorf("--repo is required (or --no-repo for an island with an empty workspace)")
 			}
 			multi := len(agents) > 1
 			if multi && strings.TrimSpace(cmdStr) != "" {
@@ -1366,12 +1374,18 @@ func newInitCmd() *cobra.Command {
 			// Resolve the repo client-side: a URL clones directly; a local path
 			// clones from its origin by default, or seeds a read-only local copy
 			// (--local-copy, or when there's no remote) against a local daemon.
-			res, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
-			if err != nil {
-				return err
-			}
-			if name == "" {
-				name = project.DeriveNameFromRepo(repo)
+			// --no-repo has nothing to resolve: no URL, no local path, no seed.
+			// Skip the resolver rather than feed it "" and rely on it declining.
+			res := reposrc.Resolution{Note: "no repo — /workspace starts empty"}
+			if !noRepo {
+				resolved, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
+				if err != nil {
+					return err
+				}
+				res = resolved
+				if name == "" {
+					name = project.DeriveNameFromRepo(repo)
+				}
 			}
 			c, err := client()
 			if err != nil {
@@ -1405,6 +1419,7 @@ func newInitCmd() *cobra.Command {
 				Name:            name,
 				Repo:            res.Repo,
 				SeedPath:        res.SeedPath,
+				NoRepo:          noRepo,
 				Agent:           agent,
 				Agents:          reqAgents,
 				Image:           image,
@@ -1440,7 +1455,8 @@ func newInitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL, or a local path (cloned from its origin by default) (required)")
+	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL, or a local path (cloned from its origin by default) (required, unless --no-repo)")
+	cmd.Flags().BoolVar(&noRepo, "no-repo", false, "create with an empty /workspace and no origin — for assistant brains, task runners and scratch sandboxes that have no repo (requires --name)")
 	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk (captures unpushed commits) instead of cloning from origin; requires a local daemon")
 	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")
 	cmd.Flags().StringArrayVar(&agents, "agent", nil, "agent to run: claude-code (default), codex, or headless (with --cmd); repeat to seed multiple agents")

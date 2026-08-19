@@ -10,15 +10,24 @@ import (
 
 // Root returns ~/.dejima, creating it if necessary.
 func Root() (string, error) {
-	home, err := userHome()
+	root, err := rootPath()
 	if err != nil {
-		return "", fmt.Errorf("locate home dir: %w", err)
+		return "", err
 	}
-	root := filepath.Join(home, ".dejima")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", fmt.Errorf("create %s: %w", root, err)
 	}
 	return root, nil
+}
+
+// rootPath resolves ~/.dejima without creating anything, for the read-only
+// accessors below.
+func rootPath() (string, error) {
+	home, err := userHome()
+	if err != nil {
+		return "", fmt.Errorf("locate home dir: %w", err)
+	}
+	return filepath.Join(home, ".dejima"), nil
 }
 
 // userHome resolves the invoking user's home directory. Under sudo (running as
@@ -111,13 +120,39 @@ func ProjectDir(name string) (string, error) {
 	return dir, nil
 }
 
-// ProjectConfigPath returns ~/.dejima/projects/<name>/config.toml.
+// ProjectConfigPath returns ~/.dejima/projects/<name>/config.toml, creating the
+// island's directory. For writers — Save needs somewhere to write to.
 func ProjectConfigPath(name string) (string, error) {
 	dir, err := ProjectDir(name)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "config.toml"), nil
+}
+
+// ProjectConfigPathRead is ProjectConfigPath for readers: the same path,
+// creating nothing.
+//
+// A read that creates is not a read. Asking whether island "x" exists used to
+// bring ~/.dejima/projects/x/ into being and then answer "no", which is wrong
+// on its own terms and had two observable consequences:
+//
+//   - Stray directories in the operator's real ~/.dejima, one per island name
+//     anything ever looked up. Four of them were sitting in this container.
+//   - The internal/api test flake. project.Load runs inside detached goroutines
+//     (the mailbox arrival hook), which outlive the test that started them. By
+//     the time one lands, $HOME is either the NEXT test's t.TempDir — where
+//     re-creating .dejima during RemoveAll gives "unlinkat: directory not
+//     empty" — or, if no test is running, the developer's real home.
+//
+// The goroutines outliving their test is a separate defect and is still true.
+// This makes their filesystem footprint nil, which is what turns the flake off.
+func ProjectConfigPathRead(name string) (string, error) {
+	root, err := rootPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "projects", name, "config.toml"), nil
 }
 
 // TokenPath returns ~/.dejima/projects/<name>/token — the per-island bearer
