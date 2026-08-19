@@ -248,9 +248,11 @@
 </details>
 
 <details class="disclose">
-  <summary>On Linux, install Docker first</summary>
+  <summary>On Linux, expect to run the installer twice</summary>
   <div class="disclose-body">
-    <p>On macOS the installer sets up Docker for you. On Linux it doesn't, so install Docker before you run <code>install.sh</code>:</p>
+    <p>The installer handles Docker on Linux as well as macOS. If it's missing, it offers to install it through Docker's official script, starts the service, and adds you to the <code>docker</code> group.</p>
+    <p>That group is why there are two passes. Membership only applies to a <em>new</em> login, and without it every later Docker call would need <code>sudo</code>, including the daemon's own, which doesn't run as root. So the installer stops there and tells you to log out, log back in, and run the same line again. It's idempotent and picks up where it stopped.</p>
+    <p>Prefer your package manager? Install Docker yourself first and the installer skips the whole step:</p>
     <pre><code>sudo apt install docker.io          # Debian / Ubuntu
 # sudo dnf install docker            # Fedora
 # sudo pacman -S docker              # Arch
