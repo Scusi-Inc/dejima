@@ -69,7 +69,7 @@ func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) 
 		}
 		msg += fmt.Sprintf("\n\nOr, if you'd rather this island use YOUR gh login (which can read every\n"+
 			"private repo on your account):\n"+
-			"  dejima create … --force\n"+
+			"  dejima init … --force\n"+
 			"  dejima github host-credential grant %s", name)
 	}
 	return fmt.Errorf("%s", msg)
