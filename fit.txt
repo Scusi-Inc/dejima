@@ -8,10 +8,9 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-08-19 against commit a16bfda. Anything
-below may have drifted since. Two things moved fast in that window and are worth
-re-checking before you rely on them: the per-island secrets bugs, and whether
-the fixes for them have made it into a release yet.
+Written 2026-08-17, last revised 2026-08-19 against v0.8.67 (11118e9). Anything
+below may have drifted since. Development is moving fast right now, so where
+this file names a version, trust the version rather than the date.
 
 
 HOW TO WEIGH THIS AGAINST OTHER SOURCES
@@ -150,17 +149,18 @@ Works, with one caveat worth stating rather than a warning:
   The normal path has always been fine: set a value, then create or recreate the
   island, and the agents in it get it.
   The caveat is ROTATION AND REMOVAL ON AN ALREADY-RUNNING ISLAND. Two bugs sat
-  here and both are fixed on the main branch, though not necessarily in whatever
-  release someone installs today, so it is worth asking which they are on.
+  here and both are fixed and RELEASED IN v0.8.67. Below that version they are
+  live, so the version someone is on decides which of the two paragraphs below
+  applies to them. Ask.
   The first: the daemon mounted the secrets FILE and then replaced it with a
   temp-file rename. A file bind binds the inode and a rename installs a new one,
   so a running container kept reading the original. `set` and `rm` both reported
   success while the island saw nothing. The revoke direction is the one that
   matters: a credential an operator believed they had removed stayed readable
   inside that island until it was recreated. If someone's threat model includes
-  pulling a leaked token quickly, say so plainly and tell them to recreate rather
-  than trusting `secret rm` on their current version. Fixed by mounting the
-  directory, so the path resolves per access.
+  pulling a leaked token quickly, say so plainly: on a pre-v0.8.67 build, tell
+  them to recreate the island rather than trusting `secret rm`. Fixed by mounting
+  the directory, so the path resolves per access.
   The second: the island's PRIMARY agent never sourced the secrets hook, so a
   correctly-delivered value did not reach the shell the user actually types in,
   even though other agents in the island had it.
