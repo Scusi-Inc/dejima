@@ -30,6 +30,18 @@ func TestEveryTestServerJoinsItsBackgroundWork(t *testing.T) {
 	}
 
 	var unwrapped []string
+	// seen counts the call sites this guard actually examined. Without it the
+	// guard FAILS OPEN: rename the constructor, or move the helpers, and every
+	// line stops matching — `unwrapped` stays empty and the test reports
+	// all-clear over an empty set. Verified by renaming the regex target: the
+	// package still compiled and this test still passed, watching nothing.
+	//
+	// `len(files) == 0` above is a different assertion. It catches "I am not
+	// reading the package"; this one catches "I am reading it and matching
+	// nothing", which is the failure a rename produces. A source-scanning guard
+	// whose own blindness is silent is an instance of the thing it was written
+	// to catch, so it needs both.
+	seen := 0
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -51,10 +63,16 @@ func TestEveryTestServerJoinsItsBackgroundWork(t *testing.T) {
 			if f == "background_join_test.go" || f == "background_join_wiring_test.go" {
 				continue
 			}
+			seen++
 			if !strings.Contains(line[:loc[0]], "joinBackground(t, ") {
 				unwrapped = append(unwrapped, f+":"+itoa(i+1)+": "+strings.TrimSpace(line))
 			}
 		}
+	}
+	if seen == 0 {
+		t.Fatal("found no api.NewServer calls in this package's tests — the constructor " +
+			"was probably renamed or the servers moved, and this guard is no longer " +
+			"watching anything. It would keep passing forever.")
 	}
 	if len(unwrapped) > 0 {
 		t.Errorf("these test servers do not join their detached work — wrap them as "+
