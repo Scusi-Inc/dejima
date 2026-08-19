@@ -65,7 +65,16 @@ if seen == 0 {
 One line. It separates "I checked and it's fine" from "I checked nothing" —
 different sentences that should not print the same.
 
-→ `cmd/dejima/background_join_test.go`
+→ `cmd/dejima/background_join_test.go`,
+  `internal/api/background_join_wiring_test.go`
+
+The `internal/api` one is worth reading as a cautionary tale rather than an
+example: it shipped WITHOUT the `seen == 0` fatal and was caught within the hour
+by the person writing the `cmd/dejima` twin. It already asserted `len(files) !=
+0`, which looks like the same thing and is not — that catches "I am not reading
+the package", while a renamed constructor leaves the files readable and the
+matches at zero. A guard can have one non-emptiness assert and still fail open
+through the other.
 
 ### 3. The guard nothing can violate — needs a lethal mutation
 
@@ -119,7 +128,7 @@ different?* If the honest answer is no, write the control.
 | --- | --- | --- |
 | `internal/api/primary_launch_parity_test.go` | prologue derived **from** `agentLaunchScript` rather than hardcoded | the check follows the daemon side instead of matching a stale literal |
 | `cmd/dejima/cli_secrets_isolation_test.go` | `TestKeychainStubMakesTheKeychainBackendReachable` | the keychain is genuinely selectable, so `"file"` means the guard worked |
-| `internal/api/background_join_wiring_test.go` | `TestJoinWiringGuardRecognisesAnUnwrappedCall` | the matcher still fires on an unwrapped call |
+| `internal/api/background_join_wiring_test.go` | `TestJoinWiringGuardRecognisesAnUnwrappedCall` + `seen == 0` fatal | the matcher still fires, AND it is still matching something |
 | `cmd/dejima/background_join_test.go` | `seen == 0` fatal | the guard is still reading the package it guards |
 
 ## The one-line version
