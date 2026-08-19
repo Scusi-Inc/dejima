@@ -107,12 +107,42 @@ type provCtx struct {
 	yes    bool // non-interactive: auto-confirm scriptable steps, skip GUI pauses
 	state  *provState
 	env    *envProbe
-	manual []string // GUI-only / off-box steps to print at the end
+	manual []manualStep // GUI-only / off-box steps to print at the end
 }
 
-// addManual records a step the wizard couldn't do for the user, surfaced as a
-// checklist at the end (the only output a --yes run produces for GUI steps).
-func (pc *provCtx) addManual(s string) { pc.manual = append(pc.manual, s) }
+// manualStep is one thing the wizard could not do for the operator.
+//
+// Split into title/detail/why because the flat version of this list was the last
+// thing a new operator read and it was a wall: a dozen bullets, each a sentence
+// with a command buried in it, and nothing saying which of them actually
+// mattered. The field report was "That's a lot of steps" — and most of them were
+// optional. A checklist that does not distinguish "your install is incomplete"
+// from "you could tune this later" gets read as all-required or all-ignorable,
+// and both readings are wrong.
+type manualStep struct {
+	why    string // grouping header; "" files under Optional
+	title  string // one line, imperative — what to do
+	detail string // the command, or the click path
+}
+
+// Why-groups, ordered by how much they matter. Blocking first, taste last.
+const (
+	whyBlocking = "Dejima is NOT usable until these are done"
+	whyRemote   = "To reach this Mac from your other devices"
+	whyReboot   = "To keep running unattended (survive a reboot)"
+	whyPerf     = "Performance — worth doing, not urgent"
+)
+
+// addManual records an OPTIONAL step. Prefer addManualFor when the step has a
+// consequence worth naming; the default here is deliberately the weakest claim.
+func (pc *provCtx) addManual(title, detail string) {
+	pc.manual = append(pc.manual, manualStep{title: title, detail: detail})
+}
+
+// addManualFor records a step under a why-group.
+func (pc *provCtx) addManualFor(why, title, detail string) {
+	pc.manual = append(pc.manual, manualStep{why: why, title: title, detail: detail})
+}
 
 // confirm asks a yes/no question, defaulting to defYes. Under --yes it returns
 // defYes without prompting, so a non-interactive run never blocks — but a step
@@ -242,14 +272,14 @@ func provPhaseSystemConfig(pc *provCtx) error {
 			if err := execInteractive("sudo", "pmset", "-a",
 				"sleep", "0", "disablesleep", "1", "womp", "1", "autorestart", "1"); err != nil {
 				fmt.Printf("  ✗ pmset failed: %v\n", err)
-				pc.addManual("Disable sleep: sudo pmset -a sleep 0 disablesleep 1 womp 1 autorestart 1")
+				pc.addManualFor(whyReboot, "Disable sleep", "sudo pmset -a sleep 0 disablesleep 1 womp 1 autorestart 1")
 			} else if after := pmsetValues(); after["sleep"] == "0" {
 				fmt.Println("  ✓ power settings applied (verified: sleep is off)")
 			} else {
 				fmt.Println("  ⚠ pmset ran but sleep still isn't 0 — check `pmset -g`")
 			}
 		} else {
-			pc.addManual("Disable sleep: sudo pmset -a sleep 0 disablesleep 1 womp 1 autorestart 1")
+			pc.addManualFor(whyReboot, "Disable sleep", "sudo pmset -a sleep 0 disablesleep 1 womp 1 autorestart 1")
 		}
 	}
 
@@ -261,7 +291,7 @@ func provPhaseSystemConfig(pc *provCtx) error {
 	fmt.Println("    System Settings → Users & Groups → Automatically log in as → <your user>")
 	fmt.Println("    (Optional if you installed the daemon as a --system LaunchDaemon, which")
 	fmt.Println("     starts at boot before any login.)")
-	pc.addManual("Enable auto-login: System Settings → Users & Groups → Automatically log in as")
+	pc.addManualFor(whyReboot, "Enable auto-login", "System Settings → Users & Groups → Automatically log in as")
 	return nil
 }
 
@@ -288,6 +318,23 @@ func pmsetValues() map[string]string {
 // tailscaleUpHeadlessHint is the browser-free way onto the tailnet, for a
 // headless Mac mini (the provisioning target). An auth key from the admin
 // console replaces the interactive login `tailscale up` would otherwise need.
+// tailscaleUpCmdHint is the `tailscale up` guidance, and it carries two caveats
+// because BOTH bit the same operator on the same day.
+//
+// On macOS, `brew install tailscale` is the CLI ONLY — there is no tailscaled
+// behind it — so `tailscale up` fails with "dial unix /var/run/tailscaled.socket:
+// no such file or directory" no matter how often it is run. The cask is what
+// ships the service.
+//
+// And on a node that is ALREADY on a tailnet, `tailscale up` with a partial flag
+// set refuses: "changing settings via 'tailscale up' requires mentioning all
+// non-default flags". Prescribing an exact flag list is therefore wrong for every
+// configured machine — so point at the command Tailscale itself prints rather
+// than pretending we know their flags.
+const tailscaleUpCmdHint = "sudo tailscale up --ssh --accept-dns=true\n" +
+	"(no tailscaled? install the app: brew install --cask tailscale-app)\n" +
+	"(already on a tailnet? Tailscale will print the exact command to use — run that one)"
+
 const tailscaleUpHeadlessHint = "Headless / no browser here? Generate an auth key " +
 	"(Tailscale admin console → Settings → Keys → Generate auth key), then run: " +
 	"sudo tailscale up --ssh --accept-dns=true --auth-key=tskey-auth-xxxxx"
@@ -318,10 +365,10 @@ func provPhaseTooling(pc *provCtx) error {
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := cmd.Run(); err != nil {
 				fmt.Printf("  ✗ Homebrew install failed: %v\n", err)
-				pc.addManual("Install Homebrew: " + script)
+				pc.addManualFor(whyBlocking, "Install Homebrew", script)
 			}
 		} else {
-			pc.addManual("Install Homebrew (then re-run): see https://brew.sh")
+			pc.addManualFor(whyBlocking, "Install Homebrew, then re-run this", "see https://brew.sh")
 		}
 	} else {
 		fmt.Println("  ✓ Homebrew present")
@@ -356,10 +403,10 @@ func provPhaseTooling(pc *provCtx) error {
 			stopSudo()
 			if err != nil {
 				fmt.Printf("  ✗ install failed: %v\n", err)
-				pc.addManual("Install Tailscale: brew install --cask tailscale-app (or https://tailscale.com/download)")
+				pc.addManualFor(whyRemote, "Install Tailscale", "brew install --cask tailscale-app   (or https://tailscale.com/download)")
 			}
 		} else if !brewAvail {
-			pc.addManual("Install Tailscale: brew install --cask tailscale-app (after Homebrew is in place)")
+			pc.addManualFor(whyRemote, "Install Tailscale (after Homebrew is in place)", "brew install --cask tailscale-app")
 		}
 	} else {
 		fmt.Println("  ✓ Tailscale present")
@@ -375,15 +422,15 @@ func provPhaseTooling(pc *provCtx) error {
 		} else if pc.yes {
 			// Non-interactive run: can't do a browser login. The auth-key route is
 			// the headless path, so lead with it.
-			pc.addManual(tailscaleUpHeadlessHint)
-			pc.addManual("…or interactively: sudo tailscale up --ssh --accept-dns=true")
+			pc.addManualFor(whyRemote, "Bring Tailscale up (headless — no browser)", tailscaleUpHeadlessHint)
+			pc.addManualFor(whyRemote, "…or interactively, at this Mac's screen", tailscaleUpCmdHint)
 		} else {
 			fmt.Println("  Tailscale isn't up yet (needed for remote + team access).")
 			fmt.Println("  " + tailscaleUpHeadlessHint)
 			if pc.confirm("  Bring Tailscale up now (opens a browser to log in)?", true) {
 				if err := execInteractive("tailscale", "up", "--ssh", "--accept-dns=true"); err != nil {
 					fmt.Printf("  ✗ `tailscale up` failed: %v\n", err)
-					pc.addManual("Bring Tailscale up: sudo tailscale up --ssh --accept-dns=true (or the auth-key route above)")
+					pc.addManualFor(whyRemote, "Bring Tailscale up", tailscaleUpCmdHint)
 				} else {
 					recordTailnetAddrs(pc)
 					if fqdn := pc.state.Answers["tailnet_fqdn"]; fqdn != "" {
@@ -391,7 +438,7 @@ func provPhaseTooling(pc *provCtx) error {
 					}
 				}
 			} else {
-				pc.addManual("Bring Tailscale up: sudo tailscale up --ssh --accept-dns=true (or the auth-key route)")
+				pc.addManualFor(whyRemote, "Bring Tailscale up", tailscaleUpCmdHint)
 			}
 		}
 	}
@@ -409,7 +456,7 @@ func provPhaseTooling(pc *provCtx) error {
 				stopSudo()
 				if err != nil {
 					fmt.Printf("  ✗ install failed: %v\n", err)
-					pc.addManual("Install Docker Desktop: brew install --cask docker-desktop")
+					pc.addManualFor(whyBlocking, "Install Docker Desktop", "brew install --cask docker-desktop")
 				}
 			}
 		}
@@ -423,10 +470,10 @@ func provPhaseTooling(pc *provCtx) error {
 				fmt.Println("  ✓ Docker engine is up")
 			} else {
 				fmt.Println("  ⚠ still not reachable — finish the Docker Desktop first-launch, then re-run")
-				pc.addManual("Start Docker Desktop and confirm `docker version` reaches a server")
+				pc.addManualFor(whyBlocking, "Start Docker Desktop, then confirm it is up", "docker version   (must print a Server section)")
 			}
 		} else if !dockerReachable() {
-			pc.addManual("Start Docker Desktop and confirm `docker version` reaches a server")
+			pc.addManualFor(whyBlocking, "Start Docker Desktop, then confirm it is up", "docker version   (must print a Server section)")
 		}
 	}
 
@@ -438,7 +485,7 @@ func provPhaseTooling(pc *provCtx) error {
 			if err := execInteractive("brew", "install", "gh"); err != nil {
 				fmt.Printf("  ✗ install failed: %v\n", err)
 			} else {
-				pc.addManual("Authenticate gh when ready: gh auth login")
+				pc.addManual("Authenticate gh (only needed for private repos)", "gh auth login")
 			}
 		}
 	}
@@ -497,7 +544,7 @@ func provPhaseVMRightsize(pc *provCtx) error {
 			if pc.yes {
 				fmt.Println("  --yes: proceeding with the resize (this bounces running islands).")
 			} else if !pc.confirm(fmt.Sprintf("  Resize to %dGB now and bounce running islands?", gb), false) {
-				pc.addManual(fmt.Sprintf("Resize the Docker VM to %dGB when islands are idle: colima start --memory %d", gb, gb))
+				pc.addManualFor(whyPerf, fmt.Sprintf("Resize the Docker VM to %dGB (when islands are idle)", gb), fmt.Sprintf("colima start --memory %d", gb))
 				return nil
 			}
 		}
@@ -505,7 +552,7 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		// Omit --cpu/--disk so colima keeps its saved values for those.
 		if err := execInteractive("colima", "start", "--memory", strconv.Itoa(gb)); err != nil {
 			fmt.Printf("  ✗ colima start --memory %d: %v\n", gb, err)
-			pc.addManual(fmt.Sprintf("Right-size the Docker VM: colima start --memory %d", gb))
+			pc.addManualFor(whyPerf, "Right-size the Docker VM", fmt.Sprintf("colima start --memory %d", gb))
 			return nil
 		}
 		fmt.Printf("  ✓ ran: colima start --memory %d\n", gb)
@@ -518,11 +565,11 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		if self, err := os.Executable(); err == nil {
 			if err := execInteractive(self, "doctor", "--fix"); err != nil {
 				fmt.Printf("  ✗ doctor --fix: %v\n", err)
-				pc.addManual(fmt.Sprintf("Right-size the Docker VM (Docker Desktop → Settings → Resources, or colima start --memory %d)", recGB))
+				pc.addManualFor(whyPerf, "Right-size the Docker VM", fmt.Sprintf("Docker Desktop → Settings → Resources   (or: colima start --memory %d)", recGB))
 			}
 		}
 	} else {
-		pc.addManual(fmt.Sprintf("Right-size the Docker VM to ~%dGB (Docker Desktop → Settings → Resources)", recGB))
+		pc.addManualFor(whyPerf, fmt.Sprintf("Right-size the Docker VM to ~%dGB", recGB), "Docker Desktop → Settings → Resources")
 	}
 	return nil
 }
@@ -593,12 +640,12 @@ func provPhaseShellSSH(pc *provCtx) error {
 		if pc.confirm("  Enable Remote Login now (sudo)?", true) {
 			if err := execInteractive("sudo", "systemsetup", "-setremotelogin", "on"); err != nil {
 				fmt.Printf("  ✗ couldn't enable Remote Login: %v\n", err)
-				pc.addManual("Enable Remote Login: System Settings → General → Sharing → Remote Login")
+				pc.addManualFor(whyRemote, "Enable Remote Login", "System Settings → General → Sharing → Remote Login")
 			} else {
 				fmt.Println("  ✓ Remote Login enabled")
 			}
 		} else {
-			pc.addManual("Enable Remote Login: System Settings → General → Sharing → Remote Login")
+			pc.addManualFor(whyRemote, "Enable Remote Login", "System Settings → General → Sharing → Remote Login")
 		}
 	}
 	return nil
@@ -630,7 +677,7 @@ func provPhaseDejimaInstall(pc *provCtx) error {
 		} else {
 			fmt.Println("  Install the server from source, then re-run this wizard to finish:")
 			fmt.Println(indentBlock("git clone https://github.com/aoos/dejima.git ~/code/dejima\ncd ~/code/dejima && make setup", "    "))
-			pc.addManual("Install the Dejima server: git clone …/dejima && make setup")
+			pc.addManualFor(whyBlocking, "Install the Dejima server", "git clone …/dejima && make setup")
 			return nil
 		}
 	}
@@ -663,16 +710,17 @@ func provPhaseDejimaInstall(pc *provCtx) error {
 			"--no-tcp-prompt", "--no-notify-prompt"}
 		if err := execInteractive(self, args...); err != nil {
 			fmt.Printf("  ✗ service install: %v\n", err)
-			pc.addManual(svcHint)
+			pc.addManualFor(whyReboot, "Register dejimad as a service", svcHint)
 			return nil
 		}
 		fmt.Println("  ✓ daemon installed and supervised")
 		if !tailnetUp {
-			pc.addManual("Remote access (:7273) is waiting on Tailscale — run " +
-				"`sudo tailscale up --ssh --accept-dns=true`; the daemon picks it up within a minute, no restart needed")
+			pc.addManualFor(whyRemote,
+				"Remote access on :7273 is waiting on Tailscale (the daemon picks it up within a minute — no restart)",
+				tailscaleUpCmdHint)
 		}
 	} else {
-		pc.addManual(svcHint)
+		pc.addManualFor(whyReboot, "Register dejimad as a service", svcHint)
 	}
 	return nil
 }
@@ -692,32 +740,32 @@ func provPhaseLocalModels(pc *provCtx) error {
 	fmt.Println("  the machine. The model loads once here; islands share it as an OpenAI-")
 	fmt.Println("  compatible endpoint. (You can always do this later with `dejima local`.)")
 	if !pc.confirmUnattended("  Set up local models now (installs Ollama + a recommended model)?", true, false) {
-		pc.addManual("Local models (optional): `dejima local install`, then `dejima local pull <model>`")
+		pc.addManual("Set up local models", "dejima local install, then dejima local pull <model>")
 		return nil
 	}
 	c, err := client()
 	if err != nil {
-		pc.addManual("Local models: daemon not reachable yet — run `dejima local install` once it's up")
+		pc.addManual("Set up local models (the daemon was not up yet)", "dejima local install")
 		return nil
 	}
 	fmt.Println("  Installing the inference backend (Ollama)…")
 	if err := c.LocalInstall(pc.ctx, os.Stdout); err != nil {
-		pc.addManual("Local models: install didn't finish — retry with `dejima local install` (" + err.Error() + ")")
+		pc.addManual("Retry the local-models install — it did not finish ("+err.Error()+")", "dejima local install")
 		return nil
 	}
 	st, err := c.LocalStatus(pc.ctx)
 	if err != nil || st.Recommend.Top == nil {
-		pc.addManual("Local models: pick + pull a model with `dejima local models` / `dejima local pull <model>`")
+		pc.addManual("Pick and pull a local model", "dejima local models, then dejima local pull <model>")
 		return nil
 	}
 	top := st.Recommend.Top
 	if !pc.confirm(fmt.Sprintf("  Pull the recommended model for this host — %s (%s)?", top.Alias, top.Params), true) {
-		pc.addManual("Local models: pull a model with `dejima local pull <model>`")
+		pc.addManual("Pull a local model", "dejima local pull <model>")
 		return nil
 	}
 	fmt.Printf("  Pulling %s…\n", top.Alias)
 	if err := c.PullLocalModel(pc.ctx, top.Alias, os.Stdout); err != nil {
-		pc.addManual("Local models: model pull didn't finish — retry with `dejima local pull " + top.Alias + "`")
+		pc.addManual("Retry the model pull — it did not finish", "dejima local pull "+top.Alias)
 		return nil
 	}
 	fmt.Println("  ✓ local models ready — point an agent at the `local` provider (the `v` model editor).")
@@ -787,16 +835,59 @@ func provPhaseVerify(pc *provCtx) error {
 }
 
 // printProvManual prints the accumulated GUI-only / off-box checklist.
-func printProvManual(pc *provCtx) {
+func printProvManual(pc *provCtx) { fmt.Print(renderProvManual(pc)) }
+
+// renderProvManual returns the checklist as text. Split from printing so the
+// layout can be asserted in a test: this is the last thing a new operator reads,
+// and it is the surface a field report was filed against.
+func renderProvManual(pc *provCtx) string {
 	if len(pc.manual) == 0 {
-		return
+		return ""
 	}
-	fmt.Println()
-	fmt.Println(bold("Still to do by hand (the steps I can't automate):"))
+	var b strings.Builder
+	// Grouped by consequence, blocking first, optional last — and each step is a
+	// TITLE on its own line with the command indented beneath it. The flat
+	// version put a dozen equal-weight bullets in front of a new operator with
+	// the command buried mid-sentence, and the field report was "That's a lot of
+	// steps". Most of them were optional; nothing said so.
+	order := []string{whyBlocking, whyRemote, whyReboot, whyPerf, ""}
+	groups := map[string][]manualStep{}
 	for _, m := range pc.manual {
-		fmt.Printf("  • %s\n", m)
+		groups[m.why] = append(groups[m.why], m)
 	}
-	fmt.Println()
+
+	b.WriteString("\n")
+	b.WriteString(bold("Still to do by hand") + "\n")
+	// Say up front whether the install is finished, because that is the question
+	// the list actually raises and the flat version never answered it.
+	if len(groups[whyBlocking]) == 0 {
+		b.WriteString("Dejima works now — nothing below blocks using it on this Mac.\n")
+	} else {
+		b.WriteString("Some of these are required. They are listed first.\n")
+	}
+
+	for _, why := range order {
+		steps := groups[why]
+		if len(steps) == 0 {
+			continue
+		}
+		header := why
+		if header == "" {
+			header = "Optional"
+		}
+		b.WriteString("\n")
+		b.WriteString("  " + header + "\n")
+		for _, m := range steps {
+			fmt.Fprintf(&b, "  • %s\n", m.title)
+			for _, line := range strings.Split(m.detail, "\n") {
+				if strings.TrimSpace(line) != "" {
+					fmt.Fprintf(&b, "      %s\n", line)
+				}
+			}
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // maybeWriteCheatsheet drops a one-page connection reference on the Desktop.
