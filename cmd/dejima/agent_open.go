@@ -102,6 +102,55 @@ func waitForForward(ctx context.Context, port int, exited <-chan struct{}, budge
 	}
 }
 
+// authStateMissingProviderKey is the daemon's proactive verdict that a
+// key-requiring agent has no resolvable credential, so it will fail at its first
+// task. Computed from the handler registry plus the provider store — never from
+// logs — and already present on every agent the island detail returns.
+const authStateMissingProviderKey = "missing-provider-auth"
+
+// providerKeyPreflight warns, BEFORE the tunnel is dialled, that this agent's
+// framework needs a provider key and dejima has none to give it.
+//
+// This is the second of the two failures that both present as a dead console,
+// and it is the one no probe can see. gatewayReady asks "is anything listening";
+// a keyless gateway answers that perfectly and then fails every task with "No
+// API key found for provider …". The operator sees a console that connects and
+// does nothing, which reads as a broken console.
+//
+// A preflight rather than a probe, deliberately. The answer is declarative
+// registry data the daemon holds before any connection exists, so asking the
+// gateway would be slower, less reliable, and would only work once the gateway
+// is up — which is after the operator has already started guessing.
+//
+// It warns and continues rather than refusing. The console is a reasonable place
+// to go and look, and turning a diagnosable state into a blocked one helps
+// nobody.
+//
+// The wording is kept deliberately distinct from the gateway-absent message.
+// Both states can be true at once — the report that prompted this showed
+// "Default model · Off" alongside a disconnect — and two failures stacked are
+// only untangleable if each says something the other does not.
+func providerKeyPreflight(w io.Writer, agentType, provider, authState string) {
+	if authState != authStateMissingProviderKey {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "⚠  %s NEEDS A PROVIDER KEY AND DOESN'T HAVE ONE\n", agentType)
+	if strings.TrimSpace(provider) == "" {
+		fmt.Fprintln(w, "   No provider is configured for this agent, so it has no model to reach.")
+	} else {
+		fmt.Fprintf(w, "   Its provider is %q, and dejima has no key stored for it.\n", provider)
+	}
+	fmt.Fprintln(w, "   The console will open and connect normally. Every task will then fail with")
+	fmt.Fprintln(w, "   a missing-API-key error from the framework — which looks like a broken")
+	fmt.Fprintln(w, "   console and isn't one.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "   Fix with:  dejima provider set <provider> --key <key>")
+	fmt.Fprintln(w, "   Then:      dejima agent config <island> <agent> --model <provider>/<model>")
+	fmt.Fprintln(w, "   The agent picks the key up when it restarts.")
+	fmt.Fprintln(w)
+}
+
 // gatewayReady reports whether something inside the island is actually serving
 // on the far end of the forward.
 //
@@ -360,6 +409,10 @@ func newAgentOpenCmd() *cobra.Command {
 			// primary). Reuses the shared id/label resolver over the island's agents.
 			agentType := ""
 			agentID := ""
+			// The agent's provider readiness rides along with its type: both come
+			// from the same record, and the preflight below needs it before any
+			// connection exists.
+			agentProvider, agentAuth := "", ""
 			if len(args) == 2 {
 				agentID, err = project.ResolveAgentRef(isl.Agents, args[1])
 				if err != nil {
@@ -367,11 +420,12 @@ func newAgentOpenCmd() *cobra.Command {
 				}
 				for _, a := range isl.Agents {
 					if a.ID == agentID {
-						agentType = a.Type
+						agentType, agentProvider, agentAuth = a.Type, a.Provider, a.AuthState
 					}
 				}
 			} else {
-				agentID, agentType = isl.Agents[0].ID, isl.Agents[0].Type
+				a := isl.Agents[0]
+				agentID, agentType, agentProvider, agentAuth = a.ID, a.Type, a.Provider, a.AuthState
 			}
 
 			// Find the agent type's gateway port.
@@ -444,6 +498,10 @@ func newAgentOpenCmd() *cobra.Command {
 			if printOnly {
 				fmt.Printf("%s\nssh %s\n", url, joinArgs(sshArgs))
 			}
+			// Before anything is dialled: the daemon already knows whether this
+			// agent can reach a model. Saying it now costs nothing and separates the
+			// keyless-gateway failure from the absent-gateway one below.
+			providerKeyPreflight(os.Stdout, agentType, agentProvider, agentAuth)
 			fmt.Printf("forwarding %s/%s gateway → %s  (Ctrl-C to stop)\n", island, agentID, url)
 
 			sshCmd := exec.CommandContext(cmd.Context(), "ssh", sshArgs...)

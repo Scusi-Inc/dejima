@@ -67,6 +67,7 @@ jobs:
             scripts/lib/tty.sh \
             scripts/lib/tty_test.sh \
             scripts/verify-secrets-propagation.sh \
+            scripts/verify-ssh-forward-semantics.sh \
             scripts/integration.sh \
             scripts/install-channels-check.sh \
             scripts/metrics/install-totals.sh \
