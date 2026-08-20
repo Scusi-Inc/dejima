@@ -2437,6 +2437,25 @@ components:
             A stamp behind the running daemon means the container was built from
             an older image and may carry stale /opt shims. Empty for islands
             created before version stamping (provenance unknown).
+        reaps_orphans:
+          type: boolean
+          description: >
+            Whether this container runs an init as PID 1 to reap processes whose
+            parent exited first. Detail endpoint only.
+
+            THREE STATES, and the third is the reason this is nullable.
+            true — the container reaps; nothing accumulates.
+            false — it does not: an island created before the daemon passed
+            --init leaks a zombie per orphaned process for its entire life, and
+            this cannot be changed without recreating the container.
+            ABSENT — the runtime could not be asked. A client MUST render a
+            missing value as "not determined", never as false and never as true.
+            Rendering it false accuses a container nobody inspected; rendering it
+            true hands out a clean bill of health nobody earned.
+
+            Read from the engine, not from the daemon's configuration: the
+            daemon passes --init today, so the record says every island reaps
+            while containers created earlier do not.
         never_heard_from:
           type: boolean
           description: >
