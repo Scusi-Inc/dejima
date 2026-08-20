@@ -416,11 +416,19 @@ func newExecCmd() *cobra.Command {
 // --- cp -------------------------------------------------------------------
 
 func newCpCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "cp <src> <dst>",
-		Short: "Copy a file in or out of an island.",
+	var recursive bool
+	cmd := &cobra.Command{
+		Use:   "cp [-r] <src> <dst>",
+		Short: "Copy a file or folder in or out of an island (not ledgered).",
 		Long: "Either source or destination must take the form <island>:<path>. " +
-			"Examples:\n  dejima cp foo:/workspace/README.md ./\n  dejima cp ./patch.diff foo:/intake/",
+			"With -r, copies a directory; symlinks are never followed and skipped " +
+			"entries are reported.\n\n" +
+			"NOT LEDGERED. This is the convenient path and it writes no audit record. " +
+			"For a scoped, ledgered transfer — one Ledger entry per file — use " +
+			"`dejima port intake -r` instead.\n\n" +
+			"Examples:\n  dejima cp foo:/workspace/README.md ./\n" +
+			"  dejima cp ./patch.diff foo:/intake/\n" +
+			"  dejima cp -r ./notes foo:/home/dejima/notes",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			src, dst := args[0], args[1]
@@ -430,6 +438,16 @@ func newCpCmd() *cobra.Command {
 			}
 			srcIsland, srcPath, srcIsRemote := splitIslandPath(src)
 			dstIsland, dstPath, dstIsRemote := splitIslandPath(dst)
+			if recursive {
+				switch {
+				case srcIsRemote && !dstIsRemote:
+					return cpFromIslandRecursive(cmd.Context(), c, srcIsland, srcPath, dst)
+				case !srcIsRemote && dstIsRemote:
+					return cpToIslandRecursive(cmd.Context(), c, src, dstIsland, dstPath)
+				default:
+					return fmt.Errorf("exactly one of src/dst must be an island path (e.g. foo:/workspace/dir)")
+				}
+			}
 			switch {
 			case srcIsRemote && !dstIsRemote:
 				rc, err := c.ReadFile(cmd.Context(), srcIsland, srcPath)
@@ -456,6 +474,9 @@ func newCpCmd() *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false,
+		"copy a directory (symlinks skipped and reported; still NOT ledgered — see `dejima port intake -r`)")
+	return cmd
 }
 
 func splitIslandPath(s string) (island, path string, isRemote bool) {
