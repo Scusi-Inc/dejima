@@ -221,6 +221,7 @@ type tuiModel struct {
 	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
 	github       *githubView       // non-nil while the self-serve GitHub identity pane is open (settings → GitHub)
 	secretsPane  *secretsView      // non-nil while the per-island Secrets pane is open
+	importPane   *importView       // non-nil while the per-island Import files pane is open
 	restartPane  *restartView      // non-nil while the "which agents to restart" checklist is open
 	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
 	// pendingActions is the polled queue of cross-island actions awaiting approval
@@ -313,6 +314,13 @@ type actionMenuItem struct {
 	// settings") rendered at the top of the menu above a separator — it moves
 	// between the Dejima/island/agent settings levels rather than acting on a row.
 	nav bool
+	// boundary marks the things you do TO an island from OUTSIDE it: putting
+	// files in, putting secrets in. Everything else in this menu configures the
+	// island. They group together at the top under a double rule, because
+	// "crosses the containment boundary" is the distinction the whole product is
+	// organised around — the grants pane draws the same line — and burying them
+	// among settings makes them read as settings.
+	boundary bool
 }
 
 func initialTUIModel(c *api.Client) tuiModel {
@@ -1008,6 +1016,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.restartPending = "a newer dejima is installed on disk — restart dejima to apply it"
 		return m, nil
 
+	case importScopesMsg:
+		return m.onImportScopes(msg), nil
+	case importDoneMsg:
+		return m.onImportDone(msg), nil
 	case islandSecretsMsg:
 		if v := m.secretsPane; v != nil && v.island == msg.island {
 			v.loading = false
@@ -1571,6 +1583,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The add-agent overlay owns keys while open.
 	if m.agentAdder != nil {
 		return m.agentAdderKey(msg)
+	}
+	// The Import pane owns keys while open.
+	if m.importPane != nil {
+		return m.importKey(msg)
 	}
 	// The Secrets pane owns keys while open.
 	if m.secretsPane != nil {
@@ -2693,7 +2709,10 @@ func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
 		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openScopeView(islandName)
 		}})
-		items = append(items, actionMenuItem{label: "Secrets… (tokens this island's tools use)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+		items = append(items, actionMenuItem{label: "⇅  Import files… (brokered, ledgered)", boundary: true, open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openImportView(row.island)
+		}})
+		items = append(items, actionMenuItem{label: "🔑  Secrets… (tokens this island's tools use)", boundary: true, open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openSecretsView(islandName)
 		}})
 		items = append(items, actionMenuItem{label: "Sub-agent budget… (spawn grant)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
@@ -2784,9 +2803,30 @@ func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
 	}
 	// Nav buttons ride at the top above a separator; the cursor lands on the first
 	// real action so opening a menu and hitting ⏎ still does the obvious thing.
-	all := append(nav, items...)
-	m.menu = &actionMenu{title: title, items: all, row: row, sel: len(nav)}
+	//
+	// Between them sit the boundary-crossing actions (import files, secrets),
+	// hoisted out of wherever they were appended. Partitioning here rather than
+	// asking every call site to append in the right order means a new boundary
+	// action lands in the right group by setting one field, instead of by
+	// remembering an ordering convention.
+	boundary, rest := partitionBoundary(items)
+	all := append(append(nav, boundary...), rest...)
+	sel := len(nav)
+	m.menu = &actionMenu{title: title, items: all, row: row, sel: sel}
 	return m, true
+}
+
+// partitionBoundary splits menu items into the boundary-crossing group and
+// everything else, preserving each group's relative order.
+func partitionBoundary(items []actionMenuItem) (boundary, rest []actionMenuItem) {
+	for _, it := range items {
+		if it.boundary {
+			boundary = append(boundary, it)
+			continue
+		}
+		rest = append(rest, it)
+	}
+	return boundary, rest
 }
 
 // actionMenuKey drives the open menu: navigate, select (re-dispatching the
@@ -3453,6 +3493,10 @@ func (m tuiModel) View() string {
 	}
 	if m.github != nil {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderGithubView())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.importPane != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderImport())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.secretsPane != nil {
@@ -5145,14 +5189,28 @@ func (m tuiModel) renderActionMenu() string {
 	b.WriteString("\n\n")
 	// Nav buttons (level-switching) ride at the top; a rule separates them from the
 	// row's own actions.
-	navCount := 0
+	navCount, boundaryCount := 0, 0
 	for _, it := range am.items {
 		if it.nav {
 			navCount++
 		}
+		if it.boundary {
+			boundaryCount++
+		}
 	}
 	for i, it := range am.items {
 		if i == navCount && navCount > 0 {
+			// A DOUBLE rule when a boundary group follows, because what separates
+			// it from the nav buttons is not the same kind of break as what
+			// separates ordinary settings from each other. The heavier rule is the
+			// only thing carrying "these two cross the containment boundary".
+			rule := "   ──────────────────────────"
+			if boundaryCount > 0 {
+				rule = "   ══════════════════════════"
+			}
+			b.WriteString(styleMuted.Render(rule) + "\n")
+		}
+		if boundaryCount > 0 && i == navCount+boundaryCount {
 			b.WriteString(styleMuted.Render("   ──────────────────────────") + "\n")
 		}
 		mark := "   "

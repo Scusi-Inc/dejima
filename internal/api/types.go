@@ -747,15 +747,63 @@ type PortIntakeRequest struct {
 	Scope  string `json:"scope"`          // scope name to read from
 	SrcRel string `json:"src_rel"`        // path relative to the scope's host root
 	Dest   string `json:"dest,omitempty"` // container path; default /intake/<scope>/<src_rel>
+	// Recursive imports a DIRECTORY, one brokered crossing per file. Opt-in
+	// because the blast radius differs by orders of magnitude: the same command
+	// that copies one file copies a tree, and "I meant that directory" and "I
+	// mistyped a directory" look identical without the flag.
+	Recursive bool `json:"recursive,omitempty"`
+	// MaxFiles / MaxBytes bound a recursive import and are checked BEFORE the
+	// first byte moves. Zero means the server default. The point is that
+	// "import my home directory" fails in a second with a number in the message
+	// rather than half-copying for ten minutes.
+	MaxFiles int   `json:"max_files,omitempty"`
+	MaxBytes int64 `json:"max_bytes,omitempty"`
 }
 
 // PortIntakeResponse reports a completed intake.
+//
+// The single-file fields stay populated for a single-file intake, so existing
+// callers are unaffected. A recursive intake fills Files/Skipped/Failed and
+// reports totals; Src/Dest then name the directory rather than a file.
 type PortIntakeResponse struct {
 	Scope  string `json:"scope"`
 	Src    string `json:"src"`  // resolved host path
 	Dest   string `json:"dest"` // container path
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
+
+	// Recursive results. BatchID groups this import's Ledger entries, which stay
+	// one-per-file: --verify walks a hash chain of crossings, and a single batch
+	// entry would have no hash for the things that actually crossed.
+	Recursive bool               `json:"recursive,omitempty"`
+	BatchID   string             `json:"batch_id,omitempty"`
+	Files     []PortIntakeFile   `json:"files,omitempty"`
+	Skipped   []PortIntakeSkip   `json:"skipped,omitempty"`
+	Failed    []PortIntakeFailed `json:"failed,omitempty"`
+}
+
+// PortIntakeFile is one file that crossed.
+type PortIntakeFile struct {
+	Rel    string `json:"rel"` // path relative to the imported directory
+	Dest   string `json:"dest"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// PortIntakeSkip is one entry deliberately not imported. Reported rather than
+// silently dropped: an import that quietly omits files is its own bug, and the
+// caller cannot tell a skipped symlink from a file that was never there.
+type PortIntakeSkip struct {
+	Rel    string `json:"rel"`
+	Reason string `json:"reason"`
+}
+
+// PortIntakeFailed is one file that was attempted and did not cross. Files
+// listed here did NOT arrive; everything in Files did. There is no rollback —
+// un-copying files is a destructive operation invented to tidy up a failure.
+type PortIntakeFailed struct {
+	Rel   string `json:"rel"`
+	Error string `json:"error"`
 }
 
 // PortExportRequest is the body of POST /v1/islands/:name/port/export — a
