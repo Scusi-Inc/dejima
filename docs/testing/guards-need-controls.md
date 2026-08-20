@@ -79,7 +79,7 @@ through the other.
 ### 3. The guard nothing can violate — needs a lethal mutation
 
 If no realistic change makes the guard fail, it isn't a guard. Mutation testing
-is the control — and it has three traps of its own, each found the hard way:
+is the control — and it has five traps of its own, each found the hard way:
 
 - **Assert the mutation applied.** `assert s != before, "MUTATION DID NOT APPLY"`
   in the script. A regex that quietly doesn't match, or a `git diff` blind to an
@@ -91,6 +91,14 @@ is the control — and it has three traps of its own, each found the hard way:
 - **Compile the mutant before reading the result.** Run `go vet` on the mutated
   tree and abort if it fails. Otherwise a broken build gives you a red that looks
   like the guard working.
+- **Prove the UNMUTATED tree is clean first.** If the baseline already fails,
+  every mutation "passes" for reasons that have nothing to do with the mutation,
+  and the results are noise wearing the shape of evidence.
+- **Prove your mutation MACHINERY is inert.** `sdk/openapi_field_parity.py`'s
+  self-test rewrites the spec with a no-op change and re-checks before applying
+  the real mutation, so a red can never be the YAML round-trip rather than the
+  edit. Any harness that parses-and-reserialises, reformats, or regenerates has
+  this exposure; the check for it is one extra run.
 
 **The second trap failed in a new direction, which is why it earns its own
 line.** Reviewing a fail-safe path, a string that appeared twice in `server.go`
@@ -102,9 +110,9 @@ other trap in this document fails toward *all clear*; this one fails toward
 harder to walk back. Upgrading the assertion from "something changed" to
 "exactly one site matched" caught it immediately.
 
-Both of the first two are one line in the mutation script. Write them before you
-need them; you will not think to add them at the moment you are reading a
-surprising zero.
+The first two are one line each in the mutation script, and the fourth is one
+run. Write them before you need them; you will not think to add them at the
+moment you are reading a surprising zero.
 
 → `internal/api/background_join_wiring_test.go`,
   `internal/api/primary_launch_parity_test.go`
@@ -247,6 +255,44 @@ register a failure before trusting the pass.** A throwaway worktree off an
 unmutated base is usually the cheapest way to guarantee the first half.
 
 *(Incident from d2, written up here at their request.)*
+
+## A verification has a timestamp; a gate does not
+
+Everything above is about checks that were never able to see. This one is about
+a check that saw correctly, and then the thing it saw changed.
+
+**What happened.** Before adding a field to an API type, I checked whether
+`openapi.yaml` needed an entry. Two pieces of evidence, both verified rather
+than assumed: the parity gate was route-level, not field-level; and sibling
+fields on the same struct (`built_version`, `never_heard_from`) were not
+documented either. Conclusion: no entry needed.
+
+Both halves were true when I checked them. Between that check and the push,
+another agent's audit documented thirty missing fields — including the two I had
+reasoned from — and added a field-level gate. **The precedent I had verified was
+the drift**, and it was fixed underneath me. CI failed, correctly, on a
+conclusion that had been sound an hour earlier.
+
+**Why this isn't "verify harder".** There was no sloppiness to remove. The check
+was right; its subject moved. Re-running it more carefully, or later, or twice
+(the resampling rule above) would only have narrowed the window, not closed it —
+in a repo with several agents committing, *any* verification can be invalidated
+between the check and the merge.
+
+> **A verification is a statement about a moment. A gate is a statement about
+> every moment after it.**
+
+That is the argument for spending effort on gates rather than on vigilance, and
+it was made here by a gate catching what a careful, correct, well-evidenced
+verification could not. If you find yourself reasoning from "the existing code
+doesn't do X either", notice that you are reasoning from a *precedent* — which is
+someone else's decision, revisable at any time, and not a rule until something
+enforces it.
+
+The practical form: when a check's conclusion is "no change needed", ask whether
+anything would *tell you* if that stopped being true. If the answer is no, the
+conclusion has a shelf life, and the cheapest fix is usually to make the rule
+enforceable rather than to remember it.
 
 ## When not to do this
 
