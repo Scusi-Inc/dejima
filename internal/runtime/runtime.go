@@ -136,6 +136,22 @@ type Runtime interface {
 	// how a surface comes to report containment it never verified.
 	ContainerMounts(ctx context.Context, name string) ([]string, error)
 
+	// ContainerReapsOrphans reports whether the container was created with an
+	// init process as PID 1 — the thing that reaps a process whose parent exited
+	// before it did.
+	//
+	// This is a create-time property and cannot be changed on a running
+	// container, so an island created before --init was passed keeps leaking
+	// zombies for its whole life while the daemon's code says it passes --init.
+	// That divergence is invisible from anywhere except the container itself,
+	// which is why it is asked of the runtime rather than inferred from the
+	// record.
+	//
+	// Like ContainerMounts and unlike Inspect, a failure is returned rather than
+	// flattened to false: "no init" and "couldn't look" are different answers and
+	// only one of them is a problem to report.
+	ContainerReapsOrphans(ctx context.Context, name string) (bool, error)
+
 	// Inspect returns crash-relevant health facts (OOM, restarts, exit code).
 	// Returns a zero Health if the container is missing or unavailable.
 	Inspect(ctx context.Context, name string) (Health, error)

@@ -272,6 +272,19 @@ func (d *Docker) ContainerMounts(ctx context.Context, name string) ([]string, er
 	return dests, nil
 }
 
+// ContainerReapsOrphans reports whether this container runs an init as PID 1.
+// An error is returned (not false) when the container can't be inspected, so a
+// caller can tell "no reaper" from "didn't find out".
+func (d *Docker) ContainerReapsOrphans(ctx context.Context, name string) (bool, error) {
+	out, stderr, err := d.run(ctx, "inspect", "-f", "{{.HostConfig.Init}}", name)
+	if err != nil {
+		return false, fmt.Errorf("inspect init for %s: %w: %s", name, err, strings.TrimSpace(stderr))
+	}
+	// Docker renders an unset Init as "<no value>" rather than "false"; both mean
+	// no reaper, and neither is an error.
+	return strings.TrimSpace(out) == "true", nil
+}
+
 func (d *Docker) Inspect(ctx context.Context, name string) (Health, error) {
 	out, _, err := d.run(ctx, "inspect", "-f",
 		"{{.State.OOMKilled}}|{{.RestartCount}}|{{.State.ExitCode}}", name)

@@ -1041,6 +1041,17 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
 	info.Git = s.gitStatusOf(ctx, p.ContainerName())
+	// Whether this container reaps orphans. Detail-only: one more inspect, and
+	// the answer cannot change without a recreate.
+	//
+	// Asked of the RUNTIME rather than read off our own source. The daemon passes
+	// --init today, so the code says every island reaps; a container created
+	// before that flag existed says otherwise and will go on leaking a zombie per
+	// orphaned process until it is recreated. Left nil on error, because "I
+	// couldn't ask" must not render as "fine" — see IslandInfo.ReapsOrphans.
+	if reaps, err := s.rt.ContainerReapsOrphans(ctx, p.ContainerName()); err == nil {
+		info.ReapsOrphans = &reaps
+	}
 	// Crash health is one extra inspect; detail-only to keep list refreshes cheap.
 	if h, err := s.rt.Inspect(ctx, p.ContainerName()); err == nil {
 		info.Health = &IslandHealth{

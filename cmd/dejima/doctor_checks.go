@@ -324,3 +324,39 @@ func diagnoseIslandSkew(info api.IslandInfo, daemonVer string) skewFinding {
 		return skewFinding{}
 	}
 }
+
+// diagnoseOrphanReaping reports an island whose container has no init as PID 1,
+// so nothing reaps a process whose parent exited first.
+//
+// The daemon passes --init now, which means this cannot be answered from the
+// daemon's own source: every island looks fine there. It is a create-time
+// property, so a container made before that flag keeps leaking a zombie per
+// orphaned process for its entire life — and islands are long-lived by design.
+// The island where this was found was 95% dead processes.
+//
+// WARN rather than FAIL: nothing is broken right now, and on a default docker
+// (pid_max in the millions, no pids cgroup limit) exhaustion is far away. What
+// it costs immediately is that `ps` inside the island becomes useless, which
+// bites whoever is debugging something else — and anyone running with
+// --pids-limit hits the wall much sooner.
+//
+// reaps is three-state. nil means the runtime could not be asked, and that gets
+// an INFO row carrying no verdict rather than silence: a check that quietly
+// didn't run must not look like one that passed.
+func diagnoseOrphanReaping(reaps *bool, island string) skewFinding {
+	if reaps == nil {
+		return skewFinding{
+			status: "INFO",
+			detail: "couldn't determine whether this container reaps orphaned processes",
+		}
+	}
+	if *reaps {
+		return skewFinding{}
+	}
+	return skewFinding{
+		status: "WARN",
+		detail: "no init as PID 1 — orphaned processes become zombies and are never reaped " +
+			"(container predates --init)",
+		fix: "dejima upgrade " + island + " (recreates the container; it cannot be fixed in place)",
+	}
+}

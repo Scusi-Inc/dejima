@@ -68,6 +68,15 @@ type IslandInfo struct {
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
+	// ReapsOrphans reports whether this container has an init as PID 1 to reap
+	// processes whose parent exited first. Detail endpoint only.
+	//
+	// THREE-STATE ON PURPOSE. nil means the runtime couldn't be asked, which is
+	// not the same as false and must never render as "fine": a container created
+	// before the daemon passed --init leaks a zombie per orphaned process for its
+	// whole life, and the daemon's own source says it passes --init, so the
+	// record cannot answer this. Only the runtime can.
+	ReapsOrphans *bool `json:"reaps_orphans,omitempty"`
 	// BuiltVersion / UpgradedVersion are the version-skew stamp: the daemon build
 	// the island's container was first created against, and the build of its most
 	// recent `dejima upgrade` recreate. A stamp behind the running daemon means the
