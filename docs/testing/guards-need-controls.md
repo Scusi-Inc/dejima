@@ -266,6 +266,7 @@ different?* If the honest answer is no, write the control.
 | `internal/api/background_join_wiring_test.go` | `TestJoinWiringGuardRecognisesAnUnwrappedCall` + `seen == 0` fatal | the matcher still fires, AND it is still matching something |
 | `cmd/dejima/background_join_test.go` | `seen == 0` fatal | the guard is still reading the package it guards |
 | `internal/wsl/wsl_test.go` | the `socat-missing-late` fixture + `TestLateHelperReallyRacesTheDiagnosis` | the race is forced rather than hoped for, and the fixture still forces it |
+| `sdk/openapi_field_parity.py` | `--self-test` (three mutations) + five `MIN_*` floors | the check still sees a field removed from either side, AND it is still binding types and reading routes rather than scanning an empty set |
 
 ## The one-line version
 

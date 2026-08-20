@@ -22,6 +22,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      # Go is here for gofmt, which the field-parity self-test uses to prove its
+      # mutated copy of internal/api still PARSES. A mutant that doesn't compile
+      # gives a red that looks like the guard working; without gofmt the
+      # self-test refuses to conclude anything rather than assume.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
       # Pinned, not "@latest": a floating spec linter can fail CI on a rule the
       # spec predates. Bump deliberately.
       - name: Lint spec
@@ -31,6 +38,14 @@ jobs:
         run: |
           pip install pyyaml
           python sdk/openapi_parity.py
+      # The control runs BEFORE the check it validates. Field parity is a
+      # source-scanning guard whose failure mode is silence — a rename or a moved
+      # file leaves it reporting "all clear" over an empty set — so a green run is
+      # worth nothing until the mutation test says the instrument can still see.
+      - name: Field-parity self-test (can the check still see a removed field?)
+        run: python sdk/openapi_field_parity.py --self-test
+      - name: Field parity (json tags + query params ↔ openapi.yaml)
+        run: python sdk/openapi_field_parity.py
 
   python-sdk:
     runs-on: ubuntu-latest

@@ -66,6 +66,16 @@ def test_recv_raises_on_error_envelope():
     assert "session revoked" in ei.value.message
 
 
+def test_recv_returns_none_on_exit_envelope():
+    """`exit` means the terminal ended, not that the link dropped. A caller that
+    can't tell them apart reconnects forever and respawns a shell nobody can
+    escape — so recv must end here, with data still unread behind it."""
+    exited = json.dumps({"type": "exit"})
+    after = json.dumps({"type": "data", "b64": base64.b64encode(b"late").decode()})
+    s = Session(FakeWS([exited, after]))
+    assert s.recv() is None
+
+
 def test_context_manager_closes():
     ws = FakeWS()
     with Session(ws) as s:

@@ -112,10 +112,18 @@ export class Client {
     return this.json("GET", "/v1/islands");
   }
 
-  /** Provision an island. `repo` is a git URL or local path. */
+  /** Provision an island. `repo` is a git URL or local path.
+   *
+   * `noRepo` instead provisions an island with an empty `/workspace` and no
+   * origin — for the things that genuinely have no repo (assistant brains,
+   * headless task runners, scratch sandboxes). It requires `name` and refuses
+   * `repo`/`seedPath`: the daemon never infers the mode from an empty `repo`, so
+   * a URL eaten by the shell fails loudly instead of quietly producing an island
+   * indistinguishable from a failed clone. */
   createIsland(
-    repo: string,
+    repo: string = "",
     opts: {
+      noRepo?: boolean;
       agent?: string;
       name?: string;
       image?: string;
@@ -131,6 +139,7 @@ export class Client {
   ): Promise<any> {
     const body = clean({
       repo,
+      no_repo: opts.noRepo || undefined,
       agent: opts.agent,
       name: opts.name,
       image: opts.image,
@@ -227,9 +236,14 @@ export class Client {
     return this.json("PATCH", `${this.island(name)}/agents/${this.seg(agentId)}`, { json: { label } });
   }
 
-  /** Remove a non-primary agent (kills its session, prunes its worktree). */
-  async removeAgent(name: string, agentId: string): Promise<void> {
-    await this.request("DELETE", `${this.island(name)}/agents/${this.seg(agentId)}`);
+  /** Remove an agent (kills its session, prunes its worktree; the branch and its
+   * commits are kept). The daemon refuses with a 409 when that worktree holds
+   * uncommitted changes — pruning it discards them permanently — or when it
+   * can't check (island hibernated, container wedged); `force` removes anyway. */
+  async removeAgent(name: string, agentId: string, force = false): Promise<void> {
+    await this.request("DELETE", `${this.island(name)}/agents/${this.seg(agentId)}`, {
+      query: force ? { force: true } : undefined,
+    });
   }
 
   /** Relaunch an agent in place so it picks up a changed environment (e.g. a new

@@ -579,11 +579,22 @@ paths:
       tags: [agents]
       summary: Remove an agent (any agent; islands may have zero)
       operationId: removeAgent
+      parameters:
+        - name: force
+          in: query
+          schema: { type: boolean }
+          description: >
+            Bypass the worktree guard, which otherwise refuses the removal when
+            the agent's worktree has uncommitted changes (removing the agent
+            prunes that worktree and discards them permanently; its branch and
+            commits are kept) or when the worktree can't be checked at all —
+            island hibernated, container wedged. An island token's self-reap of an
+            ephemeral sub-agent skips the guard without this flag.
       responses:
         "204": { description: Removed }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Refused — the agent is the container's PID 1 (a headless first agent); hibernate or purge instead
+          description: Refused — the agent is the container's PID 1 (a headless first agent; hibernate or purge instead), or its worktree holds uncommitted work (retry with force=true)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -661,7 +672,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/islands/{name}/session:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AttachLabel"
     get:
       tags: [agents]
       summary: "WebSocket PTY stream (multi-attach). NOTE: WebSocket upgrade — see SessionEnvelope."
@@ -673,6 +686,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Name"
       - $ref: "#/components/parameters/AgentID"
+      - $ref: "#/components/parameters/AttachLabel"
     get:
       tags: [agents]
       summary: "Per-agent WebSocket PTY stream. NOTE: WebSocket upgrade — see SessionEnvelope."
@@ -681,7 +695,9 @@ paths:
       responses:
         "101": { description: Switching Protocols (WebSocket) }
   /v1/islands/{name}/shell/session:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AttachLabel"
     get:
       tags: [agents]
       summary: "WebSocket PTY stream for the island's contained shell at /workspace (shared, resumable; not an agent). NOTE: WebSocket upgrade — see SessionEnvelope."
@@ -1679,6 +1695,7 @@ paths:
         required: true
         schema: { type: string }
         description: Terminal id
+      - $ref: "#/components/parameters/AttachLabel"
     get:
       tags: [terminals]
       summary: "Host-terminal WebSocket PTY stream. NOTE: WebSocket upgrade — see SessionEnvelope."
@@ -2033,6 +2050,16 @@ components:
       required: true
       schema: { type: string }
       description: Agent id (e.g. p1, p2)
+    AttachLabel:
+      name: label
+      in: query
+      schema: { type: string, default: anonymous }
+      description: >
+        How this client names itself to everyone else attached to the same PTY.
+        These streams are multi-attach: the label is echoed back to every peer in
+        the `hello`/`attached` presence list and in the island's attach/detach
+        log, so a human can tell which device or teammate joined. Defaults to
+        "anonymous" when omitted.
   responses:
     NotFound:
       description: Island, agent, or resource not found
@@ -2056,10 +2083,23 @@ components:
         error: { type: string }
     CreateIslandRequest:
       type: object
-      required: [repo]
+      description: >
+        Exactly one clone source is required: `repo`, `seed_path`, or `no_repo`.
+        An empty `repo` is never treated as "no repo" — a URL eaten by the shell,
+        or a variable that expanded to nothing, is refused rather than silently
+        producing an empty island that looks exactly like a clone that failed.
       properties:
-        name: { type: string, description: optional; derived from repo if empty }
-        repo: { type: string, description: git URL or local path }
+        name: { type: string, description: optional; derived from repo if empty (required with no_repo) }
+        repo: { type: string, description: git URL or local path; required unless seed_path or no_repo is set }
+        no_repo:
+          type: boolean
+          description: >
+            Create the island with no checkout at all — an empty /workspace and no
+            origin. For the things that genuinely have no repo: assistant brains,
+            headless task runners, scratch sandboxes, evaluating a tool before it
+            is a project. An EXPLICIT opt-in, never inferred from an empty `repo`,
+            and rejected alongside `repo`/`seed_path`. `name` is required in this
+            mode — there is no repo to derive one from.
         agent: { type: string, default: claude-code }
         image: { type: string, default: "dejima/island:latest" }
         cmd: { type: string, description: "entrypoint for agent=headless (required then; ignored otherwise)" }
@@ -2349,12 +2389,24 @@ components:
         agent: { type: string }
         image: { type: string }
         cmd: { type: string }
+        no_repo:
+          type: boolean
+          description: >
+            The island was created with a deliberately empty /workspace and no
+            origin. Needed to tell "empty on purpose" from "the clone failed" —
+            the two look identical from outside. It also changes what deleting the
+            island costs: with no remote, nothing inside has a copy anywhere else.
         role: { type: string }
         owner: { type: string }
         tags: { type: object, additionalProperties: { type: string } }
         github_cred_missing: { type: boolean, description: named GitHub identity no longer resolves for this island's tenant (clone/push will fail) }
+        github_host_credential:
+          allOf: [ { $ref: "#/components/schemas/HostGitHubCredential" } ]
+          description: whether this island may use the HOST operator's own gh login; omitted on list responses, which don't compute it
+        secrets_count: { type: integer, description: "how many secrets the island holds — a count, read from island metadata (never the keychain), never the names or values" }
         state: { type: string, description: desired state from config }
         container: { type: string, description: observed runtime status }
+        no_hibernate: { type: boolean, description: "the island is pinned awake — exempt from idle auto-hibernate (set via PATCH /v1/islands/{name})" }
         created_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
         attached:
@@ -2377,6 +2429,22 @@ components:
         agents:
           type: array
           items: { $ref: "#/components/schemas/AgentInfo" }
+        built_version: { type: string, description: "daemon build the island's container was first created against; empty for islands created before version stamping" }
+        upgraded_version:
+          type: string
+          description: >
+            Daemon build of the island's most recent `dejima upgrade` recreate.
+            A stamp behind the running daemon means the container was built from
+            an older image and may carry stale /opt shims. Empty for islands
+            created before version stamping (provenance unknown).
+        never_heard_from:
+          type: boolean
+          description: >
+            The container is running yet NO agent has emitted a single
+            agent-state event since boot, past a short grace window. The direct
+            broken-shim signal: a stale notify hook silently no-ops, so the
+            heartbeat never fires and mail-nudges, idle-hibernate and the idle
+            metric all go dark with no error.
         identity:
           allOf: [ { $ref: "#/components/schemas/IslandIdentity" } ]
           description: operator-set visual color+glyph override; omitted when unset
@@ -2576,6 +2644,7 @@ components:
         ttl: { type: integer, format: int64, description: per-sub-agent max lifetime in nanoseconds (0 = no time cap) }
         per_agent_memory: { type: string, description: "per-sub-agent memory cap, e.g. 512m" }
         per_agent_cpus: { type: string, description: "per-sub-agent cpu cap, e.g. 1.0" }
+        used: { type: integer, description: "lifetime sub-agents spawned under this grant — what max_total is measured against; reset when the grant is replaced (a fresh grant is a fresh budget)" }
         created_at: { type: string, format: date-time }
         created_by: { type: string }
     SpawnGrantRequest:
@@ -2720,6 +2789,45 @@ components:
         links:
           type: array
           items: { $ref: "#/components/schemas/LinkGrant" }
+        host_github:
+          allOf: [ { $ref: "#/components/schemas/HostGitHubCredential" } ]
+          description: >
+            The host-operator gh credential grant. Unlike the four above it is a
+            single yes/no rather than a list, and it is the one grant that used to
+            be implicit — it appears here so "what does this island hold" has one
+            answer instead of four plus a special case.
+        credentials:
+          allOf: [ { $ref: "#/components/schemas/CredentialMountReport" } ]
+          description: what the RUNNING container actually has mounted, next to what the config says it should
+    CredentialMountReport:
+      type: object
+      description: >
+        The answer to "what credentials does this island actually have right
+        now". Credential mounts are fixed at container create, so a grant or
+        revoke does not take effect until a recreate — and a surface that reports
+        only the record answers a question about intent while the operator reads
+        it as a question about the running island.
+      properties:
+        known:
+          type: boolean
+          description: >
+            False when the runtime couldn't be asked — no container yet, or the
+            engine didn't answer. Consumers MUST render this as "not determined"
+            rather than as agreement: an unasked question is not a clean answer,
+            and a containment surface under-reporting access reassures instead of
+            failing. `states` is empty when this is false.
+        reason: { type: string, description: "explains a false `known`, for a surface to show verbatim" }
+        states:
+          type: array
+          items: { $ref: "#/components/schemas/CredentialMountState" }
+    CredentialMountState:
+      type: object
+      description: One credential the island can be given, in operator terms rather than container paths. `configured` and `mounted` disagreeing means a recreate is needed before the record describes reality.
+      properties:
+        label: { type: string, description: "e.g. GitHub credential" }
+        path: { type: string, description: where it is mounted in the container }
+        configured: { type: boolean, description: what the island's config implies it should have }
+        mounted: { type: boolean, description: what the container actually has right now }
     MCPCallRequest:
       type: object
       required: [server, method]
@@ -2878,6 +2986,15 @@ components:
         supported_providers: { type: array, items: { type: string } }
         suggested_models: { type: array, items: { type: string } }
         gateway_port: { type: integer, description: "0 = no localhost UI to open" }
+        dashboard_token_cmd:
+          type: string
+          description: >
+            Command, run inside the container, that prints the framework's gateway
+            auth token. With `dashboard_token_suffix` it lets a client open the
+            console already authenticated. Both empty = open the gateway root.
+        dashboard_token_suffix: { type: string, description: "appended to the console URL with \"{token}\" substituted, e.g. \"#token={token}\"" }
+        bundled: { type: boolean, description: "tier-1 agent preinstalled in the island image; false = self-installs on first launch" }
+        install_cmd: { type: array, items: { type: string }, description: "informational install command for a non-bundled agent, so a picker can surface \"installs on first use\"" }
     AgentTypesResponse:
       type: object
       properties:
@@ -2982,7 +3099,8 @@ components:
         time: { type: string, format: date-time }
         type: { type: string, description: "port.grant | port.revoke | trade.read | trade.write | capability.* | mcp.* | api.request | <lifecycle event>" }
         island: { type: string }
-        agent: { type: string }
+        agent: { type: string, description: "agent id — the machine-keyed lookup handle" }
+        agent_label: { type: string, description: "the agent's human-given name, for read-side display; `agent` stays the id" }
         scope: { type: string }
         path: { type: string, description: "host/scope path (trades) or request path (api.request)" }
         mode: { type: string }
@@ -3044,6 +3162,15 @@ components:
         island_image: { type: string }
         host_terminals_enabled: { type: boolean }
         ssh_addr: { type: string }
+        ssh_host_key:
+          type: string
+          description: >
+            The SSH façade's host public key, as an OpenSSH `ssh-ed25519 AAAA…`
+            line, served alongside `ssh_addr` so a client pins it in a known_hosts
+            file it manages. That way a tunnel verifies the key over the trusted
+            API rather than TOFU, and a rotated key self-heals instead of failing
+            with "REMOTE HOST IDENTIFICATION HAS CHANGED". Empty on daemons
+            predating this and on daemons started without `--ssh`.
         daemon_version: { type: string }
         api_version: { type: integer }
         panicked: { type: boolean }
@@ -3077,11 +3204,27 @@ components:
 
         Client → server: `{type: data, b64}` for keystrokes and
         `{type: resize, rows, cols}` to resize the PTY.
+
+        `{type: exit}` is the server's application-level end signal: the bridged
+        terminal itself ended (a detach, an `exit`, a tmux that died on start).
+        A client must stop on it rather than treat the websocket close as a
+        transport drop and reconnect forever — that respawns a shell the operator
+        can't escape. An abnormal close WITHOUT an `exit` is a dropped link and
+        should be reconnected through; the tmux session survives it.
       properties:
-        type: { type: string, enum: [hello, data, resize, error] }
+        type: { type: string, enum: [hello, data, resize, error, exit] }
         b64: { type: string, description: base64-encoded PTY bytes (plaintext for type=error) }
         rows: { type: integer }
         cols: { type: integer }
+        term:
+          type: string
+          description: >
+            The client's TERM (and `colorterm` its COLORTERM), sent on the FIRST
+            resize and ignored on later ones — they describe the client's
+            terminal, which does not change mid-session. Optional in both
+            directions: an older client omits them and an older daemon ignores
+            them, so either side upgrading alone is safe.
+        colorterm: { type: string, description: the client's COLORTERM; see term }
         attached:
           type: array
           items: { $ref: "#/components/schemas/PresenceEntry" }
