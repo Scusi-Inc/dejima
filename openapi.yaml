@@ -769,7 +769,22 @@ paths:
         in: path
         required: true
         schema: { type: string }
-        description: File path within the island (defaults to the primary worktree)
+        description: |
+          File path within the island (defaults to the primary worktree).
+
+          MULTI-SEGMENT. The daemon route is `{path...}` — a wildcard that
+          captures every remaining segment, so this value contains slashes and
+          they are part of the path, not encoded data.
+
+          OpenAPI has no way to say that, and this is a plain `type: string`
+          path parameter because there is no truthful alternative. A conforming
+          generated client percent-encodes a simple path parameter WHOLE, so
+          `/workspace/docs/spec.md` is sent as `%2Fworkspace%2Fdocs%2Fspec.md`
+          and matches no route. That is the spec's limitation, not the client's
+          bug, and it has already cost one integrator an afternoon.
+
+          If you are generating a client: bypass it for this operation and build
+          the URL yourself, encoding each segment but not the separators.
     get:
       tags: [exec-and-files]
       summary: Read a file from an island
