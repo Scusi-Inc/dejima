@@ -289,7 +289,26 @@ func (d *Docker) Inspect(ctx context.Context, name string) (Health, error) {
 }
 
 func (d *Docker) CreateContainer(ctx context.Context, req CreateRequest) (string, error) {
-	args := []string{"run", "-d", "--name", req.Name, "--restart", "unless-stopped"}
+	// --init puts tini at PID 1 so orphaned grandchildren get reaped.
+	//
+	// Without it the island's PID 1 is the entrypoint's `tail -f /dev/null`
+	// (image/start.sh), which never calls wait(). Anything whose parent exits
+	// first is reparented to it and becomes a zombie FOREVER — a zombie cannot be
+	// killed, only reaped, and nothing in the container reaps. Measured in a
+	// 29-hour-old island: 541 zombies out of 572 processes, 95% of the table, all
+	// ordinary agent work (gh, bash, go, sleep) rather than anything exotic.
+	//
+	// Not urgent at Docker's defaults — pid_max is in the millions and these
+	// islands set no cgroup pids limit, so exhaustion is decades away. It matters
+	// because the accumulation is monotonic and islands are long-lived by design,
+	// because anyone running with --pids-limit hits it far sooner, and because a
+	// process table that is 95% dead makes `ps` useless exactly when someone is
+	// debugging something else.
+	//
+	// A runtime flag rather than a change to start.sh: it cannot be undone by a
+	// later edit to the entrypoint that does not know about this, and tini's
+	// presence does not change what the entrypoint does.
+	args := []string{"run", "-d", "--init", "--name", req.Name, "--restart", "unless-stopped"}
 	if req.Network != "" {
 		args = append(args, "--network", req.Network)
 	}
