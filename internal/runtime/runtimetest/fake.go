@@ -27,6 +27,11 @@ type Fake struct {
 	// fail, which is how a test exercises the "couldn't determine" path.
 	MountsVal []string
 	MountsErr error
+	// ReapsVal overrides what ContainerReapsOrphans reports; ReapsErr forces it
+	// to fail, which is how a test exercises the "couldn't determine" path. The
+	// default (nil/nil) reports true, matching a container the daemon created.
+	ReapsVal *bool
+	ReapsErr error
 	// lastCreate records the most recent CreateContainer so ContainerMounts can
 	// answer consistently with what the server actually asked for.
 	lastCreate runtime.CreateRequest
@@ -95,6 +100,20 @@ func (f *Fake) ContainerMounts(context.Context, string) ([]string, error) {
 		dests = append(dests, b.ContainerPath)
 	}
 	return dests, nil
+}
+
+// ContainerReapsOrphans reports ReapsVal when set, else true — the state of a
+// container this daemon created. ReapsErr forces the "couldn't look" path.
+func (f *Fake) ContainerReapsOrphans(context.Context, string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ReapsErr != nil {
+		return false, f.ReapsErr
+	}
+	if f.ReapsVal != nil {
+		return *f.ReapsVal, nil
+	}
+	return true, nil
 }
 
 func (f *Fake) Exec(_ context.Context, _ string, cmd []string) (string, string, int, error) {
