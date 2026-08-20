@@ -28,6 +28,27 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # The race detector, on ubuntu only and only where it can find anything.
+      #
+      # Nothing has EVER run `-race` against this codebase, in a daemon full of
+      # goroutines, mutexes, a per-project lock and a mailbox with detached
+      # arrival hooks. The one race we found (a hook outliving the test that
+      # started it, #347/#349) surfaced as a TempDir cleanup failure and was
+      # diagnosed by hand-instrumenting Root() — which is the slow, lucky way.
+      #
+      # Scoped to the concurrent packages rather than ./... because -race is
+      # 2-10x slower and most of this tree is sequential; a whole-suite run would
+      # be paid on every PR to cover code that cannot race. Per-PR rather than
+      # nightly ON PURPOSE: a nightly fails at 3am, nobody is watching, and it
+      # becomes wallpaper within a fortnight — this repo has a torn-down QA
+      # runner as evidence. A check that fails where someone is already looking
+      # is worth more than a thorough one nobody reads.
+      #
+      # Islands cannot run this themselves (no C toolchain, so CGO_ENABLED=1
+      # will not build), so it is CI's job or it does not happen.
+      - name: race detector (concurrent packages)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./internal/api/... ./internal/bridge/... ./internal/events/... ./internal/mailbox/...
 
   lint:
     runs-on: ubuntu-latest
