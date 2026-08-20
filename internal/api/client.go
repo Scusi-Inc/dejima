@@ -594,8 +594,16 @@ func (c *Client) RevokeCapability(ctx context.Context, name, target string) erro
 
 // PortIntake brokers a host file (within a granted scope) into the island.
 func (c *Client) PortIntake(ctx context.Context, name, scope, srcRel, dest string) (*PortIntakeResponse, error) {
+	return c.PortIntakeRecursive(ctx, name, scope, srcRel, dest, false)
+}
+
+// PortIntakeRecursive brokers a file, or a whole directory when recursive is set
+// — one ledgered crossing per file. A partial result comes back as 207 with the
+// per-file lists populated, which is below the client's error threshold on
+// purpose: the caller needs the body to see what actually crossed.
+func (c *Client) PortIntakeRecursive(ctx context.Context, name, scope, srcRel, dest string, recursive bool) (*PortIntakeResponse, error) {
 	var out PortIntakeResponse
-	req := PortIntakeRequest{Scope: scope, SrcRel: srcRel, Dest: dest}
+	req := PortIntakeRequest{Scope: scope, SrcRel: srcRel, Dest: dest, Recursive: recursive}
 	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/port/intake", req, &out); err != nil {
 		return nil, err
 	}

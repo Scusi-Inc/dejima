@@ -10,6 +10,7 @@ package runtimetest
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -35,6 +36,23 @@ type Fake struct {
 	// lastCreate records the most recent CreateContainer so ContainerMounts can
 	// answer consistently with what the server actually asked for.
 	lastCreate runtime.CreateRequest
+	// copies counts CopyToContainer calls. It exists so a test can assert that a
+	// refusal happened BEFORE any bytes moved — without it, such a test proves
+	// only that an error came back, which is also what a refusal issued halfway
+	// through a transfer looks like.
+	copies int
+	// CopyErrOn makes CopyToContainer fail for any destination containing this
+	// substring. Staging a MID-TRANSFER failure is otherwise impossible against a
+	// fake that always succeeds, and "some files crossed and some did not" is a
+	// state with its own required behaviour.
+	CopyErrOn string
+}
+
+// CopyCount reports how many times CopyToContainer has been called.
+func (f *Fake) CopyCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.copies
 }
 
 // New returns a Fake that reports its containers as running.
@@ -137,7 +155,15 @@ func (f *Fake) ImageExists(context.Context, string) (bool, error) { return true,
 func (f *Fake) BuildImage(context.Context, string, string, string, map[string]string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
-func (f *Fake) CopyToContainer(context.Context, string, string, string) error   { return nil }
+func (f *Fake) CopyToContainer(_ context.Context, _, _, dst string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.CopyErrOn != "" && strings.Contains(dst, f.CopyErrOn) {
+		return errors.New("simulated copy failure")
+	}
+	f.copies++
+	return nil
+}
 func (f *Fake) CopyFromContainer(context.Context, string, string, string) error { return nil }
 func (f *Fake) Logs(context.Context, string, bool) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("container logs\n")), nil

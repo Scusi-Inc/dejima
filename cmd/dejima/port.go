@@ -122,12 +122,16 @@ func newPortRevokeCmd() *cobra.Command {
 }
 
 func newPortIntakeCmd() *cobra.Command {
-	return &cobra.Command{
+	var recursive bool
+	cmd := &cobra.Command{
 		Use:   "intake <island> <scope>:<path> [container-dest]",
-		Short: "Broker a host file (within a scope) into an island, read-only.",
-		Long: "Copies a file from a granted scope into the island. <path> is relative to " +
-			"the scope's host root. The crossing is recorded in the Ledger; if it can't be " +
-			"logged, the file does not cross.\n\n  dejima port intake myrepo vault:daily/2026-06-11.md",
+		Short: "Broker a host file or folder (within a scope) into an island, read-only.",
+		Long: "Copies a file — or with -r a whole directory — from a granted scope into the " +
+			"island. <path> is relative to the scope's host root. Every crossing is recorded " +
+			"in the Ledger, one entry per file; if it can't be logged, the file does not " +
+			"cross.\n\n  dejima port intake myrepo vault:daily/2026-06-11.md\n" +
+			"  dejima port intake myrepo vault:daily -r\n\n" +
+			"Symlinks are never followed, and any skipped entries are reported.",
 		Args: cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			island := args[0]
@@ -143,14 +147,36 @@ func newPortIntakeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := c.PortIntake(cmd.Context(), island, scope, rel, dest)
+			res, err := c.PortIntakeRecursive(cmd.Context(), island, scope, rel, dest, recursive)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("intake %s → %s (%d bytes, sha256:%s)\n", res.Src, res.Dest, res.Bytes, res.SHA256[:12])
+			if !res.Recursive {
+				fmt.Printf("intake %s → %s (%d bytes, sha256:%s)\n", res.Src, res.Dest, res.Bytes, res.SHA256[:12])
+				return nil
+			}
+			fmt.Printf("intake %s → %s\n", res.Src, res.Dest)
+			fmt.Printf("  %s crossed (%s), ledger batch %s\n",
+				countNoun(len(res.Files), "file"), humanBytes(uint64(res.Bytes)), res.BatchID)
+			for _, sk := range res.Skipped {
+				fmt.Printf("  skipped %s — %s\n", sk.Rel, sk.Reason)
+			}
+			// A partial import must not exit 0. The files that crossed are real and
+			// ledgered and are NOT rolled back — but reporting success over a result
+			// that is missing files is the failure this whole surface exists to avoid.
+			if len(res.Failed) > 0 {
+				for _, f := range res.Failed {
+					fmt.Fprintf(os.Stderr, "  FAILED %s — %s\n", f.Rel, f.Error)
+				}
+				return fmt.Errorf("%s did not cross (%s did); nothing was rolled back",
+					countNoun(len(res.Failed), "file"), countNoun(len(res.Files), "file"))
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false,
+		"import a directory: one brokered, ledgered crossing per file (symlinks skipped)")
+	return cmd
 }
 
 func newPortExportCmd() *cobra.Command {
