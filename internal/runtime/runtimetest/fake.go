@@ -10,7 +10,9 @@ package runtimetest
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"strings"
 	"sync"
 
@@ -32,6 +34,9 @@ type Fake struct {
 	// default (nil/nil) reports true, matching a container the daemon created.
 	ReapsVal *bool
 	ReapsErr error
+	// DialFn backs DialContainerPort. Nil makes every dial fail, which is the
+	// safe default: a test that needs a gateway has to say so.
+	DialFn func(ctx context.Context, name, host string, port int) (net.Conn, error)
 	// lastCreate records the most recent CreateContainer so ContainerMounts can
 	// answer consistently with what the server actually asked for.
 	lastCreate runtime.CreateRequest
@@ -100,6 +105,19 @@ func (f *Fake) ContainerMounts(context.Context, string) ([]string, error) {
 		dests = append(dests, b.ContainerPath)
 	}
 	return dests, nil
+}
+
+// DialContainerPort returns DialFn's conn when set, else an error. A fake that
+// silently returned a working pipe would let a proxy test pass without ever
+// reaching a gateway.
+func (f *Fake) DialContainerPort(ctx context.Context, name, host string, port int) (net.Conn, error) {
+	f.mu.Lock()
+	fn := f.DialFn
+	f.mu.Unlock()
+	if fn == nil {
+		return nil, errors.New("runtimetest: no DialFn set")
+	}
+	return fn(ctx, name, host, port)
 }
 
 // ContainerReapsOrphans reports ReapsVal when set, else true — the state of a

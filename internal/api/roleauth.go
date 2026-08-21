@@ -116,27 +116,44 @@ var roleRouteCap = map[string]roleCap{
 	// returned); writes need operate, and an island token is refused outright in
 	// the handler — an agent that can plant a value its peers trust is an
 	// escalation path.
-	"GET /v1/islands/{name}/secrets":                capRead,
-	"PUT /v1/islands/{name}/secrets/{key}":          capOperate,
-	"DELETE /v1/islands/{name}/secrets/{key}":       capOperate,
-	"POST /v1/islands/{name}/agents/{id}/move":      capOperate,
-	"POST /v1/islands/{name}/agents/{id}/restart":   capOperate,
-	"PATCH /v1/islands/{name}/agents/{id}/config":   capOperate,
-	"PATCH /v1/islands/{name}/egress/policy":        capOperate, // set island egress allow/deny (operator)
-	"GET /v1/islands/{name}/spawn-grant":            capRead,    // read the spawn budget (operator/viewer)
-	"POST /v1/islands/{name}/spawn-grant":           capOperate, // grant ephemeral-sub-agent spawn budget (operator-only; never an in-island token)
-	"DELETE /v1/islands/{name}/spawn-grant":         capOperate, // revoke spawn grant (operator)
-	"GET /v1/islands/{name}/session":                capOperate, // interactive attach (control)
-	"GET /v1/islands/{name}/shell/session":          capOperate, // in-island contained shell at /workspace
-	"GET /v1/islands/{name}/agents/{id}/session":    capOperate,
-	"POST /v1/islands/{name}/exec":                  capOperate,
-	"GET /v1/islands/{name}/files/{path...}":        capOperate, // reading workspace files is beyond "observe"
-	"PUT /v1/islands/{name}/files/{path...}":        capOperate,
-	"POST /v1/islands/{name}/port/intake":           capOperate,
-	"POST /v1/islands/{name}/port/export":           capOperate,
-	"POST /v1/islands/{name}/port/write":            capOperate,
-	"POST /v1/islands/{name}/port/scopes":           capOperate, // grant host access (operator act)
-	"DELETE /v1/islands/{name}/port/scopes/{scope}": capOperate,
+	"GET /v1/islands/{name}/secrets":              capRead,
+	"PUT /v1/islands/{name}/secrets/{key}":        capOperate,
+	"DELETE /v1/islands/{name}/secrets/{key}":     capOperate,
+	"POST /v1/islands/{name}/agents/{id}/move":    capOperate,
+	"POST /v1/islands/{name}/agents/{id}/restart": capOperate,
+	"PATCH /v1/islands/{name}/agents/{id}/config": capOperate,
+	"PATCH /v1/islands/{name}/egress/policy":      capOperate, // set island egress allow/deny (operator)
+	"GET /v1/islands/{name}/spawn-grant":          capRead,    // read the spawn budget (operator/viewer)
+	"POST /v1/islands/{name}/spawn-grant":         capOperate, // grant ephemeral-sub-agent spawn budget (operator-only; never an in-island token)
+	"DELETE /v1/islands/{name}/spawn-grant":       capOperate, // revoke spawn grant (operator)
+	"GET /v1/islands/{name}/session":              capOperate, // interactive attach (control)
+	"GET /v1/islands/{name}/shell/session":        capOperate, // in-island contained shell at /workspace
+	"GET /v1/islands/{name}/agents/{id}/session":  capOperate,
+	// The framework console. capOperate, classified consciously rather than left
+	// to the owner-only default: this is the assistant UI a non-owner operator is
+	// expected to use, and defaulting it to owner-only would be safe and wrong.
+	// It is NOT capRead — the console sends work to an agent, which is an act.
+	//
+	// Island tokens stay denied by tokenauth's default. An island reaching
+	// another island's assistant through the daemon is exactly the containment
+	// break the token scoping exists to prevent.
+	"GET /v1/islands/{name}/agents/{id}/gateway/{path...}":     capOperate,
+	"POST /v1/islands/{name}/agents/{id}/gateway/{path...}":    capOperate,
+	"PUT /v1/islands/{name}/agents/{id}/gateway/{path...}":     capOperate,
+	"DELETE /v1/islands/{name}/agents/{id}/gateway/{path...}":  capOperate,
+	"PATCH /v1/islands/{name}/agents/{id}/gateway/{path...}":   capOperate,
+	"HEAD /v1/islands/{name}/agents/{id}/gateway/{path...}":    capOperate,
+	"OPTIONS /v1/islands/{name}/agents/{id}/gateway/{path...}": capOperate,
+	// Readiness is an observation, not an act.
+	"GET /v1/islands/{name}/agents/{id}/gateway-ready": capRead,
+	"POST /v1/islands/{name}/exec":                     capOperate,
+	"GET /v1/islands/{name}/files/{path...}":           capOperate, // reading workspace files is beyond "observe"
+	"PUT /v1/islands/{name}/files/{path...}":           capOperate,
+	"POST /v1/islands/{name}/port/intake":              capOperate,
+	"POST /v1/islands/{name}/port/export":              capOperate,
+	"POST /v1/islands/{name}/port/write":               capOperate,
+	"POST /v1/islands/{name}/port/scopes":              capOperate, // grant host access (operator act)
+	"DELETE /v1/islands/{name}/port/scopes/{scope}":    capOperate,
 	// Granting the host operator's own gh login is an operator act with the widest
 	// blast radius of any grant here — account-wide read of every private repo.
 	"POST /v1/islands/{name}/github/host-credential":       capOperate,

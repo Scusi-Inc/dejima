@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"io"
+	"net"
 )
 
 // ContainerStatus is a coarse-grained state from the runtime's perspective.
@@ -151,6 +152,15 @@ type Runtime interface {
 	// flattened to false: "no init" and "couldn't look" are different answers and
 	// only one of them is a problem to report.
 	ContainerReapsOrphans(ctx context.Context, name string) (bool, error)
+
+	// DialContainerPort opens a connection to host:port INSIDE the named
+	// container. A framework gateway binds the container's loopback, which is
+	// unreachable from the host by any ordinary dial — not 127.0.0.1 (that is the
+	// host's own), and not the bridge address (nothing is bound there).
+	//
+	// ctx bounds the dial, not the connection: an http.Transport pools a conn past
+	// the request that opened it, and a websocket outlives every request context.
+	DialContainerPort(ctx context.Context, name, host string, port int) (net.Conn, error)
 
 	// Inspect returns crash-relevant health facts (OOM, restarts, exit code).
 	// Returns a zero Health if the container is missing or unavailable.

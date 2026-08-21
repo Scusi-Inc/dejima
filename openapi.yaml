@@ -762,6 +762,172 @@ paths:
               schema: { $ref: "#/components/schemas/MailboxSendResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/agents/{id}/gateway/{path}:
+    description: >
+      Relay to the agent framework's console running on the container's
+      loopback. The daemon relays BYTES and does not model the framework's API,
+      so a framework works here the day it declares a gateway port.
+
+      Why a proxy rather than a published address: a browser cannot run
+      `ssh -L`, so an address only helps a client that could already dial it;
+      and the pinned console credential is injected server-side, so the client
+      never holds it. Returning that token to a client would put a credential in
+      a browser.
+
+      Not reachable by an island token. An island driving an assistant through
+      the daemon is the containment break the token scoping exists to prevent.
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Agent id
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+        description: Path within the gateway, relayed verbatim
+    get:
+      tags: [agents]
+      summary: Proxy a GET to an agent's framework console
+      operationId: proxyAgentGatewayGet
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    post:
+      tags: [agents]
+      summary: Proxy a POST to an agent's framework console
+      operationId: proxyAgentGatewayPost
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    put:
+      tags: [agents]
+      summary: Proxy a PUT to an agent's framework console
+      operationId: proxyAgentGatewayPut
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    delete:
+      tags: [agents]
+      summary: Proxy a DELETE to an agent's framework console
+      operationId: proxyAgentGatewayDelete
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    patch:
+      tags: [agents]
+      summary: Proxy a PATCH to an agent's framework console
+      operationId: proxyAgentGatewayPatch
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    head:
+      tags: [agents]
+      summary: Proxy a HEAD to an agent's framework console
+      operationId: proxyAgentGatewayHead
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    options:
+      tags: [agents]
+      summary: Proxy an OPTIONS to an agent's framework console
+      operationId: proxyAgentGatewayOptions
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+  /v1/islands/{name}/agents/{id}/gateway-ready:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Agent id
+    get:
+      tags: [agents]
+      summary: Whether the agent's console is serving yet
+      operationId: getAgentGatewayReady
+      description: >
+        Exposed so a client does not reimplement the probe and drift from the
+        one `dejima agent open` uses.
+      responses:
+        "200":
+          description: Readiness
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/GatewayReadiness" } }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/files/{path}:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -2467,6 +2633,42 @@ components:
         identity:
           allOf: [ { $ref: "#/components/schemas/IslandIdentity" } ]
           description: operator-set visual color+glyph override; omitted when unset
+    GatewayReadiness:
+      type: object
+      description: >
+        Whether an agent's framework console is serving yet, and — separately —
+        whether that agent can reach a model at all.
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [ready, not-ready, unknown]
+          description: >
+            THREE states, and the third is why this is not a boolean.
+            ready — something is serving on the gateway port.
+            not-ready — nothing is listening: starting, installing, or stopped.
+            unknown — the daemon could not ask (the island was unreachable).
+            A client MUST NOT render `unknown` as `not-ready`. Claiming a gateway
+            is down is a stronger statement than admitting nobody looked, and an
+            operator acts differently on each.
+        reason:
+          type: string
+          description: Why the state is not `ready`, for a surface to show verbatim.
+        port:
+          type: integer
+          description: The in-container gateway port probed (absent when the agent type has none).
+        needs_provider_key:
+          type: boolean
+          description: >
+            This agent's framework reaches a model over a provider API key and
+            none is configured.
+
+            ORTHOGONAL to `state` and never folded into it: a keyless gateway
+            serves the readiness probe perfectly and then fails every task with a
+            missing-key error. "Nothing is listening" and "listening but cannot
+            reach a model" are different problems with different remedies, and a
+            client that merges them will tell the operator to wait for something
+            that has already arrived.
     IslandIdentity:
       type: object
       required: [color, glyph]
