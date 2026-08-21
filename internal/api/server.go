@@ -1682,15 +1682,31 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	// rather than letting an empty repo through: an empty Repo is far more often
 	// a shell-eaten URL than an intent, and silently booting an empty island for
 	// it is indistinguishable from a clone that failed.
+	fromDir := strings.TrimSpace(req.FromDir)
 	switch {
+	case fromDir != "" && (strings.TrimSpace(req.Repo) != "" || strings.TrimSpace(req.SeedPath) != "" || req.NoRepo):
+		writeError(w, http.StatusBadRequest, errors.New("from_dir is its own workspace source — it can't be combined with a repo, a seed, or no_repo"))
+		return
+	case fromDir != "" && strings.TrimSpace(req.Name) == "":
+		// Deriving one from the directory's basename is tempting and wrong: the
+		// same folder name recurs everywhere ("src", "notes", "tmp"), so the
+		// island would be named something unpredictable and often colliding.
+		writeError(w, http.StatusBadRequest, errors.New("name is required with from_dir (a folder name is not a good island name)"))
+		return
+	case req.GitInit && fromDir == "":
+		writeError(w, http.StatusBadRequest, errors.New("git_init only applies with from_dir"))
+		return
+	case req.KeepScope && fromDir == "":
+		writeError(w, http.StatusBadRequest, errors.New("keep_scope only applies with from_dir"))
+		return
 	case req.NoRepo && (strings.TrimSpace(req.Repo) != "" || strings.TrimSpace(req.SeedPath) != ""):
 		writeError(w, http.StatusBadRequest, errors.New("no_repo can't be combined with a repo or seed — pick one"))
 		return
 	case req.NoRepo && strings.TrimSpace(req.Name) == "":
 		writeError(w, http.StatusBadRequest, errors.New("name is required with no_repo (there's no repo to derive one from)"))
 		return
-	case !req.NoRepo && strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "":
-		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed) — or set no_repo for an island with an empty workspace"))
+	case !req.NoRepo && fromDir == "" && strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "":
+		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed) — or from_dir to seed from a folder, or no_repo for an empty workspace"))
 		return
 	}
 	// Stop a doomed private-repo clone before it launches into an empty, repo-less
@@ -1811,7 +1827,8 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents, req.NoRepo)
+	// from_dir seeds a repo-less island: no clone, then a brokered copy.
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents, req.NoRepo || fromDir != "")
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -1834,6 +1851,24 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := p.Save(); err != nil {
 		s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
+	}
+
+	// Seed from a host folder AFTER provisioning succeeded, deliberately outside
+	// the block above: a failure here must not reach that teardown. The island
+	// itself is fine by this point, so destroying it would make the operator
+	// recreate a working island to retry a copy they can re-run with
+	// `port intake -r`.
+	if fromDir != "" {
+		if err := s.seedWorkspaceFromDir(r.Context(), p, folderSeed{
+			Dir: fromDir, KeepScope: req.KeepScope, GitInit: req.GitInit,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf(
+				"island %q was created, but seeding /workspace from %q failed: %w — "+
+					"the source folder is untouched; retry with `dejima port grant %s %s:ro` "+
+					"then `dejima port intake %s <scope>:. -r`",
+				p.Name, fromDir, err, p.Name, fromDir, p.Name))
+			return
+		}
 	}
 
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: p.Name})

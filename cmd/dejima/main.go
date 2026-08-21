@@ -1363,6 +1363,9 @@ func newInitCmd() *cobra.Command {
 	var (
 		repo       string
 		noRepo     bool
+		fromDir    string
+		keepScope  bool
+		gitInit    bool
 		name       string
 		agents     []string
 		image      string
@@ -1386,12 +1389,16 @@ func newInitCmd() *cobra.Command {
 			// --no-repo is deliberate; an empty --repo is not. Requiring the flag
 			// means a URL the shell ate can't quietly become an empty island.
 			switch {
+			case fromDir != "" && (repo != "" || noRepo):
+				return fmt.Errorf("--from is its own workspace source — it can't be combined with --repo or --no-repo")
+			case fromDir != "" && name == "":
+				return fmt.Errorf("--name is required with --from (a folder name is not a good island name)")
 			case noRepo && repo != "":
 				return fmt.Errorf("--no-repo can't be combined with --repo — pick one")
 			case noRepo && name == "":
 				return fmt.Errorf("--name is required with --no-repo (there's no repo to derive it from)")
-			case !noRepo && repo == "":
-				return fmt.Errorf("--repo is required (or --no-repo for an island with an empty workspace)")
+			case !noRepo && fromDir == "" && repo == "":
+				return fmt.Errorf("--repo is required — or --from <folder> to seed from a directory, or --no-repo for an empty workspace")
 			}
 			multi := len(agents) > 1
 			if multi && strings.TrimSpace(cmdStr) != "" {
@@ -1415,7 +1422,15 @@ func newInitCmd() *cobra.Command {
 			// --no-repo has nothing to resolve: no URL, no local path, no seed.
 			// Skip the resolver rather than feed it "" and rely on it declining.
 			res := reposrc.Resolution{Note: "no repo — /workspace starts empty"}
-			if !noRepo {
+			if fromDir != "" {
+				abs, err := filepath.Abs(fromDir)
+				if err != nil {
+					return fmt.Errorf("resolving %q: %w", fromDir, err)
+				}
+				fromDir = abs
+				res = reposrc.Resolution{Note: "seeding /workspace from " + abs + " (brokered through Port, one Ledger entry per file)"}
+			}
+			if !noRepo && fromDir == "" {
 				resolved, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
 				if err != nil {
 					return err
@@ -1458,6 +1473,9 @@ func newInitCmd() *cobra.Command {
 				Repo:            res.Repo,
 				SeedPath:        res.SeedPath,
 				NoRepo:          noRepo,
+				FromDir:         fromDir,
+				KeepScope:       keepScope,
+				GitInit:         gitInit,
 				Agent:           agent,
 				Agents:          reqAgents,
 				Image:           image,
@@ -1494,6 +1512,9 @@ func newInitCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL, or a local path (cloned from its origin by default) (required, unless --no-repo)")
+	cmd.Flags().StringVar(&fromDir, "from", "", "seed /workspace from a local FOLDER that isn't a git repo (brokered through Port; one Ledger entry per file) (requires --name)")
+	cmd.Flags().BoolVar(&keepScope, "keep-scope", false, "with --from: keep the Port scope after seeding (default: it's dropped — the grant was needed to copy, not to keep)")
+	cmd.Flags().BoolVar(&gitInit, "git-init", false, "with --from: run `git init` in the seeded workspace. Off by default because a repo with no remote makes the agent commit where nothing can be pushed, and gives the purge and agent-rm guards a repo they can't reason about")
 	cmd.Flags().BoolVar(&noRepo, "no-repo", false, "create with an empty /workspace and no origin — for assistant brains, task runners and scratch sandboxes that have no repo (requires --name)")
 	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk (captures unpushed commits) instead of cloning from origin; requires a local daemon")
 	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")
