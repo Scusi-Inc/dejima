@@ -1392,7 +1392,8 @@ func newInitCmd() *cobra.Command {
 			case fromDir != "" && (repo != "" || noRepo):
 				return fmt.Errorf("--from is its own workspace source — it can't be combined with --repo or --no-repo")
 			case fromDir != "" && name == "":
-				return fmt.Errorf("--name is required with --from (a folder name is not a good island name)")
+				return fmt.Errorf("--name is required with --from (a folder name is not a good island name)\n" +
+					"  dejima init --name <island> --from " + fromDir)
 			case noRepo && repo != "":
 				return fmt.Errorf("--no-repo can't be combined with --repo — pick one")
 			case noRepo && name == "":
