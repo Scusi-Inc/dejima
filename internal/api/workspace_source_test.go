@@ -195,3 +195,33 @@ func seedServer(t *testing.T) (*Server, *project.Project) {
 }
 
 func copyCount(s *Server) int { return s.rt.(*runtimetest.Fake).CopyCount() }
+
+// A seed that FAILS partway must still drop the scope.
+//
+// The implementation is correct — the revoke is a `defer`, so it runs on every
+// path. Nothing held it there. Moving it to the happy path only (a plausible
+// refactor: "the deferred closure is hard to read, call it before the return")
+// passed every other test in this file, because they all exercise success.
+//
+// The consequence of that regression is not a failed copy. It is that a create
+// flag leaves STANDING READ ACCESS to the operator's directory behind, granted
+// as a side effect and never asked for — visible only to someone who thinks to
+// run `dejima port list` on an island whose create errored.
+func TestSeedWorkspace_DropsTheScopeEvenWhenTheCopyFails(t *testing.T) {
+	scope, _ := treeFixture(t)
+	s, p := seedServer(t)
+	// Fail the second file, so the failure lands after the grant and partway
+	// through the crossing rather than before either.
+	s.rt.(*runtimetest.Fake).CopyErrOn = "b.txt"
+
+	err := s.seedWorkspaceFromDir(context.Background(), p, folderSeed{Dir: scope})
+	if err == nil {
+		t.Fatal("seed reported success while a file failed to copy — a partial " +
+			"seed must not report as a whole one")
+	}
+	if len(p.Ports) != 0 {
+		t.Errorf("the seed failed and left %d scope(s) behind: %+v\n"+
+			"That is standing host-file access granted as a side effect of a "+
+			"create flag, on the path where nobody is looking.", len(p.Ports), p.Ports)
+	}
+}
