@@ -82,8 +82,7 @@ func (g *fakeGateway) handle(c net.Conn) {
 		buf := make([]byte, 64)
 		n, rerr := br.Read(buf)
 		if rerr == nil && n > 0 {
-			_, _ = c.Write([]byte("echo:"))
-			_, _ = c.Write(buf[:n])
+			_, _ = c.Write(append([]byte("echo:"), buf[:n]...))
 		}
 		return
 	}
@@ -201,14 +200,19 @@ func TestGatewayProxyCompletesAWebsocketUpgrade(t *testing.T) {
 	if _, err := c.Write([]byte("ping")); err != nil {
 		t.Fatalf("writing after upgrade: %v", err)
 	}
-	buf := make([]byte, 64)
-	n, err := br.Read(buf)
-	if err != nil {
+	// ReadFull, not Read: this is a byte stream, and a single Read is entitled to
+	// return a partial. The first version of this test used Read, passed here,
+	// and failed on CI with "echo:" — a test that is flaky about stream
+	// boundaries, written while documenting flaky tests. The assertion is about
+	// what arrives, not how it is chunked, so it must not depend on chunking.
+	want := "echo:ping"
+	buf := make([]byte, len(want))
+	if _, err := io.ReadFull(br, buf); err != nil {
 		t.Fatalf("the connection did not survive the upgrade — this is the silent "+
 			"websocket failure the proxy exists to avoid: %v", err)
 	}
-	if got := string(buf[:n]); got != "echo:ping" {
-		t.Errorf("read %q after upgrade, want echo:ping", got)
+	if got := string(buf); got != want {
+		t.Errorf("read %q after upgrade, want %q", got, want)
 	}
 	g.with(func() {
 		if !g.upgraded {
