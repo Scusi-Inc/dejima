@@ -681,6 +681,26 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
 	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/move", s.moveAgent)
 	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/restart", s.restartAgent)
+	// The framework console, proxied. One handler for every verb: the daemon
+	// relays bytes and does not model the gateway's API, so it has no business
+	// deciding which methods that API accepts.
+	//
+	// Written out rather than looped, deliberately. sdk/openapi_parity.py finds
+	// routes by matching a literal verb-and-path string in these sources, so a
+	// loop over verbs registers seven routes the parity gate cannot see —
+	// undocumented, and silently exempt from the check that exists to catch
+	// exactly that. Repetition here buys visibility to the gate.
+	//
+	// (The example that would make this comment clearer cannot be written here:
+	// the extractor reads comments too, so quoting the pattern invents a route.)
+	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("PUT /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("HEAD /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("OPTIONS /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/gateway-ready", s.getAgentGatewayReady)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
 	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
