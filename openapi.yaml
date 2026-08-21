@@ -2281,6 +2281,44 @@ components:
       properties:
         name: { type: string, description: optional; derived from repo if empty (required with no_repo) }
         repo: { type: string, description: git URL or local path; required unless seed_path or no_repo is set }
+        from_dir:
+          type: string
+          description: >
+            Seed /workspace from a host DIRECTORY that is not a git repo — the
+            common case of a folder of work nobody has run `git init` on yet.
+            Its own source: mutually exclusive with `repo`, `seed_path` and
+            `no_repo`, and `name` is required (a folder name makes a poor island
+            name — "src" and "notes" recur everywhere).
+
+            A THIN WRAPPER over the brokered recursive intake, not a second way
+            to move host files in. The daemon grants a Port scope for the
+            directory, performs one ledgered crossing per file, then drops the
+            scope. The grant is the audit trail: `port.grant`, one `trade.read`
+            per file, `port.revoke`.
+
+            The same caps as a recursive intake apply and are refused UP FRONT.
+            A folder too large for them is rejected with the two-step path named
+            (create with `no_repo`, then grant + intake), which has no create
+            timeout over it.
+
+            A folder-sourced island reports `no_repo: true` on IslandInfo — it is
+            repo-less, it just is not empty.
+        keep_scope:
+          type: boolean
+          description: >
+            With `from_dir`: keep the Port scope after seeding. Default false —
+            the grant is needed to COPY, not to keep, and a retained scope is
+            standing host-file access the operator never asked to give.
+        git_init:
+          type: boolean
+          description: >
+            With `from_dir`: run `git init` in the seeded workspace. Default
+            false, and deliberately never implied. A fabricated repo has no
+            remote, so the agent commits where nothing can be pushed and work
+            looks saved when it is not; purge's unpushed-work guard gains a repo
+            it can only false-alarm on; and `agent rm`'s `git status` reasoning
+            becomes meaningless. Offered as an explicit choice with the
+            consequence stated, or not at all.
         no_repo:
           type: boolean
           description: >

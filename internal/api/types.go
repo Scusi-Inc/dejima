@@ -357,6 +357,29 @@ type CreateIslandRequest struct {
 	// like a clone that didn't happen. Name is required in this mode — there is
 	// no repo to derive one from.
 	NoRepo bool `json:"no_repo,omitempty"`
+	// FromDir seeds /workspace from a host DIRECTORY that is not a git repo —
+	// the most common thing a person actually has: scratch analysis, a folder of
+	// documents, a project started before anyone ran `git init`.
+	//
+	// A thin wrapper over the brokered recursive intake, NOT a second way to move
+	// host files in: the daemon grants a Port scope for the directory, runs the
+	// same per-file ledgered crossing, then drops the scope. The grant IS the
+	// audit trail for how those files got there. A create-time copy that bypassed
+	// Port would reintroduce the unaudited door folder import exists to close.
+	//
+	// A folder-sourced island is repo-less but NOT empty, which is why it sets
+	// NoRepo without the caller passing no_repo.
+	FromDir string `json:"from_dir,omitempty"`
+	// KeepScope leaves the Port scope granted after seeding. Off by default: the
+	// grant is needed to COPY, not to keep, and a scope nobody asked to retain is
+	// standing host-file access the operator never decided to give.
+	KeepScope bool `json:"keep_scope,omitempty"`
+	// GitInit runs `git init` in the seeded workspace. EXPLICIT, never implied.
+	// A fabricated repo makes the agent commit into something nobody can push,
+	// hands purge's unpushed-work guard a remote-less repo to have opinions about,
+	// and makes `agent rm`'s `git status` reasoning meaningless. Defaulting it on
+	// creates a state whose surface implies something untrue.
+	GitInit bool `json:"git_init,omitempty"`
 	// Cmd is the entrypoint command for agent="headless" islands (e.g.
 	// "python my_loop.py"). Required when Agent is "headless"; ignored
 	// otherwise. The container runs the command via /bin/sh -c, so shell
