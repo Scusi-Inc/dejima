@@ -6,7 +6,7 @@
 <title>Dejima — secure infrastructure for AI coding agents on hardware you own</title>
 <meta name="description" content="Dejima is self-hosted infrastructure for AI coding agents (Claude Code, Codex, and more). Each project is sandboxed on hardware you own — isolated from your machine and your other projects, with no infrastructure to build. Open-source, up in minutes.">
 <meta property="og:title" content="Dejima — isolated projects, persistent sessions, on your hardware">
-<meta property="og:description" content="Self-hosted infrastructure for AI coding agents. Each one sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
+<meta property="og:description" content="Self-hosted infrastructure for AI coding agents. Each project sandboxed on hardware you own — isolated from your machine and from your other projects, with no infrastructure to build. Open-source, up in minutes.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://dejima.tech/">
 <meta property="og:image" content="https://dejima.tech/assets/og-card.png">
@@ -22,7 +22,7 @@
 {"@context":"https://schema.org","@graph":[
 {"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"},
 {"@type":"Organization","name":"Dejima","url":"https://dejima.tech/","logo":"https://dejima.tech/assets/logo.png","sameAs":["https://github.com/Scusi-Inc/dejima"]},
-{"@type":"SoftwareApplication","name":"Dejima","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","url":"https://dejima.tech/","description":"Free, open-source, self-hosted infrastructure for running a fleet of AI coding agents (Claude Code, Codex, OpenClaw, and more) on hardware you own. Each agent is sandboxed in its own container, with brokered deny-all host access and a tamper-evident audit log.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"sameAs":["https://github.com/Scusi-Inc/dejima"]},
+{"@type":"SoftwareApplication","name":"Dejima","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","url":"https://dejima.tech/","description":"Free, open-source, self-hosted infrastructure for running a fleet of AI coding agents (Claude Code, Codex, OpenClaw, and more) on hardware you own. Each project runs in its own sandboxed container, isolated from the host and from your other projects, with brokered deny-all host access and a tamper-evident audit log.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"sameAs":["https://github.com/Scusi-Inc/dejima"]},
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Is Dejima free?","acceptedAnswer":{"@type":"Answer","text":"Yes. Dejima is free and open source under Apache 2.0. You run it on hardware you already own, so there is no subscription and no per-second usage bill. You bring your own agents and API keys, and pay only your normal LLM provider costs."}},
 {"@type":"Question","name":"Does my code leave my machine?","acceptedAnswer":{"@type":"Answer","text":"No. Your source, your files, and your credentials stay on your own box. The agents' model calls go out to whatever LLM provider you use, but there is no Dejima cloud in the loop and no vendor account holding your work. Auth is your own Tailscale identity."}},
