@@ -4213,18 +4213,21 @@ func (m tuiModel) renderBand(width int) (string, int) {
 			}
 			count = fmt.Sprintf("%d terminal%s", n, s)
 		}
-		line := fmt.Sprintf("%s %s %s %s   %s",
-			styleHeader.Render("▸ Host"), dot, styleMuted.Render(count),
-			styleMuted.Render("· not contained"), styleMuted.Render("[/] expand"))
+		// The key sits next to the arrow rather than trailing the line. It is
+		// the only affordance on this band, and at the far right it read as an
+		// afterthought on a row whose whole purpose is "press this".
+		line := fmt.Sprintf("%s %s %s %s %s",
+			styleHeader.Render("▸ [/] Host"), dot, styleMuted.Render(count),
+			styleMuted.Render("· not contained"), styleMuted.Render("· expand"))
 		return clip(line), 1
 	}
 
 	var b strings.Builder
 	// Header carries the action hints inline (rather than a separate footer line)
 	// so the pinned band stays compact: ⏎ attach · d delete · / close.
-	b.WriteString(styleHeader.Render("▾ Host terminals") + " " +
+	b.WriteString(styleHeader.Render("▾ [/] Host terminals") + " " +
 		styleMuted.Render("· not contained") + "   " +
-		styleMuted.Render("⏎ open · d delete · [/] collapse") + "\n")
+		styleMuted.Render("⏎ open · d delete · / collapse") + "\n")
 	for i, t := range m.terminals {
 		line := "  " + terminalRowText(t)
 		if i == m.bandSel {
