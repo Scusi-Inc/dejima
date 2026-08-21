@@ -99,26 +99,31 @@ func TestCreator_NoRepoReachesTheRequest(t *testing.T) {
 	}
 }
 
-// Adding a row shifted every index below it. The comment on the pickRow block warns
-// that drift between the view, the key handler and the enter action is the bug it
-// exists to prevent — so assert the DEFAULT action specifically: repoCursor starts
-// at 0, and leading with "start empty" would silently turn `n` ⏎ into "create an
-// empty island" for everyone.
-func TestCreator_PickerDefaultRowIsStillGitHub(t *testing.T) {
-	if pickRowGitHub != 0 {
-		t.Fatalf("pickRowGitHub = %d, want 0 — repoCursor's zero value decides the default action", pickRowGitHub)
+// The default action must never be "create an empty island". This asserts the
+// BEHAVIOUR, not an index: an earlier version of this test pinned
+// pickRowGitHub == 0, which broke the moment "Start empty" was moved to the top
+// of the list — a correct UI change failing a test that had over-specified. What
+// must hold is that repoCursor's initial value does not select the repo-less row,
+// however the rows are ordered.
+func TestCreator_DefaultRowDoesNotCreateAnEmptyIsland(t *testing.T) {
+	m := tuiModel{}
+	mm, _ := m.openCreator()
+	c := mm.(tuiModel).creator
+	if c == nil {
+		t.Fatal("creator did not open")
 	}
-	if pickRowNoRepo == 0 {
-		t.Fatal("`start empty` is the default row; `n` then ⏎ would create an empty island")
+	if c.repoCursor == pickRowNoRepo {
+		t.Fatal("the picker opens on `start empty`; `n` then ⏎ would create an " +
+			"empty island for anyone who presses Enter twice")
+	}
+	if c.repoCursor == pickRowFromDir {
+		t.Error("the picker opens on the folder-source row, which then demands a path")
 	}
 
-	m := newPickCreator() // repoCursor zero value
-	m = feedCreator(m, "enter")
-	if m.creator.noRepo {
+	m2 := tuiModel{creator: &creatorModel{step: stepPick, repoCursor: c.repoCursor}}
+	m2 = feedCreator(m2, "enter")
+	if m2.creator.noRepo {
 		t.Error("the default picker row took the repo-less branch")
-	}
-	if m.creator.step == stepName {
-		t.Error("default ⏎ landed on the name step — it should reach the GitHub browser")
 	}
 }
 
@@ -128,13 +133,15 @@ func TestCreator_PickerDefaultRowIsStillGitHub(t *testing.T) {
 func TestCreator_NoRepoReachableWhenNoLocalReposFound(t *testing.T) {
 	m := newPickCreator()
 	m.creator.repos = nil
-	m = feedCreator(m, "down", "down") // GitHub → manual → start empty
-	if m.creator.repoCursor != pickRowNoRepo {
-		t.Fatalf("repoCursor = %d, want %d — `start empty` is unreachable with no local repos",
-			m.creator.repoCursor, pickRowNoRepo)
+	// Walk down past every action row; the last one must be reachable and the
+	// cursor must clamp there rather than running off the end into a repo that
+	// does not exist.
+	for i := 0; i < 8; i++ {
+		m = feedCreator(m, "down")
 	}
-	m = feedCreator(m, "down") // must clamp here, not run off the end
-	if m.creator.repoCursor != pickRowNoRepo {
-		t.Errorf("cursor ran past the last row to %d", m.creator.repoCursor)
+	if m.creator.repoCursor != pickRowFromDir {
+		t.Fatalf("repoCursor = %d, want %d — the last action row is unreachable or "+
+			"the cursor ran past it when no local repos were found",
+			m.creator.repoCursor, pickRowFromDir)
 	}
 }

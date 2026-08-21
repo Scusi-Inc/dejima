@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ const (
 	stepName                          // confirm/edit the island name
 	stepCreate                        // provisioning in flight
 	stepGitHubGate                    // create refused: private repo needs a GitHub identity — guided connect
+	stepFromDir                       // type the host folder to seed /workspace from
 )
 
 // ghBrowsePhase tracks the two steps of the daemon-backed GitHub browser.
@@ -105,6 +107,12 @@ type creatorModel struct {
 	// no seed. It skips the repo-source steps entirely rather than feeding them ""
 	// and relying on each to decline.
 	noRepo bool
+	// fromDir seeds /workspace from a host folder that is not a repo. Like
+	// noRepo it skips the repo-source steps, but unlike noRepo the workspace is
+	// not empty afterwards — the island is repo-less, not blank.
+	fromDir      string
+	fromDirInput string
+	fromDirGit   bool // run `git init` after seeding — explicit, never implied
 
 	// resolved selection
 	resolution   reposrc.Resolution
@@ -162,11 +170,15 @@ type ghReposMsg struct {
 func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 	cfg, _ := clientcfg.Load()
 	c := &creatorModel{
-		client:       m.client,
-		daemonLocal:  resolveHost() == "",
-		callerRole:   m.callerRole,
-		existing:     m.islands,
-		statusCache:  map[string]reposrc.Status{},
+		client:      m.client,
+		daemonLocal: resolveHost() == "",
+		callerRole:  m.callerRole,
+		existing:    m.islands,
+		statusCache: map[string]reposrc.Status{},
+		// "Start empty" now leads the list, so the cursor's ZERO VALUE would make
+		// `n` then ⏎ create an empty island — the trap #355 added a test for,
+		// re-armed by reordering. The default action stays the primary path.
+		repoCursor:   pickRowGitHub,
 		imageMissing: m.overview != nil && !m.overview.IslandImagePresent,
 		keyGap:       m.agentKeyGap,
 	}
@@ -222,6 +234,8 @@ func (c *creatorModel) buildRequest() api.CreateIslandRequest {
 		Repo:            c.resolution.Repo,
 		SeedPath:        c.resolution.SeedPath,
 		NoRepo:          c.noRepo,
+		FromDir:         c.fromDir,
+		GitInit:         c.fromDirGit && c.fromDir != "",
 		Agent:           c.agents[0].Type,  // primary (scalar back-compat path)
 		Cmd:             c.agents[0].Cmd,   // headless only; empty for interactive agents
 		GitHubIdentity:  c.ghIdentity,      // "" unless sourced via the GitHub browser
@@ -277,8 +291,12 @@ func (c *creatorModel) onReposDiscovered(msg reposDiscoveredMsg) {
 		return
 	}
 	c.repos = msg.repos
-	if c.repoCursor >= len(c.repos) {
-		c.repoCursor = 0
+	// repoCursor is a ROW index and includes the leading action rows, so comparing
+	// it against the repo COUNT is wrong: with two repos found, a cursor resting on
+	// the first of them (pickRowFirstRepo) would test 4 >= 2 and jump to the top,
+	// moving the selection out from under the user as the scan lands.
+	if last := pickRowFirstRepo + len(c.repos) - 1; c.repoCursor > last {
+		c.repoCursor = pickRowGitHub
 	}
 }
 
@@ -318,6 +336,8 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.creatorNameKey(msg)
 	case stepGitHubGate:
 		return m.creatorGitHubGateKey(msg)
+	case stepFromDir:
+		return m.creatorFromDirKey(msg)
 	}
 	return m, nil // stepCreate: ignore input while provisioning
 }
@@ -417,7 +437,7 @@ func (m tuiModel) creatorPickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if len(c.repos) == 0 {
 		// No local repos discovered: the last selectable row is "start empty",
 		// which sits below the two remote-source actions.
-		lastRow = pickRowNoRepo
+		lastRow = pickRowFromDir
 	}
 	switch msg.String() {
 	case "esc", "q":
@@ -452,6 +472,9 @@ func (m tuiModel) creatorPickEnter() (tea.Model, tea.Cmd) {
 		return m.creatorEnterGitHub()
 	case pickRowNoRepo:
 		return m.creatorEnterNoRepo()
+	case pickRowFromDir:
+		c.step, c.fromDirInput, c.err = stepFromDir, "", ""
+		return m, nil
 	default:
 		i := c.repoCursor - pickRowFirstRepo
 		if i < 0 || i >= len(c.repos) {
@@ -1017,6 +1040,8 @@ func (c *creatorModel) view(width int) string {
 		} else {
 			b.WriteString(styleMuted.Render("cloning the repo and starting the agent; it opens when ready."))
 		}
+	case stepFromDir:
+		c.viewFromDir(&b)
 	case stepGitHubGate:
 		b.WriteString(styleWaiting.Render("🔒 " + c.gateRepo + " needs your GitHub to clone"))
 		b.WriteString("\n\n")
@@ -1060,16 +1085,21 @@ func (c *creatorModel) viewPick(b *strings.Builder) {
 	// happens to be in one directory made the primary path the least visible.
 	// Two labelled sections, so it reads as a choice between kinds of source
 	// rather than one long undifferentiated list.
+	// The question this list answers is "what goes in /workspace?", and a repo is
+	// only ONE answer to it. Starting empty leads because it is the answer that is
+	// not a repo at all, and burying it under two repo headings framed the whole
+	// prompt as "which repo?".
+	c.writeHeader(b, "Start empty")
+	c.writeChoice(b, c.repoCursor == pickRowNoRepo, "␀  No repo — /workspace starts empty")
+
+	b.WriteString("\n")
 	c.writeHeader(b, "Clone from GitHub")
 	c.writeChoice(b, c.repoCursor == pickRowGitHub, "⬇  Browse my GitHub repos…")
 	c.writeChoice(b, c.repoCursor == pickRowManual, "✎  Enter a repo URL or path…")
 
 	b.WriteString("\n")
-	// Its own section: starting empty is a different KIND of choice from picking a
-	// source, and filing it under either heading would read as "a repo I haven't
-	// found yet" rather than "no repo, deliberately".
-	c.writeHeader(b, "Start empty")
-	c.writeChoice(b, c.repoCursor == pickRowNoRepo, "␀  No repo — /workspace starts empty")
+	c.writeHeader(b, "Use a local folder")
+	c.writeChoice(b, c.repoCursor == pickRowFromDir, "📁  A folder that isn't a repo — just files…")
 
 	b.WriteString("\n")
 	c.writeHeader(b, "Use a local repo — "+tildeify(c.root))
@@ -1296,10 +1326,11 @@ func (c *creatorModel) viewName(b *strings.Builder) {
 // the default action of the most-used flow. Repo-less is a rare, deliberate choice;
 // it has to be visible, not default.
 const (
-	pickRowGitHub    = 0
-	pickRowManual    = 1
-	pickRowNoRepo    = 2
-	pickRowFirstRepo = 3
+	pickRowNoRepo    = 0
+	pickRowGitHub    = 1
+	pickRowManual    = 2
+	pickRowFromDir   = 3
+	pickRowFirstRepo = 4
 )
 
 // writeHeader renders a non-selectable section label. It deliberately consumes
@@ -1331,4 +1362,72 @@ func shortRemote(url string) string {
 		s = s[at+1:] // git@github.com:owner/repo → github.com:owner/repo
 	}
 	return s
+}
+
+// creatorFromDirKey drives the folder-source step: type a host path, [tab]
+// toggles `git init`, ⏎ accepts.
+func (m tuiModel) creatorFromDirKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	c := m.creator
+	switch msg.String() {
+	case "esc":
+		c.step, c.err = stepPick, ""
+	case "tab":
+		c.fromDirGit = !c.fromDirGit
+	case "enter":
+		in := strings.TrimSpace(c.fromDirInput)
+		if in == "" {
+			c.err = "type the folder to seed /workspace from"
+			return m, nil
+		}
+		abs, err := filepath.Abs(expandTilde(in))
+		if err != nil {
+			c.err = err.Error()
+			return m, nil
+		}
+		info, err := os.Stat(abs)
+		if err != nil {
+			c.err = "can't read " + abs + ": " + err.Error()
+			return m, nil
+		}
+		if !info.IsDir() {
+			c.err = abs + " is a file, not a folder"
+			return m, nil
+		}
+		c.fromDir, c.err = abs, ""
+		// Same shape as the repo-less branch: nothing for the resolver to resolve,
+		// and a name is required because a folder's basename ("src", "notes") makes
+		// an unpredictable, colliding island name.
+		c.resolution = reposrc.Resolution{Note: "seeding /workspace from " + tildeify(abs) + " — brokered, one Ledger entry per file"}
+		mm, cmd := m.creatorEnterAgent("")
+		c.nameInput = ""
+		c.step = stepName
+		return mm, cmd
+	case "backspace":
+		if c.fromDirInput != "" {
+			c.fromDirInput = c.fromDirInput[:len(c.fromDirInput)-1]
+		}
+	default:
+		if len(msg.String()) == 1 {
+			c.fromDirInput += msg.String()
+		}
+	}
+	return m, nil
+}
+
+func (c *creatorModel) viewFromDir(b *strings.Builder) {
+	b.WriteString(styleMuted.Render("A folder of work that isn't a repo yet — it's copied in through Port,") + "\n")
+	b.WriteString(styleMuted.Render("one Ledger entry per file. Symlinks are never followed.") + "\n\n")
+	b.WriteString("folder: " + styleAccent.Render(c.fromDirInput+"_") + "\n\n")
+	git := "no — /workspace holds the files, with no repo"
+	if c.fromDirGit {
+		// The cost is stated here rather than at the toggle, because this is the
+		// moment the choice is being made and a repo with no remote is a state
+		// whose surface implies something untrue.
+		git = "yes — WARNING: a repo with no remote. Commits go nowhere pushable"
+	}
+	b.WriteString(styleMuted.Render("git init: ") + git + "\n")
+	if c.err != "" {
+		b.WriteString("\n" + styleErrored.Render(c.err) + "\n")
+	}
+	b.WriteString("\n" + styleMuted.Render("[⏎] continue   [tab] git init on/off   [esc] back"))
 }
