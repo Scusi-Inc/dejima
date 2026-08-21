@@ -68,6 +68,15 @@ type IslandInfo struct {
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
+	// ReapsOrphans reports whether this container has an init as PID 1 to reap
+	// processes whose parent exited first. Detail endpoint only.
+	//
+	// THREE-STATE ON PURPOSE. nil means the runtime couldn't be asked, which is
+	// not the same as false and must never render as "fine": a container created
+	// before the daemon passed --init leaks a zombie per orphaned process for its
+	// whole life, and the daemon's own source says it passes --init, so the
+	// record cannot answer this. Only the runtime can.
+	ReapsOrphans *bool `json:"reaps_orphans,omitempty"`
 	// BuiltVersion / UpgradedVersion are the version-skew stamp: the daemon build
 	// the island's container was first created against, and the build of its most
 	// recent `dejima upgrade` recreate. A stamp behind the running daemon means the
@@ -348,6 +357,29 @@ type CreateIslandRequest struct {
 	// like a clone that didn't happen. Name is required in this mode — there is
 	// no repo to derive one from.
 	NoRepo bool `json:"no_repo,omitempty"`
+	// FromDir seeds /workspace from a host DIRECTORY that is not a git repo —
+	// the most common thing a person actually has: scratch analysis, a folder of
+	// documents, a project started before anyone ran `git init`.
+	//
+	// A thin wrapper over the brokered recursive intake, NOT a second way to move
+	// host files in: the daemon grants a Port scope for the directory, runs the
+	// same per-file ledgered crossing, then drops the scope. The grant IS the
+	// audit trail for how those files got there. A create-time copy that bypassed
+	// Port would reintroduce the unaudited door folder import exists to close.
+	//
+	// A folder-sourced island is repo-less but NOT empty, which is why it sets
+	// NoRepo without the caller passing no_repo.
+	FromDir string `json:"from_dir,omitempty"`
+	// KeepScope leaves the Port scope granted after seeding. Off by default: the
+	// grant is needed to COPY, not to keep, and a scope nobody asked to retain is
+	// standing host-file access the operator never decided to give.
+	KeepScope bool `json:"keep_scope,omitempty"`
+	// GitInit runs `git init` in the seeded workspace. EXPLICIT, never implied.
+	// A fabricated repo makes the agent commit into something nobody can push,
+	// hands purge's unpushed-work guard a remote-less repo to have opinions about,
+	// and makes `agent rm`'s `git status` reasoning meaningless. Defaulting it on
+	// creates a state whose surface implies something untrue.
+	GitInit bool `json:"git_init,omitempty"`
 	// Cmd is the entrypoint command for agent="headless" islands (e.g.
 	// "python my_loop.py"). Required when Agent is "headless"; ignored
 	// otherwise. The container runs the command via /bin/sh -c, so shell
@@ -738,15 +770,63 @@ type PortIntakeRequest struct {
 	Scope  string `json:"scope"`          // scope name to read from
 	SrcRel string `json:"src_rel"`        // path relative to the scope's host root
 	Dest   string `json:"dest,omitempty"` // container path; default /intake/<scope>/<src_rel>
+	// Recursive imports a DIRECTORY, one brokered crossing per file. Opt-in
+	// because the blast radius differs by orders of magnitude: the same command
+	// that copies one file copies a tree, and "I meant that directory" and "I
+	// mistyped a directory" look identical without the flag.
+	Recursive bool `json:"recursive,omitempty"`
+	// MaxFiles / MaxBytes bound a recursive import and are checked BEFORE the
+	// first byte moves. Zero means the server default. The point is that
+	// "import my home directory" fails in a second with a number in the message
+	// rather than half-copying for ten minutes.
+	MaxFiles int   `json:"max_files,omitempty"`
+	MaxBytes int64 `json:"max_bytes,omitempty"`
 }
 
 // PortIntakeResponse reports a completed intake.
+//
+// The single-file fields stay populated for a single-file intake, so existing
+// callers are unaffected. A recursive intake fills Files/Skipped/Failed and
+// reports totals; Src/Dest then name the directory rather than a file.
 type PortIntakeResponse struct {
 	Scope  string `json:"scope"`
 	Src    string `json:"src"`  // resolved host path
 	Dest   string `json:"dest"` // container path
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
+
+	// Recursive results. BatchID groups this import's Ledger entries, which stay
+	// one-per-file: --verify walks a hash chain of crossings, and a single batch
+	// entry would have no hash for the things that actually crossed.
+	Recursive bool               `json:"recursive,omitempty"`
+	BatchID   string             `json:"batch_id,omitempty"`
+	Files     []PortIntakeFile   `json:"files,omitempty"`
+	Skipped   []PortIntakeSkip   `json:"skipped,omitempty"`
+	Failed    []PortIntakeFailed `json:"failed,omitempty"`
+}
+
+// PortIntakeFile is one file that crossed.
+type PortIntakeFile struct {
+	Rel    string `json:"rel"` // path relative to the imported directory
+	Dest   string `json:"dest"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// PortIntakeSkip is one entry deliberately not imported. Reported rather than
+// silently dropped: an import that quietly omits files is its own bug, and the
+// caller cannot tell a skipped symlink from a file that was never there.
+type PortIntakeSkip struct {
+	Rel    string `json:"rel"`
+	Reason string `json:"reason"`
+}
+
+// PortIntakeFailed is one file that was attempted and did not cross. Files
+// listed here did NOT arrive; everything in Files did. There is no rollback —
+// un-copying files is a destructive operation invented to tidy up a failure.
+type PortIntakeFailed struct {
+	Rel   string `json:"rel"`
+	Error string `json:"error"`
 }
 
 // PortExportRequest is the body of POST /v1/islands/:name/port/export — a

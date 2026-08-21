@@ -28,14 +28,48 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # The race detector, on ubuntu only and only where it can find anything.
+      #
+      # Nothing has EVER run `-race` against this codebase, in a daemon full of
+      # goroutines, mutexes, a per-project lock and a mailbox with detached
+      # arrival hooks. The one race we found (a hook outliving the test that
+      # started it, #347/#349) surfaced as a TempDir cleanup failure and was
+      # diagnosed by hand-instrumenting Root() — which is the slow, lucky way.
+      #
+      # Scoped to the concurrent packages rather than ./... because -race is
+      # 2-10x slower and most of this tree is sequential; a whole-suite run would
+      # be paid on every PR to cover code that cannot race. Per-PR rather than
+      # nightly ON PURPOSE: a nightly fails at 3am, nobody is watching, and it
+      # becomes wallpaper within a fortnight — this repo has a torn-down QA
+      # runner as evidence. A check that fails where someone is already looking
+      # is worth more than a thorough one nobody reads.
+      #
+      # Islands cannot run this themselves (no C toolchain, so CGO_ENABLED=1
+      # will not build), so it is CI's job or it does not happen.
+      - name: race detector (concurrent packages)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./internal/api/... ./internal/bridge/... ./internal/events/... ./internal/mailbox/...
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # PINNED to go.mod's toolchain, NOT "stable" — this one is coupled to the
+      # linter below. golangci-lint typechecks with the Go it was built against,
+      # so when Go 1.27 shipped and `stable` moved to it, the pinned v2.12.2
+      # (built with 1.26) panicked on the 1.27 stdlib: "file requires newer Go
+      # version go1.27 (application built with go1.26)". Lint went red on master
+      # and on every open PR, for a change nobody made.
+      #
+      # The version below was pinned for exactly this class of problem and the
+      # floating half was left next to it. Bump the two together.
+      #
+      # The cost, stated: lint typechecks against 1.26 while the build jobs use
+      # the latest Go. A 1.27-only construct would build and go unlinted — which
+      # go.mod's `go 1.26.3` already disallows, so the window is narrow.
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version: "1.26.x"
       # action v7 drives golangci-lint v2 (v6 drove v1). The version is PINNED, not
       # "latest": a floating latest silently jumped to v2 while the config was still
       # v1-format, failing every CI run since May 2026. Bump deliberately alongside
@@ -67,6 +101,7 @@ jobs:
             scripts/lib/tty.sh \
             scripts/lib/tty_test.sh \
             scripts/verify-secrets-propagation.sh \
+            scripts/verify-ssh-forward-semantics.sh \
             scripts/integration.sh \
             scripts/install-channels-check.sh \
             scripts/metrics/install-totals.sh \

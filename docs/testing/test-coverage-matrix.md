@@ -202,7 +202,9 @@ manual verify today · `▢` none yet.
 ## 18. SDK & clients
 - [ ] Python SDK tests (pytest) · T1 · A
 - [ ] TS SDK tests · T1 · A
-- [ ] OpenAPI route-parity (server ↔ openapi, 88 ops) · T1 · A
+- [ ] OpenAPI route-parity (server ↔ openapi, 122 routes) · T1 · A
+- [ ] OpenAPI field-parity (json tags + query params ↔ openapi, 149 comparisons) · T1 · A
+      — with its mutation control, `openapi_field_parity.py --self-test`
 - [ ] PTY JSON-envelope+base64 protocol · T1/T2 · A
 - [ ] PyPI/npm publish (tag-driven) · T1 · ▢ (needs secrets)
 

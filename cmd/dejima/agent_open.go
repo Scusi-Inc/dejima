@@ -102,6 +102,137 @@ func waitForForward(ctx context.Context, port int, exited <-chan struct{}, budge
 	}
 }
 
+// authStateMissingProviderKey is the daemon's proactive verdict that a
+// key-requiring agent has no resolvable credential, so it will fail at its first
+// task. Computed from the handler registry plus the provider store — never from
+// logs — and already present on every agent the island detail returns.
+const authStateMissingProviderKey = "missing-provider-auth"
+
+// providerKeyPreflight warns, BEFORE the tunnel is dialled, that this agent's
+// framework needs a provider key and dejima has none to give it.
+//
+// This is the second of the two failures that both present as a dead console,
+// and it is the one no probe can see. gatewayReady asks "is anything listening";
+// a keyless gateway answers that perfectly and then fails every task with "No
+// API key found for provider …". The operator sees a console that connects and
+// does nothing, which reads as a broken console.
+//
+// A preflight rather than a probe, deliberately. The answer is declarative
+// registry data the daemon holds before any connection exists, so asking the
+// gateway would be slower, less reliable, and would only work once the gateway
+// is up — which is after the operator has already started guessing.
+//
+// It warns and continues rather than refusing. The console is a reasonable place
+// to go and look, and turning a diagnosable state into a blocked one helps
+// nobody.
+//
+// The wording is kept deliberately distinct from the gateway-absent message.
+// Both states can be true at once — the report that prompted this showed
+// "Default model · Off" alongside a disconnect — and two failures stacked are
+// only untangleable if each says something the other does not.
+func providerKeyPreflight(w io.Writer, agentType, provider, authState string) {
+	if authState != authStateMissingProviderKey {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "⚠  %s NEEDS A PROVIDER KEY AND DOESN'T HAVE ONE\n", agentType)
+	if strings.TrimSpace(provider) == "" {
+		fmt.Fprintln(w, "   No provider is configured for this agent, so it has no model to reach.")
+	} else {
+		fmt.Fprintf(w, "   Its provider is %q, and dejima has no key stored for it.\n", provider)
+	}
+	fmt.Fprintln(w, "   The console will open and connect normally. Every task will then fail with")
+	fmt.Fprintln(w, "   a missing-API-key error from the framework — which looks like a broken")
+	fmt.Fprintln(w, "   console and isn't one.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "   Fix with:  dejima provider set <provider> --key <key>")
+	fmt.Fprintln(w, "   Then:      dejima agent config <island> <agent> --model <provider>/<model>")
+	fmt.Fprintln(w, "   The agent picks the key up when it restarts.")
+	fmt.Fprintln(w)
+}
+
+// gatewayReady reports whether something inside the island is actually serving
+// on the far end of the forward.
+//
+// waitForForward answers a strictly smaller question, and its own comment says
+// so: ssh binds the LOCAL end after auth and does not dial the remote until a
+// connection arrives. So a forward can be "ready" with nothing behind it, and
+// the browser we open lands on a port that accepts and immediately closes. That
+// is not a corner case — an openclaw agent's first launch runs `npm install -g
+// openclaw`, so the gateway is absent for minutes on exactly the run where a new
+// operator is watching.
+//
+// The check is framework-agnostic on purpose: send the least surprising HTTP
+// request there is (the same GET the browser is about to make) and require at
+// least one byte back. Any HTTP server answers something — 200, 404, 401 — while
+// ssh's accept-then-fail gives EOF with nothing read. We deliberately do not ask
+// for a health endpoint or interpret the status: this separates "something is
+// listening" from "nothing is listening", and nothing more.
+//
+// What it explicitly does NOT answer: whether the gateway is healthy, and
+// whether it has a provider key. A gateway that is up and keyless serves this
+// request perfectly and fails every task. Those are different states with
+// different remedies, and a probe that conflated them would confidently name the
+// wrong one — the operator would be told to wait for something already present.
+func gatewayReady(ctx context.Context, port int) bool {
+	d := net.Dialer{}
+	dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.WriteString(conn, "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n"); err != nil {
+		return false
+	}
+	var buf [1]byte
+	n, err := conn.Read(buf[:])
+	// One byte is the whole assertion. Anything the far end says means a server
+	// is there; err with n == 0 is ssh reporting that its remote dial failed.
+	return n > 0 && (err == nil || err == io.EOF)
+}
+
+// waitForGateway blocks until gatewayReady, ssh exits, the budget runs out, or
+// the context is cancelled. It reports whether the gateway came up.
+//
+// notify is called once when the first attempt fails, so a wait that is about to
+// last minutes says what it is waiting for. A silent wait is indistinguishable
+// from a hang, and an operator who Ctrl-Cs a working npm install gets a
+// half-installed agent — which is how this failure compounds.
+func waitForGateway(ctx context.Context, port int, exited <-chan struct{}, budget time.Duration, notify func()) bool {
+	if gatewayReady(ctx, port) {
+		return true
+	}
+	if notify != nil {
+		notify()
+	}
+	deadline := time.Now().Add(budget)
+	for {
+		select {
+		case <-exited:
+			return false
+		case <-ctx.Done():
+			return false
+		case <-time.After(time.Second):
+		}
+		if gatewayReady(ctx, port) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+}
+
+// gatewayReadyBudget is generous because the thing it waits for is a package
+// install, not a process start: an openclaw agent's first launch fetches the
+// framework from npm inside the container. Too short and we tell the operator
+// their gateway is absent while it is still arriving — the same wrong-cause
+// diagnosis this file already exists to stop.
+const gatewayReadyBudget = 5 * time.Minute
+
 // sshFailureHint turns an ssh-layer failure into the remedy that actually fixes
 // it, or "" when the failure isn't ssh's (i.e. the command ran in the container
 // and failed on its own terms).
@@ -278,6 +409,10 @@ func newAgentOpenCmd() *cobra.Command {
 			// primary). Reuses the shared id/label resolver over the island's agents.
 			agentType := ""
 			agentID := ""
+			// The agent's provider readiness rides along with its type: both come
+			// from the same record, and the preflight below needs it before any
+			// connection exists.
+			agentProvider, agentAuth := "", ""
 			if len(args) == 2 {
 				agentID, err = project.ResolveAgentRef(isl.Agents, args[1])
 				if err != nil {
@@ -285,11 +420,12 @@ func newAgentOpenCmd() *cobra.Command {
 				}
 				for _, a := range isl.Agents {
 					if a.ID == agentID {
-						agentType = a.Type
+						agentType, agentProvider, agentAuth = a.Type, a.Provider, a.AuthState
 					}
 				}
 			} else {
-				agentID, agentType = isl.Agents[0].ID, isl.Agents[0].Type
+				a := isl.Agents[0]
+				agentID, agentType, agentProvider, agentAuth = a.ID, a.Type, a.Provider, a.AuthState
 			}
 
 			// Find the agent type's gateway port.
@@ -362,6 +498,10 @@ func newAgentOpenCmd() *cobra.Command {
 			if printOnly {
 				fmt.Printf("%s\nssh %s\n", url, joinArgs(sshArgs))
 			}
+			// Before anything is dialled: the daemon already knows whether this
+			// agent can reach a model. Saying it now costs nothing and separates the
+			// keyless-gateway failure from the absent-gateway one below.
+			providerKeyPreflight(os.Stdout, agentType, agentProvider, agentAuth)
 			fmt.Printf("forwarding %s/%s gateway → %s  (Ctrl-C to stop)\n", island, agentID, url)
 
 			sshCmd := exec.CommandContext(cmd.Context(), "ssh", sshArgs...)
@@ -403,6 +543,45 @@ func newAgentOpenCmd() *cobra.Command {
 					return fmt.Errorf("couldn't open the forward to %s: %w", island, waitErr)
 				}
 				return fmt.Errorf("couldn't open the forward to %s: %w", island, err)
+			}
+
+			// The forward is up. That is not the same as the gateway being up — see
+			// gatewayReady. Establish it before opening anything, or the browser
+			// lands on a port that accepts and immediately closes, and every
+			// diagnosis printed below is about a service that isn't there yet.
+			gatewayUp := true
+			if !printOnly {
+				gatewayUp = waitForGateway(cmd.Context(), localPort, exited, gatewayReadyBudget, func() {
+					fmt.Println()
+					fmt.Printf("The tunnel is up, but nothing is serving on port %d inside %s yet.\n", gw, island)
+					fmt.Println("  Waiting for the gateway to start. A first launch installs the framework")
+					fmt.Println("  inside the container, which can take a few minutes — this is normal.")
+					fmt.Println("  (Ctrl-C stops the tunnel; the install keeps running.)")
+					fmt.Println()
+				})
+			}
+			if !gatewayUp {
+				// Deliberately not an error, and deliberately not a browser tab. The
+				// tunnel works; it is the far end that hasn't arrived. Holding it open
+				// means the console works the moment the gateway starts, which is
+				// strictly better than a dead tab the operator has to remember to
+				// reload. Say only what we know: nothing here can tell whether the
+				// agent is still installing, crashed, or came up without a provider
+				// key, and naming the wrong one of those is worse than naming none.
+				if cmd.Context().Err() != nil {
+					<-exited
+					return waitErr
+				}
+				fmt.Println()
+				fmt.Printf("Gave up waiting for the gateway after %s. The tunnel is still open.\n", gatewayReadyBudget)
+				fmt.Println()
+				fmt.Println("  Not opening a browser: it would land on a port with nothing behind it.")
+				fmt.Printf("  Open %s yourself once the agent is serving.\n", url)
+				fmt.Println()
+				fmt.Printf("  To see what the agent is doing:  dejima attach %s %s\n", island, agentID)
+				fmt.Println()
+				<-exited
+				return waitErr
 			}
 
 			// A gateway whose console needs an auth token (OpenClaw) can't be reached

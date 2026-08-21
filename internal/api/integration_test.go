@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -189,6 +191,9 @@ type fakeRuntime struct {
 	statsByName      map[string]runtime.Stats // returned by StatsAll
 	volumeSizes      map[string]int64
 	mountsErr        error // forces ContainerMounts to fail (the "couldn't look" path)
+	reapsVal         *bool // overrides ContainerReapsOrphans; nil = true (as created)
+	dialFn           func(ctx context.Context, name, host string, port int) (net.Conn, error)
+	reapsErr         error // forces it to fail (the "couldn't look" path)
 	volumeCopies     [][2]string
 	startCalls       int
 	stopCalls        int
@@ -261,6 +266,27 @@ func (f *fakeRuntime) VolumeSizes(context.Context) (map[string]int64, error) {
 
 // ContainerMounts answers from the last create, so the fake container agrees
 // with what the server asked for. mountsErr forces the "couldn't look" path.
+// DialContainerPort backs the gateway proxy. Nil dialFn fails every dial, which
+// is the honest default: a test that wants a reachable gateway must provide one.
+func (f *fakeRuntime) DialContainerPort(ctx context.Context, name, host string, port int) (net.Conn, error) {
+	if f.dialFn == nil {
+		return nil, errors.New("fakeRuntime: no dialFn set")
+	}
+	return f.dialFn(ctx, name, host, port)
+}
+
+// ContainerReapsOrphans defaults to true — what the daemon creates — so only a
+// test that cares has to say anything.
+func (f *fakeRuntime) ContainerReapsOrphans(context.Context, string) (bool, error) {
+	if f.reapsErr != nil {
+		return false, f.reapsErr
+	}
+	if f.reapsVal != nil {
+		return *f.reapsVal, nil
+	}
+	return true, nil
+}
+
 func (f *fakeRuntime) ContainerMounts(context.Context, string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -81,6 +81,33 @@ test("deleteIsland no force", async () => {
   assert.equal(cap.url, "http://h:1/v1/islands/foo");
 });
 
+test("createIsland noRepo sends no_repo with an empty repo", async () => {
+  const { dj, cap } = makeClient({ status: 201, body: { name: "brain" } });
+  await dj.createIsland("", { noRepo: true, name: "brain", agent: "headless", cmd: "python loop.py" });
+  const sent = JSON.parse(cap.body!);
+  assert.equal(sent.no_repo, true);
+  assert.equal(sent.repo, "");
+});
+
+test("createIsland omits no_repo when not asked for", async () => {
+  const { dj, cap } = makeClient({ status: 201, body: {} });
+  await dj.createIsland("git@github.com:you/foo.git");
+  assert.equal("no_repo" in JSON.parse(cap.body!), false);
+});
+
+test("removeAgent force query", async () => {
+  const { dj, cap } = makeClient({ status: 204 });
+  await dj.removeAgent("foo", "p2", true);
+  assert.equal(cap.method, "DELETE");
+  assert.equal(cap.url, "http://h:1/v1/islands/foo/agents/p2?force=true");
+});
+
+test("removeAgent no force", async () => {
+  const { dj, cap } = makeClient({ status: 204 });
+  await dj.removeAgent("foo", "p2");
+  assert.equal(cap.url, "http://h:1/v1/islands/foo/agents/p2");
+});
+
 test("setResources sends both fields", async () => {
   const { dj, cap } = makeClient({ body: { restart_required: true } });
   const out = await dj.setResources("foo", { memory: "4g", oomPriority: 100 });

@@ -641,8 +641,53 @@ func (s *Server) Handler() http.Handler {
 // between listeners live in the middleware that wraps this mux, never in the
 // routes themselves, so there is exactly one source of truth for the API
 // surface.
+// routeRecorder is a ServeMux that remembers what it was asked to serve.
+//
+// The route-parity gate (sdk/openapi_parity.py) finds routes by matching
+// literal `mux.HandleFunc("VERB /path", …)` strings in these sources. That is a
+// defensible design and it has one blind spot: a route registered through a
+// LOOP or a variable is invisible to it — undocumented, AND silently exempt
+// from the gate whose entire job is catching undocumented routes.
+//
+// It was found the only way a textual scan can be: someone registered seven
+// verbs in a loop, the gate reported one missing route, and they noticed the
+// number was too small. That reflex works when you happen to know what the
+// number should be, which is not a check.
+//
+// Recording what is ACTUALLY registered gives the test below something
+// authoritative to compare the literal scan against, so the next person to loop
+// is told rather than silently exempted.
+// routeMux is what the Register* helpers take, so routes registered inside them
+// are recorded too. *http.ServeMux satisfies it, so nothing else changes.
+type routeMux interface {
+	HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request))
+}
+
+type routeRecorder struct {
+	mux      *http.ServeMux
+	patterns []string
+}
+
+func (r *routeRecorder) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	r.patterns = append(r.patterns, pattern)
+	r.mux.HandleFunc(pattern, h)
+}
+
+// registeredRoutes returns every pattern routes() actually registered — the
+// runtime truth, as opposed to what a regex over the source can see.
+func (s *Server) registeredRoutes() []string {
+	rec := &routeRecorder{mux: http.NewServeMux()}
+	s.buildRoutes(rec)
+	return rec.patterns
+}
+
 func (s *Server) routes() *http.ServeMux {
-	mux := http.NewServeMux()
+	rec := &routeRecorder{mux: http.NewServeMux()}
+	s.buildRoutes(rec)
+	return rec.mux
+}
+
+func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("GET /v1/islands", s.listIslands)
 	mux.HandleFunc("POST /v1/islands", s.createIsland)
 	mux.HandleFunc("GET /v1/islands/{name}", s.getIsland)
@@ -681,6 +726,26 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
 	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/move", s.moveAgent)
 	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/restart", s.restartAgent)
+	// The framework console, proxied. One handler for every verb: the daemon
+	// relays bytes and does not model the gateway's API, so it has no business
+	// deciding which methods that API accepts.
+	//
+	// Written out rather than looped, deliberately. sdk/openapi_parity.py finds
+	// routes by matching a literal verb-and-path string in these sources, so a
+	// loop over verbs registers seven routes the parity gate cannot see —
+	// undocumented, and silently exempt from the check that exists to catch
+	// exactly that. Repetition here buys visibility to the gate.
+	//
+	// (The example that would make this comment clearer cannot be written here:
+	// the extractor reads comments too, so quoting the pattern invents a route.)
+	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("PUT /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("HEAD /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("OPTIONS /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/gateway-ready", s.getAgentGatewayReady)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
 	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
@@ -782,7 +847,6 @@ func (s *Server) routes() *http.ServeMux {
 	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
 	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
 	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
-	return mux
 }
 
 // AdoptExisting brings the runtime state into alignment with persisted project
@@ -1041,6 +1105,17 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
 	info.Git = s.gitStatusOf(ctx, p.ContainerName())
+	// Whether this container reaps orphans. Detail-only: one more inspect, and
+	// the answer cannot change without a recreate.
+	//
+	// Asked of the RUNTIME rather than read off our own source. The daemon passes
+	// --init today, so the code says every island reaps; a container created
+	// before that flag existed says otherwise and will go on leaking a zombie per
+	// orphaned process until it is recreated. Left nil on error, because "I
+	// couldn't ask" must not render as "fine" — see IslandInfo.ReapsOrphans.
+	if reaps, err := s.rt.ContainerReapsOrphans(ctx, p.ContainerName()); err == nil {
+		info.ReapsOrphans = &reaps
+	}
 	// Crash health is one extra inspect; detail-only to keep list refreshes cheap.
 	if h, err := s.rt.Inspect(ctx, p.ContainerName()); err == nil {
 		info.Health = &IslandHealth{
@@ -1607,15 +1682,31 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	// rather than letting an empty repo through: an empty Repo is far more often
 	// a shell-eaten URL than an intent, and silently booting an empty island for
 	// it is indistinguishable from a clone that failed.
+	fromDir := strings.TrimSpace(req.FromDir)
 	switch {
+	case fromDir != "" && (strings.TrimSpace(req.Repo) != "" || strings.TrimSpace(req.SeedPath) != "" || req.NoRepo):
+		writeError(w, http.StatusBadRequest, errors.New("from_dir is its own workspace source — it can't be combined with a repo, a seed, or no_repo"))
+		return
+	case fromDir != "" && strings.TrimSpace(req.Name) == "":
+		// Deriving one from the directory's basename is tempting and wrong: the
+		// same folder name recurs everywhere ("src", "notes", "tmp"), so the
+		// island would be named something unpredictable and often colliding.
+		writeError(w, http.StatusBadRequest, errors.New("name is required with from_dir (a folder name is not a good island name)"))
+		return
+	case req.GitInit && fromDir == "":
+		writeError(w, http.StatusBadRequest, errors.New("git_init only applies with from_dir"))
+		return
+	case req.KeepScope && fromDir == "":
+		writeError(w, http.StatusBadRequest, errors.New("keep_scope only applies with from_dir"))
+		return
 	case req.NoRepo && (strings.TrimSpace(req.Repo) != "" || strings.TrimSpace(req.SeedPath) != ""):
 		writeError(w, http.StatusBadRequest, errors.New("no_repo can't be combined with a repo or seed — pick one"))
 		return
 	case req.NoRepo && strings.TrimSpace(req.Name) == "":
 		writeError(w, http.StatusBadRequest, errors.New("name is required with no_repo (there's no repo to derive one from)"))
 		return
-	case !req.NoRepo && strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "":
-		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed) — or set no_repo for an island with an empty workspace"))
+	case !req.NoRepo && fromDir == "" && strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "":
+		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed) — or from_dir to seed from a folder, or no_repo for an empty workspace"))
 		return
 	}
 	// Stop a doomed private-repo clone before it launches into an empty, repo-less
@@ -1736,7 +1827,8 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents, req.NoRepo)
+	// from_dir seeds a repo-less island: no clone, then a brokered copy.
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents, req.NoRepo || fromDir != "")
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -1759,6 +1851,24 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := p.Save(); err != nil {
 		s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
+	}
+
+	// Seed from a host folder AFTER provisioning succeeded, deliberately outside
+	// the block above: a failure here must not reach that teardown. The island
+	// itself is fine by this point, so destroying it would make the operator
+	// recreate a working island to retry a copy they can re-run with
+	// `port intake -r`.
+	if fromDir != "" {
+		if err := s.seedWorkspaceFromDir(r.Context(), p, folderSeed{
+			Dir: fromDir, KeepScope: req.KeepScope, GitInit: req.GitInit,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf(
+				"island %q was created, but seeding /workspace from %q failed: %w — "+
+					"the source folder is untouched; retry with `dejima port grant %s %s:ro` "+
+					"then `dejima port intake %s <scope>:. -r`",
+				p.Name, fromDir, err, p.Name, fromDir, p.Name))
+			return
+		}
 	}
 
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: p.Name})

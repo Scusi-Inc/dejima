@@ -54,7 +54,9 @@ rules that make the list only ever shrink:
 ## Adding a feature: the workflow
 
 1. Add the route to `internal/api/*.go` and/or the command to `cmd/dejima/`.
-2. Update `openapi.yaml` (the route-parity check enforces this).
+2. Update `openapi.yaml` — the route-parity check enforces the route, and
+   `sdk/openapi_field_parity.py` enforces the FIELDS: every `json:` tag on a
+   documented request/response type and every query param the handler reads.
 3. Write a test that exercises it (a CLI table test, an httptest API test, or a
    line in a live suite). The gate now sees the reference.
 4. If the surface was previously waived, delete its line from the waiver file.

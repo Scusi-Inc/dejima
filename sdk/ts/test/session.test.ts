@@ -99,6 +99,20 @@ test("error envelope fires onError and closes", async () => {
   assert.equal(await s.recv(), null);
 });
 
+test("exit envelope ends the session without a socket close", async () => {
+  // `exit` means the terminal ended, not that the link dropped. A caller that
+  // can't tell them apart reconnects forever and respawns a shell nobody can
+  // escape — so the session must finish here, while the socket is still open.
+  const ws = new FakeWS();
+  const s = new Session(ws);
+  let closed = false;
+  s.onClose(() => (closed = true));
+  ws.inbound({ type: "exit" });
+  assert.equal(closed, true);
+  assert.equal(ws.closed, false);
+  assert.equal(await s.recv(), null);
+});
+
 test("close() closes the socket", () => {
   const ws = new FakeWS();
   new Session(ws).close();

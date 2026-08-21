@@ -227,6 +227,9 @@ func runDoctor(ctx context.Context) *doctorReport {
 					// running islands so a dead agent in a live container is flagged.
 					if info.Container == "running" {
 						if d, err := c.GetIsland(ctx, info.Name); err == nil {
+							if f := diagnoseOrphanReaping(d.ReapsOrphans, info.Name); f.status != "" {
+								r.add("Projects", info.Name, f.status, f.detail, f.fix)
+							}
 							for _, a := range d.Agents {
 								if a.State == "exited" {
 									r.add("Projects", info.Name+"/"+a.ID, "WARN",

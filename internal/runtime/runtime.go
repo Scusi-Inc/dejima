@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"io"
+	"net"
 )
 
 // ContainerStatus is a coarse-grained state from the runtime's perspective.
@@ -135,6 +136,31 @@ type Runtime interface {
 	// statement from "I could not look". Collapsing the second into the first is
 	// how a surface comes to report containment it never verified.
 	ContainerMounts(ctx context.Context, name string) ([]string, error)
+
+	// ContainerReapsOrphans reports whether the container was created with an
+	// init process as PID 1 — the thing that reaps a process whose parent exited
+	// before it did.
+	//
+	// This is a create-time property and cannot be changed on a running
+	// container, so an island created before --init was passed keeps leaking
+	// zombies for its whole life while the daemon's code says it passes --init.
+	// That divergence is invisible from anywhere except the container itself,
+	// which is why it is asked of the runtime rather than inferred from the
+	// record.
+	//
+	// Like ContainerMounts and unlike Inspect, a failure is returned rather than
+	// flattened to false: "no init" and "couldn't look" are different answers and
+	// only one of them is a problem to report.
+	ContainerReapsOrphans(ctx context.Context, name string) (bool, error)
+
+	// DialContainerPort opens a connection to host:port INSIDE the named
+	// container. A framework gateway binds the container's loopback, which is
+	// unreachable from the host by any ordinary dial — not 127.0.0.1 (that is the
+	// host's own), and not the bridge address (nothing is bound there).
+	//
+	// ctx bounds the dial, not the connection: an http.Transport pools a conn past
+	// the request that opened it, and a websocket outlives every request context.
+	DialContainerPort(ctx context.Context, name, host string, port int) (net.Conn, error)
 
 	// Inspect returns crash-relevant health facts (OOM, restarts, exit code).
 	// Returns a zero Health if the container is missing or unavailable.

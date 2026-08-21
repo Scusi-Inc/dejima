@@ -51,8 +51,53 @@ info() { printf '    %s\n' "$*"; }
 
 # Read the probe from a NEW login shell inside the island. Login shell because
 # secrets arrive via /etc/profile.d, which a non-login shell never sources.
+# ${VAR-UNSET} (no colon) and ${VAR:-EMPTY} say different things, and the
+# difference decides where to look: UNSET means load-secrets.sh never exported
+# it, EMPTY means it did and the value is blank — a `--stdin` that read nothing.
+# The first version of this used ${VAR:-ABSENT}, which collapses both into one
+# word and cost a whole field round-trip to un-collapse.
 read_probe() {
-    dejima exec "$ISLAND" -- bash -lc "printf '%s' \"\${${PROBE}:-ABSENT}\"" 2>/dev/null
+    dejima exec "$ISLAND" -- bash -lc \
+        "v=\${${PROBE}-UNSET}; [ -z \"\$v\" ] && v=EMPTY; printf '%s' \"\$v\"" 2>/dev/null
+}
+
+# on_read_failure prints what the CONTAINER can see, so a bad read is diagnosed
+# in the same run instead of costing a round trip. The env and the file are
+# different facts: in-file-but-not-in-env is the parser or the profile hook;
+# not-in-file is the daemon.
+on_read_failure() {
+    # Re-read with the SIMPLEST possible form, immediately.
+    #
+    # The first field run reported a specific defect in code that did not have
+    # it, and the second could not be reproduced: the script's read said UNSET
+    # while the same read by hand, seconds later, returned the value. Every
+    # difference I could test — the command string, the variable name, the
+    # timing, the call sequence — came out identical. So the script now captures
+    # the discriminator itself instead of costing another round trip:
+    #
+    #   both disagree  -> the two read forms differ, and that is the bug
+    #   both agree     -> the earlier read was transient; the value arrived late
+    local simple
+    simple="$(dejima exec "$ISLAND" -- bash -lc "printf '%s' \"\${${PROBE}-UNSET}\"" 2>/dev/null)"
+    info "re-read with the simple form: '${simple}'"
+    if [[ "$simple" != "$got" ]]; then
+        info "  THE TWO READ FORMS DISAGREE ('$got' vs '$simple') — that is this"
+        info "  script's bug, not the daemon's. Report both values."
+    else
+        info "  both read forms agree, so the read is consistent — the value was"
+        info "  genuinely not in the environment at that moment."
+    fi
+    info "what the island can actually see:"
+    local line
+    line="$(dejima exec "$ISLAND" -- grep -c "^${PROBE}=" /opt/host/secrets.d/secrets.env 2>/dev/null || echo 0)"
+    if [[ "$line" == "0" ]]; then
+        info "  ${PROBE} is NOT in secrets.d/secrets.env — the daemon never wrote it."
+        info "  Look at the daemon, not the island: is it new enough to refresh on set?"
+    else
+        info "  ${PROBE} IS in secrets.d/secrets.env but did not reach the shell."
+        info "  Look in the island: /opt/dejima/load-secrets.sh and"
+        info "  /etc/profile.d/10-dejima-secrets.sh. Run the first by hand to see its output."
+    fi
 }
 
 cleanup() {
@@ -103,15 +148,15 @@ echo
 
 # --- RUN 1 ----------------------------------------------------------------
 bold "2. Does a write reach a running container at all?"
-printf '%s' "$V1" | dejima secret set "$ISLAND" "$PROBE" --stdin >/dev/null 2>&1 \
-    || bad "dejima secret set failed"
+set_out="$(printf '%s' "$V1" | dejima secret set "$ISLAND" "$PROBE" --stdin 2>&1)" \
+    || bad "dejima secret set failed: $set_out"
 got="$(read_probe)"
 if [[ "$got" == "$V1" ]]; then
     ok "a newly-set secret is visible in a new login shell"
 else
     bad "set did not propagate — read '$got', want '$V1'"
-    info "If this reads ABSENT, check the host rebuilt the IMAGE and not just the"
-    info "daemon: an old load-secrets.sh looks only at /opt/host/secrets.env."
+    info "daemon said: $(printf '%s' "$set_out" | head -1)"
+    on_read_failure
 fi
 echo
 
@@ -120,8 +165,8 @@ echo
 # the value happened to be written before the container was created; REPLACING
 # a value cannot.
 bold "3. Does REPLACING an existing value reach it?"
-printf '%s' "$V2" | dejima secret set "$ISLAND" "$PROBE" --stdin >/dev/null 2>&1 \
-    || bad "dejima secret set (rotate) failed"
+set_out="$(printf '%s' "$V2" | dejima secret set "$ISLAND" "$PROBE" --stdin 2>&1)" \
+    || bad "dejima secret set (rotate) failed: $set_out"
 got="$(read_probe)"
 if [[ "$got" == "$V2" ]]; then
     ok "a rotated secret is visible in a new login shell"
@@ -131,6 +176,8 @@ elif [[ "$got" == "$V1" ]]; then
     info "host and the container is still resolving the pre-rename inode."
 else
     bad "rotate did not propagate — read '$got', want '$V2'"
+    info "daemon said: $(printf '%s' "$set_out" | head -1)"
+    on_read_failure
 fi
 echo
 
@@ -138,7 +185,7 @@ echo
 bold "4. Does 'secret rm' actually remove it?"
 dejima secret rm "$ISLAND" "$PROBE" >/dev/null 2>&1 || bad "dejima secret rm failed"
 got="$(read_probe)"
-if [[ "$got" == "ABSENT" ]]; then
+if [[ "$got" == "UNSET" ]]; then
     ok "a removed secret is gone from a new login shell"
 else
     bad "REVOKE DID NOT PROPAGATE — the value is still readable as '$got'"
