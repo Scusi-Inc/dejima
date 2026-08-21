@@ -40,7 +40,11 @@ func TestBandCollapsed(t *testing.T) {
 		t.Errorf("collapsed band height = %d, want 1", h)
 	}
 	bare := plain(s)
-	for _, want := range []string{"Host", "2 terminal", "[/] expand"} {
+	// "[/]" and "expand" separately, not the concatenation. The guard exists so
+	// the band always NAMES ITS KEY; asserting one exact string also pinned the
+	// layout, so moving the key next to the arrow (where it reads as the
+	// affordance rather than an afterthought) failed a test about naming.
+	for _, want := range []string{"Host", "2 terminal", "[/]", "expand"} {
 		if !strings.Contains(bare, want) {
 			t.Errorf("collapsed band missing %q: %q", want, bare)
 		}
@@ -57,7 +61,7 @@ func TestBandExpanded(t *testing.T) {
 		t.Errorf("expanded band height = %d, want %d", h, want)
 	}
 	bare := plain(s)
-	for _, want := range []string{"build", "t2", "+ new terminal", "[/] collapse"} {
+	for _, want := range []string{"build", "t2", "+ new terminal", "[/]", "collapse"} {
 		if !strings.Contains(bare, want) {
 			t.Errorf("expanded band missing %q: %q", want, bare)
 		}

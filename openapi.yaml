@@ -935,7 +935,22 @@ paths:
         in: path
         required: true
         schema: { type: string }
-        description: File path within the island (defaults to the primary worktree)
+        description: |
+          File path within the island (defaults to the primary worktree).
+
+          MULTI-SEGMENT. The daemon route is `{path...}` — a wildcard that
+          captures every remaining segment, so this value contains slashes and
+          they are part of the path, not encoded data.
+
+          OpenAPI has no way to say that, and this is a plain `type: string`
+          path parameter because there is no truthful alternative. A conforming
+          generated client percent-encodes a simple path parameter WHOLE, so
+          `/workspace/docs/spec.md` is sent as `%2Fworkspace%2Fdocs%2Fspec.md`
+          and matches no route. That is the spec's limitation, not the client's
+          bug, and it has already cost one integrator an afternoon.
+
+          If you are generating a client: bypass it for this operation and build
+          the URL yourself, encoding each segment but not the separators.
     get:
       tags: [exec-and-files]
       summary: Read a file from an island
@@ -1032,7 +1047,16 @@ paths:
             schema: { $ref: "#/components/schemas/PortIntakeRequest" }
       responses:
         "200":
-          description: OK
+          description: OK — everything requested crossed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortIntakeResponse" }
+        "207":
+          description: >-
+            Partial import: some files crossed and some did not. `files` is what
+            arrived and `failed` says what did not and why. Nothing is rolled
+            back. Deliberately not 200 — a success code over an incomplete
+            result is how a partial import gets mistaken for a whole one.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PortIntakeResponse" }
@@ -2909,14 +2933,54 @@ components:
         scope: { type: string, description: scope name to read from }
         src_rel: { type: string, description: path relative to the scope's host root }
         dest: { type: string, description: "container path; default /intake/<scope>/<src_rel>" }
+        recursive: { type: boolean, description: "import a DIRECTORY, one brokered and ledgered crossing per file. Symlinks are never followed and are reported as skipped. Required to import a directory at all — without it a directory is refused, because \"I meant that directory\" and \"I mistyped a directory\" are indistinguishable. Default false" }
+        max_files: { type: integer, description: "cap on files in a recursive import, refused BEFORE the first byte moves; 0 = server default (2000)" }
+        max_bytes: { type: integer, format: int64, description: "cap on total bytes in a recursive import, refused BEFORE the first byte moves; 0 = server default (512 MiB)" }
     PortIntakeResponse:
       type: object
+      description: >-
+        A single-file intake fills bytes/sha256 and leaves the recursive fields
+        empty. A recursive intake fills files/skipped/failed, and src/dest then
+        name the directory. Responds 207 rather than 200 when any file failed —
+        a 200 carrying a failure list is a success report over an incomplete
+        result.
       properties:
         scope: { type: string }
         src: { type: string }
         dest: { type: string }
-        bytes: { type: integer }
+        bytes: { type: integer, format: int64, description: "single-file: the file's size. recursive: total bytes that actually crossed" }
+        sha256: { type: string, description: "single-file only" }
+        recursive: { type: boolean }
+        batch_id: { type: string, description: "groups this import's Ledger entries. Entries stay one-per-file: --verify walks a hash chain of crossings, and a single batch entry would carry no hash for the things that crossed" }
+        files:
+          type: array
+          description: files that crossed
+          items: { $ref: "#/components/schemas/PortIntakeFile" }
+        skipped:
+          type: array
+          description: "entries deliberately not imported (symlinks, non-regular files, unreadable directories). Reported rather than silently dropped — a caller cannot otherwise tell a skipped symlink from a file that was never there"
+          items: { $ref: "#/components/schemas/PortIntakeSkip" }
+        failed:
+          type: array
+          description: "files attempted that did not cross. There is NO rollback: everything in files is present and ledgered, and stays that way"
+          items: { $ref: "#/components/schemas/PortIntakeFailed" }
+    PortIntakeFile:
+      type: object
+      properties:
+        rel: { type: string, description: path relative to the imported directory }
+        dest: { type: string }
+        bytes: { type: integer, format: int64 }
         sha256: { type: string }
+    PortIntakeSkip:
+      type: object
+      properties:
+        rel: { type: string }
+        reason: { type: string }
+    PortIntakeFailed:
+      type: object
+      properties:
+        rel: { type: string }
+        error: { type: string }
     PortExportRequest:
       type: object
       required: [src]

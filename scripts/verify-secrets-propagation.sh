@@ -66,6 +66,27 @@ read_probe() {
 # different facts: in-file-but-not-in-env is the parser or the profile hook;
 # not-in-file is the daemon.
 on_read_failure() {
+    # Re-read with the SIMPLEST possible form, immediately.
+    #
+    # The first field run reported a specific defect in code that did not have
+    # it, and the second could not be reproduced: the script's read said UNSET
+    # while the same read by hand, seconds later, returned the value. Every
+    # difference I could test — the command string, the variable name, the
+    # timing, the call sequence — came out identical. So the script now captures
+    # the discriminator itself instead of costing another round trip:
+    #
+    #   both disagree  -> the two read forms differ, and that is the bug
+    #   both agree     -> the earlier read was transient; the value arrived late
+    local simple
+    simple="$(dejima exec "$ISLAND" -- bash -lc "printf '%s' \"\${${PROBE}-UNSET}\"" 2>/dev/null)"
+    info "re-read with the simple form: '${simple}'"
+    if [[ "$simple" != "$got" ]]; then
+        info "  THE TWO READ FORMS DISAGREE ('$got' vs '$simple') — that is this"
+        info "  script's bug, not the daemon's. Report both values."
+    else
+        info "  both read forms agree, so the read is consistent — the value was"
+        info "  genuinely not in the environment at that moment."
+    fi
     info "what the island can actually see:"
     local line
     line="$(dejima exec "$ISLAND" -- grep -c "^${PROBE}=" /opt/host/secrets.d/secrets.env 2>/dev/null || echo 0)"

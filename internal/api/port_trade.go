@@ -49,16 +49,35 @@ func (s *Server) handlePortIntake(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("source not reachable on the daemon host: %w", err))
 		return
 	}
-	if info.IsDir() {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("intake is single-file in V1; %q is a directory", rel))
+	if info.IsDir() && !req.Recursive {
+		// Naming the flag matters more than refusing does: this used to say
+		// "intake is single-file in V1", which reads as "not supported" and sends
+		// people to tar + cp + untar over exec — a path that works and produces no
+		// Ledger entries at all.
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%q is a directory; pass recursive to import it (one brokered crossing per file)", rel))
 		return
 	}
-	if !info.Mode().IsRegular() {
+	if !info.IsDir() && req.Recursive {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("recursive was set but %q is a file", rel))
+		return
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%q is not a regular file", rel))
 		return
 	}
 	if status, _ := s.rt.Status(r.Context(), p.ContainerName()); status != runtime.StatusRunning {
 		writeError(w, http.StatusConflict, errIslandNotRunning(name))
+		return
+	}
+	if req.Recursive {
+		destRoot := req.Dest
+		if destRoot == "" {
+			destRoot = "/home/dejima/intake/" + scope.Name + "/" + filepath.ToSlash(rel)
+		}
+		destRoot = strings.TrimSuffix(destRoot, "/")
+		ctx := context.WithValue(r.Context(), intakeLimitsKey{},
+			intakeLimits{maxFiles: req.MaxFiles, maxBytes: req.MaxBytes})
+		s.handlePortIntakeRecursive(w, r.WithContext(ctx), p, scope, real, rel, destRoot)
 		return
 	}
 	size, sum, err := hashFile(real)
