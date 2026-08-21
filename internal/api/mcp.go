@@ -38,7 +38,7 @@ var newMCPBroker = mcpbroker.Default
 // RegisterMCP mounts the MCP-broker routes. Called once from server.go's
 // routes() — the single shared-file seam this lane adds (append-only). Keeping
 // the registrations here means the route surface lives beside its handlers.
-func (s *Server) RegisterMCP(mux *http.ServeMux) {
+func (s *Server) RegisterMCP(mux routeMux) {
 	// Grant surface — operator-only (absent from tokenRouteAccess).
 	mux.HandleFunc("GET /v1/islands/{name}/mcp/grants", s.handleListMCPGrants)
 	mux.HandleFunc("POST /v1/islands/{name}/mcp/grants", s.handleGrantMCP)

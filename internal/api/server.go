@@ -641,8 +641,53 @@ func (s *Server) Handler() http.Handler {
 // between listeners live in the middleware that wraps this mux, never in the
 // routes themselves, so there is exactly one source of truth for the API
 // surface.
+// routeRecorder is a ServeMux that remembers what it was asked to serve.
+//
+// The route-parity gate (sdk/openapi_parity.py) finds routes by matching
+// literal `mux.HandleFunc("VERB /path", …)` strings in these sources. That is a
+// defensible design and it has one blind spot: a route registered through a
+// LOOP or a variable is invisible to it — undocumented, AND silently exempt
+// from the gate whose entire job is catching undocumented routes.
+//
+// It was found the only way a textual scan can be: someone registered seven
+// verbs in a loop, the gate reported one missing route, and they noticed the
+// number was too small. That reflex works when you happen to know what the
+// number should be, which is not a check.
+//
+// Recording what is ACTUALLY registered gives the test below something
+// authoritative to compare the literal scan against, so the next person to loop
+// is told rather than silently exempted.
+// routeMux is what the Register* helpers take, so routes registered inside them
+// are recorded too. *http.ServeMux satisfies it, so nothing else changes.
+type routeMux interface {
+	HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request))
+}
+
+type routeRecorder struct {
+	mux      *http.ServeMux
+	patterns []string
+}
+
+func (r *routeRecorder) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	r.patterns = append(r.patterns, pattern)
+	r.mux.HandleFunc(pattern, h)
+}
+
+// registeredRoutes returns every pattern routes() actually registered — the
+// runtime truth, as opposed to what a regex over the source can see.
+func (s *Server) registeredRoutes() []string {
+	rec := &routeRecorder{mux: http.NewServeMux()}
+	s.buildRoutes(rec)
+	return rec.patterns
+}
+
 func (s *Server) routes() *http.ServeMux {
-	mux := http.NewServeMux()
+	rec := &routeRecorder{mux: http.NewServeMux()}
+	s.buildRoutes(rec)
+	return rec.mux
+}
+
+func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("GET /v1/islands", s.listIslands)
 	mux.HandleFunc("POST /v1/islands", s.createIsland)
 	mux.HandleFunc("GET /v1/islands/{name}", s.getIsland)
@@ -802,7 +847,6 @@ func (s *Server) routes() *http.ServeMux {
 	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
 	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
 	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
-	return mux
 }
 
 // AdoptExisting brings the runtime state into alignment with persisted project

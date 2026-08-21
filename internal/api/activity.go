@@ -74,7 +74,7 @@ const (
 // in routes(), per the lane seam contract). Read-only and operator-surface only;
 // classified capRead in roleRouteCap so viewers can observe team activity, and
 // absent from tokenRouteAccess so an island token can never read the fleet feed.
-func (s *Server) RegisterActivity(mux *http.ServeMux) {
+func (s *Server) RegisterActivity(mux routeMux) {
 	mux.HandleFunc("GET /v1/activity", s.handleActivity)
 }
 

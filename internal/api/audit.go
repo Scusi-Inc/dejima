@@ -305,7 +305,7 @@ func lifecycleDetail(e events.Event) string {
 // RegisterAudit registers the audit read/filter/export/verify route on mux. It's
 // the single seam server.go wires in (one line), keeping the route table change
 // per-lane to a one-liner.
-func (s *Server) RegisterAudit(mux *http.ServeMux) {
+func (s *Server) RegisterAudit(mux routeMux) {
 	mux.HandleFunc("GET /v1/audit", s.handleAudit)
 }
 

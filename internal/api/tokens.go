@@ -72,7 +72,7 @@ type TokensResponse struct {
 // RegisterAuth registers the team-auth token-administration routes on mux. Called
 // once from routes() (one append-only line per the lane seam contract). The
 // owner-only gate is enforced by roleAuth via roleRouteCap, not re-checked here.
-func (s *Server) RegisterAuth(mux *http.ServeMux) {
+func (s *Server) RegisterAuth(mux routeMux) {
 	mux.HandleFunc("POST /v1/tokens", s.handleCreateToken)
 	mux.HandleFunc("GET /v1/tokens", s.handleListTokens)
 	mux.HandleFunc("DELETE /v1/tokens/{id}", s.handleRevokeToken)
