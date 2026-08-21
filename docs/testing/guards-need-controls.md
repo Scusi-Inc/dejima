@@ -87,7 +87,10 @@ is the control — and it has five traps of its own, each found the hard way:
 - **Assert it hit the site you meant.** `assert s.count(old) == 1` before
   replacing. The weaker check above passes happily when your pattern matches in
   two places and you mutate the wrong one — the file changed, the mutation is
-  real, and it is somewhere else entirely.
+  real, and it is somewhere else entirely. Note that `sed` and `perl` without
+  `/g` replace the FIRST match *silently*: an ambiguous pattern does not error,
+  it quietly mutates the wrong site, which is exactly how a confident zero gets
+  produced.
 - **Compile the mutant before reading the result.** Run `go vet` on the mutated
   tree and abort if it fails. Otherwise a broken build gives you a red that looks
   like the guard working.
@@ -221,19 +224,32 @@ nothing was wrong with the tooling.
 
 **What happened.** Two things were fixed at once: a wrong boolean pair, and a
 hardcoded path literal that should have come from a canonical table. A mutation
-of the path was expected to fail the test. It passed. That surprise prompted a
-control — put the old literal back, drift the path again, expect a failure this
-time. **It passed too**, and the conclusion "the coupling is fine, the test is
-sound" was one sentence from being written up.
+of the path was expected to fail the test. **It passed.**
 
-The control had reverted the literal but kept the boolean fix, so the mismatch
-degraded into a different warning — one containing the exact word the test
-greps for. Two things changed; the result was attributed to one.
+That first pass was not the bug — it had a real explanation. The fix had already
+made the drift impossible: both sides now read one exported constant, so moving
+it moves them together and there is nothing left to detect. A fix working so well
+that the old failure mode stopped existing is a *good* result, and one that
+should prompt "why?" rather than a celebration.
+
+The error was what came next. A control was built — put the old literal back,
+drift the path again, expect a failure this time — and **it passed too**, and the
+conclusion "the coupling is fine, the test is sound" was one sentence from being
+written up. The control had reverted the literal but kept the boolean fix, so the
+mismatch degraded into a different warning: one containing the exact word the
+test greps for. Two things changed; the result was attributed to one.
 
 Re-run properly against unmutated `master` in a throwaway worktree, drifting the
-path *does* fail the test, in both directions. **The original claim was right and
-the method used to confirm it was not**, which is the combination that survives
-review.
+path *does* fail the test, in both directions.
+
+In the words of the person it happened to: **the first pass was correct and
+unexplained; the control built to explain it was the broken instrument.** And the
+reason it was broken is worth more than the mechanics — *"I already believed the
+answer; the control was there to agree with me. That is the state in which a
+non-isolating control does its damage."*
+
+So: **the original claim was right and the method used to confirm it was not**,
+which is the combination that survives review.
 
 **Why this needs its own rule.** A control that fails makes you look harder. A
 control that *passes* makes you stop and write the conclusion. So a
@@ -254,7 +270,7 @@ control instead of the guard: **change one thing, and prove the control can
 register a failure before trusting the pass.** A throwaway worktree off an
 unmutated base is usually the cheapest way to guarantee the first half.
 
-*(Incident from d2, written up here at their request.)*
+*(Incident from d2, sent over at d1's request rather than edited in directly.)*
 
 ## A verification has a timestamp; a gate does not
 
