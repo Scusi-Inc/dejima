@@ -118,6 +118,24 @@ func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 		return ReleaseInfo{}, rateLimitError(resp)
 	}
+	// 401 is unambiguous and the generic message wasted an operator's time on it:
+	// GitHub rejected a token we SENT. The release check needs no auth at all —
+	// it reads a public release — so the token came from GITHUB_TOKEN, GH_TOKEN
+	// or the daemon's stored credential, and it is expired, revoked, or scoped so
+	// it cannot read this repo. "HTTP 401" sends the reader to look for an outage.
+	//
+	// The remedy is the part worth printing: unsetting the variable makes the
+	// check work immediately, because it never needed the token.
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ReleaseInfo{}, fmt.Errorf(
+			"github rejected the token we sent (HTTP 401) — reconnect with `dejima github connect`.\n" +
+				"  This check needs no auth at all (it reads a public release); the token only\n" +
+				"  avoids GitHub's 60/hr anonymous limit. So an expired one BREAKS a check that\n" +
+				"  would otherwise work.\n" +
+				"  Note `gh auth login` does NOT fix this: the daemon reads Dejima's own GitHub\n" +
+				"  identity store, not ~/.config/gh. Two stores, and only this one is consulted\n" +
+				"  here — an operator who refreshes the wrong one sees no change and no reason why")
+	}
 	if resp.StatusCode != http.StatusOK {
 		return ReleaseInfo{}, fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
 	}
