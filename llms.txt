@@ -1,6 +1,6 @@
 # Dejima
 
-> Dejima is free, open-source, self-hosted infrastructure for running a fleet of AI coding agents (Claude Code, Codex, OpenClaw, and more) on hardware you own. Each agent runs sandboxed in its own container, called an island, isolated from your machine and from the other agents. Host-file access is deny-all by default and granted folder by folder, read-only, through a broker that records every crossing to a tamper-evident audit log. It runs on a Mac mini, a Linux server, a cloud VM in your own account, or your local machine, and you reach it over your own Tailscale network. You bring your own agents and API keys; there is no managed cloud holding your code.
+> Dejima is free, open-source, self-hosted infrastructure for running a fleet of AI coding agents (Claude Code, Codex, OpenClaw, and more) on hardware you own. Each project runs sandboxed in its own container, called an island, isolated from your machine and from your other projects. An island can hold several agents; they share it, each on its own git worktree. Host-file access is deny-all by default and granted folder by folder, read-only, through a broker that records every crossing to a tamper-evident audit log. It runs on a Mac mini, a Linux server, a cloud VM in your own account, or your local machine, and you reach it over your own Tailscale network. You bring your own agents and API keys; there is no managed cloud holding your code.
 
 ## Start here
 - [Overview](https://dejima.tech/index.html): what Dejima is, how it works, the compare table
