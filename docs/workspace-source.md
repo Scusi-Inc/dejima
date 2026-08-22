@@ -88,6 +88,30 @@ folder-sourced island is repo-less; it just is not empty.
 - **API** — a request field, documented in `openapi.yaml` in the same commit.
   Field parity will catch it if not, which is the point.
 
+## Verifying it on a live host
+
+```
+dejima init --name notes --from ~/some-folder
+dejima audit --island notes --type port     # port.grant … port.revoke
+dejima audit --island notes                 # ALSO the trade.read, one per file
+dejima port list notes                      # must be EMPTY
+```
+
+`--type port` matches a prefix, so it shows the grant and the revoke and HIDES
+the per-file `trade.read` entries between them. Both halves matter and they
+answer different questions: the pair proves the scope did not outlive the copy,
+the per-file entries prove what actually crossed. Checking only the first looks
+complete and is half the record.
+
+**First live run, 2026-08-21:** passed. `port.grant` at seq 1962, `port.revoke`
+at 1968, five files in `/workspace`, and `port list` reporting no scopes — a
+create flag does not leave standing host access behind.
+
+One thing that surprises people and is correct: `/workspace` also holds a
+`CLAUDE.md` the seed did not copy. The claude-code agent's init drops a template
+into any workspace without one (`image/agents/claude-code/init.sh`). It is the
+agent, not the seed.
+
 ## Open questions
 
 - **Size feedback.** A folder copy can be large and slow. The caps from #362
