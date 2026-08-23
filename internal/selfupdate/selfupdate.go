@@ -101,7 +101,8 @@ func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 		return ReleaseInfo{}, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if tok := githubToken(); tok != "" {
+	tok := githubToken()
+	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := http.DefaultClient.Do(req)
@@ -109,6 +110,35 @@ func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 		return ReleaseInfo{}, fmt.Errorf("query latest release: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// A REJECTED TOKEN MUST NOT BREAK A CHECK THAT NEEDS NO TOKEN.
+	//
+	// This reads a public release. The token exists only to lift the anonymous
+	// 60/hr-per-IP limit to 5000/hr — an optimisation, not a requirement. But
+	// sending an expired one turns a 200 into a 401, so having a BAD credential
+	// became worse than having none, and an operator whose token expired lost
+	// update checks entirely for a reason nothing connected to updates.
+	//
+	// That is what happened in the field: checks worked for hundreds of updates
+	// while anonymous, then broke a month after they were wired to a credential
+	// connected for private-repo clones.
+	//
+	// So: retry once, anonymously. Degrade to the rate limit rather than to
+	// nothing. The 401 is still surfaced when the retry ALSO fails, because then
+	// it is a real problem rather than a stale token.
+	if resp.StatusCode == http.StatusUnauthorized && tok != "" {
+		resp.Body.Close()
+		anon, aerr := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
+		if aerr != nil {
+			return ReleaseInfo{}, aerr
+		}
+		anon.Header.Set("Accept", "application/vnd.github+json")
+		resp, err = http.DefaultClient.Do(anon)
+		if err != nil {
+			return ReleaseInfo{}, fmt.Errorf("query latest release: %w", err)
+		}
+		defer resp.Body.Close()
+	}
 	// 403/429 from the GitHub API is usually the unauthenticated rate limit
 	// (60/hr, shared per source IP), but not always — a bad GITHUB_TOKEN also
 	// 403s, and telling that operator to "retry shortly" sends them to wait for
@@ -128,7 +158,10 @@ func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 	// check work immediately, because it never needed the token.
 	if resp.StatusCode == http.StatusUnauthorized {
 		return ReleaseInfo{}, fmt.Errorf(
-			"github rejected the token we sent (HTTP 401) — reconnect with `dejima github connect`.\n" +
+			"github rejected the token we sent, and an anonymous retry failed too (HTTP 401).\n" +
+				"  Reconnect with `dejima github connect --default` — plain `connect` adds a\n" +
+				"  SECOND identity and leaves the expired one as the default, which is what the\n" +
+				"  daemon resolves.\n" +
 				"  This check needs no auth at all (it reads a public release); the token only\n" +
 				"  avoids GitHub's 60/hr anonymous limit. So an expired one BREAKS a check that\n" +
 				"  would otherwise work.\n" +
