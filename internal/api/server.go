@@ -771,6 +771,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
 	mux.HandleFunc("GET /v1/credentials/github", s.handleGitHubIdentities)
 	mux.HandleFunc("PUT /v1/credentials/github/{name}", s.handlePutGitHubIdentity)
+	mux.HandleFunc("POST /v1/credentials/github/{name}/default", s.handleSetGitHubDefault)
 	mux.HandleFunc("DELETE /v1/credentials/github/{name}", s.handleDeleteGitHubIdentity)
 	mux.HandleFunc("GET /v1/credentials/github/{name}/repos", s.handleGitHubRepos)
 	mux.HandleFunc("POST /v1/credentials/github/device-flow/start", s.handleGitHubDeviceStart)
@@ -1002,6 +1003,45 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.log.Info("github identity stored", "name", name, "login", req.Login, "owner", owner, "shared", ownsAll && req.Shared)
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
+}
+
+// handleSetGitHubDefault points the caller's default at an EXISTING identity.
+//
+// A separate route rather than a flag on PUT, because PUT requires a login and
+// token: choosing among identities you already have would otherwise mean
+// re-supplying a credential you are not changing, and relaxing PUT's validation
+// to allow a token-less update would make "seed an identity" and "pick one"
+// the same call with different meanings depending on which fields are blank.
+//
+// This gap is why an operator spent an hour on a 401. `dejima github connect`
+// without --default creates a SECOND identity, the resolver picks the DEFAULT
+// rather than the newest, and there was no route to say which one to use. You
+// could add identities and not manage them.
+func (s *Server) handleSetGitHubDefault(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	owner, ownsAll := s.callerGHScope(r.Context())
+	var known bool
+	store, err := githubid.Update(func(st *githubid.Store) error {
+		for _, m := range st.ListForOwner(owner, ownsAll) {
+			if m.Name == name {
+				known = true
+			}
+		}
+		if !known {
+			return nil // reported as 404 below; never create by side effect
+		}
+		return st.SetDefaultFor(owner, name)
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !known {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", name))
+		return
+	}
+	s.log.Info("github default identity set", "name", name, "owner", owner)
 	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
 }
 
@@ -3228,6 +3268,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	info.Attached = s.islandPresence(p.Name)
 	info.AgentState = s.islandAgentState(p.Name)
 	info.Agents = s.agentInfos(ctx, p, false)
+	info.GitHubIdentity = p.GitHubIdentity
 	info.BuiltVersion = p.BuiltVersion
 	info.UpgradedVersion = p.UpgradedVersion
 	// Zero-heartbeat liveness: a running island that has never emitted a single
