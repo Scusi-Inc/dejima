@@ -134,6 +134,11 @@ func (c *execConn) Close() error {
 	if c.cmd.Process != nil {
 		_ = c.cmd.Process.Kill()
 	}
+	// Belt and braces, not the primary reaper. Killing the process ends the
+	// stdout pump, which drains and reaps on its way out — so removing this line
+	// is a SURVIVABLE mutation and no test pins it. Kept because the redundancy
+	// is free and the cost of not reaping in an island is permanent: PID 1 there
+	// is `tail -f /dev/null`, which never calls wait().
 	go c.reap()
 	return err
 }
