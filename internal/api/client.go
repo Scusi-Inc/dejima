@@ -235,6 +235,18 @@ func (c *Client) PutGitHubIdentity(ctx context.Context, name string, req PutGitH
 	return out.Identities, nil
 }
 
+// SetGitHubDefaultIdentity points the caller's default at an identity that
+// already exists. Separate from PutGitHubIdentity because that one requires a
+// token: choosing among credentials you already hold should not mean supplying
+// one again.
+func (c *Client) SetGitHubDefaultIdentity(ctx context.Context, name string) ([]githubid.Meta, error) {
+	var out GitHubIdentitiesResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/credentials/github/"+url.PathEscape(name)+"/default", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Identities, nil
+}
+
 // GitHubDeviceStart begins a guided device-flow GitHub sign-in (no PAT paste).
 // The returned UserCode + VerificationURI are shown to the operator; poll with
 // SessionID. A daemon with no OAuth app configured returns an error whose message

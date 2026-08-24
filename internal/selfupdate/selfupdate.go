@@ -159,9 +159,12 @@ func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 	if resp.StatusCode == http.StatusUnauthorized {
 		return ReleaseInfo{}, fmt.Errorf(
 			"github rejected the token we sent, and an anonymous retry failed too (HTTP 401).\n" +
-				"  Reconnect with `dejima github connect --default` — plain `connect` adds a\n" +
-				"  SECOND identity and leaves the expired one as the default, which is what the\n" +
-				"  daemon resolves.\n" +
+				"  See what you have:      dejima github ls\n" +
+				"  A good one already?     dejima github default <name>\n" +
+				"  Need a fresh token?     dejima github connect --default\n" +
+				"  Plain `connect` adds a SECOND identity and leaves the old one as the default,\n" +
+				"  which is what the daemon resolves — so if you have already run it, the fix is\n" +
+				"  `github default`, not another reconnect.\n" +
 				"  This check needs no auth at all (it reads a public release); the token only\n" +
 				"  avoids GitHub's 60/hr anonymous limit. So an expired one BREAKS a check that\n" +
 				"  would otherwise work.\n" +

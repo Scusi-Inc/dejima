@@ -762,6 +762,32 @@ paths:
               schema: { $ref: "#/components/schemas/MailboxSendResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/credentials/github/{name}/default:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Name of an EXISTING GitHub identity
+    post:
+      tags: [credentials]
+      summary: Choose which GitHub identity is used by default
+      operationId: setGitHubDefaultIdentity
+      description: >
+        Points the caller's default at an identity that already exists. The
+        default is what the daemon resolves when nothing names an identity —
+        island clones, the release check, `gh` inside an island.
+
+        Separate from PUT /v1/credentials/github/{name}, which requires a login
+        and token: choosing among credentials you already hold should not mean
+        supplying one again. Never creates — an unknown name is 404, not a new
+        identity.
+      responses:
+        "200":
+          description: The caller's identities, with the new default marked
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/GitHubIdentitiesResponse" } }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/agents/{id}/gateway/{path}:
     description: >
       Relay to the agent framework's console running on the container's
@@ -2665,6 +2691,17 @@ components:
             A stamp behind the running daemon means the container was built from
             an older image and may carry stale /opt shims. Empty for islands
             created before version stamping (provenance unknown).
+        github_identity:
+          type: string
+          description: >
+            Which daemon GitHub identity this island clones and pushes as. EMPTY
+            IS A REAL ANSWER, not a missing one: it means the daemon default (or
+            the host's ~/.config/gh when no identities are configured).
+
+            Surfaced because it was not, and its absence had a cost: an operator
+            could list the identities and could not see which island used which,
+            so "what breaks if I remove this credential" had no answer from any
+            client.
         reaps_orphans:
           type: boolean
           description: >

@@ -68,6 +68,15 @@ type IslandInfo struct {
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
+	// GitHubIdentity names which daemon GitHub identity this island clones and
+	// pushes as. Empty means the daemon default (or the host's ~/.config/gh when
+	// no identities are configured), so an empty value is a real answer and not a
+	// missing one.
+	//
+	// Surfaced because it was not: an operator could see the identity LIST and
+	// could not see which island used which, so "what breaks if I remove this
+	// credential" had no answer from any client. `dejima github rm` asks this.
+	GitHubIdentity string `json:"github_identity,omitempty"`
 	// ReapsOrphans reports whether this container has an init as PID 1 to reap
 	// processes whose parent exited first. Detail endpoint only.
 	//
