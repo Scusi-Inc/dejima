@@ -40,7 +40,14 @@ import (
 //	...:      dejima github ls\n  — runs to the end of its line
 var (
 	remedyBacktick = regexp.MustCompile("`dejima ([^`]+)`")
-	remedyLineTail = regexp.MustCompile(`dejima ([a-z][a-z0-9- ]*?)(?:\\n|"|$)`)
+	// A remedy that takes an argument ends in a PLACEHOLDER, not a newline:
+	//   "A good one already?  dejima github default <name>\n"
+	// Without `\s+<` as a terminator, the lazy run stops at the space before `<`,
+	// finds no accepted terminator there, and matches nothing — so every remedy
+	// that takes an argument was invisible to this guard. That is the commonest
+	// shape a remedy HAS, and it included the 401 message this guard was written
+	// for. Verified by planting `dejima github set-default <name>`: it passed.
+	remedyLineTail = regexp.MustCompile(`dejima ([a-z][a-z0-9- ]*?)(?:\s+<|\\n|"|$)`)
 )
 
 // commandWord is what a cobra command name can look like. Everything else in a
