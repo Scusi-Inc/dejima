@@ -3470,12 +3470,21 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 			seen[prov.Name] = prov
 		}
 	}
-	if len(seen) == 0 {
-		return "", nil
-	}
 	dir, err := paths.LLMIslandConfigDir(p.Name)
 	if err != nil {
 		return "", err
+	}
+	// Prune first. This function is also the REFRESH path, so it runs against a
+	// dir that may already hold a previous resolution's files — and a provider
+	// the island no longer resolves must have its key REMOVED, not merely
+	// stopped being rewritten. Leaving it is the silent-revoke shape: `dejima
+	// provider rm` reports success, the store is clean, and the island keeps a
+	// working copy of the revoked key plus a manifest still advertising it.
+	if err := pruneIslandLLMConfig(dir, seen); err != nil {
+		return "", err
+	}
+	if len(seen) == 0 {
+		return "", nil
 	}
 	manifest := make([]providercreds.Meta, 0, len(seen))
 	for _, prov := range seen {
@@ -3493,6 +3502,40 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 		return "", fmt.Errorf("write island llm manifest: %w", err)
 	}
 	return dir, nil
+}
+
+// pruneIslandLLMConfig deletes materialized provider keys the island no longer
+// resolves. keep is the set that survives; anything else goes, and when keep is
+// empty so does the manifest — an island with no provider must be left with no
+// key material at all, matching what LLMIslandConfigPath teardown promises.
+//
+// A missing dir is not an error: nothing to prune is the success case.
+func pruneIslandLLMConfig(dir string, keep map[string]providercreds.Provider) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read island llm dir: %w", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".env") {
+			continue
+		}
+		if _, ok := keep[strings.TrimSuffix(name, ".env")]; ok {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale island llm env: %w", err)
+		}
+	}
+	if len(keep) == 0 {
+		if err := os.Remove(filepath.Join(dir, "providers.json")); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale island llm manifest: %w", err)
+		}
+	}
+	return nil
 }
 
 func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {

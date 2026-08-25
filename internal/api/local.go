@@ -80,7 +80,13 @@ func (s *Server) registerLocalProvider() error {
 		})
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// The endpoint can move between registrations (a backend reinstall, a
+	// different port), so this is a rotation too, not only a first write.
+	s.refreshIslandLLMConfigs()
+	return nil
 }
 
 func (s *Server) handleLocalStatus(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +155,9 @@ func (s *Server) handleLocalOff(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// "Islands stop being offered it" has to mean the key material is gone from
+	// them, not just absent from the store's list.
+	s.refreshIslandLLMConfigs()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "local provider disabled"})
 }
 
