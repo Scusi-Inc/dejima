@@ -41,5 +41,16 @@ func (s *Server) refreshIslandGitHubConfigs() {
 			s.log.Warn("island gh credential not refreshed",
 				"island", p.Name, "err", err)
 		}
+		// The commit-author gitconfig is materialized from the SAME identity and
+		// was equally stale. Refreshing only the credential would leave an island
+		// pushing AS the new identity while committing as the old one's noreply
+		// email — so GitHub authenticates one account and attributes the commits
+		// to another. islandGitConfig's own comment exists to prevent exactly
+		// that, and refreshing half the pair reintroduces it in a subtler form:
+		// the push succeeds, so nothing looks wrong.
+		if _, err := islandGitConfig(p); err != nil {
+			s.log.Warn("island git author config not refreshed",
+				"island", p.Name, "err", err)
+		}
 	}
 }
