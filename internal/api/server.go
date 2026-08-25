@@ -1003,6 +1003,10 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.log.Info("github identity stored", "name", name, "login", req.Login, "owner", owner, "shared", ownsAll && req.Shared)
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
 	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
 }
 
@@ -1042,6 +1046,10 @@ func (s *Server) handleSetGitHubDefault(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.log.Info("github default identity set", "name", name, "owner", owner)
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
 	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
 }
 
@@ -1067,6 +1075,10 @@ func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Reque
 		s.log.Warn("deleted a github identity still referenced by islands",
 			"name", name, "islands", affected)
 	}
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
 	writeJSON(w, http.StatusOK, DeleteGitHubIdentityResponse{AffectedIslands: affected})
 }
 
