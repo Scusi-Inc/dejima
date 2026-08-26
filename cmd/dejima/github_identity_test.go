@@ -144,3 +144,59 @@ func TestCLIGithubRemoveRejectsAnUnknownIdentity(t *testing.T) {
 		t.Error("removing an identity that does not exist should fail")
 	}
 }
+
+// TestCLIGithubRepoint drives `dejima github repoint` end-to-end against an
+// in-process daemon: the pin moves, and a name the daemon cannot resolve is
+// refused rather than written.
+//
+// The operation exists because an island's GitHub identity was chosen at create
+// time and afterwards editable only by hand-editing config.toml on the host — so
+// "point these islands at the working credential" was not something the product
+// could do while eight of them failed on an expired one.
+func TestCLIGithubRepoint(t *testing.T) {
+	_, c := cliEnv(t)
+	seedIsland(t, c, "krieg")
+
+	if _, err := c.PutGitHubIdentity(t.Context(), "aoos", api.PutGitHubIdentityRequest{
+		Login: "aoos", Token: "DEAD", Default: true,
+	}); err != nil {
+		t.Fatalf("seed aoos: %v", err)
+	}
+	if _, err := c.PutGitHubIdentity(t.Context(), "github", api.PutGitHubIdentityRequest{
+		Login: "aoos", Token: "LIVE",
+	}); err != nil {
+		t.Fatalf("seed github: %v", err)
+	}
+
+	out, err := runCLI(t, "github", "repoint", "krieg", "github")
+	if err != nil {
+		t.Fatalf("repoint: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "github") {
+		t.Errorf("repoint did not report which identity the island landed on: %q", out)
+	}
+	// Reported as no-upgrade-needed on purpose: the reflex after any credential
+	// change here is `dejima upgrade`, which recreates the container and kills
+	// whatever the agents were doing.
+	if !strings.Contains(out, "no upgrade needed") {
+		t.Errorf("repoint did not say the credential is already live: %q", out)
+	}
+
+	// A typo must not be written. A dangling pin leaves the island with NO
+	// credential — identical symptoms to an expired token, different fix.
+	if out, err := runCLI(t, "github", "repoint", "krieg", "typo"); err == nil {
+		t.Errorf("repointing to a nonexistent identity succeeded: %q", out)
+	}
+	ids, err := c.ListGitHubIdentitiesFull(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range ids.Identities {
+		if v.Name == "github" && len(v.Islands) != 1 {
+			t.Errorf("after a successful repoint and a refused one, `github` has islands %v, want exactly krieg", v.Islands)
+		}
+	}
+	if len(ids.Dangling) != 0 {
+		t.Errorf("a refused repoint left a dangling pin behind: %+v", ids.Dangling)
+	}
+}
