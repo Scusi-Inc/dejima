@@ -168,6 +168,32 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/UpdateResourcesResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/github-identity:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    put:
+      tags: [islands]
+      summary: Repoint the island at a different stored GitHub identity
+      description: >-
+        Changes which identity the island clones and pushes as, and
+        re-materializes its gh credential and commit-author config immediately —
+        no container recreate, so agent sessions survive. An identity the daemon
+        cannot resolve is refused rather than written.
+      operationId: setIslandGitHubIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetIslandGitHubIdentityRequest" }
+      responses:
+        "200":
+          description: OK — the pin written and the identity it resolves to
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SetIslandGitHubIdentityResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The pin is empty and the daemon has no default identity
   /v1/islands/{name}/identity:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     put:
@@ -3245,6 +3271,15 @@ components:
     GitHubIdentityMeta:
       type: object
       properties:
+        updated_at:
+          type: string
+          format: date-time
+          description: >-
+            When this identity's TOKEN was last written. Two identities for the
+            same GitHub login are otherwise indistinguishable in a listing, and
+            this is the field that separates a live one from a month-dead one.
+            Absent for identities predating the field — render as unknown, never
+            as "just now".
         name: { type: string }
         login: { type: string }
         host: { type: string }
@@ -3256,7 +3291,49 @@ components:
       properties:
         identities:
           type: array
-          items: { $ref: "#/components/schemas/GitHubIdentityMeta" }
+          items: { $ref: "#/components/schemas/GitHubIdentityView" }
+        dangling:
+          type: array
+          description: >-
+            Islands pinned to an identity this daemon does not have. They
+            materialize NO credential, which from inside the island looks
+            identical to an expired token and has a different fix. Kept separate
+            from identities because there is no identity row to attach them to.
+          items: { $ref: "#/components/schemas/DanglingIdentityPin" }
+    GitHubIdentityView:
+      description: >-
+        A GitHub identity plus the islands that resolve to it. Extends
+        GitHubIdentityMeta; every field of that schema is present unchanged.
+      allOf:
+        - $ref: "#/components/schemas/GitHubIdentityMeta"
+        - type: object
+          properties:
+            islands:
+              type: array
+              items: { type: string }
+              description: >-
+                Islands whose credential is materialized from this identity,
+                INCLUDING those that reach it by being the default rather than
+                naming it. Empty means nothing uses it — for a default identity
+                that is the signal that refreshing it will change nothing.
+    DanglingIdentityPin:
+      type: object
+      properties:
+        island: { type: string }
+        identity: { type: string, description: the identity name the island asks for and the daemon does not have }
+    SetIslandGitHubIdentityRequest:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: Identity name to use; empty string means follow the daemon default.
+    SetIslandGitHubIdentityResponse:
+      type: object
+      properties:
+        island: { type: string }
+        identity: { type: string, description: the pin that was written ("" = follow the default) }
+        resolved: { type: string, description: the identity the pin actually resolves to — differs from identity whenever the pin is empty }
+        login: { type: string }
     PutGitHubIdentityRequest:
       type: object
       required: [login, token]

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -41,16 +42,17 @@ func newGithubIdentityListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ids, err := c.ListGitHubIdentities(cmd.Context())
+			resp, err := c.ListGitHubIdentitiesFull(cmd.Context())
 			if err != nil {
 				return err
 			}
+			ids := resp.Identities
 			if len(ids) == 0 {
 				fmt.Println("no GitHub identities")
 				fmt.Println("  add one with:  dejima github connect --default")
 				return nil
 			}
-			fmt.Printf("%-3s %-20s %-20s %-16s %s\n", "", "NAME", "LOGIN", "HOST", "SHARED")
+			fmt.Printf("%-3s %-20s %-20s %-16s %-10s %s\n", "", "NAME", "LOGIN", "HOST", "REFRESHED", "ISLANDS")
 			for _, m := range ids {
 				mark := " "
 				if m.Default {
@@ -60,22 +62,40 @@ func newGithubIdentityListCmd() *cobra.Command {
 				if host == "" {
 					host = "github.com"
 				}
-				shared := ""
-				if m.Shared {
-					shared = "shared"
-				}
-				fmt.Printf("%-3s %-20s %-20s %-16s %s\n", mark, m.Name, m.Login, host, shared)
+				fmt.Printf("%-3s %-20s %-20s %-16s %-10s %s\n",
+					mark, m.Name, m.Login, host, refreshedAge(m.UpdatedAt), islandsCell(m.Islands))
 			}
 			fmt.Println()
-			if defaultIdentity(ids) == "" {
+			for _, d := range resp.Dangling {
+				fmt.Printf("⚠  island %q names identity %q, which this daemon does not have.\n", d.Island, d.Identity)
+				fmt.Println("   It materializes NO credential, so git in it fails the same way an")
+				fmt.Println("   expired token does. Repoint it:  dejima github repoint " + d.Island + " <name>")
+			}
+			if len(resp.Dangling) > 0 {
+				fmt.Println()
+			}
+			def := defaultIdentity(metasOfViews(ids))
+			if def == "" {
 				// The state that produced the 401: identities exist and none is
 				// default, so every lookup that doesn't name one resolves nothing.
 				fmt.Println("⚠  NO DEFAULT IS SET, so anything that doesn't name an identity has none")
 				fmt.Println("   to use. Pick one:  dejima github default <name>")
-			} else {
-				fmt.Println("* is the default — used when nothing names an identity.")
-				fmt.Println("Change it with:  dejima github default <name>")
+				return nil
 			}
+			// The line this listing existed without, and the reason an operator
+			// refreshed the right-looking identity and fixed nothing. `*` marks
+			// the default; it does NOT mean the default is what anything uses.
+			if unused, used := splitByUsage(ids, def); unused != "" {
+				fmt.Printf("⚠  THE DEFAULT (%s) IS USED BY NO ISLAND — refreshing it changes nothing.\n", unused)
+				if used != "" {
+					fmt.Printf("   Islands resolve %q instead. To refresh the one they actually use:\n", used)
+					fmt.Printf("     dejima github connect %s --default\n", used)
+				}
+				fmt.Println()
+			}
+			fmt.Println("* is the default — used only by islands that name no identity of their own.")
+			fmt.Println("Change it with:      dejima github default <name>")
+			fmt.Println("Repoint an island:   dejima github repoint <island> <identity>")
 			return nil
 		},
 	}
@@ -231,4 +251,109 @@ func defaultIdentity(ids []githubid.Meta) string {
 		}
 	}
 	return ""
+}
+
+// refreshedAge renders when an identity's token was last written. A ZERO time
+// means the identity predates the field, and it renders as "unknown" — not as
+// "just now" and not as 1970. An operator reading this column is deciding
+// whether a credential is plausibly dead, and a confident wrong answer there is
+// worse than admitting the daemon does not know.
+func refreshedAge(t time.Time) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+	return timeAgo(t) + " ago"
+}
+
+// islandsCell summarises which islands resolve to an identity, capped so a host
+// with thirty islands still prints a table. The COUNT is always exact and comes
+// first — a truncated list must never be readable as the whole list.
+func islandsCell(islands []string) string {
+	switch n := len(islands); {
+	case n == 0:
+		return "—  (none)"
+	case n <= 3:
+		return fmt.Sprintf("%d  (%s)", n, strings.Join(islands, ", "))
+	default:
+		return fmt.Sprintf("%d  (%s, +%d more)", n, strings.Join(islands[:3], ", "), n-3)
+	}
+}
+
+// splitByUsage reports the exact trap this listing was blind to: the default
+// identity is used by NO island while some other identity is used by several.
+// Refreshing the default then looks completely correct and reaches nothing.
+//
+// It returns ("", "") unless that specific shape holds. A default with no
+// islands on a host with no islands at all is not this bug, and neither is a
+// default that everything uses. Only the divergence is worth a warning — a
+// caution that fires on healthy states is one people learn to skip.
+func splitByUsage(ids []api.GitHubIdentityView, def string) (unusedDefault, mostUsed string) {
+	best := 0
+	for _, m := range ids {
+		if m.Name == def {
+			if len(m.Islands) > 0 {
+				return "", "" // the default is in use; nothing to warn about
+			}
+			continue
+		}
+		if len(m.Islands) > best {
+			best, mostUsed = len(m.Islands), m.Name
+		}
+	}
+	if best == 0 {
+		return "", "" // nothing uses anything — a fresh daemon, not a misdirection
+	}
+	return def, mostUsed
+}
+
+// metasOfViews drops the island decoration for the helpers that predate it.
+func metasOfViews(views []api.GitHubIdentityView) []githubid.Meta {
+	out := make([]githubid.Meta, 0, len(views))
+	for _, v := range views {
+		out = append(out, v.Meta)
+	}
+	return out
+}
+
+// newGithubRepointCmd changes WHICH stored identity an island uses.
+//
+// The gap this closes, stated plainly: an island's GitHub identity was chosen at
+// create time and after that the only way to change it was to edit
+// ~/.dejima/projects/<name>/config.toml by hand on the host. So when an
+// identity's token expired, "point these islands at the working credential" was
+// not an operation that existed — the only supported move was to refresh that
+// exact identity, and nothing on any surface said which islands cared.
+func newGithubRepointCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "repoint <island> <identity>",
+		Short: "Point an island at a different GitHub identity.",
+		Long: "Changes which of the daemon's GitHub identities an island clones and pushes\n" +
+			"as, and re-materializes the island's credential immediately — no recreate,\n" +
+			"and no restart of whatever the agents are doing.\n\n" +
+			"Pass \"\" as the identity to follow the daemon default instead of naming one.\n\n" +
+			"See who uses what first:  dejima github ls",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			island, identity := args[0], strings.TrimSpace(args[1])
+			out, err := c.SetIslandGitHubIdentity(cmd.Context(), island, identity)
+			if err != nil {
+				return err
+			}
+			if out.Identity == "" {
+				fmt.Printf("%s now follows the default GitHub identity → %s (%s)\n",
+					out.Island, out.Resolved, out.Login)
+			} else {
+				fmt.Printf("%s now uses GitHub identity %s (%s)\n", out.Island, out.Resolved, out.Login)
+			}
+			// The credential is live in the container already; say so, because the
+			// reflex after any credential change here is to run `dejima upgrade`,
+			// and that recreates the container and kills agent sessions.
+			fmt.Println("The island's gh credential was refreshed in place — no upgrade needed.")
+			return nil
+		},
+	}
 }

@@ -217,13 +217,44 @@ func (c *Client) ClaudeCredentialsStatus(ctx context.Context) (*ClaudeCredential
 	return &st, nil
 }
 
+// metasOf drops the island decoration, so the callers that only ever wanted the
+// identity itself (the TUI pickers, `auth status`, adopt) keep their type. Only
+// the surfaces that DIAGNOSE take the full view.
+func metasOf(views []GitHubIdentityView) []githubid.Meta {
+	out := make([]githubid.Meta, 0, len(views))
+	for _, v := range views {
+		out = append(out, v.Meta)
+	}
+	return out
+}
+
+// ListGitHubIdentitiesFull returns the identities AND the dangling pins — the
+// islands naming an identity the store does not have. Use this where the result
+// is shown to a person: a dangling pin is invisible in the identity list by
+// construction (there is no row to attach it to) and it is the state that makes
+// an island fail with no credential at all.
+func (c *Client) ListGitHubIdentitiesFull(ctx context.Context) (GitHubIdentitiesResponse, error) {
+	var out GitHubIdentitiesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/credentials/github", nil, &out)
+	return out, err
+}
+
+// SetIslandGitHubIdentity repoints one island at a stored identity ("" = follow
+// the default).
+func (c *Client) SetIslandGitHubIdentity(ctx context.Context, island, identity string) (SetIslandGitHubIdentityResponse, error) {
+	var out SetIslandGitHubIdentityResponse
+	err := c.do(ctx, http.MethodPut, "/v1/islands/"+url.PathEscape(island)+"/github-identity",
+		SetIslandGitHubIdentityRequest{Identity: identity}, &out)
+	return out, err
+}
+
 // ListGitHubIdentities returns the daemon's GitHub identities (no tokens).
 func (c *Client) ListGitHubIdentities(ctx context.Context) ([]githubid.Meta, error) {
 	var out GitHubIdentitiesResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/credentials/github", nil, &out); err != nil {
 		return nil, err
 	}
-	return out.Identities, nil
+	return metasOf(out.Identities), nil
 }
 
 // PutGitHubIdentity seeds or updates a named GitHub identity on the daemon.
@@ -232,7 +263,7 @@ func (c *Client) PutGitHubIdentity(ctx context.Context, name string, req PutGitH
 	if err := c.do(ctx, http.MethodPut, "/v1/credentials/github/"+url.PathEscape(name), req, &out); err != nil {
 		return nil, err
 	}
-	return out.Identities, nil
+	return metasOf(out.Identities), nil
 }
 
 // SetGitHubDefaultIdentity points the caller's default at an identity that
@@ -244,7 +275,7 @@ func (c *Client) SetGitHubDefaultIdentity(ctx context.Context, name string) ([]g
 	if err := c.do(ctx, http.MethodPost, "/v1/credentials/github/"+url.PathEscape(name)+"/default", nil, &out); err != nil {
 		return nil, err
 	}
-	return out.Identities, nil
+	return metasOf(out.Identities), nil
 }
 
 // GitHubDeviceStart begins a guided device-flow GitHub sign-in (no PAT paste).

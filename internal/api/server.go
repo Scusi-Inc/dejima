@@ -847,6 +847,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	// tokenRouteAccess, so a contained island can never set its own identity). The
 	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
 	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
+	mux.HandleFunc("PUT /v1/islands/{name}/github-identity", s.handleSetIslandGitHubIdentity)
 	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
 }
 
@@ -960,7 +961,8 @@ func (s *Server) handleGitHubIdentities(w http.ResponseWriter, r *http.Request) 
 	// An operator sees only their own tenant's identities (plus host-shared ones);
 	// the host owner sees all.
 	owner, ownsAll := s.callerGHScope(r.Context())
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
 }
 
 // handlePutGitHubIdentity adds or updates a named GitHub identity. This is how
@@ -1007,7 +1009,8 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 	// potentially stale. Rewrite them: the mount is a directory, so a running
 	// container sees it without a recreate.
 	s.refreshIslandGitHubConfigs()
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
 }
 
 // handleSetGitHubDefault points the caller's default at an EXISTING identity.
@@ -1050,7 +1053,8 @@ func (s *Server) handleSetGitHubDefault(w http.ResponseWriter, r *http.Request) 
 	// potentially stale. Rewrite them: the mount is a directory, so a running
 	// container sees it without a recreate.
 	s.refreshIslandGitHubConfigs()
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
 }
 
 // handleDeleteGitHubIdentity removes a GitHub identity. An operator can delete

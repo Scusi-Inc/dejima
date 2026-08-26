@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoos/dejima/internal/paths"
 )
@@ -42,6 +43,14 @@ type Identity struct {
 	// (a team-wide org credential). Only the host owner may set it. Ignored on a
 	// non-host identity.
 	Shared bool `json:"shared,omitempty"`
+	// UpdatedAt is when this identity's TOKEN was last written. It exists because
+	// two identities for the same GitHub login are indistinguishable in a listing
+	// — same name shape, same login, same host — and the only thing that separates
+	// a live one from a month-dead one is when it was last refreshed. An operator
+	// spent an incident looking at exactly that pair. Zero for identities that
+	// predate this field (migrated legacy entries); render it as unknown, never as
+	// the epoch, and never as "just now".
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // Meta is an identity without its token: the safe view to hand back to clients.
@@ -52,6 +61,10 @@ type Meta struct {
 	Default bool   `json:"default"`
 	Owner   string `json:"owner,omitempty"`
 	Shared  bool   `json:"shared,omitempty"`
+	// UpdatedAt mirrors Identity.UpdatedAt — safe to publish (it is not the
+	// token, only when the token was last written) and it is the field that
+	// tells two same-login identities apart.
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // Store is the per-daemon identity set. Identities are owner-scoped (a flat list,
@@ -210,6 +223,14 @@ func (s *Store) PutOwned(id Identity) {
 	if strings.TrimSpace(id.Host) == "" {
 		id.Host = DefaultHost
 	}
+	// Stamp the write unless the caller supplied a time (tests, and any future
+	// import that knows the real age). migrateLegacy appends directly rather
+	// than coming through here, so pre-existing identities correctly keep a zero
+	// time — claiming they were refreshed at migration would be the exact lie
+	// this field exists to stop telling.
+	if id.UpdatedAt.IsZero() {
+		id.UpdatedAt = time.Now()
+	}
 	if i, ok := s.find(id.Owner, id.Name); ok {
 		s.Idents[i] = id
 	} else {
@@ -351,6 +372,7 @@ func (s *Store) ListForOwner(owner string, ownsAll bool) []Meta {
 			Name: id.Name, Login: id.Login, Host: id.Host,
 			Default: id.Name == s.DefaultFor(id.Owner),
 			Owner:   id.Owner, Shared: id.Shared,
+			UpdatedAt: id.UpdatedAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

@@ -572,7 +572,48 @@ type ClaudeCredentialsStatus struct {
 // GitHubIdentitiesResponse is the body of GET /v1/credentials/github: the
 // daemon's GitHub identities without their tokens.
 type GitHubIdentitiesResponse struct {
-	Identities []githubid.Meta `json:"identities"`
+	Identities []GitHubIdentityView `json:"identities"`
+	// Dangling lists islands pinned to an identity the store does not have. Kept
+	// OUT of Identities because there is no identity to hang them on — that is
+	// the whole problem with those islands.
+	Dangling []DanglingIdentityPin `json:"dangling,omitempty"`
+}
+
+// GitHubIdentityView is an identity plus the islands that resolve to it. The
+// embedded Meta flattens in JSON, so a client reading identities[].name is
+// unaffected by the added field.
+type GitHubIdentityView struct {
+	githubid.Meta
+	// Islands are the islands whose credential the daemon materializes from this
+	// identity — including those that reach it by being the DEFAULT rather than
+	// naming it. Empty means nothing uses it, which for a default identity is the
+	// signal that refreshing it will change nothing.
+	Islands []string `json:"islands"`
+}
+
+// DanglingIdentityPin is an island naming a GitHub identity that does not exist.
+// It materializes no credential at all, which from inside the island is
+// indistinguishable from an expired token and has a different fix.
+type DanglingIdentityPin struct {
+	Island   string `json:"island"`
+	Identity string `json:"identity"`
+}
+
+// SetIslandGitHubIdentityRequest is the body of
+// PUT /v1/islands/:name/github-identity — repointing which stored identity an
+// island clones and pushes as. An empty Identity means "follow the default".
+type SetIslandGitHubIdentityRequest struct {
+	Identity string `json:"identity"`
+}
+
+// SetIslandGitHubIdentityResponse reports the pin that was written and the
+// identity it now RESOLVES to. Those differ whenever the pin is empty, and
+// reporting only the pin would hide which credential the island actually got.
+type SetIslandGitHubIdentityResponse struct {
+	Island   string `json:"island"`
+	Identity string `json:"identity"`
+	Resolved string `json:"resolved"`
+	Login    string `json:"login"`
 }
 
 // WorkspaceReadyResponse reports whether an island's repo clone has landed in
