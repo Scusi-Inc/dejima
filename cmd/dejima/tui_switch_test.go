@@ -167,8 +167,11 @@ func TestImageBuildAnnouncement(t *testing.T) {
 	if done.building {
 		t.Error("a finished build must clear building")
 	}
-	if !strings.Contains(done.imageBuiltPending, "Upgrade to the current image") {
-		t.Errorf("success banner must name the upgrade step, got %q", done.imageBuiltPending)
+	// Asserted against the label the menu ACTUALLY carries, not a copy of it: the
+	// banner tells the operator to go find a named item, so a rename that doesn't
+	// update both leaves an instruction pointing at something that isn't there.
+	if want := upgradeMenuLabel(t); !strings.Contains(done.imageBuiltPending, want) {
+		t.Errorf("success banner must name the upgrade item verbatim (%q), got %q", want, done.imageBuiltPending)
 	}
 	full, _, st, ok = done.announcement()
 	if !ok || !strings.Contains(full, "[esc] dismiss") || !sameStyle(st, styleWarnBroadcast) {
