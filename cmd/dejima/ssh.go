@@ -120,9 +120,9 @@ func ensureLocalKey() (string, error) {
 		return "", err
 	}
 	priv := filepath.Join(dir, "id_ed25519")
-	fmt.Println("no SSH key on this machine — generating an ed25519 keypair…")
+	fmt.Fprintln(cliOut, "no SSH key on this machine — generating an ed25519 keypair…")
 	gen := exec.Command("ssh-keygen", "-t", "ed25519", "-f", priv, "-N", "", "-q")
-	gen.Stdout, gen.Stderr = os.Stdout, os.Stderr
+	gen.Stdout, gen.Stderr = cliOut, cliOut
 	if err := gen.Run(); err != nil {
 		return "", fmt.Errorf("ssh-keygen: %w", err)
 	}
@@ -428,15 +428,15 @@ func installSSHConfig(island, block string) error {
 		return err
 	}
 	if status == "exists" {
-		fmt.Printf("~/.ssh/config already has Host dejima-%s (left unchanged)\n", island)
+		fmt.Fprintf(cliOut, "~/.ssh/config already has Host dejima-%s (left unchanged)\n", island)
 	} else {
-		fmt.Printf("added Host dejima-%s to %s\n", island, path)
+		fmt.Fprintf(cliOut, "added Host dejima-%s to %s\n", island, path)
 	}
-	fmt.Printf("VS Code / Cursor → Remote-SSH: Connect to Host… → dejima-%s\n", island)
+	fmt.Fprintf(cliOut, "VS Code / Cursor → Remote-SSH: Connect to Host… → dejima-%s\n", island)
 	// The dead-simple path: open straight into the repo, no folder-browsing (the
 	// SSH home is /home/<island>, which only holds dotfiles — the working tree is
 	// /workspace). VS Code remembers the folder per host after the first open.
-	fmt.Printf("   or open the repo directly:  code --remote ssh-remote+dejima-%s /workspace\n", island)
+	fmt.Fprintf(cliOut, "   or open the repo directly:  code --remote ssh-remote+dejima-%s /workspace\n", island)
 	return nil
 }
 

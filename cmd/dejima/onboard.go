@@ -308,30 +308,30 @@ func joinFromInvite(blob string) (invite.Payload, string, error) {
 // existing daemon (#68). It mirrors `dejima join <blob>` and the TUI switcher's
 // join step, all three sharing invite.Decode + clientcfg.SaveInvite.
 func firstRunJoin(ctx context.Context) (bool, error) {
-	fmt.Println()
-	fmt.Println(bold("Join an existing Dejima server"))
-	fmt.Println()
-	fmt.Println("  Paste the invite a teammate sent you (it starts with `dejima-invite:`).")
-	fmt.Println("  It carries the daemon host + your access token — no env vars to set.")
-	fmt.Println()
+	fmt.Fprintln(cliOut)
+	fmt.Fprintln(cliOut, bold("Join an existing Dejima server"))
+	fmt.Fprintln(cliOut)
+	fmt.Fprintln(cliOut, "  Paste the invite a teammate sent you (it starts with `dejima-invite:`).")
+	fmt.Fprintln(cliOut, "  It carries the daemon host + your access token — no env vars to set.")
+	fmt.Fprintln(cliOut)
 	blob := readSingleKey("Invite: ")
 	if strings.TrimSpace(blob) == "" {
-		fmt.Println("No invite entered — opening the dashboard. Run `dejima join <invite>` (or re-run `dejima onboard`) anytime.")
+		fmt.Fprintln(cliOut, "No invite entered — opening the dashboard. Run `dejima join <invite>` (or re-run `dejima onboard`) anytime.")
 		return true, nil
 	}
 	p, name, err := joinFromInvite(blob)
 	if err != nil {
 		// Decode/save errors are user-facing strings (a1's contract) — show
 		// verbatim, then fall through to the dashboard rather than blocking.
-		fmt.Println(err)
-		fmt.Println("Opening the dashboard. Try `dejima join <invite>` once you have a valid invite.")
+		fmt.Fprintln(cliOut, err)
+		fmt.Fprintln(cliOut, "Opening the dashboard. Try `dejima join <invite>` once you have a valid invite.")
 		return true, nil
 	}
 	scope := "all islands"
 	if len(p.Islands) > 0 {
 		scope = strings.Join(p.Islands, ", ")
 	}
-	fmt.Printf("Joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
+	fmt.Fprintf(cliOut, "Joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
 	// Confirm the connection now (bounded) so the teammate gets immediate
 	// feedback, but never block the dashboard on it: the profile is saved either
 	// way, and a transient failure shouldn't strand them. Probe the invite's own
@@ -343,10 +343,10 @@ func firstRunJoin(ctx context.Context) (bool, error) {
 			// tailnet — guide them there instead of the opaque timeout error.
 			printTailscaleJoinHelp(p.Host)
 		} else {
-			fmt.Printf("note: couldn't reach %s yet — the profile is saved; the dashboard will retry.\n", p.Host)
+			fmt.Fprintf(cliOut, "note: couldn't reach %s yet — the profile is saved; the dashboard will retry.\n", p.Host)
 		}
 	} else {
-		fmt.Println("Connection verified. Opening the dashboard.")
+		fmt.Fprintln(cliOut, "Connection verified. Opening the dashboard.")
 	}
 	_ = writeDismissalMarker() // configured now — don't nag on the next run
 	return true, nil
@@ -411,8 +411,31 @@ func detectFirstRunContext(ctx context.Context) firstRunContext {
 var stdinReader = bufio.NewReader(os.Stdin)
 
 // readSingleKey prompts and reads a line of input from stdin.
+// promptOut is where interactive prompts are written.
+//
+// A var because `fmt.Print` here wrote to the PROCESS's stdout, which no caller
+// could redirect — so a table test of a confirm helper printed "go? [Y/n]:"
+// straight onto whatever screen the test binary was attached to. In an agent
+// island that is an operator's pane, and they saw it three times before anyone
+// traced it to a test. `go test` pipes the binary's stdout and prints it
+// verbatim, so this was never hidden by not passing -v either.
+//
+// TestMain points it at io.Discard for the whole package; a test that wants to
+// ASSERT on a prompt sets it to its own buffer.
+var promptOut io.Writer = os.Stdout
+
+// cliOut is the same idea for helpers that print progress but sit BELOW a cobra
+// command, where cmd.OutOrStdout() is not in scope. Same failure: a test calling
+// one of these emitted "no SSH key on this machine — generating an ed25519
+// keypair…" onto an operator's pane, from a suite they were not running.
+//
+// Prefer cmd.OutOrStdout() when a *cobra.Command is available — it is already
+// redirectable and the test harness already captures it. This var is for the
+// helpers that have no command to ask.
+var cliOut io.Writer = os.Stdout
+
 func readSingleKey(prompt string) string {
-	fmt.Print(prompt)
+	fmt.Fprint(promptOut, prompt)
 	line, err := stdinReader.ReadString('\n')
 	if err != nil {
 		return ""
