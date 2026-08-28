@@ -2440,7 +2440,22 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	if pa := p.PrimaryAgent(); pa != nil {
 		agentType = pa.Type
 		env["DEJIMA_AGENT_ID"] = pa.ID
+		// Fall back to the SAME default the attach path uses. These two disagreed:
+		// sessionWS defaults an empty Tmux to "agent-"+ID, while start.sh defaults
+		// an empty DEJIMA_TMUX to the literal "agent-a1" — a stale first-agent id
+		// that is wrong for every island whose agents are not named a1.
+		//
+		// So on a project record with no Tmux (one created before the field was
+		// populated), the entrypoint launches the agent into "agent-a1" and the
+		// daemon attaches to "agent-<id>", which does not exist. `tmux new-session
+		// -A` then CREATES it, and the operator gets a bare shell where their agent
+		// should be, while the real agent runs on in a session nothing points at.
+		// Two defaults for one name is the bug; this makes the daemon always send a
+		// value so the fallback in start.sh can never be reached.
 		env["DEJIMA_TMUX"] = pa.Tmux
+		if pa.Tmux == "" {
+			env["DEJIMA_TMUX"] = "agent-" + pa.ID
+		}
 		if pa.Cmd != "" {
 			env["DEJIMA_AGENT_CMD"] = pa.Cmd
 		}
