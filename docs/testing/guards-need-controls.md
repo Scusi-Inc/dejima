@@ -228,8 +228,11 @@ of the path was expected to fail the test. **It passed.**
 
 That first pass was not the bug — it had a real explanation. The fix had already
 made the drift impossible: both sides now read one exported constant, so moving
-it moves them together and there is nothing left to detect. A fix working so well
-that the old failure mode stopped existing is a *good* result, and one that
+it moves them together and there is nothing left to detect. The constant is
+`api.GitHubCredentialMountPath`, and it did not exist before that change —
+which is *why* the literal had been duplicated in the first place, and why the
+old failure mode was real right up until it wasn't. A fix working so well that
+the failure it defends against stopped existing is a *good* result, and one that
 should prompt "why?" rather than a celebration.
 
 The error was what came next. A control was built — put the old literal back,
