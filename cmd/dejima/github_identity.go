@@ -64,6 +64,16 @@ func newGithubIdentityListCmd() *cobra.Command {
 				}
 				fmt.Printf("%-3s %-20s %-20s %-16s %-10s %s\n",
 					mark, m.Name, m.Login, host, refreshedAge(m.UpdatedAt), islandsCell(m.Islands))
+				// What the token may DO, under the row it belongs to. "It
+				// authenticates" was the strongest thing this listing could say,
+				// so a token that could clone and push but not open a pull request
+				// was indistinguishable from a working one until an agent hit
+				// "Resource not accessible by personal access token".
+				if note, canWrite := githubid.ScopeNote(m.Scopes); !canWrite {
+					fmt.Printf("        scopes: %s — cannot push or open PRs\n", note)
+				} else if m.Scopes != "" {
+					fmt.Printf("        scopes: %s\n", note)
+				}
 			}
 			fmt.Println()
 			for _, d := range resp.Dangling {

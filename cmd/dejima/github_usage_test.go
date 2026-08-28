@@ -93,3 +93,35 @@ func TestIslandsCellNeverUnderstatesTheCount(t *testing.T) {
 			"missing data, and 'nothing uses this' is the finding", got)
 	}
 }
+
+// A token that AUTHENTICATES and cannot do the work must not read as healthy.
+//
+// The three states are distinct and collapsing any two is the bug: a
+// fine-grained token reports NO scopes (GitHub sends no header for them), which
+// is not the same fact as a classic token that has none. Calling the first
+// "no permissions" would condemn a working token; calling the second "unknown"
+// would bless a broken one.
+func TestScopeNoteSeparatesUnknownFromUnable(t *testing.T) {
+	tests := []struct {
+		name     string
+		scopes   string
+		wantOK   bool
+		contains string
+	}{
+		{"fine-grained sends no header", "", true, "fine-grained"},
+		{"classic with repo can write", "repo, read:org", true, "repo"},
+		{"classic without repo cannot", "read:org, gist", false, "no `repo` scope"},
+		{"read-only repo scopes are not repo", "public_repo, read:org", false, "no `repo` scope"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			note, ok := githubid.ScopeNote(tc.scopes)
+			if ok != tc.wantOK {
+				t.Errorf("ScopeNote(%q) canWrite = %v, want %v", tc.scopes, ok, tc.wantOK)
+			}
+			if !strings.Contains(note, tc.contains) {
+				t.Errorf("ScopeNote(%q) note = %q, want it to mention %q", tc.scopes, note, tc.contains)
+			}
+		})
+	}
+}

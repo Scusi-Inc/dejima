@@ -642,6 +642,9 @@ type PutGitHubIdentityRequest struct {
 	Token   string `json:"token"`
 	Default bool   `json:"default,omitempty"` // make this the default identity (host owner only)
 	Shared  bool   `json:"shared,omitempty"`  // host owner only: mark a host identity usable by every tenant's islands
+	// Scopes is what the token may do (X-OAuth-Scopes at verification time).
+	// Empty means a fine-grained token, which reports none — not that it has none.
+	Scopes string `json:"scopes,omitempty"`
 }
 
 // GitHubDeviceStartResponse is the body of POST /v1/credentials/github/device-flow/start.

@@ -993,7 +993,7 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 	store, err := githubid.Update(func(st *githubid.Store) error {
 		st.PutOwned(githubid.Identity{
 			Name: name, Login: req.Login, ID: req.ID, Host: req.Host, Token: req.Token,
-			Owner: owner, Shared: ownsAll && req.Shared,
+			Owner: owner, Shared: ownsAll && req.Shared, Scopes: req.Scopes,
 		})
 		if req.Default {
 			_ = st.SetDefaultFor(owner, name)

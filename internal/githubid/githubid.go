@@ -51,6 +51,9 @@ type Identity struct {
 	// predate this field (migrated legacy entries); render it as unknown, never as
 	// the epoch, and never as "just now".
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	// Scopes is the X-OAuth-Scopes GitHub returned when this token was verified.
+	// Empty for a fine-grained token, which sends no such header — see ScopeNote.
+	Scopes string `json:"scopes,omitempty"`
 }
 
 // Meta is an identity without its token: the safe view to hand back to clients.
@@ -65,6 +68,9 @@ type Meta struct {
 	// token, only when the token was last written) and it is the field that
 	// tells two same-login identities apart.
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	// Scopes mirrors Identity.Scopes. Safe to publish: it describes what the token
+	// may do, never the token.
+	Scopes string `json:"scopes,omitempty"`
 }
 
 // Store is the per-daemon identity set. Identities are owner-scoped (a flat list,
@@ -484,4 +490,31 @@ func GitConfig(id Identity) string {
 // and fails on the read-only dir (see HostsYAML).
 func ConfigYAML() string {
 	return "version: \"1\"\n"
+}
+
+// ScopeNote explains, in one line, what a token's scopes mean for the work an
+// island does — or says plainly that it cannot tell.
+//
+// Three states, and collapsing any two of them is how this went wrong:
+//
+//	""            a FINE-GRAINED token. GitHub sends no X-OAuth-Scopes header for
+//	              these; permissions are per-repository and not visible from
+//	              /user at all. "Unknown" is the honest answer, NOT "no scopes".
+//	has "repo"    a classic token that can clone, push, and open pull requests.
+//	otherwise     a classic token that authenticates and cannot write. This is
+//	              the state that produced "Resource not accessible by personal
+//	              access token" inside an island, hours after `github connect`
+//	              reported success — because authenticating and being ABLE TO DO
+//	              THE WORK are different questions and only the first was asked.
+func ScopeNote(scopes string) (note string, canWrite bool) {
+	s := strings.TrimSpace(scopes)
+	if s == "" {
+		return "fine-grained (per-repo; not introspectable)", true
+	}
+	for _, f := range strings.Split(s, ",") {
+		if strings.TrimSpace(f) == "repo" {
+			return s, true
+		}
+	}
+	return s + "  ⚠ no `repo` scope", false
 }

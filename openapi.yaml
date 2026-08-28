@@ -3271,6 +3271,12 @@ components:
     GitHubIdentityMeta:
       type: object
       properties:
+        scopes:
+          type: string
+          description: >-
+            What this token may do. Absent for a fine-grained token (GitHub sends
+            no X-OAuth-Scopes header for those); a classic token WITHOUT `repo`
+            can authenticate but cannot push or open pull requests.
         updated_at:
           type: string
           format: date-time
@@ -3344,6 +3350,12 @@ components:
         token: { type: string }
         default: { type: boolean, description: make this the default (host owner only) }
         shared: { type: boolean, description: host owner only — mark usable by every tenant's islands }
+        scopes:
+          type: string
+          description: >-
+            What the token may do (X-OAuth-Scopes at verification time). ABSENT
+            for a fine-grained token, which sends no such header — that means
+            "not introspectable", not "no permissions".
     GitHubDeviceStartResponse:
       type: object
       properties:
