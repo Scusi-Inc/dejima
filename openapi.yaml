@@ -168,6 +168,32 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/UpdateResourcesResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/github-identity:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    put:
+      tags: [islands]
+      summary: Repoint the island at a different stored GitHub identity
+      description: >-
+        Changes which identity the island clones and pushes as, and
+        re-materializes its gh credential and commit-author config immediately —
+        no container recreate, so agent sessions survive. An identity the daemon
+        cannot resolve is refused rather than written.
+      operationId: setIslandGitHubIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetIslandGitHubIdentityRequest" }
+      responses:
+        "200":
+          description: OK — the pin written and the identity it resolves to
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SetIslandGitHubIdentityResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The pin is empty and the daemon has no default identity
   /v1/islands/{name}/identity:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     put:
@@ -761,6 +787,32 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MailboxSendResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/credentials/github/{name}/default:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Name of an EXISTING GitHub identity
+    post:
+      tags: [credentials]
+      summary: Choose which GitHub identity is used by default
+      operationId: setGitHubDefaultIdentity
+      description: >
+        Points the caller's default at an identity that already exists. The
+        default is what the daemon resolves when nothing names an identity —
+        island clones, the release check, `gh` inside an island.
+
+        Separate from PUT /v1/credentials/github/{name}, which requires a login
+        and token: choosing among credentials you already hold should not mean
+        supplying one again. Never creates — an unknown name is 404, not a new
+        identity.
+      responses:
+        "200":
+          description: The caller's identities, with the new default marked
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/GitHubIdentitiesResponse" } }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/agents/{id}/gateway/{path}:
     description: >
@@ -2665,6 +2717,17 @@ components:
             A stamp behind the running daemon means the container was built from
             an older image and may carry stale /opt shims. Empty for islands
             created before version stamping (provenance unknown).
+        github_identity:
+          type: string
+          description: >
+            Which daemon GitHub identity this island clones and pushes as. EMPTY
+            IS A REAL ANSWER, not a missing one: it means the daemon default (or
+            the host's ~/.config/gh when no identities are configured).
+
+            Surfaced because it was not, and its absence had a cost: an operator
+            could list the identities and could not see which island used which,
+            so "what breaks if I remove this credential" had no answer from any
+            client.
         reaps_orphans:
           type: boolean
           description: >
@@ -3208,6 +3271,21 @@ components:
     GitHubIdentityMeta:
       type: object
       properties:
+        scopes:
+          type: string
+          description: >-
+            What this token may do. Absent for a fine-grained token (GitHub sends
+            no X-OAuth-Scopes header for those); a classic token WITHOUT `repo`
+            can authenticate but cannot push or open pull requests.
+        updated_at:
+          type: string
+          format: date-time
+          description: >-
+            When this identity's TOKEN was last written. Two identities for the
+            same GitHub login are otherwise indistinguishable in a listing, and
+            this is the field that separates a live one from a month-dead one.
+            Absent for identities predating the field — render as unknown, never
+            as "just now".
         name: { type: string }
         login: { type: string }
         host: { type: string }
@@ -3219,7 +3297,49 @@ components:
       properties:
         identities:
           type: array
-          items: { $ref: "#/components/schemas/GitHubIdentityMeta" }
+          items: { $ref: "#/components/schemas/GitHubIdentityView" }
+        dangling:
+          type: array
+          description: >-
+            Islands pinned to an identity this daemon does not have. They
+            materialize NO credential, which from inside the island looks
+            identical to an expired token and has a different fix. Kept separate
+            from identities because there is no identity row to attach them to.
+          items: { $ref: "#/components/schemas/DanglingIdentityPin" }
+    GitHubIdentityView:
+      description: >-
+        A GitHub identity plus the islands that resolve to it. Extends
+        GitHubIdentityMeta; every field of that schema is present unchanged.
+      allOf:
+        - $ref: "#/components/schemas/GitHubIdentityMeta"
+        - type: object
+          properties:
+            islands:
+              type: array
+              items: { type: string }
+              description: >-
+                Islands whose credential is materialized from this identity,
+                INCLUDING those that reach it by being the default rather than
+                naming it. Empty means nothing uses it — for a default identity
+                that is the signal that refreshing it will change nothing.
+    DanglingIdentityPin:
+      type: object
+      properties:
+        island: { type: string }
+        identity: { type: string, description: the identity name the island asks for and the daemon does not have }
+    SetIslandGitHubIdentityRequest:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: Identity name to use; empty string means follow the daemon default.
+    SetIslandGitHubIdentityResponse:
+      type: object
+      properties:
+        island: { type: string }
+        identity: { type: string, description: the pin that was written ("" = follow the default) }
+        resolved: { type: string, description: the identity the pin actually resolves to — differs from identity whenever the pin is empty }
+        login: { type: string }
     PutGitHubIdentityRequest:
       type: object
       required: [login, token]
@@ -3230,6 +3350,12 @@ components:
         token: { type: string }
         default: { type: boolean, description: make this the default (host owner only) }
         shared: { type: boolean, description: host owner only — mark usable by every tenant's islands }
+        scopes:
+          type: string
+          description: >-
+            What the token may do (X-OAuth-Scopes at verification time). ABSENT
+            for a fine-grained token, which sends no such header — that means
+            "not introspectable", not "no permissions".
     GitHubDeviceStartResponse:
       type: object
       properties:

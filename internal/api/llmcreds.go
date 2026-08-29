@@ -61,6 +61,10 @@ func (s *Server) handlePutProviderCred(w http.ResponseWriter, r *http.Request) {
 	}
 	// Log the provider name only — never the key.
 	s.log.Info("provider credential stored", "provider", provider)
+	// A ROTATION is the common case here, and the one that used to strand every
+	// existing island on the dead key. Re-materialize now; the mount is a
+	// directory, so a running container sees it (the agent restarts to use it).
+	s.refreshIslandLLMConfigs()
 	writeJSON(w, http.StatusOK, ProviderCredentialsResponse{Providers: store.List()})
 }
 
@@ -81,6 +85,9 @@ func (s *Server) handleDeleteProviderCred(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such provider %q", provider))
 		return
 	}
+	// Remove the materialized copies BEFORE reporting success. A revoke that
+	// leaves key material behind is the failure that never announces itself.
+	s.refreshIslandLLMConfigs()
 	affected := s.islandsUsingProvider(provider)
 	if len(affected) > 0 {
 		s.log.Warn("deleted a provider credential still referenced by islands",
@@ -199,6 +206,13 @@ func (s *Server) configureAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// Which provider .env files this island needs is derived from p.Agents, so
+	// repointing an agent changes it. Without this, RestartRequired below is a
+	// promise the daemon cannot keep: the agent restarts, finds no .env for its
+	// new provider, and fails on a missing key — while the API reported the
+	// change applied and told the operator exactly which action would finish it.
+	// Only a container RECREATE used to materialize the new file.
+	s.refreshIslandLLMConfig(p)
 	writeJSON(w, http.StatusOK, AgentConfigResponse{
 		Provider:        a.Provider,
 		Model:           a.Model,

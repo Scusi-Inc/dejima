@@ -101,7 +101,8 @@ func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 		return ReleaseInfo{}, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if tok := githubToken(); tok != "" {
+	tok := githubToken()
+	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := http.DefaultClient.Do(req)
@@ -109,6 +110,35 @@ func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 		return ReleaseInfo{}, fmt.Errorf("query latest release: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// A REJECTED TOKEN MUST NOT BREAK A CHECK THAT NEEDS NO TOKEN.
+	//
+	// This reads a public release. The token exists only to lift the anonymous
+	// 60/hr-per-IP limit to 5000/hr — an optimisation, not a requirement. But
+	// sending an expired one turns a 200 into a 401, so having a BAD credential
+	// became worse than having none, and an operator whose token expired lost
+	// update checks entirely for a reason nothing connected to updates.
+	//
+	// That is what happened in the field: checks worked for hundreds of updates
+	// while anonymous, then broke a month after they were wired to a credential
+	// connected for private-repo clones.
+	//
+	// So: retry once, anonymously. Degrade to the rate limit rather than to
+	// nothing. The 401 is still surfaced when the retry ALSO fails, because then
+	// it is a real problem rather than a stale token.
+	if resp.StatusCode == http.StatusUnauthorized && tok != "" {
+		resp.Body.Close()
+		anon, aerr := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
+		if aerr != nil {
+			return ReleaseInfo{}, aerr
+		}
+		anon.Header.Set("Accept", "application/vnd.github+json")
+		resp, err = http.DefaultClient.Do(anon)
+		if err != nil {
+			return ReleaseInfo{}, fmt.Errorf("query latest release: %w", err)
+		}
+		defer resp.Body.Close()
+	}
 	// 403/429 from the GitHub API is usually the unauthenticated rate limit
 	// (60/hr, shared per source IP), but not always — a bad GITHUB_TOKEN also
 	// 403s, and telling that operator to "retry shortly" sends them to wait for
@@ -117,6 +147,30 @@ func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 	// guess.
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 		return ReleaseInfo{}, rateLimitError(resp)
+	}
+	// 401 is unambiguous and the generic message wasted an operator's time on it:
+	// GitHub rejected a token we SENT. The release check needs no auth at all —
+	// it reads a public release — so the token came from GITHUB_TOKEN, GH_TOKEN
+	// or the daemon's stored credential, and it is expired, revoked, or scoped so
+	// it cannot read this repo. "HTTP 401" sends the reader to look for an outage.
+	//
+	// The remedy is the part worth printing: unsetting the variable makes the
+	// check work immediately, because it never needed the token.
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ReleaseInfo{}, fmt.Errorf(
+			"github rejected the token we sent, and an anonymous retry failed too (HTTP 401).\n" +
+				"  See what you have:      dejima github ls\n" +
+				"  A good one already?     dejima github default <name>\n" +
+				"  Need a fresh token?     dejima github connect --default\n" +
+				"  Plain `connect` adds a SECOND identity and leaves the old one as the default,\n" +
+				"  which is what the daemon resolves — so if you have already run it, the fix is\n" +
+				"  `github default`, not another reconnect.\n" +
+				"  This check needs no auth at all (it reads a public release); the token only\n" +
+				"  avoids GitHub's 60/hr anonymous limit. So an expired one BREAKS a check that\n" +
+				"  would otherwise work.\n" +
+				"  Note `gh auth login` does NOT fix this: the daemon reads Dejima's own GitHub\n" +
+				"  identity store, not ~/.config/gh. Two stores, and only this one is consulted\n" +
+				"  here — an operator who refreshes the wrong one sees no change and no reason why")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return ReleaseInfo{}, fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
