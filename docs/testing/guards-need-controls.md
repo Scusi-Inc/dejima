@@ -29,7 +29,7 @@ Added to the tally in the matrix:
   timeout let the timer beat the drained `WaitGroup`, so a store with nothing
   running reported "still busy". It inflated the published number seventeen-fold.
 
-## The three shapes, and the control each one needs
+## The shapes, and the control each one needs
 
 ### 1. The guard that can't see — needs a positive control
 
@@ -117,6 +117,34 @@ The first two are one line each in the mutation script, and the fourth is one
 run. Write them before you need them; you will not think to add them at the
 moment you are reading a surprising zero.
 
+**Running the rule backwards, over work you already believe is finished.** The
+second trap was written up after the mutations it describes had already shipped.
+The honest thing to do with a rule that arrives late is to point it at what you
+already believe is done — so, in d2's words:
+
+> Three anchors from my own mutation runs, and how many places each actually
+> matches in the file I ran them against: `== c.island` (3), `== c.agent` (4),
+> `m.dirtyOps[c.island] = "purging"` (2). Any of those, used bare with a
+> first-match replace, mutates whichever site comes first — not the one I meant.
+> Two of the three would have hit a different `case` in the same switch.
+>
+> They did not, because I had used multi-line anchors that included the
+> surrounding `case` line, and each of those matched exactly once. So the
+> results stand. But I want to be precise about *why* they stand: **they held by
+> luck of habit, not by method.** I used a longer anchor because longer anchors
+> feel safer, not because I had counted the matches.
+
+That is the sentence worth keeping, because it names something invisible in a
+green result: **a correct result produced by an unverified method and a correct
+result produced by a verified one look identical** — in the diff, in the test
+output, and in the write-up. The only person who can tell them apart is the one
+who did it, and only if they ask.
+
+Which is also why the check tends not to get run. Retroactively it is no longer
+"validate my method", it is "find out whether my finished work was wrong all
+along" — the same command, a much less comfortable question. Run it before, and
+it costs nothing.
+
 → `internal/api/background_join_wiring_test.go`,
   `internal/api/primary_launch_parity_test.go`
 
@@ -189,6 +217,30 @@ Two practical rules:
 - **Never let "flaky" be a resting state.** A flaky test gets a fix or an issue
   with a named owner. The third state — known-flaky, tolerated, unowned — is
   where a real defect hides in plain sight with a green suite around it.
+
+### 5. The test that reaches past the wire — needs to go through the dispatcher
+
+The unit under test is fine, and the test proves it is fine. What is missing is
+the *call*: nothing routes to it in production. No test of the unit can tell you
+that, because every one of them supplies the call itself.
+
+**Real case.** A TUI pane was written along with its message handlers. It
+compiled and it rendered — with the async messages never routed through
+`Update`, so the pane would have sat on "loading…" forever. Every unit test of
+the handler passes, because the handler is correct. The wire is the part that is
+missing, and the tests are structurally incapable of noticing.
+
+This is shape 1 in different clothes — an assertion passing for a reason
+unrelated to what it claims — but it earns its own line because the substitution
+is so natural that it doesn't feel like one. Calling the handler directly *is*
+the obvious way to test a handler.
+
+**The control.** Assert through the dispatcher, never by calling the handler
+directly. Then mutate the wire: delete the routing line and confirm the test
+goes red. If it stays green, the test is measuring the handler while you are
+reading it as a statement about the feature.
+
+→ from d3; both mutations lethal on the pane as landed.
 
 ## Instruments get the same treatment
 
@@ -275,10 +327,88 @@ unmutated base is usually the cheapest way to guarantee the first half.
 
 *(Incident from d2, sent over at d1's request rather than edited in directly.)*
 
+## The instrument was fine; the reference was not
+
+Every shape above is a check that could not see. These two saw perfectly and
+answered a question nobody had asked. Nothing in the output betrays it, because
+the output is *correct* — the assumption lives in the step from output to
+conclusion, which happens in the operator's head where no control can reach it.
+
+The remedy is therefore not a better instrument. It is naming the reference out
+loud, before reading the result.
+
+### A diff compares against a reference, and the reference moves
+
+**What happened.** A rebase onto `origin/master` hit one conflict in
+`openapi.yaml`. It was resolved, and then the resolution was diffed against
+`origin/master` to check the work. The diff showed the branch *deleting* a large
+block of documentation that master had.
+
+It had not. Master moved **twice** during the few minutes of resolving, so the
+rebase had started from a tip that was already stale and the verifying diff was
+comparing an in-progress tree against a master that had moved underneath both.
+`git diff` behaved exactly as specified. **It renders "you deleted this" and
+"you never had this" identically.**
+
+**The tell.** A diff shows you removing content you never touched. If you cannot
+point at the line in your own patch that removes it, you are almost certainly
+comparing against a reference that has moved.
+
+**The control.** `git rev-parse HEAD` and `git rev-parse origin/master` before
+believing the diff, and re-fetch immediately before you **verify** — not only
+before you start. At this repo's merge rate those are different moments.
+
+**The near-miss.** One step from reporting that the rebase had eaten master's
+new path-param docs — which would have sent someone hunting a data-loss bug that
+did not exist. Note the direction: almost everything else in this file fails
+toward *all clear*, while this one fails toward **a false alarm about someone
+else's work**, the same direction as the wrong-site mutation trap and just as
+hard to walk back.
+
+*(From d3.)*
+
+### A sequence range bounds how many things happened, never which
+
+**What happened.** The question was whether a folder seed writes one ledger
+entry *per file* or a single batch entry. It matters: `--verify` walks a hash
+chain of crossings, and a batch entry carries no hash for the thing that
+crossed. The evidence to hand was a gap in the sequence numbers — `port.grant`
+at 1962, `port.revoke` at 1968, five files seeded. Five slots, five files.
+**The number matching expectation is exactly why nobody looked harder.**
+
+The count was right. The inference was not, and it took tracing to see why.
+Between the grant and the revoke, only `trade.read` can append *from this
+island* — but the ledger is **host-wide**. A concurrent append from any other
+island takes a slot in that range and pushes a `trade.read` outside it. Five
+slots would then hold four reads and one stranger, and the count would still
+look right while the conclusion was wrong.
+
+**The tell.** Any argument of the form *"the sequence numbers are contiguous,
+therefore nothing else happened"*. Contiguity bounds the **count**. It says
+nothing about the **content**.
+
+**The control.** Enumerate the range instead of counting it. Ask the log for the
+entries by type — `dejima audit --island X --type trade.read` — rather than
+asking a range to imply them. The operator's run did enumerate, and every slot
+came back named and sized, which *disproves* the confound for that run instead
+of leaving it merely unlikely.
+
+**The near-miss.** One step from recording "per-file ledgering is observed" on
+the strength of a matching count. It happens to be true. It would have been
+recorded as observed either way — and filed under *observed*, which is the word
+this project spends the most care on.
+
+> **A shared log under concurrency answers "how many", never "which". If your
+> conclusion is about which, the range cannot carry it, however neatly the count
+> lines up.**
+
+*(From d3; the one-line version is d1's.)*
+
 ## A verification has a timestamp; a gate does not
 
-Everything above is about checks that were never able to see. This one is about
-a check that saw correctly, and then the thing it saw changed.
+The two above are references that were wrong at the moment they were read. This
+one is a reference that was right, and then moved: a check that saw correctly,
+and then the thing it saw changed.
 
 **What happened.** Before adding a field to an API type, I checked whether
 `openapi.yaml` needed an entry. Two pieces of evidence, both verified rather
@@ -335,4 +465,5 @@ different?* If the honest answer is no, write the control.
 
 ## The one-line version
 
-**Prove the check can see a failure before trusting its silence.**
+**Prove the check can see a failure before trusting its silence** — and when it
+does speak, **name what it was comparing against before trusting the answer.**
