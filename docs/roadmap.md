@@ -229,6 +229,25 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **A situational island primer** *(the static half is fixed and guarded; see
+  `image/island-primer.md`)* — agents get told what is possible IN GENERAL, and
+  cannot tell "not granted yet" from "does not work". The static primer said an
+  island token "CANNOT reach other islands" while `tokenauth.go` grants
+  `/link/send`, so every agent in every island believed cross-island messaging
+  was impossible **by design** — and never saw the refusal that names
+  `dejima link grant`, because nobody got that far. A second instance: four Port
+  routes are granted and Port appeared only in a "don't reach host files"
+  paragraph. Both corrected, and a test now fails if a granted capability goes
+  unnamed. **What remains is that the primer is static.** The daemon knows this
+  island's actual link grants, Port scopes, secret names and co-residents at
+  launch; rendering them below the primer turns "I believe this is impossible"
+  into "this isn't granted yet, and here is the ask" — the same
+  absence-rendered-as-absence distinction the grants pane needed. Mechanism
+  decided: the primer, because it is the only agent-agnostic surface (a Claude
+  Code skill would leave codex/openclaw/letta/goose uncovered). MCP is better for
+  discoverability and duplicates the CLI, so it is an addition to revisit later,
+  not a replacement.
+
 - **Adopting agents Dejima didn't launch** *(design written, Phase 1 approved to
   build — see [`agent-adoption.md`](agent-adoption.md))* — changes the pitch from
   "run your agents in containers" (a migration, which asks for a decision before

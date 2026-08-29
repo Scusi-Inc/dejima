@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -56,18 +55,18 @@ func newActivityCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
 				return enc.Encode(resp.Items)
 			}
 			if len(resp.Items) == 0 {
-				fmt.Println("no activity yet")
+				fmt.Fprintln(cmd.OutOrStdout(), "no activity yet")
 				if !resp.AuditEnabled {
-					fmt.Fprintln(os.Stderr, "note: the daemon's operational audit log is off — start dejimad with --audit for the full who-did-what feed.")
+					fmt.Fprintln(cmd.ErrOrStderr(), "note: the daemon's operational audit log is off — start dejimad with --audit for the full who-did-what feed.")
 				}
 				return nil
 			}
-			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
 			fmt.Fprintln(tw, "WHEN\tACTOR\tROLE\tISLAND\tOWNER\tACTIVITY")
 			for _, it := range resp.Items {
 				summary := it.Summary
@@ -82,7 +81,7 @@ func newActivityCmd() *cobra.Command {
 				return err
 			}
 			if !resp.AuditEnabled {
-				fmt.Fprintln(os.Stderr, "\nnote: operational audit log is off (dejimad --audit) — showing agent↔host broker activity only.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "\nnote: operational audit log is off (dejimad --audit) — showing agent↔host broker activity only.")
 			}
 			return nil
 		},

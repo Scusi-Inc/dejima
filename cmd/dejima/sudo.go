@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -38,10 +39,7 @@ func primeSudo(reason string) (stop func()) {
 	// be typed.
 	//
 	// Deliberately not `term.IsTerminal(os.Stdin)`, which is what this used to
-	// be: piped stdin does not mean nobody is present. `curl -fsSL … | bash`
-	// makes stdin a pipe while a person watches from the keyboard, and reading
-	// that as "no human" is what made the shell installer skip its own priming
-	// and let Homebrew's sudo take the operator's password with echo on (#341).
+	// be — see the #341 note above.
 	tty := openTTY()
 	if tty == nil {
 		return noop
@@ -52,7 +50,7 @@ func primeSudo(reason string) (stop func()) {
 		fmt.Printf("  %s needs your macOS password partway through (Homebrew links\n", reason)
 		fmt.Println("  binaries into /usr/local, which is root-owned). Asking now, once, so")
 		fmt.Println("  the installer doesn't stop to ask in the middle of its own output:")
-		if err := sudoValidate(tty); err != nil {
+		if err := sudoValidateFn(tty); err != nil {
 			// Declined, mistyped, or not a sudoer. Not fatal — brew will ask on
 			// its own terms, which is exactly the path this avoids but still
 			// beats refusing to continue.
@@ -95,8 +93,31 @@ func primeSudo(reason string) (stop func()) {
 //
 // A var so tests can substitute it: the case that matters most — a human at the
 // keyboard while stdin is a pipe — cannot be produced by running a test the
-// ordinary way, and CI has no controlling terminal at all.
+// ordinary way.
+//
+// A TEST BINARY NEVER GETS ONE, and that guard is here rather than at each
+// caller because this is the single place the terminal is acquired. It is not
+// belt-and-braces; it is a regression this file caused.
+//
+// The #341 fix changed the "is anyone home?" question from stdin to /dev/tty,
+// correctly: piped stdin does not mean nobody is present, and reading it that
+// way let Homebrew's sudo take an operator's password with echo left on. What
+// that missed is that a `go test` process ALSO has a real controlling terminal —
+// the developer's, or in an agent island the pane a human happens to be attached
+// to. So the same change started `go test ./...` printing "[sudo] password for …"
+// onto somebody else's screen mid-suite, reading input from it, with nothing
+// naming which test was asking. The suite still reported PASS.
+//
+// CI never saw it: a GitHub runner has no controlling terminal, so openTTY
+// returned nil there for the ordinary reason. It only appears where a person is
+// watching, which is the worst possible place for it to appear first.
+//
+// The rule the tty check reaches for is "is a human present FOR US". For a test
+// binary the answer is no, however real the terminal is.
 var openTTY = func() *os.File {
+	if testing.Testing() {
+		return nil
+	}
 	// O_RDWR because sudo wants to both prompt and read on it. Fails with ENXIO
 	// when the process has no controlling terminal, and ENOENT on Windows —
 	// both of which correctly mean "nobody to ask".
@@ -109,6 +130,12 @@ var openTTY = func() *os.File {
 
 // sudoValidate runs `sudo -v`, prompting on the terminal rather than on
 // whatever stdin happens to be.
+// sudoValidateFn is indirected so a test can prove primeSudo never reaches it.
+// The guard that was supposed to cover this asserted only that primeSudo
+// returned a non-nil stop func — which it does on every path, including the one
+// that prompts for a password first.
+var sudoValidateFn = sudoValidate
+
 func sudoValidate(tty *os.File) error {
 	c := exec.Command("sudo", "-v")
 	c.Stdin = tty

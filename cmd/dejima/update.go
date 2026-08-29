@@ -66,8 +66,7 @@ func newUpdateCmd() *cobra.Command {
 			}
 			dir := source
 			if dir == "" {
-				cwd, _ := os.Getwd()
-				dir, err = selfupdate.FindCheckout(cwd)
+				dir, err = resolveUpdateCheckout()
 				if err != nil {
 					return err
 				}
@@ -131,4 +130,30 @@ func selfExe() string {
 		return p
 	}
 	return "this binary"
+}
+
+// resolveUpdateCheckout finds the checkout to update: the one containing the
+// current directory, else the one this install was BUILT FROM.
+//
+// It used to search upward from cwd and nothing else, so `dejima update` run
+// from anywhere but inside the repo failed with "run this from your checkout" —
+// which asks the operator for a path the daemon already knows. `dejima service
+// install` records SourceDir precisely so self-update does not have to ask, and
+// ResolveSourceDir has read it back since the day it was added. The update
+// command simply never called it.
+//
+// cwd wins when it resolves, because an operator standing in a checkout means
+// that one; the recorded dir is the fallback, not an override.
+func resolveUpdateCheckout() (string, error) {
+	cwd, _ := os.Getwd()
+	if dir, err := selfupdate.FindCheckout(cwd); err == nil {
+		return dir, nil
+	}
+	if dir := selfupdate.ResolveSourceDir(); dir != "" {
+		fmt.Printf("using the checkout this install was built from: %s\n", dir)
+		return dir, nil
+	}
+	return "", fmt.Errorf(
+		"no dejima checkout found from %s, and this install recorded none.\n"+
+			"Pass one explicitly:  dejima update --source <dir>", cwd)
 }
