@@ -59,7 +59,7 @@ func connectGitHubViaToken(ctx context.Context, c *api.Client, name string, toke
 	}
 	// Verify before storing, so a stale or over-narrow token fails here rather
 	// than inside an island days later.
-	verified, ghUserID, err := githubid.VerifyToken(ctx, "", token)
+	verified, ghUserID, scopes, err := githubid.VerifyToken(ctx, "", token)
 	if err != nil {
 		return fmt.Errorf("token verification failed (nothing stored): %w", err)
 	}
@@ -71,13 +71,27 @@ func connectGitHubViaToken(ctx context.Context, c *api.Client, name string, toke
 		id = login
 	}
 	if _, err := c.PutGitHubIdentity(ctx, id, api.PutGitHubIdentityRequest{
-		Login: login, ID: ghUserID, Token: token, Default: makeDefault, Shared: shared,
+		Login: login, ID: ghUserID, Token: token, Default: makeDefault, Shared: shared, Scopes: scopes,
 	}); err != nil {
 		return err
 	}
 
 	fmt.Println()
 	fmt.Printf("connected GitHub identity %q (login %s)\n", id, login)
+	// Say what the token CAN DO, here, at the moment it is stored. The comment
+	// above claims this call catches an "over-narrow" token; until now it could
+	// only catch an INVALID one. A token that authenticates and cannot open a
+	// pull request looked identical to a working one, and the difference surfaced
+	// hours later inside an island as "Resource not accessible by personal access
+	// token" — a message naming nothing anyone could act on.
+	if note, canWrite := githubid.ScopeNote(scopes); !canWrite {
+		fmt.Println()
+		fmt.Printf("⚠ this token's scopes are: %s\n", note)
+		fmt.Println("  It can authenticate, but it CANNOT push or open pull requests, so an")
+		fmt.Println("  agent will fail with \"Resource not accessible by personal access token\".")
+		fmt.Println("  Re-issue it with the `repo` scope (classic), or grant Contents +")
+		fmt.Println("  Pull requests write (fine-grained), then re-run this command.")
+	}
 	fmt.Println("islands can now clone and push as this identity.")
 	fmt.Println()
 	fmt.Println("check it with: dejima auth status")

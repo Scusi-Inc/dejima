@@ -79,10 +79,14 @@ func TestVerifyToken(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer good" {
 				t.Errorf("auth header = %q", r.Header.Get("Authorization"))
 			}
+			// GitHub returns the token's scopes on this very call. They were always
+			// here and always discarded, which is why "your token authenticates"
+			// was the strongest thing any surface could say about it.
+			w.Header().Set("X-OAuth-Scopes", "repo, read:org")
 			_, _ = w.Write([]byte(`{"login":"octocat","id":583231}`))
 		}))
 		defer srv.Close()
-		login, id, err := verifyToken(context.Background(), srv.URL, "good")
+		login, id, scopes, err := verifyToken(context.Background(), srv.URL, "good")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,6 +96,11 @@ func TestVerifyToken(t *testing.T) {
 		if id != 583231 {
 			t.Errorf("id = %d, want 583231", id)
 		}
+		if scopes != "repo, read:org" {
+			t.Errorf("scopes = %q, want the X-OAuth-Scopes header verbatim — without it "+
+				"a token that authenticates and cannot open a pull request is "+
+				"indistinguishable from a working one", scopes)
+		}
 	})
 
 	t.Run("errors on 401", func(t *testing.T) {
@@ -100,7 +109,7 @@ func TestVerifyToken(t *testing.T) {
 			_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
 		}))
 		defer srv.Close()
-		if _, _, err := verifyToken(context.Background(), srv.URL, "bad"); err == nil {
+		if _, _, _, err := verifyToken(context.Background(), srv.URL, "bad"); err == nil {
 			t.Fatal("expected an error on 401")
 		}
 	})

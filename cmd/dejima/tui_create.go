@@ -350,7 +350,10 @@ func (m tuiModel) creatorGitHubGateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
 	case "c", "C":
-		if err := m.openGithubConnectWindow(); err != nil {
+		// --default: this gate only fires when NO identity resolves, so the one
+		// being created is the one everything should follow. Leaving it implicit
+		// is how a daemon ends up with identities and no default.
+		if err := m.openGithubConnectWindow(" --default"); err != nil {
 			c.err = "couldn't open a window — run `dejima github connect` in a terminal, then press Enter"
 		} else {
 			c.err = "opened `dejima github connect` — approve it on GitHub, then press Enter to retry"

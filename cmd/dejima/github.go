@@ -19,7 +19,9 @@ func newGithubCmd() *cobra.Command {
 		Use:   "github",
 		Short: "Connect your GitHub identity for private-repo clones (self-serve).",
 	}
-	cmd.AddCommand(newGithubConnectCmd(), newGithubHostCredentialCmd())
+	cmd.AddCommand(newGithubConnectCmd(), newGithubHostCredentialCmd(),
+		newGithubIdentityListCmd(), newGithubIdentityDefaultCmd(), newGithubIdentityRemoveCmd(),
+		newGithubRepointCmd())
 	return cmd
 }
 

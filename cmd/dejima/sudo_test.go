@@ -8,11 +8,32 @@ import (
 	"testing"
 )
 
-// Under `go test` stdin isn't a terminal, so primeSudo must take the no-op path
-// and never try to prompt. That's also the scripted-run guarantee: a wizard run
-// with piped stdin must not block on a password nobody can type.
-func TestPrimeSudo_NoTTYIsNoop(t *testing.T) {
+// primeSudo must never prompt from a test binary.
+//
+// The previous version of this guard asserted only that primeSudo returned a
+// non-nil stop func, on the stated premise that "under `go test` stdin isn't a
+// terminal". That premise stopped being true when the #341 fix moved the check
+// from stdin to /dev/tty — a test process has a real controlling terminal, so
+// primeSudo began running `sudo -v` against it. The suite printed "[sudo]
+// password for …" onto whatever terminal was attached, consumed input from it,
+// and STILL REPORTED PASS, because the only thing asserted was the return value.
+//
+// So this asserts the behaviour instead of the signature: sudo is never reached.
+func TestPrimeSudoNeverPromptsFromATestBinary(t *testing.T) {
+	called := false
+	orig := sudoValidateFn
+	sudoValidateFn = func(*os.File) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() { sudoValidateFn = orig })
+
 	stop := primeSudo("Installing Something")
+	if called {
+		t.Error("primeSudo ran `sudo -v` from a test binary — that prompts for a password " +
+			"on the developer's (or an attached operator's) terminal, mid-suite, with " +
+			"nothing naming which test is asking")
+	}
 	if stop == nil {
 		t.Fatal("primeSudo returned a nil stop func — callers defer it unconditionally")
 	}

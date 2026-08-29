@@ -771,6 +771,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
 	mux.HandleFunc("GET /v1/credentials/github", s.handleGitHubIdentities)
 	mux.HandleFunc("PUT /v1/credentials/github/{name}", s.handlePutGitHubIdentity)
+	mux.HandleFunc("POST /v1/credentials/github/{name}/default", s.handleSetGitHubDefault)
 	mux.HandleFunc("DELETE /v1/credentials/github/{name}", s.handleDeleteGitHubIdentity)
 	mux.HandleFunc("GET /v1/credentials/github/{name}/repos", s.handleGitHubRepos)
 	mux.HandleFunc("POST /v1/credentials/github/device-flow/start", s.handleGitHubDeviceStart)
@@ -846,6 +847,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	// tokenRouteAccess, so a contained island can never set its own identity). The
 	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
 	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
+	mux.HandleFunc("PUT /v1/islands/{name}/github-identity", s.handleSetIslandGitHubIdentity)
 	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
 }
 
@@ -959,7 +961,8 @@ func (s *Server) handleGitHubIdentities(w http.ResponseWriter, r *http.Request) 
 	// An operator sees only their own tenant's identities (plus host-shared ones);
 	// the host owner sees all.
 	owner, ownsAll := s.callerGHScope(r.Context())
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
 }
 
 // handlePutGitHubIdentity adds or updates a named GitHub identity. This is how
@@ -990,7 +993,7 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 	store, err := githubid.Update(func(st *githubid.Store) error {
 		st.PutOwned(githubid.Identity{
 			Name: name, Login: req.Login, ID: req.ID, Host: req.Host, Token: req.Token,
-			Owner: owner, Shared: ownsAll && req.Shared,
+			Owner: owner, Shared: ownsAll && req.Shared, Scopes: req.Scopes,
 		})
 		if req.Default {
 			_ = st.SetDefaultFor(owner, name)
@@ -1002,7 +1005,56 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.log.Info("github identity stored", "name", name, "login", req.Login, "owner", owner, "shared", ownsAll && req.Shared)
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
+}
+
+// handleSetGitHubDefault points the caller's default at an EXISTING identity.
+//
+// A separate route rather than a flag on PUT, because PUT requires a login and
+// token: choosing among identities you already have would otherwise mean
+// re-supplying a credential you are not changing, and relaxing PUT's validation
+// to allow a token-less update would make "seed an identity" and "pick one"
+// the same call with different meanings depending on which fields are blank.
+//
+// This gap is why an operator spent an hour on a 401. `dejima github connect`
+// without --default creates a SECOND identity, the resolver picks the DEFAULT
+// rather than the newest, and there was no route to say which one to use. You
+// could add identities and not manage them.
+func (s *Server) handleSetGitHubDefault(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	owner, ownsAll := s.callerGHScope(r.Context())
+	var known bool
+	store, err := githubid.Update(func(st *githubid.Store) error {
+		for _, m := range st.ListForOwner(owner, ownsAll) {
+			if m.Name == name {
+				known = true
+			}
+		}
+		if !known {
+			return nil // reported as 404 below; never create by side effect
+		}
+		return st.SetDefaultFor(owner, name)
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !known {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", name))
+		return
+	}
+	s.log.Info("github default identity set", "name", name, "owner", owner)
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
 }
 
 // handleDeleteGitHubIdentity removes a GitHub identity. An operator can delete
@@ -1027,6 +1079,10 @@ func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Reque
 		s.log.Warn("deleted a github identity still referenced by islands",
 			"name", name, "islands", affected)
 	}
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
 	writeJSON(w, http.StatusOK, DeleteGitHubIdentityResponse{AffectedIslands: affected})
 }
 
@@ -2384,7 +2440,22 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	if pa := p.PrimaryAgent(); pa != nil {
 		agentType = pa.Type
 		env["DEJIMA_AGENT_ID"] = pa.ID
+		// Fall back to the SAME default the attach path uses. These two disagreed:
+		// sessionWS defaults an empty Tmux to "agent-"+ID, while start.sh defaults
+		// an empty DEJIMA_TMUX to the literal "agent-a1" — a stale first-agent id
+		// that is wrong for every island whose agents are not named a1.
+		//
+		// So on a project record with no Tmux (one created before the field was
+		// populated), the entrypoint launches the agent into "agent-a1" and the
+		// daemon attaches to "agent-<id>", which does not exist. `tmux new-session
+		// -A` then CREATES it, and the operator gets a bare shell where their agent
+		// should be, while the real agent runs on in a session nothing points at.
+		// Two defaults for one name is the bug; this makes the daemon always send a
+		// value so the fallback in start.sh can never be reached.
 		env["DEJIMA_TMUX"] = pa.Tmux
+		if pa.Tmux == "" {
+			env["DEJIMA_TMUX"] = "agent-" + pa.ID
+		}
 		if pa.Cmd != "" {
 			env["DEJIMA_AGENT_CMD"] = pa.Cmd
 		}
@@ -2943,7 +3014,12 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandWoken, Island: p.Name})
-	s.reconcileAgentsAsync(p, false) // the entrypoint relaunches the primary; restore the rest
+	// Match whatever the ENTRYPOINT is about to do with the primary, rather than
+	// asserting a value here. A container upgraded earlier carries
+	// DEJIMA_LAUNCH="claude --continue" permanently, so a hardcoded false here
+	// resumed the primary and cold-started everyone else — the exact split the
+	// upgrade fix exists to prevent, one hibernate/wake cycle later.
+	s.reconcileAgentsAsync(p, s.containerResumesPrimary(r.Context(), p))
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
@@ -3228,6 +3304,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	info.Attached = s.islandPresence(p.Name)
 	info.AgentState = s.islandAgentState(p.Name)
 	info.Agents = s.agentInfos(ctx, p, false)
+	info.GitHubIdentity = p.GitHubIdentity
 	info.BuiltVersion = p.BuiltVersion
 	info.UpgradedVersion = p.UpgradedVersion
 	// Zero-heartbeat liveness: a running island that has never emitted a single
@@ -3417,12 +3494,21 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 			seen[prov.Name] = prov
 		}
 	}
-	if len(seen) == 0 {
-		return "", nil
-	}
 	dir, err := paths.LLMIslandConfigDir(p.Name)
 	if err != nil {
 		return "", err
+	}
+	// Prune first. This function is also the REFRESH path, so it runs against a
+	// dir that may already hold a previous resolution's files — and a provider
+	// the island no longer resolves must have its key REMOVED, not merely
+	// stopped being rewritten. Leaving it is the silent-revoke shape: `dejima
+	// provider rm` reports success, the store is clean, and the island keeps a
+	// working copy of the revoked key plus a manifest still advertising it.
+	if err := pruneIslandLLMConfig(dir, seen); err != nil {
+		return "", err
+	}
+	if len(seen) == 0 {
+		return "", nil
 	}
 	manifest := make([]providercreds.Meta, 0, len(seen))
 	for _, prov := range seen {
@@ -3440,6 +3526,40 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 		return "", fmt.Errorf("write island llm manifest: %w", err)
 	}
 	return dir, nil
+}
+
+// pruneIslandLLMConfig deletes materialized provider keys the island no longer
+// resolves. keep is the set that survives; anything else goes, and when keep is
+// empty so does the manifest — an island with no provider must be left with no
+// key material at all, matching what LLMIslandConfigPath teardown promises.
+//
+// A missing dir is not an error: nothing to prune is the success case.
+func pruneIslandLLMConfig(dir string, keep map[string]providercreds.Provider) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read island llm dir: %w", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".env") {
+			continue
+		}
+		if _, ok := keep[strings.TrimSuffix(name, ".env")]; ok {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale island llm env: %w", err)
+		}
+	}
+	if len(keep) == 0 {
+		if err := os.Remove(filepath.Join(dir, "providers.json")); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale island llm manifest: %w", err)
+		}
+	}
+	return nil
 }
 
 func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
