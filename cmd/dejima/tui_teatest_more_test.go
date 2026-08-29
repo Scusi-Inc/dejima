@@ -80,8 +80,18 @@ func TestTUIUpgradeViaActionMenu(t *testing.T) {
 	if m.confirm == nil || m.confirm.verb != "upgrade" || m.confirm.island != "alpha" {
 		t.Fatalf("selecting Upgrade should arm an upgrade confirm on alpha, got %+v", m.confirm)
 	}
-	if !strings.Contains(m.renderConfirm(), "current island image") {
-		t.Errorf("upgrade confirm prompt: %q", m.renderConfirm())
+	// The confirm has to say what upgrade does NOT do. It recreates against the
+	// image that is already on the host and then stamps the island with the
+	// daemon's version regardless of how old that image is — so "the current
+	// island image", the old wording, was the one claim nothing here can check.
+	prompt := confirmText(m)
+	for _, want := range []string{"already on the host", "does NOT rebuild", "Rebuild the island image"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("upgrade confirm must mention %q; got %q", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "current island image") {
+		t.Errorf("upgrade confirm still claims the host's image is current: %q", prompt)
 	}
 }
 

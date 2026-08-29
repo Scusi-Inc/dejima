@@ -1411,7 +1411,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// that actually moves an island onto what we just built. Action first, so
 			// the narrow-terminal clip eats the parenthetical rather than the
 			// instruction.
-			m.imageBuiltPending = "image built — now: select an island, [s] → \"Upgrade to the current image\" (islands keep their old image until recreated)"
+			m.imageBuiltPending = "image built — now: select an island, [s] → \"Upgrade to the image on the host\" (islands keep their old image until recreated)"
 		}
 		return m, m.fetchOverviewCmd()
 
@@ -2682,11 +2682,29 @@ func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
 			if m.overview != nil && m.overview.SSHAddr != "" {
 				items = append(items, actionMenuItem{label: "Open in VS Code / Cursor (/workspace)", key: "c"})
 			}
-			// Lifecycle (non-destructive): stop-and-keep, and recreate on the current
-			// image — kept clear of the danger block at the very bottom.
+			// Lifecycle (non-destructive): stop-and-keep, then the two halves of
+			// rolling onto a new image — kept clear of the danger block at the bottom.
+			//
+			// REBUILD SITS ABOVE UPGRADE BECAUSE IT COMES FIRST. `dejima upgrade`
+			// recreates a container against whatever image is already on the host; it
+			// never builds one. This menu offered the second step and not the first,
+			// so an operator who came here to roll an island forward could only do the
+			// half that silently keeps the old image — the exact window c058652
+			// patched (a new daemon mounting /opt/host/secrets.d while the old image's
+			// load-secrets.sh still read /opt/host/secrets.env).
+			//
+			// `b` on the dashboard has always opened this confirm, and the Server menu
+			// [H] already lists it as a host control. Neither is where someone looking
+			// for "upgrade" looks. Reusing the same accelerator adds a place to find
+			// the action, not a second meaning for the key.
 			items = append(items,
 				actionMenuItem{label: "Hibernate", key: "h"},
-				actionMenuItem{label: "Upgrade to the current image", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+				rebuildImageItem(m.building),
+				// Not "the current image": nothing here checks that the host's image is
+				// current, and after this recreate the island is stamped with the DAEMON's
+				// version either way (server.go, upgradeIsland) — so the word would be a
+				// claim the code never verifies.
+				actionMenuItem{label: "Upgrade to the image on the host (recreate — does not rebuild)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 					mm.confirm = &confirmPrompt{verb: "upgrade", island: islandName}
 					return mm, nil
 				}},
@@ -2816,6 +2834,32 @@ func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
 	return m, true
 }
 
+// menuActionName is the part of a menu label an operator actually scans for: the
+// action, without its trailing "(…)" gloss (which renders muted). Copy that tells
+// someone to go find a menu item should name THIS, not the whole label — and
+// should get it from here rather than keeping its own copy of the string.
+func menuActionName(label string) string {
+	if p := strings.Index(label, " ("); p >= 0 && strings.HasSuffix(label, ")") {
+		return label[:p]
+	}
+	return label
+}
+
+// rebuildImageItem is the "rebuild the island image" row, shared by the Server
+// menu [H] and every island's settings menu [s] so the two can't drift into
+// naming the same action differently.
+//
+// It goes DISABLED while a build is in flight rather than staying selectable:
+// the `b` handler already no-ops when m.building, and a menu row that visibly
+// does nothing when chosen is the same failure as a button that lies — the
+// operator can't tell "already running" from "didn't register".
+func rebuildImageItem(building bool) actionMenuItem {
+	if building {
+		return actionMenuItem{label: "Rebuilding the island image… (in progress)", disabled: true}
+	}
+	return actionMenuItem{label: "Rebuild the island image (host-wide; islands pick it up on upgrade)", key: "b"}
+}
+
 // partitionBoundary splits menu items into the boundary-crossing group and
 // everything else, preserving each group's relative order.
 func partitionBoundary(items []actionMenuItem) (boundary, rest []actionMenuItem) {
@@ -2935,7 +2979,7 @@ func (m tuiModel) openServerMenu() tuiModel {
 	items = append(items, actionMenuItem{label: "Set up SSH (this device → every island)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 		return mm.startSSHSetup()
 	}})
-	items = append(items, actionMenuItem{label: "Build island image", key: "b"})
+	items = append(items, rebuildImageItem(m.building))
 	if m.hostTerminalsAvailable() {
 		items = append(items, actionMenuItem{label: "Host terminals", key: "/"})
 	}
@@ -4843,7 +4887,7 @@ func (m tuiModel) renderHelp() string {
 		{"u / U", "update Dejima — the client first, then the daemon if needed (daemon update warns + gates: it restarts the daemon, closing all terminals fleet-wide). Also in [H]"},
 		{"S / ,", "global Dejima settings — editor · group-by-repo · connection target (which server). Also `s` on empty space, or the top nav button in any row's settings menu"},
 		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
-		{"b", "build the island image on the daemon host — confirms first"},
+		{"b", "rebuild the island image on the daemon host — the step BEFORE [s] → Upgrade, which only recreates against the image already there. Also in [H] and in an island's [s] menu"},
 		{"R", "refresh now"},
 	})
 
@@ -4999,7 +5043,14 @@ func (m tuiModel) renderConfirm() string {
 			input = "the agent id (" + c.agent + ")"
 		}
 	case "upgrade":
-		prompt = fmt.Sprintf("Recreate %q on the current island image? (all state preserved)", c.island)
+		// "the current island image" was the reassuring half of a two-step operation
+		// whose first step this prompt never mentioned. Upgrade recreates against
+		// whatever image is on the host and then stamps the island with the DAEMON's
+		// version — so an island rolled onto a stale image reports itself level, and
+		// doctor agrees. Nothing available here can tell how old the host's image is
+		// (the daemon reports only whether it exists), so this says what it does and
+		// names the step that makes it current, rather than guessing.
+		prompt = fmt.Sprintf("Recreate %q against the island image already on the host? This does NOT rebuild the image — if the daemon has been updated since the image was built, rebuild first ([s] → Rebuild the island image). All state preserved.", c.island)
 	case "recreate-island":
 		// Generic recreate confirm (secrets apply, OOM-priority apply, …): be honest
 		// that running agent sessions restart — that's the disruption the operator
@@ -5238,8 +5289,8 @@ func (m tuiModel) renderActionMenu() string {
 		// A trailing "(…)" gloss is rendered muted so the action name reads first.
 		label := st.Render(it.label)
 		if !it.disabled {
-			if p := strings.Index(it.label, " ("); p >= 0 && strings.HasSuffix(it.label, ")") {
-				label = st.Render(it.label[:p]) + styleMuted.Render(it.label[p:])
+			if name := menuActionName(it.label); name != it.label {
+				label = st.Render(name) + styleMuted.Render(it.label[len(name):])
 			}
 		}
 		b.WriteString(mark + label + accel + "\n")
