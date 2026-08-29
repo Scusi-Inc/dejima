@@ -1271,12 +1271,18 @@ func islandPeerRoster(infos []AgentInfo) []AgentInfo {
 	out := make([]AgentInfo, len(infos))
 	for i, ai := range infos {
 		out[i] = AgentInfo{
-			ID:       ai.ID,
-			Label:    ai.Label,
-			Type:     ai.Type,
-			State:    ai.State,
-			Branch:   ai.Branch,
-			Worktree: ai.Worktree,
+			// Carried, not re-asserted: the roster is a projection of an island's
+			// own agent list, so the level was already decided at that boundary.
+			// Dropping it would make every peer read as unset, which callers must
+			// treat as not-contained — safe, but wrong, and the wrong kind of wrong
+			// for a list whose whole purpose is "who else is in here with me".
+			Containment: ai.Containment,
+			ID:          ai.ID,
+			Label:       ai.Label,
+			Type:        ai.Type,
+			State:       ai.State,
+			Branch:      ai.Branch,
+			Worktree:    ai.Worktree,
 		}
 	}
 	return out
@@ -3350,16 +3356,21 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 	for i := range p.Agents {
 		a := &p.Agents[i]
 		ai := AgentInfo{
-			ID:         a.ID,
-			Type:       a.Type,
-			Label:      a.Label,
-			Tmux:       a.Tmux,
-			Branch:     a.Branch,
-			Worktree:   a.Worktree,
-			Attachable: handlers.Attachable(a.Type),
-			CreatedAt:  a.CreatedAt,
-			Ephemeral:  a.Ephemeral,
-			SpawnedBy:  a.SpawnedBy,
+			// Stamped HERE, not read from the record. This function's whole
+			// premise is that it is enumerating one island's agents, so being in
+			// an island is a fact it knows and the stored agent does not. A record
+			// that carried its own level could drift from where it actually lives.
+			Containment: ContainmentContained,
+			ID:          a.ID,
+			Type:        a.Type,
+			Label:       a.Label,
+			Tmux:        a.Tmux,
+			Branch:      a.Branch,
+			Worktree:    a.Worktree,
+			Attachable:  handlers.Attachable(a.Type),
+			CreatedAt:   a.CreatedAt,
+			Ephemeral:   a.Ephemeral,
+			SpawnedBy:   a.SpawnedBy,
 		}
 		// Resolve the spawner's name from the same roster so lineage renders as a
 		// name, not a bare id.

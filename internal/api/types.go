@@ -114,15 +114,64 @@ type IslandIdentity struct {
 	Glyph string `json:"glyph"`
 }
 
+// ContainmentLevel says whether Dejima GATES an agent or merely watches it.
+//
+// It exists because those two states are indistinguishable from the outside and
+// the difference is the entire product. An agent Dejima observes but does not
+// gate has no Port scopes, no MCP grants, no links and no capabilities — not
+// because everything is denied, but because nothing is asked. The grants pane
+// cannot tell those apart: at total == 0 with credentials confirmed it renders
+// "✓ fully contained" in green (tui_grants.go:201). It is not being lied to; it
+// is being asked a question it has no way to answer.
+//
+// THE ZERO VALUE IS "" AND IS NOT A LEVEL. That is the load-bearing decision. If
+// the zero value were a valid level, every record that forgot to set it would
+// silently CLAIM that level — and the claim that matters is the reassuring one,
+// so the failure would always land in the dangerous direction. "" means nobody
+// said, it is distinguishable from every real answer, and every reader must
+// treat it as NOT CONTAINED. The least reassuring answer is the safe default;
+// the most reassuring one never is.
+//
+// Go cannot make a struct field required, so this is not a compile-time
+// guarantee and should not be described as one. What holds it up: a zero that
+// names no level, a server that stamps the level at the boundary, readers that
+// fail safe, and a test that no path emits "".
+type ContainmentLevel string
+
+// ContainmentContained is an agent inside an island: gated by the Port broker,
+// its crossings ledgered. The other level is pending a naming decision — the
+// verb "adopt" is already taken by `dejima adopt`, which means the OPPOSITE
+// (migrating a local project INTO an island), so naming the ungated state
+// "adopted" would give one word both ends of the only axis this product has.
+const ContainmentContained ContainmentLevel = "contained"
+
+// Contained reports whether this level is a positive containment claim. Anything
+// else — including the empty zero value — is not. Written as a method so the
+// fail-safe reading is in ONE place: `if a.Containment == ContainmentContained`
+// scattered across call sites is how one of them ends up written the other way
+// round and defaults an unset record to gated.
+func (c ContainmentLevel) Contained() bool { return c == ContainmentContained }
+
 // AgentInfo is the public view of one agent within an island.
 type AgentInfo struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Label      string `json:"label,omitempty"`
-	Tmux       string `json:"tmux,omitempty"`
-	Branch     string `json:"branch,omitempty"`
-	Worktree   string `json:"worktree,omitempty"`
-	Attachable bool   `json:"attachable"`
+	ID string `json:"id"`
+	// Containment is stamped by the SERVER at the boundary, from the source of
+	// truth — never carried up from a stored record. An agent enumerated as part
+	// of an island is contained BECAUSE it is in an island; that is what toInfo
+	// knows and the record does not.
+	//
+	// Both a field and a location encode containment, so they can disagree.
+	// Stamping at the boundary is what stops them: the field restates what the
+	// collection already implies, for clients that merge the two lists, rather
+	// than making an independent claim that can drift from where the agent
+	// actually lives.
+	Containment ContainmentLevel `json:"containment,omitempty"`
+	Type        string           `json:"type"`
+	Label       string           `json:"label,omitempty"`
+	Tmux        string           `json:"tmux,omitempty"`
+	Branch      string           `json:"branch,omitempty"`
+	Worktree    string           `json:"worktree,omitempty"`
+	Attachable  bool             `json:"attachable"`
 	// CreatedAt is when the agent was added to the island — the basis for its
 	// displayed uptime/age. Zero for legacy agents persisted before this field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
