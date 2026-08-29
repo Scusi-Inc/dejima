@@ -3014,7 +3014,12 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandWoken, Island: p.Name})
-	s.reconcileAgentsAsync(p, false) // the entrypoint relaunches the primary; restore the rest
+	// Match whatever the ENTRYPOINT is about to do with the primary, rather than
+	// asserting a value here. A container upgraded earlier carries
+	// DEJIMA_LAUNCH="claude --continue" permanently, so a hardcoded false here
+	// resumed the primary and cold-started everyone else — the exact split the
+	// upgrade fix exists to prevent, one hibernate/wake cycle later.
+	s.reconcileAgentsAsync(p, s.containerResumesPrimary(r.Context(), p))
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
