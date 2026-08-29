@@ -2862,6 +2862,28 @@ components:
       type: object
       properties:
         id: { type: string }
+        containment:
+          type: string
+          enum: [contained]
+          description: >
+            Whether Dejima GATES this agent or merely watches it. `contained`
+            means the agent runs inside an island: brokered by Port, its host
+            crossings ledgered.
+
+            ABSENT IS NOT A LEVEL, and a client must treat it as NOT CONTAINED.
+            The two states are indistinguishable from outside — an agent nothing
+            gates has no Port scopes, no MCP grants, no links and no capabilities,
+            which is byte-identical to an agent for which everything is denied. So
+            a missing value means "nobody said", never "it is fine". The safe
+            default is the least reassuring answer.
+
+            The server stamps this at the boundary from where the agent actually
+            lives, not from a stored record, so it cannot drift from the
+            collection that already implies it.
+
+            The enum lists only `contained` today; the ungated level is pending a
+            naming decision (`dejima adopt` already means the opposite — migrating
+            a local project INTO an island).
         type: { type: string }
         label: { type: string }
         tmux: { type: string }
