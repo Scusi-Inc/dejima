@@ -108,6 +108,23 @@ type provCtx struct {
 	state  *provState
 	env    *envProbe
 	manual []manualStep // GUI-only / off-box steps to print at the end
+
+	// incomplete marks phases that RAN but did not achieve their goal, so the
+	// runner does not record them as done. Without this the only two outcomes
+	// were "done" and "abort the wizard", and an optional phase can be neither:
+	// local models failed to install, returned nil so the wizard would carry on,
+	// and was then marked complete — so the reinstall an operator does to fix it
+	// silently skips the very phase they reinstalled for. Declining is NOT
+	// incomplete; that is an answer, and re-asking every run is nagging.
+	incomplete map[string]bool
+}
+
+// markIncomplete records that this phase must run again next time.
+func (pc *provCtx) markIncomplete(id string) {
+	if pc.incomplete == nil {
+		pc.incomplete = map[string]bool{}
+	}
+	pc.incomplete[id] = true
 }
 
 // manualStep is one thing the wizard could not do for the operator.
@@ -361,7 +378,9 @@ func runProvisionHost(ctx context.Context, yes, reset bool) error {
 			fmt.Println("  Fix the above, then re-run `dejima onboard --provision-host` to resume.")
 			return nil
 		}
-		st.markDone(ph.id)
+		if !pc.incomplete[ph.id] {
+			st.markDone(ph.id)
+		}
 		saveProvState(st)
 		fmt.Println()
 	}
@@ -920,6 +939,7 @@ func provPhaseLocalModels(pc *provCtx) error {
 	c, err := client()
 	if err != nil {
 		fmt.Println("  The daemon wasn't up yet. Set them up from the TUI later: run `dejima`, Local models.")
+		pc.markIncomplete("local-models")
 		return nil
 	}
 	fmt.Println("  Installing the inference backend (Ollama)…")
@@ -929,11 +949,13 @@ func provPhaseLocalModels(pc *provCtx) error {
 	installLocalBackendHere(pc.ctx)
 	if err := c.LocalInstall(pc.ctx, os.Stdout); err != nil {
 		fmt.Printf("  Install didn't finish (%v). Retry any time from the TUI: run `dejima`, Local models.\n", err)
+		pc.markIncomplete("local-models")
 		return nil
 	}
 	st, err := c.LocalStatus(pc.ctx)
 	if err != nil || st.Recommend.Top == nil {
 		fmt.Println("  Pick a model from the TUI when you want one: run `dejima`, Local models.")
+		pc.markIncomplete("local-models")
 		return nil
 	}
 	top := st.Recommend.Top
@@ -944,6 +966,7 @@ func provPhaseLocalModels(pc *provCtx) error {
 	fmt.Printf("  Pulling %s…\n", top.Alias)
 	if err := c.PullLocalModel(pc.ctx, top.Alias, os.Stdout); err != nil {
 		fmt.Printf("  The %s pull didn't finish. Retry from the TUI: run `dejima`, Local models.\n", top.Alias)
+		pc.markIncomplete("local-models")
 		return nil
 	}
 	fmt.Println("  ✓ local models ready — point an agent at the `local` provider (the `v` model editor).")
