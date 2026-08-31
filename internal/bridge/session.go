@@ -307,8 +307,22 @@ func parseMaxClientSize(out string) (rows, cols uint16, ok bool) {
 }
 
 // Resize tells the PTY about a new window size.
+//
+// A ZERO DIMENSION IS REFUSED, which startPTY above already does at creation and
+// this forgot. A 0x0 pty is never a legitimate request: under tmux's
+// `window-size latest` it makes the resizing client the "latest" one and
+// collapses the shared window, which is the black-pane bug in its other form.
+//
+// Not reachable from today's own clients — both size watchers drop the event on
+// error rather than sending zeros (cmd/dejima/resize_unix.go, resize_windows.go)
+// — but the SSH façade feeds window-change dimensions straight from the wire
+// (internal/sshfacade), and this is the one choke point every resize crosses.
+// Guard here rather than at each caller.
 func (s *PTYSession) Resize(rows, cols uint16) error {
 	if s == nil || s.pty == nil {
+		return nil
+	}
+	if rows == 0 || cols == 0 {
 		return nil
 	}
 	return pty.Setsize(s.pty, &pty.Winsize{Rows: rows, Cols: cols})

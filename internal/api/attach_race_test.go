@@ -101,18 +101,29 @@ func TestSessionAttachActuallyCallsEnsureAttachTarget(t *testing.T) {
 		t.Fatal("sessionWS not found — it was renamed, and this guard now checks nothing " +
 			"while passing")
 	}
-	found := false
+	called := map[string]bool{}
 	ast.Inspect(body, func(n ast.Node) bool {
 		if ce, ok := n.(*ast.CallExpr); ok {
-			if se, ok := ce.Fun.(*ast.SelectorExpr); ok && se.Sel.Name == "ensureAttachTarget" {
-				found = true
+			if se, ok := ce.Fun.(*ast.SelectorExpr); ok {
+				called[se.Sel.Name] = true
 			}
 		}
 		return true
 	})
-	if !found {
-		t.Error("sessionWS does not call ensureAttachTarget, so `tmux new-session -A` will " +
-			"create an EMPTY shell under the agent's session name when the attach beats " +
-			"the entrypoint — and start.sh then skips launching the agent permanently")
+	// Each of these is unit-tested on its own, and a unit test cannot notice the
+	// CALL being deleted — which is how the first version of this file passed
+	// while sessionWS walked straight past the helper it was proving correct.
+	for _, req := range []struct{ fn, why string }{
+		{"ensureAttachTarget",
+			"`tmux new-session -A` will create an EMPTY shell under the agent's session " +
+				"name when the attach beats the entrypoint, and start.sh then skips " +
+				"launching the agent permanently"},
+		{"resolveAttachSize",
+			"the attach can come up at 0x0, and under `window-size latest` that client " +
+				"becomes the latest one and collapses the shared window — the black pane"},
+	} {
+		if !called[req.fn] {
+			t.Errorf("sessionWS does not call %s, so %s", req.fn, req.why)
+		}
 	}
 }

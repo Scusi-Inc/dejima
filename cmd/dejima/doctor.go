@@ -46,6 +46,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&fix, "fix", false, "apply the safe, local repairs doctor knows how to make")
+	cmd.AddCommand(newDoctorTmuxSizeCmd())
 	return cmd
 }
 
