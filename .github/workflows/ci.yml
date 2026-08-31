@@ -99,7 +99,9 @@ jobs:
           shellcheck -x install.sh \
             scripts/setup.sh \
             scripts/lib/tty.sh \
+            scripts/lib/transcript.sh \
             scripts/lib/tty_test.sh \
+            scripts/lib/transcript_test.sh \
             scripts/verify-secrets-propagation.sh \
             scripts/verify-ssh-forward-semantics.sh \
             scripts/integration.sh \

@@ -20,6 +20,12 @@ set -euo pipefail
 SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/tty.sh
 . "$SETUP_DIR/lib/tty.sh"
+# shellcheck source=scripts/lib/transcript.sh
+. "$SETUP_DIR/lib/transcript.sh"
+# Idempotent: install.sh already started one and exported DEJIMA_INSTALL_LOG,
+# and `exec make setup` inherits both it and the redirected descriptors. This
+# call is for the operator who runs `make setup` (or this script) directly.
+start_transcript
 trap stop_sudo_keepalive EXIT
 
 OS=$(uname -s)

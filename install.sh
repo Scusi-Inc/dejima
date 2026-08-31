@@ -34,9 +34,37 @@ SRC_DIR="${DEJIMA_SRC_DIR:-$HOME/.dejima-src}"
 REF="${DEJIMA_REF:-master}"
 OS=$(uname -s)
 
+# Record everything to a file before anything else runs, so a failure is
+# reportable. See scripts/lib/transcript.sh — but that lives in the repo we have
+# not cloned yet, so the one-liner carries its own copy of the two lines that
+# matter.
+if [[ -z "${DEJIMA_INSTALL_LOG:-}" ]]; then
+    DEJIMA_INSTALL_LOG="${HOME:-/tmp}/dejima-install-$(date +%Y%m%d-%H%M%S).log"
+    if : >"$DEJIMA_INSTALL_LOG" 2>/dev/null; then
+        export DEJIMA_INSTALL_LOG
+        {
+            printf 'dejima install transcript\ndate:    %s\nhost:    %s\nref:     %s\n\n' \
+                "$(date)" "$(uname -a 2>/dev/null || echo unknown)" "${DEJIMA_REF:-master}"
+        } >>"$DEJIMA_INSTALL_LOG"
+        # tee, so the operator still sees the install. This makes stdout a pipe —
+        # the condition #341 wrongly read as "nobody is here". lib/tty.sh answers
+        # that on /dev/tty, so prompts and sudo still find the human.
+        exec > >(tee -a "$DEJIMA_INSTALL_LOG") 2>&1
+    else
+        unset DEJIMA_INSTALL_LOG
+    fi
+fi
+
 bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
 info()  { printf '  %s\n' "$*"; }
-fail()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+fail()  {
+    printf '\033[31m✗\033[0m %s\n' "$*" >&2
+    if [[ -n "${DEJIMA_INSTALL_LOG:-}" ]]; then
+        printf '\n  A full transcript of this run is at:\n    %s\n' "$DEJIMA_INSTALL_LOG" >&2
+        printf '  Send that file — it says what actually happened, in order.\n' >&2
+    fi
+    exit 1
+}
 # A ref can be a branch, a tag, or a raw commit SHA. `git clone --branch` and a
 # refspec fetch only accept a branch/tag name — a bare SHA makes them fail with
 # "Remote branch <sha> not found". So when the ref looks like a commit hash we
