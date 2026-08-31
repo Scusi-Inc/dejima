@@ -26,6 +26,7 @@ import (
 	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/localmodel"
 	"github.com/aoos/dejima/internal/policy"
+	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
@@ -358,14 +359,26 @@ type settingsModel struct {
 	// Local-models sub-page state, fetched async when the page opens.
 	localStatus *localmodel.Status
 	localErr    string
+	// Provider-keys sub-page. provCreds is what the daemon holds; provCands is
+	// every provider an agent COULD use, so the page can offer one that has no
+	// key yet — ListProviderCredentials returns nothing at all on a fresh daemon,
+	// and a page that lists only what exists can never add the first key.
+	provCreds  []providercreds.Meta
+	provCands  []string
+	provErr    string
+	provSel    int
+	provInput  string
+	provBusy   bool
+	provNotice string
 }
 
 type settingsPage int
 
 const (
-	settingsTop    settingsPage = iota // the preferences list
-	settingsEditor                     // the editor radio sub-page
-	settingsLocal                      // the local-models status sub-page
+	settingsTop       settingsPage = iota // the preferences list
+	settingsEditor                        // the editor radio sub-page
+	settingsLocal                         // the local-models status sub-page
+	settingsProviders                     // LLM provider keys: list, add, rotate
 )
 
 type editorChoice struct {
@@ -383,7 +396,7 @@ var editorChoices = []editorChoice{
 }
 
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 8 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models
+const settingsTopLen = 9 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models · provider keys
 // NB: voice dictation was row 6; it is roadmapped, not wired — see docs/roadmap.md.
 
 func (m tuiModel) openSettings() tuiModel {
@@ -410,9 +423,16 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case settingsLocal:
 		rows = 0 // read-only status page — nothing to move through
 	}
+	// The provider-keys page owns its keys entirely: j, k and q are legal
+	// characters in an API key, and the shared handling below would eat them as
+	// cursor movement and "close". agentAdderKeyStep solves the same problem the
+	// same way — navigate with arrows, delegate early.
+	if s.page == settingsProviders {
+		return m.settingsProvidersKey(msg)
+	}
 	switch msg.String() {
 	case "esc", "q", "ctrl+c", "left", "h":
-		if s.page == settingsEditor || s.page == settingsLocal { // back to the top page, don't close
+		if s.page == settingsEditor || s.page == settingsLocal || s.page == settingsProviders { // back to the top page, don't close
 			s.page, s.sel = settingsTop, 0
 			return m, nil
 		}
@@ -462,6 +482,11 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.lastNotice = "already up to date"
 				}
 				return m, nil
+			case 8: // Provider keys → list + set/rotate (fetched async)
+				s.page, s.sel = settingsProviders, 0
+				s.provCreds, s.provCands, s.provErr = nil, nil, ""
+				s.provSel, s.provInput, s.provBusy, s.provNotice = 0, "", false, ""
+				return m, m.fetchProviderCredsCmd()
 			case 7: // Local models → read-only status sub-page (fetched async)
 				s.page, s.sel = settingsLocal, 0
 				s.localStatus, s.localErr = nil, ""
@@ -1069,6 +1094,31 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case providerCredsMsg:
+		if st := m.settings; st != nil && st.page == settingsProviders {
+			if msg.err != nil {
+				st.provErr = msg.err.Error()
+			} else {
+				st.provCreds, st.provCands, st.provErr = msg.creds, msg.cands, ""
+			}
+		}
+		return m, nil
+
+	case providerKeySavedMsg:
+		if st := m.settings; st != nil && st.page == settingsProviders {
+			st.provBusy = false
+			if msg.err != nil {
+				st.provErr, st.provNotice = msg.err.Error(), ""
+				return m, nil
+			}
+			st.provCreds, st.provErr = msg.creds, ""
+			st.provNotice = fmt.Sprintf("%s key saved — restart an agent to pick it up", msg.provider)
+		}
+		// Clear the stale key-gap the agent picker warns from, or it keeps saying
+		// "needs an LLM key (none set)" about a key just stored. Refetching is the
+		// authoritative version of what adderKeySetMsg does by hand.
+		return m, m.fetchSetupReadinessCmd()
 
 	case localStatusMsg:
 		// Land the status in the settings sub-page only if it's still open on it.
@@ -4901,7 +4951,7 @@ func (m tuiModel) renderHelp() string {
 	sec("Server controls (the daemon / host)", [][2]string{
 		{"H", "server menu — update daemon · set up SSH fleet-wide · build image · refresh"},
 		{"u / U", "update Dejima — the client first, then the daemon if needed (daemon update warns + gates: it restarts the daemon, closing all terminals fleet-wide). Also in [H]"},
-		{"S / ,", "global Dejima settings — editor · group-by-repo · connection target (which server). Also `s` on empty space, or the top nav button in any row's settings menu"},
+		{"S / ,", "global Dejima settings — editor · group-by-repo · connection target (which server) · provider keys. Also `s` on empty space, or the top nav button in any row's settings menu"},
 		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
 		{"b", "rebuild the island image on the daemon host — the step BEFORE [s] → Upgrade, which only recreates against the image already there. Also in [H] and in an island's [s] menu"},
 		{"R", "refresh now"},
@@ -5348,6 +5398,9 @@ func (m tuiModel) renderSettings() string {
 		return b.String()
 	}
 
+	if st.page == settingsProviders {
+		return m.renderProviders()
+	}
 	if st.page == settingsLocal {
 		b.WriteString(styleHeader.Render("Settings · local models"))
 		b.WriteString("\n")
@@ -5450,6 +5503,7 @@ func (m tuiModel) renderSettings() string {
 	row(5, "", "Check for updates")
 	row(6, "", updateRow)
 	row(7, "", "Local models              "+styleMuted.Render("shared open-weights models (Ollama)")+styleMuted.Render("  →"))
+	row(8, "", "Provider keys             "+styleMuted.Render("Anthropic / OpenAI / Google API keys")+styleMuted.Render("  →"))
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()
