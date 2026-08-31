@@ -923,6 +923,10 @@ func provPhaseLocalModels(pc *provCtx) error {
 		return nil
 	}
 	fmt.Println("  Installing the inference backend (Ollama)…")
+	// Install from here, not through the daemon: the wizard runs in the
+	// operator's terminal, and on macOS the backend's installer needs one for
+	// sudo. See installLocalBackendHere.
+	installLocalBackendHere(pc.ctx)
 	if err := c.LocalInstall(pc.ctx, os.Stdout); err != nil {
 		fmt.Printf("  Install didn't finish (%v). Retry any time from the TUI: run `dejima`, Local models.\n", err)
 		return nil
