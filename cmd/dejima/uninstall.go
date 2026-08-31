@@ -301,6 +301,14 @@ func newUninstallCmd() *cobra.Command {
 				}
 			}
 
+			// 3b. Drop the provisioning wizard's progress, in BOTH modes. It lives
+			// in ~/.dejima, but it is not island data: it is a record of which
+			// host-setup phases ran on a host that is being torn down. Keeping it
+			// makes "uninstall, then reinstall" — the operator's own remedy for a
+			// broken setup — replay as "already done (skipping)" for every phase,
+			// so the reinstall fixes nothing and says nothing about why.
+			resetProvState()
+
 			// 4. Delete ~/.dejima — only under --purge-all. --keep-islands keeps
 			//    it (config + volume bookkeeping) so a reinstall re-adopts.
 			if purge && root != "" {
