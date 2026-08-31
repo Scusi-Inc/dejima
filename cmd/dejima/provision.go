@@ -212,6 +212,53 @@ func autoLoginUser() string {
 	return strings.TrimSpace(string(out))
 }
 
+// fileVaultOn reports whether FileVault is enabled. `fdesetup status` prints
+// "FileVault is On." / "FileVault is Off." and — like autoLoginUser — needs no
+// sudo, so the check can't be the thing that gets skipped.
+func fileVaultOn() bool {
+	out, err := exec.Command("fdesetup", "status").Output()
+	if err != nil {
+		return false // not macOS, or fdesetup missing: don't invent a constraint
+	}
+	return strings.Contains(string(out), "FileVault is On")
+}
+
+// autoLoginStep returns the "come back after a reboot" step for this Mac.
+// FileVault is a parameter rather than a lookup inside, because it changes the
+// answer completely and that has to be assertable in a test.
+//
+// macOS DISABLES the "Automatically log in as" control while FileVault is on, so
+// the un-branched version walked the operator to a greyed-out setting and then
+// told them, in a loop, that auto-login "still reads as off" — reported from the
+// field as exactly that. The deeper promise fails too: a FileVault Mac stops at
+// the unlock screen at boot, BEFORE any LaunchDaemon runs, so it cannot return
+// from a power cut unattended whatever auto-login or `pmset autorestart` say.
+// That is a decision for the operator, not a setting to poll, so it carries no
+// verify: it belongs on the end-of-run list, not in a walk loop.
+func autoLoginStep(fileVault bool) guidedStep {
+	if fileVault {
+		return guidedStep{
+			why:   whyHost,
+			title: "Decide how this Mac comes back after a reboot (FileVault is on)",
+			detail: "macOS greys out auto-login while FileVault is on, and a FileVault Mac\n" +
+				"stops at the unlock screen at boot — before any daemon starts.\n" +
+				"Unattended recovery (what a dedicated host wants):\n" +
+				"  sudo fdesetup disable\n" +
+				"  then System Settings → Users & Groups → Automatically log in as\n" +
+				"Keeping FileVault: someone unlocks at the screen after every boot.\n" +
+				"  For a PLANNED reboot, `sudo fdesetup authrestart` skips that prompt.",
+		}
+	}
+	return guidedStep{
+		why:    whyHost,
+		title:  "Enable auto-login",
+		detail: "System Settings → Users & Groups → Automatically log in as → this account",
+		verify: func() bool { return autoLoginUser() != "" },
+		done:   "auto-login is on — this Mac comes back by itself after a reboot",
+		notYet: "auto-login still reads as off (macOS may need the panel closed first)",
+	}
+}
+
 // addManual records an OPTIONAL step. Prefer addManualFor when the step has a
 // consequence worth naming; the default here is deliberately the weakest claim.
 func (pc *provCtx) addManual(title, detail string) {
@@ -366,18 +413,17 @@ func provPhaseSystemConfig(pc *provCtx) error {
 	// be flipped safely from the CLI (it stores the account password), so this is
 	// always a GUI instruction.
 	fmt.Println()
-	fmt.Println("  Auto-login (so the daemon returns after a reboot with no one at the keyboard):")
-	fmt.Println("    System Settings → Users & Groups → Automatically log in as → <your user>")
-	fmt.Println("    (Optional if you installed the daemon as a --system LaunchDaemon, which")
-	fmt.Println("     starts at boot before any login.)")
-	pc.guide(guidedStep{
-		why:    whyHost,
-		title:  "Enable auto-login",
-		detail: "System Settings → Users & Groups → Automatically log in as → this account",
-		verify: func() bool { return autoLoginUser() != "" },
-		done:   "auto-login is on — this Mac comes back by itself after a reboot",
-		notYet: "auto-login still reads as off (macOS may need the panel closed first)",
-	})
+	fv := fileVaultOn()
+	if fv {
+		fmt.Println("  Auto-login: macOS won't allow it while FileVault is on, and a FileVault Mac")
+		fmt.Println("  stops at the unlock screen at boot anyway — so this needs a decision, below.")
+	} else {
+		fmt.Println("  Auto-login (so the daemon returns after a reboot with no one at the keyboard):")
+		fmt.Println("    System Settings → Users & Groups → Automatically log in as → <your user>")
+		fmt.Println("    (Optional if you installed the daemon as a --system LaunchDaemon, which")
+		fmt.Println("     starts at boot before any login.)")
+	}
+	pc.guide(autoLoginStep(fv))
 	return nil
 }
 
@@ -407,10 +453,14 @@ func pmsetValues() map[string]string {
 // tailscaleUpCmdHint is the `tailscale up` guidance, and it carries two caveats
 // because BOTH bit the same operator on the same day.
 //
-// On macOS, `brew install tailscale` is the CLI ONLY — there is no tailscaled
-// behind it — so `tailscale up` fails with "dial unix /var/run/tailscaled.socket:
-// no such file or directory" no matter how often it is run. The cask is what
-// ships the service.
+// On macOS, `brew install tailscale` leaves `tailscale up` failing with "failed
+// to connect to local Tailscale service; is Tailscale running?" — but NOT
+// because the formula is CLI-only, which is what this said. The formula ships
+// tailscaled; nothing starts it. `sudo brew services start tailscale` does, and
+// an operator who ran it (Cellar/tailscale/*/bin/tailscaled, started cleanly) is
+// what corrected this. Prescribing a reinstall for a service that is installed
+// costs a download and still leaves them one command short, so name that command
+// first and keep the cask as the alternative it is.
 //
 // And on a node that is ALREADY on a tailnet, `tailscale up` with a partial flag
 // set refuses: "changing settings via 'tailscale up' requires mentioning all
@@ -418,7 +468,9 @@ func pmsetValues() map[string]string {
 // configured machine — so point at the command Tailscale itself prints rather
 // than pretending we know their flags.
 const tailscaleUpCmdHint = "sudo tailscale up --ssh --accept-dns=true\n" +
-	"(no tailscaled? install the app: brew install --cask tailscale-app)\n" +
+	"(\"is Tailscale running?\" — start the service first, then re-run the above:\n" +
+	"   sudo brew services start tailscale        [Homebrew formula]\n" +
+	"   or install the GUI app: brew install --cask tailscale-app, then open it)\n" +
 	"(already on a tailnet? Tailscale will print the exact command to use — run that one)"
 
 const tailscaleUpHeadlessHint = "Headless / no browser here? Generate an auth key " +
@@ -609,9 +661,10 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		fmt.Printf("  ✓ Docker VM has %s of %s host RAM — fine\n", humanBytes(vm), humanBytes(host))
 		return nil
 	}
+	recGB := vmmem.RecommendedGB(host)
 	fmt.Printf("  ⚠ Docker VM has only %s of %s host RAM — islands share this pool and will OOM.\n",
 		humanBytes(vm), humanBytes(host))
-	recGB := vmmem.RecommendedGB(host)
+	fmt.Printf("    Set it to %dGB.\n", recGB)
 
 	// colima can resize from the CLI, so do it inline — suggest the vmmem default
 	// (¾ of host RAM, leaving the host ≥4GiB) but let the user confirm or override
@@ -630,7 +683,7 @@ func provPhaseVMRightsize(pc *provCtx) error {
 			if pc.yes {
 				fmt.Println("  --yes: proceeding with the resize (this bounces running islands).")
 			} else if !pc.confirm(fmt.Sprintf("  Resize to %dGB now and bounce running islands?", gb), false) {
-				pc.addManualFor(whyHost, fmt.Sprintf("Resize the Docker VM to %dGB (when islands are idle)", gb), fmt.Sprintf("colima start --memory %d", gb))
+				pc.addManualFor(whyHost, fmt.Sprintf("Set the Docker VM memory to %dGB (when islands are idle)", gb), fmt.Sprintf("colima start --memory %d", gb))
 				return nil
 			}
 		}
@@ -638,7 +691,8 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		// Omit --cpu/--disk so colima keeps its saved values for those.
 		if err := execInteractive("colima", "start", "--memory", strconv.Itoa(gb)); err != nil {
 			fmt.Printf("  ✗ colima start --memory %d: %v\n", gb, err)
-			pc.addManualFor(whyHost, "Right-size the Docker VM", fmt.Sprintf("colima start --memory %d", gb))
+			title, detail := vmRightsizeStep(gb)
+			pc.addManualFor(whyHost, title, detail)
 			return nil
 		}
 		fmt.Printf("  ✓ ran: colima start --memory %d\n", gb)
@@ -646,15 +700,17 @@ func provPhaseVMRightsize(pc *provCtx) error {
 	}
 
 	// Docker Desktop — no CLI resize; point at doctor --fix / the GUI slider.
-	fmt.Printf("    Recommended: ~%dGB. `dejima doctor --fix` scripts the colima resize.\n", recGB)
+	fmt.Printf("    Set Memory to %dGB: Docker Desktop → Settings → Resources → Memory.\n", recGB)
+	fmt.Println("    (`dejima doctor --fix` scripts the equivalent colima resize.)")
 	if pc.confirm("  Run `dejima doctor --fix` now?", true) {
 		if self, err := os.Executable(); err == nil {
 			if err := execInteractive(self, "doctor", "--fix"); err != nil {
 				fmt.Printf("  ✗ doctor --fix: %v\n", err)
+				title, detail := vmRightsizeStep(recGB)
 				pc.guide(guidedStep{
 					why:    whyHost,
-					title:  fmt.Sprintf("Right-size the Docker VM to ~%dGB", recGB),
-					detail: fmt.Sprintf("Docker Desktop → Settings → Resources → Memory   (or: colima start --memory %d)", recGB),
+					title:  title,
+					detail: detail,
 					verify: func() bool { return !vmmem.Undersized(vmmem.HostMemoryBytes(), dockerVMMemoryBytes()) },
 					done:   "the Docker VM has enough memory for islands",
 					notYet: fmt.Sprintf("still reads as under %dGB — Docker Desktop restarts its VM when you apply", recGB),
@@ -662,9 +718,20 @@ func provPhaseVMRightsize(pc *provCtx) error {
 			}
 		}
 	} else {
-		pc.addManualFor(whyHost, fmt.Sprintf("Right-size the Docker VM to ~%dGB", recGB), "Docker Desktop → Settings → Resources → Memory")
+		title, detail := vmRightsizeStep(recGB)
+		pc.addManualFor(whyHost, title, detail)
 	}
 	return nil
+}
+
+// vmRightsizeStep phrases the right-sizing step so the TARGET SIZE is in it.
+// "Right-size the Docker VM" with the click path but no number is a step the
+// operator cannot act on — they are left to work out the figure the wizard
+// already computed. The field note was that it should blatantly say what to set
+// it to, so every path that records this step goes through here.
+func vmRightsizeStep(gb int) (title, detail string) {
+	return fmt.Sprintf("Set the Docker VM memory to %dGB", gb),
+		fmt.Sprintf("Docker Desktop → Settings → Resources → Memory → %dGB\n(or, with colima: colima start --memory %d)", gb, gb)
 }
 
 // promptMemoryGB asks the user to confirm the recommended VM memory size (in GB)

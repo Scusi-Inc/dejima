@@ -215,10 +215,15 @@ fi
 # ---------------------------------------------------------------------------
 printf '\n'
 bold "Server address"
-info "If a teammate sent you a 'dejima-invite:' code, you can SKIP this — just press"
-info "Enter, then run 'dejima join <invite>' afterwards (it carries the address + token)."
-info "Otherwise: on the SERVER (mac mini / linux box), run 'tailscale ip -4' for its address."
-info "Example: 100.84.12.7"
+# Lead with the common case. This used to open with the invite escape hatch,
+# which reads as a question you have to answer ("am I using an invite?") — and
+# for the solo operator, who set the server up themselves and has no teammate to
+# get a code from, the answer is always no. The invite line stays, demoted to
+# what it is: the exception.
+info "This is the machine you set up Dejima on (mac mini / linux box) — run"
+info "'tailscale ip -4' THERE to get its address. Example: 100.84.12.7"
+info "(Joining someone else's server from a 'dejima-invite:' code? Press Enter to"
+info " skip this, then run 'dejima join <invite>' — it carries the address + token.)"
 
 server_host=""
 if [[ -e /dev/tty && -z "${DEJIMA_HOST_PREFILL:-}" ]]; then
