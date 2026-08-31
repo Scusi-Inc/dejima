@@ -1041,13 +1041,29 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case restartDoneMsg:
 		if v := m.restartPane; v != nil && v.island == msg.island {
 			v.busy = false
-			if len(msg.failed) > 0 {
+			verb := "restarted"
+			if msg.updated {
+				verb = "updated"
+			}
+			switch {
+			case len(msg.failed) > 0:
 				v.notice = ""
-				v.err = fmt.Sprintf("%d restarted; failed: %s", msg.ok, strings.Join(msg.failed, ", "))
+				v.err = fmt.Sprintf("%d %s; failed: %s", msg.ok, verb, strings.Join(msg.failed, ", "))
 				if msg.err != nil {
 					v.err += " (" + msg.err.Error() + ")"
 				}
-			} else {
+			case len(msg.notRelaunched) > 0:
+				// Installed but still running the old process. Not a success line:
+				// the version on disk and the version in memory disagree, and only
+				// a restart settles it.
+				v.notice = ""
+				v.err = fmt.Sprintf("%d updated, but %s did not relaunch — the NEW version is "+
+					"installed and the OLD one is still running. Restart them with [⏎].",
+					msg.ok, strings.Join(msg.notRelaunched, ", "))
+			case msg.updated:
+				v.err = ""
+				v.notice = fmt.Sprintf("updated and relaunched %d agent(s) on the new version. [esc] to close.", msg.ok)
+			default:
 				v.err = ""
 				v.notice = fmt.Sprintf("restarted %d agent(s) — new environment loaded. [esc] to close.", msg.ok)
 			}

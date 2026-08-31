@@ -200,3 +200,34 @@ func TestCLIGithubRepoint(t *testing.T) {
 		t.Errorf("a refused repoint left a dangling pin behind: %+v", ids.Dangling)
 	}
 }
+
+// TestCLIAgentUpdate drives `dejima agent update` against an in-process daemon.
+//
+// The command exists because every self-installing agent launches with
+// `command -v X || install X` — install-if-missing, never update — so an island
+// pinned whatever version it first installed, and the agent's own updater could
+// not help: OpenClaw's hands off to a service supervisor to restart the process,
+// and Dejima runs agents in tmux, so it reports
+// "managed-service-handoff-unavailable" and skips.
+func TestCLIAgentUpdate(t *testing.T) {
+	_, c := cliEnv(t)
+	seedIsland(t, c, "isl")
+
+	// A bundled agent must be told the command that DOES update it, not refused
+	// vaguely — a hand-typed install into an image-managed path is silently
+	// reverted by the next upgrade.
+	// The agent id is derived from the island name, so ask rather than assume.
+	isl, err := c.GetIsland(t.Context(), "isl")
+	if err != nil || len(isl.Agents) == 0 {
+		t.Fatalf("seeded island has no agents: %v", err)
+	}
+	id := isl.Agents[0].ID
+
+	out, err := runCLI(t, "agent", "update", "isl", id)
+	if err == nil {
+		t.Fatalf("updating a bundled agent should refuse: %q", out)
+	}
+	if !strings.Contains(err.Error()+out, "dejima upgrade") {
+		t.Errorf("the refusal does not name the command that updates a bundled agent: %v / %q", err, out)
+	}
+}

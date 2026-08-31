@@ -75,6 +75,24 @@ type Handler struct {
 	// codex): no first-use install wait. Tier-2 agents (Bundled=false) self-install
 	// on first launch instead — see InstallCmd and the self-installing Launch line.
 	Bundled bool
+	// UpdateCmd upgrades an already-installed agent IN PLACE, inside the island.
+	//
+	// It exists because the self-installing Launch lines are all shaped
+	// `command -v X || install X` — install-if-missing, never update. So an
+	// island pins whatever version it first installed, for the life of the
+	// container. An operator watching OpenClaw's own UI offer "Update available:
+	// v2026.8.1 (running v2026.7.1-2)" could not take it: that button hands off
+	// to a service supervisor to restart the process, and Dejima launches the
+	// agent directly in tmux, so the handoff target does not exist
+	// ("managed-service-handoff-unavailable"). Neither side is wrong; there was
+	// simply no path.
+	//
+	// EMPTY MEANS NOT UPDATABLE IN PLACE, and that is a real answer for the
+	// bundled agents — claude-code ships in the island image, so its version is
+	// the image's and `dejima upgrade` is the update. The API says that rather
+	// than failing vaguely.
+	UpdateCmd []string
+
 	// InstallCmd is the tier-2 install command (informational: surfaced in the
 	// picker as "installs on first use"). The actual install happens inside the
 	// self-installing Launch line, matching the existing goose/letta/hermes pattern.
@@ -124,6 +142,7 @@ var registry = map[string]Handler{
 		SupportedProviders:  []string{"local", "openai", "anthropic", "google"},
 		SuggestedModels:     []string{"local/qwen-coder", "openai/gpt-5.5", "anthropic/claude-sonnet-4-6"},
 		InstallCmd:          []string{"pipx", "install", "aider-chat"},
+		UpdateCmd:           []string{"pipx", "upgrade", "aider-chat"},
 	},
 	Shell: {ID: Shell, Kind: KindInteractive, Launch: "bash -l", StateDir: "/home/dejima"},
 	// OpenClaw: a first-class headless assistant. Self-installs on first launch
@@ -140,6 +159,7 @@ var registry = map[string]Handler{
 	//     loopback makes it self-generate a runtime token and come up `ready`;
 	//     widening the bind is the operator's job once auth/config is in place.
 	"openclaw": {ID: "openclaw", Kind: KindHeadless,
+		UpdateCmd: []string{"npm", "install", "-g", "openclaw@latest"},
 		// Source the daemon-materialized provider key (DEJIMA_PROVIDER_KEY_FILE →
 		// `<PROVIDER>_API_KEY=…`) into the env before launch, like letta/goose —
 		// OpenClaw reads OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY from
@@ -175,6 +195,7 @@ var registry = map[string]Handler{
 	// no extra config shim needed. Self-installs via pip on first launch (kept out
 	// of the base image, like openclaw). GatewayPort 8283 → `dejima agent open`.
 	"letta": {ID: "letta", Kind: KindHeadless,
+		UpdateCmd:           []string{"pip3", "install", "--user", "--upgrade", "letta"},
 		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; command -v letta >/dev/null 2>&1 || pip3 install --user letta; exec letta server'",
 		StateDir:            "/home/dejima/.letta",
 		RequiresProviderKey: true,
@@ -187,6 +208,7 @@ var registry = map[string]Handler{
 	// framework concern left to the operator / a later shim.
 	"hermes": {ID: "hermes", Kind: KindHeadless,
 		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; command -v hermes >/dev/null 2>&1 || npm install -g @hermes-gateway/cli; exec hermes gateway'",
+		UpdateCmd:           []string{"npm", "install", "-g", "@hermes-gateway/cli@latest"},
 		StateDir:            "/home/dejima/.hermes",
 		RequiresProviderKey: true,
 		SupportedProviders:  []string{"anthropic", "openai", "google"},
@@ -197,6 +219,8 @@ var registry = map[string]Handler{
 	// framework-agnostic DEJIMA_PROVIDER / DEJIMA_MODEL ("provider/model") into
 	// them. Self-installs via the official CLI installer on first launch.
 	"goose": {ID: "goose", Kind: KindHeadless,
+		// The vendor install script IS the updater; it is what Launch already runs.
+		UpdateCmd:           []string{"bash", "-lc", "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash"},
 		Launch:              "bash -lc 'set -a; k=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$k\" ] && . \"$k\"; set +a; [ -n \"${DEJIMA_PROVIDER:-}\" ] && export GOOSE_PROVIDER=\"$DEJIMA_PROVIDER\"; [ -n \"${DEJIMA_MODEL:-}\" ] && export GOOSE_MODEL=\"${DEJIMA_MODEL#*/}\"; command -v goosed >/dev/null 2>&1 || curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash; exec goosed'",
 		StateDir:            "/home/dejima/.config/goose",
 		RequiresProviderKey: true,
@@ -234,3 +258,9 @@ func All() []Handler {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
+
+// UpdatableInPlace reports whether this agent can be upgraded inside a running
+// island. False is not a failure: a BUNDLED agent's version is the island
+// image's, so the update is `dejima upgrade`, and callers should say that
+// instead of reporting the agent unupdatable.
+func (h Handler) UpdatableInPlace() bool { return len(h.UpdateCmd) > 0 }
