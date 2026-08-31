@@ -111,6 +111,47 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 	}
 }
 
+// tmuxWindowIndex finds the window with exactly this name in `tmux list-windows`
+// output, formatted as "<index>\t<name>" per line.
+//
+// Exact match, deliberately: tmux's own `-t <name>` targeting falls back to
+// prefix and fnmatch searching, so selecting "host/api" could land on
+// "host/api-staging" — picking the wrong window is worse than opening a new one.
+func tmuxWindowIndex(listOutput, name string) (string, bool) {
+	for _, line := range strings.Split(listOutput, "\n") {
+		idx, wname, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
+		if ok && wname == name {
+			return idx, true
+		}
+	}
+	return "", false
+}
+
+// tmuxFocusWindow switches to an existing window by name, reporting whether it
+// found one.
+//
+// Each opener below ran `tmux new-window` unconditionally, so a second press
+// produced a second window instead of returning to the first. For a flow that is
+// a singleton by nature — one GitHub sign-in, one WSL setup, one attachment to a
+// given host terminal — that is a leak the operator has to clean up by hand.
+// Reported from a real session as tmux "adding layers of github-connect": every
+// layer an abandoned device-flow poll, none of them distinguishable from the one
+// that is actually live.
+func tmuxFocusWindow(name string) bool {
+	if os.Getenv("TMUX") == "" {
+		return false
+	}
+	out, err := exec.Command("tmux", "list-windows", "-F", "#{window_index}\t#{window_name}").Output()
+	if err != nil {
+		return false
+	}
+	idx, ok := tmuxWindowIndex(string(out), name)
+	if !ok {
+		return false
+	}
+	return exec.Command("tmux", "select-window", "-t", idx).Run() == nil
+}
+
 // openAgentGatewayWindow opens `dejima agent open <island> <agentID>` in a new
 // window — the forward-and-open-browser flow for a gateway agent (OpenClaw,
 // Letta, Goose). Its own window because it holds an SSH tunnel until closed.
@@ -131,6 +172,10 @@ func (m tuiModel) openAgentGatewayWindow(island, agentID string) error {
 		shquote(m.activeHost), shquote(title), shquote(exe), arg)
 	switch {
 	case os.Getenv("TMUX") != "":
+		// Return to the existing one rather than stacking another.
+		if tmuxFocusWindow(title) {
+			return nil
+		}
 		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
 	case goruntime.GOOS == "darwin":
 		return openMacTerminal(inner)
@@ -160,6 +205,10 @@ func (m tuiModel) openHostTermWindow(id, label string) error {
 		shquote(m.activeHost), shquote(title), shquote(exe), shquote(id))
 	switch {
 	case os.Getenv("TMUX") != "":
+		// Return to the existing one rather than stacking another.
+		if tmuxFocusWindow(title) {
+			return nil
+		}
 		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
 	case goruntime.GOOS == "darwin":
 		return openMacTerminal(inner)
@@ -193,6 +242,10 @@ func (m tuiModel) openGithubConnectWindow(args string) error {
 		shquote(m.activeHost), shquote(title), shquote(exe), args)
 	switch {
 	case os.Getenv("TMUX") != "":
+		// Return to the existing one rather than stacking another.
+		if tmuxFocusWindow(title) {
+			return nil
+		}
 		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
 	case goruntime.GOOS == "darwin":
 		return openMacTerminal(inner)
@@ -226,6 +279,10 @@ func (m tuiModel) openWSLSetupWindow() error {
 	inner := fmt.Sprintf("DEJIMA_TAB_TITLE=%s %s wsl setup", shquote(title), shquote(exe))
 	switch {
 	case os.Getenv("TMUX") != "":
+		// Return to the existing one rather than stacking another.
+		if tmuxFocusWindow(title) {
+			return nil
+		}
 		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
 	case goruntime.GOOS == "windows":
 		// verb "wsl setup" is two trusted words, like "term attach".
