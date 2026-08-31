@@ -319,6 +319,25 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Make sure the session exists WITH THE AGENT IN IT before attaching.
+	//
+	// The attach runs `tmux new-session -A`, which CREATES the session when it is
+	// missing — an empty login shell. image/start.sh then guards its own launch
+	// with `if ! tmux has-session`, sees the name taken, and never starts the
+	// agent at all. So attaching a moment too early does not just show the wrong
+	// thing once; it PERMANENTLY replaces the agent with a bare shell, and the
+	// island looks up and healthy.
+	//
+	// The window is small and easy to hit exactly when it matters: recreate the
+	// island to apply a secret ([!] in the secrets pane), and the dashboard
+	// reattaches while the container is still coming up. Reported from the field
+	// as "after the ! restart it ends up at the terminal workspace, not in the
+	// agent" — which reads like a cold start and is not one.
+	//
+	// ensureAgentSession is idempotent and checks for the session first, so when
+	// the entrypoint wins the race this costs one `tmux has-session`.
+	s.ensureAttachTarget(r.Context(), p, spec, tmuxName)
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // local trust boundary; remote auth handled at TCP listener (M4)
 	})
@@ -735,4 +754,21 @@ func (s *Server) ensureIslandShell(ctx context.Context, p *project.Project) erro
 		return fmt.Errorf("create in-island shell: %s", strings.TrimSpace(stderr))
 	}
 	return nil
+}
+
+// ensureAttachTarget starts the agent's tmux session if it is not up yet, so the
+// attach has something real to connect to. Extracted from sessionWS to be
+// testable: the decision happens before the websocket upgrade, which needs a
+// hijackable connection a test recorder cannot provide.
+//
+// Best-effort by design. A bare shell in place of an agent is bad; refusing to
+// connect at all is worse, so a failure is logged and the attach proceeds.
+func (s *Server) ensureAttachTarget(ctx context.Context, p *project.Project, spec *project.AgentSpec, tmuxName string) {
+	if ok, _ := s.tmuxHasSession(ctx, p, tmuxName); ok {
+		return
+	}
+	if err := s.ensureAgentSession(ctx, p, spec, false); err != nil {
+		s.log.Warn("could not start agent session before attach",
+			"island", p.Name, "agent", spec.ID, "err", err)
+	}
 }

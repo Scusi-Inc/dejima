@@ -832,7 +832,7 @@ func (m tuiModel) creatorAgentNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			c.agentNameIn = c.agentNameIn[:len(c.agentNameIn)-1]
 		}
 	default:
-		if s := msg.String(); len(s) == 1 {
+		if s := pastableInput(msg); s != "" {
 			c.agentNameIn += s
 		}
 	}
@@ -896,7 +896,9 @@ func (m tuiModel) creatorProviderKeyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			c.keyInput = c.keyInput[:len(c.keyInput)-1]
 		}
 	default:
-		if s := msg.String(); len(s) == 1 {
+		// An API key, so the silent half matters more than the visible one: a
+		// non-ASCII character in a pasted key was dropped without a word.
+		if s := pastableInput(msg); s != "" {
 			c.keyInput += s
 		}
 	}
