@@ -2,9 +2,13 @@ package localmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -80,17 +84,53 @@ func (o *Ollama) Name() Backend         { return BackendOllama }
 func (o *Ollama) Endpoint() string      { return OllamaEndpoint }
 func (o *Ollama) AllowHostPort() string { return OllamaAllowHostPort }
 
-func (o *Ollama) exe() string {
-	if o.bin == "" {
-		return "ollama"
-	}
-	return o.bin
+// ollamaKnownPaths is where a macOS install actually lands. PATH alone is not
+// enough to find it: these methods run in the DAEMON, and a system LaunchDaemon
+// inherits a bare /usr/bin:/bin:/usr/sbin:/sbin — no Homebrew prefix. Without
+// this, an operator who installs Ollama correctly still sees "not installed"
+// forever, and the only visible symptom is a wrong answer.
+var ollamaKnownPaths = []string{
+	"/opt/homebrew/bin/ollama", // Homebrew, Apple silicon
+	"/usr/local/bin/ollama",    // Homebrew on Intel; also where the .app links it
+	"/Applications/Ollama.app/Contents/Resources/ollama",
 }
 
-// Detect: installed = binary on PATH; running = `ollama list` succeeds (it talks
-// to the local server, so a clean exit means the server is up).
+// resolveExe locates the ollama binary. ok=false means genuinely not installed,
+// as opposed to installed-but-off-PATH.
+func (o *Ollama) resolveExe() (string, bool) {
+	name := o.bin
+	if name == "" {
+		name = "ollama"
+	}
+	if filepath.IsAbs(name) {
+		return name, isExecutableFile(name)
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p, true
+	}
+	for _, p := range ollamaKnownPaths {
+		if isExecutableFile(p) {
+			return p, true
+		}
+	}
+	return name, false
+}
+
+func isExecutableFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0
+}
+
+func (o *Ollama) exe() string {
+	p, _ := o.resolveExe()
+	return p
+}
+
+// Detect: installed = binary found (PATH or a known install location); running =
+// `ollama list` succeeds (it talks to the local server, so a clean exit means
+// the server is up).
 func (o *Ollama) Detect(ctx context.Context) (installed, running bool) {
-	if _, err := exec.LookPath(o.exe()); err != nil {
+	if _, ok := o.resolveExe(); !ok {
 		return false, false
 	}
 	installed = true
@@ -122,9 +162,33 @@ func (o *Ollama) Remove(ctx context.Context, ref string) error {
 	return nil
 }
 
-// Install runs Ollama's official install script (Linux/macOS). It's best-effort
-// and explicitly user-invoked (`dejima local install`); we never auto-install.
+// ErrInstallNeedsTerminal reports that this host's Ollama install cannot be
+// driven from the daemon, and names the commands that do work.
+//
+// On macOS the official script copies Ollama.app into /Applications and then
+// SUDOs to link the CLI onto PATH. These methods run inside the daemon, which
+// has no controlling terminal, so that sudo dies on "a terminal is required to
+// read the password" — every time, unfixably from here. It was reported from a
+// Mac mini as a bare "ERROR: exit status 1" after a completed 100% download,
+// which reads as a network flake rather than the one thing it is.
+var ErrInstallNeedsTerminal = errors.New(
+	"can't install Ollama from the daemon on macOS: its installer needs sudo, and the daemon has no terminal to enter a password at.\n" +
+		"Install it yourself on this Mac, then re-run `dejima local install` (it will detect it and just register the provider):\n" +
+		"  brew install ollama && brew services start ollama\n" +
+		"or download the app from https://ollama.com/download and open it once")
+
+// Install runs Ollama's official install script. It's best-effort and explicitly
+// user-invoked (`dejima local install`); we never auto-install.
 func (o *Ollama) Install(ctx context.Context) (io.ReadCloser, error) {
+	return o.installOn(ctx, runtime.GOOS)
+}
+
+// installOn is Install with the platform injected, so the macOS refusal is
+// assertable from a Linux test runner — which is the only place it ever runs.
+func (o *Ollama) installOn(ctx context.Context, goos string) (io.ReadCloser, error) {
+	if goos == "darwin" {
+		return nil, ErrInstallNeedsTerminal
+	}
 	// The official one-liner is idempotent and handles platform detection.
 	return streamCommand(exec.CommandContext(ctx, "sh", "-c",
 		"curl -fsSL https://ollama.com/install.sh | sh"))
