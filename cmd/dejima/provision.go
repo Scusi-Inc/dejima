@@ -1035,10 +1035,20 @@ func provPhaseVerify(pc *provCtx) error {
 			fmt.Println("      (`dejima service install --system --tcp :7273 …`) and Tailscale is up.")
 		}
 		fmt.Println()
-		fmt.Println("    On a laptop (same Tailscale account):")
-		fmt.Println("      go install github.com/aoos/dejima/cmd/dejima@latest")
-		fmt.Printf("      export DEJIMA_HOST=%s:7273\n", remote)
-		fmt.Println("      dejima ls")
+		// WRITE THE ADDRESS DOWN NOW. The client installer asks for it on the
+		// OTHER machine, at which point the operator is standing at a laptop
+		// being asked for a number that is only printed here — so they go
+		// hunting, or guess. Say it while they are still at this Mac, and say
+		// what will ask for it. (`go install` used to lead here: the developer
+		// path, for a person who just wants their laptop to talk to this Mac.)
+		fmt.Println("    On your laptop (signed in to the same Tailscale account), run:")
+		fmt.Println("      curl -fsSL https://dejima.tech/install-client.sh | bash")
+		fmt.Println()
+		fmt.Println("    It asks for a \"Server address\". That is this Mac. Type:")
+		fmt.Printf("      %s\n", remote)
+		fmt.Println()
+		fmt.Println("    (If your laptop is already on this tailnet, the installer finds this Mac")
+		fmt.Println("     by itself and offers that address — just press Enter.)")
 		if fqdn != "" && ip != "" {
 			fmt.Println()
 			fmt.Printf("    That name (%s) is this Mac's MagicDNS name — Tailscale's own DNS.\n", fqdn)

@@ -182,7 +182,18 @@ else
         if [[ "$os" == "darwin" ]]; then
             if command -v brew >/dev/null 2>&1; then
                 info "Running: brew install tailscale"
-                brew install tailscale && ok "Tailscale installed" || warn "brew install tailscale failed"
+                if brew install tailscale; then
+                    ok "Tailscale installed"
+                    # The formula ships tailscaled but never starts it, so
+                    # `tailscale up` would fail with "is Tailscale running?" —
+                    # installed, and useless, with nothing saying why.
+                    info "Starting the Tailscale service (needs your password)…"
+                    sudo brew services start tailscale >/dev/null 2>&1 \
+                        && ok "Tailscale service started" \
+                        || warn "couldn't start it — run: sudo brew services start tailscale"
+                else
+                    warn "brew install tailscale failed"
+                fi
             else
                 warn "Homebrew not found — install from https://brew.sh, then 'brew install tailscale'"
             fi
@@ -215,13 +226,56 @@ fi
 # ---------------------------------------------------------------------------
 printf '\n'
 bold "Server address"
+
+# probe_host: does something answer the daemon's port on this address?
+probe_host() {
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w2 "$1" 7273 >/dev/null 2>&1
+    else
+        # Fallback: bash's /dev/tcp (works on macOS bash too)
+        (exec 3<>/dev/tcp/"$1"/7273) 2>/dev/null || return 1
+        exec 3<&- 2>/dev/null || true
+        exec 3>&- 2>/dev/null || true
+    fi
+}
+
+# Tailscale already knows every machine on this tailnet. Sending the user to a
+# DIFFERENT computer to run `tailscale ip -4`, write the number down, and carry
+# it back is asking them to perform a lookup we can do from here — and it was
+# the step where the answer to "wait, what am I supposed to enter?" was not
+# obvious. Ask the tailnet, and offer whatever is running a Dejima daemon.
+discovered=""
+if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+    info "Looking for your Dejima server on your Tailscale network…"
+    for ts_ip in $(tailscale status 2>/dev/null | awk '$1 ~ /^100\./ {print $1}'); do
+        if probe_host "$ts_ip"; then
+            discovered="$discovered $ts_ip"
+        fi
+    done
+    discovered="${discovered# }"
+fi
+
 # Lead with the common case. This used to open with the invite escape hatch,
 # which reads as a question you have to answer ("am I using an invite?") — and
 # for the solo operator, who set the server up themselves and has no teammate to
 # get a code from, the answer is always no. The invite line stays, demoted to
 # what it is: the exception.
-info "This is the machine you set up Dejima on (mac mini / linux box) — run"
-info "'tailscale ip -4' THERE to get its address. Example: 100.84.12.7"
+default_host=""
+if [[ -n "$discovered" && "$discovered" != *" "* ]]; then
+    default_host="$discovered"
+    ok "Found a Dejima server at $default_host"
+    info "Press Enter to use it, or type a different address."
+elif [[ -n "$discovered" ]]; then
+    info "Found more than one Dejima server on your network:"
+    for ts_ip in $discovered; do info "  $ts_ip"; done
+    info "Type the one you want below."
+else
+    info "TYPE THE ADDRESS of the Mac you installed Dejima on — its Tailscale IP,"
+    info "which looks like 100.84.12.7. To find it, run this ON THAT MAC:"
+    info "    tailscale ip -4"
+    info "(If Tailscale isn't signed in on this Mac yet, press Enter to skip — you"
+    info " can set the address later with: dejima profile add <name> <ip>:7273)"
+fi
 info "(Joining someone else's server from a 'dejima-invite:' code? Press Enter to"
 info " skip this, then run 'dejima join <invite>' — it carries the address + token.)"
 
@@ -229,16 +283,31 @@ server_host=""
 if [[ -e /dev/tty && -z "${DEJIMA_HOST_PREFILL:-}" ]]; then
     # Default port assumed below; user types IP or hostname only. The '▸' marks
     # this as an input prompt so it doesn't read as a blank/hung line.
-    read -r -p "▸ Enter your server's tailnet IP or hostname (or press Enter to skip): " server_host </dev/tty 2>/dev/null || true
+    if [[ -n "$default_host" ]]; then
+        read -r -p "▸ Server address [$default_host]: " server_host </dev/tty 2>/dev/null || true
+        server_host="${server_host:-$default_host}"
+    else
+        read -r -p "▸ Type your server's Tailscale IP, e.g. 100.84.12.7 (or press Enter to skip): " server_host </dev/tty 2>/dev/null || true
+    fi
 elif [[ -n "${DEJIMA_HOST_PREFILL:-}" ]]; then
     server_host="$DEJIMA_HOST_PREFILL"
+elif [[ -n "$default_host" ]]; then
+    # Non-interactive, but the tailnet answered — take it rather than finishing
+    # the install with no server configured at all.
+    server_host="$default_host"
 fi
 
 if [[ -n "$server_host" ]]; then
     # Strip a user-supplied port, then re-attach the canonical 7273.
     server_host="${server_host%:*}"
     candidate_host="${server_host}:7273"
-    info "Probing $candidate_host…"
+    # BRACES ARE LOAD-BEARING. `$candidate_host…` — a variable abutting a
+    # multibyte character with no delimiter — is read by macOS's bash 3.2 as one
+    # long undefined NAME, and `set -u` then kills the installer at the last
+    # step with "candidate_host?: unbound variable". Bash 5 parses it correctly,
+    # which is why it survived: it fails only on the platform most users run it
+    # on, and only for the users who actually answered the prompt.
+    info "Probing ${candidate_host}…"
     probe_ok=0
     if command -v nc >/dev/null 2>&1; then
         if nc -z -w3 "$server_host" 7273 >/dev/null 2>&1; then probe_ok=1; fi
