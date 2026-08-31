@@ -184,10 +184,21 @@ Broken, confirmed by the maintainer. Do not describe this as working:
 Unproven rather than broken. Real code, no evidence of an end-to-end run:
 - Local models end to end (see above). Targeted to work at launch;
   verify rather than assume.
-- Hosting on Windows via WSL2. The path exists and shipped recently, but
-  `dejima wsl setup` is roughly a thousand lines that nobody has yet run. The
+- Hosting on Windows via WSL2. An earlier version of this file said `dejima wsl
+  setup` was roughly a thousand lines nobody had run. It has now been run: the
+  operator walked the local Windows install end to end on a real box, hitting
+  two hard stops (WSL itself not installed, and `dejima` not on PATH until
+  PowerShell is reopened) and two near-misses (the installer's tailnet prompt
+  persists a DEJIMA_HOST that outranks the local profile; a distro you open and
+  give a sudo password to breaks setup's unattended provisioning). All four are
+  now documented in the quickstart. So the path works and is no longer unrun,
+  but it has exactly one successful install behind it, done by someone who
+  could read the source when it stalled. Treat it as walked, not as smooth. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
   way. Windows as a CLIENT driving a server elsewhere is well-trodden and fine.
+  Windows uninstall is incomplete: `dejima uninstall --client` leaves the
+  binary, the PATH entry, and DEJIMA_HOST behind, and npm/brew don't remove
+  them either.
 (Team roles, invites, and the activity feed were on this list and have since
 been verified: RoleOwner/RoleOperator/RoleViewer are defined with distinct
 scopes in internal/authtoken, enforced in the API's token check, minted by

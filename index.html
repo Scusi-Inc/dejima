@@ -27,7 +27,7 @@
 {"@type":"Question","name":"Is Dejima free?","acceptedAnswer":{"@type":"Answer","text":"Yes. Dejima is free and open source under Apache 2.0. You run it on hardware you already own, so there is no subscription and no per-second usage bill. You bring your own agents and API keys, and pay only your normal LLM provider costs."}},
 {"@type":"Question","name":"Does my code leave my machine?","acceptedAnswer":{"@type":"Answer","text":"No. Your source, your files, and your credentials stay on your own box. The agents' model calls go out to whatever LLM provider you use, but there is no Dejima cloud in the loop and no vendor account holding your work. Auth is your own Tailscale identity."}},
 {"@type":"Question","name":"Which AI coding agents can I run?","acceptedAnswer":{"@type":"Answer","text":"Terminal agents you attach to, like Claude Code, Codex, or a plain shell, and headless runtimes like OpenClaw, Letta, and Hermes, or your own SDK loop. You bring your own API keys and can mix vendors freely across islands."}},
-{"@type":"Question","name":"What hardware do I need?","acceptedAnswer":{"@type":"Answer","text":"A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4 GB of RAM run a few agents comfortably. The same one install command works on all of them."}},
+{"@type":"Question","name":"What hardware do I need?","acceptedAnswer":{"@type":"Answer","text":"A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4 GB of RAM run a few agents comfortably. The same few commands work on all of them."}},
 {"@type":"Question","name":"How is this different from a cloud agent sandbox?","acceptedAnswer":{"@type":"Answer","text":"Services like E2B and Daytona run your agents on their infrastructure and bill by the second. Dejima runs on hardware you own, for free, with persistent sessions you attach to, a dashboard, brokered host access, and an audit log. Your code never leaves your perimeter."}}
 ]}
 ]}
@@ -105,7 +105,7 @@
 <h2 id="why-dejima">The hard parts of running agents, already handled</h2>
 <p><strong>You shouldn't have to become an infrastructure engineer to run agents safely.</strong> That usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
 <ul>
-  <li><strong>Ease.</strong> One line installs it; run <code>dejima</code> and the TUI walks you to a sandboxed agent in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same one command.</li>
+  <li><strong>Ease.</strong> A few commands install it; run <code>dejima</code> and the TUI walks you to a sandboxed agent in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same handful of commands.</li>
   <li><strong>Security.</strong> Every project is walled off from your machine, your files, and your other projects; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
   <li><strong>Audit.</strong> Every privileged crossing is written to a tamper-evident, hash-chained ledger you can read, export, and verify — so you can <em>prove</em> what an agent did, not just hope.</li>
 </ul>
@@ -212,7 +212,7 @@
 <p>Short, practical walkthroughs for getting a fleet running on your own box.</p>
 <div class="guide-list">
   <a class="guide-card" href="guides/mac-mini-agent-server.html">
-    <h3>Turn a Mac mini into an AI agent server (5 minutes, free)</h3>
+    <h3>Turn a Mac mini into an AI agent server (free)</h3>
     <p>Install once, then run Claude Code, Codex, and OpenClaw contained on a mini in the closet.</p>
   </a>
   <a class="guide-card" href="guides/tmux-ssh-agents.html">
@@ -238,7 +238,7 @@
   </div>
   <div class="faq-item">
     <h3>What hardware do I need?</h3>
-    <p>A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4&nbsp;GB of RAM run a few agents comfortably. The same one install command works on all of them.</p>
+    <p>A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4&nbsp;GB of RAM run a few agents comfortably. The same few commands work on all of them.</p>
   </div>
   <div class="faq-item">
     <h3>How is this different from a cloud agent sandbox?</h3>
@@ -249,7 +249,7 @@
 
 <section class="cta-band">
   <h2>Run a fleet on your own box</h2>
-  <p>On one machine, or on a server you drive from your laptop. One line to install, one word to run. Alpha and open source.</p>
+  <p>On one machine, or on a server you drive from your laptop. A few commands to install, one word to run. Alpha and open source.</p>
   <a class="btn-primary" href="quickstart.html">Get started →</a>
 </section>
 

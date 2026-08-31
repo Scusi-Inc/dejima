@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Run AI coding agents on a Linux server (headless, free) — Dejima</title>
-<meta name="description" content="Turn an Ubuntu or Debian server, a VPS, or a box in the closet into a headless home for your AI coding agents. One install command, a systemd user service, reachable over Tailscale. Step by step.">
+<meta name="description" content="Turn an Ubuntu or Debian server, a VPS, or a box in the closet into a headless home for your AI coding agents. A few commands, a systemd user service, reachable over Tailscale. Step by step.">
 <link rel="canonical" href="https://dejima.tech/guides/linux-server-agent-server.html">
 <meta property="og:title" content="Run AI coding agents on a Linux server">
-<meta property="og:description" content="Turn a VPS or a box in the closet into a headless agent server. One command, systemd, Tailscale.">
+<meta property="og:description" content="Turn a VPS or a box in the closet into a headless agent server. A few commands, systemd, Tailscale.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://dejima.tech/guides/linux-server-agent-server.html">
 <meta property="og:image" content="https://dejima.tech/assets/og-linux-server.png">
@@ -25,10 +25,10 @@
 {"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
 {"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
 {"@type":"ListItem","position":3,"name":"Linux server","item":"https://dejima.tech/guides/linux-server-agent-server.html"}]},
-{"@type":"TechArticle","headline":"Run AI coding agents on a Linux server","description":"Turn an Ubuntu or Debian server, a VPS, or a box in the closet into a headless home for your AI coding agents. One install command, a systemd user service, reachable over Tailscale.","image":"https://dejima.tech/assets/og-linux-server.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/linux-server-agent-server.html"},
+{"@type":"TechArticle","headline":"Run AI coding agents on a Linux server","description":"Turn an Ubuntu or Debian server, a VPS, or a box in the closet into a headless home for your AI coding agents. A few commands, a systemd user service, reachable over Tailscale.","image":"https://dejima.tech/assets/og-linux-server.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/linux-server-agent-server.html"},
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"How do I keep Dejima running after I log out of the server?","acceptedAnswer":{"@type":"Answer","text":"Run loginctl enable-linger $USER. Dejima runs as a systemd user service, which normally stops when your login session ends. Lingering keeps it running between SSH sessions and across reboots. Check it with dejima doctor, which flags linger if it is off."}},
-{"@type":"Question","name":"Can I run AI coding agents on a VPS?","acceptedAnswer":{"@type":"Answer","text":"Yes. Any Ubuntu or Debian VPS works. Install Dejima with one command, enable linger so the daemon survives logout, and reach it from your laptop over Tailscale. A small VPS with two cores and 4 GB of RAM runs several agents."}},
+{"@type":"Question","name":"Can I run AI coding agents on a VPS?","acceptedAnswer":{"@type":"Answer","text":"Yes. Any Ubuntu or Debian VPS works. Install Dejima with a few commands, enable linger so the daemon survives logout, and reach it from your laptop over Tailscale. A small VPS with two cores and 4 GB of RAM runs several agents."}},
 {"@type":"Question","name":"Do I need a screen or desktop on the server?","acceptedAnswer":{"@type":"Answer","text":"No. Dejima is headless. You drive everything from the CLI and TUI, either over SSH or by pointing Dejima at the server from your own machine with the DEJIMA_HOST variable. The server just needs Docker and a network connection."}}
 ]}
 ]}
@@ -66,7 +66,7 @@
   </ul>
 
   <h2>Step 1: install Dejima</h2>
-  <p>SSH into the server and run the one-liner.</p>
+  <p>SSH into the server and run the installer.</p>
   <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
   <p>It checks prerequisites and names a fix for anything missing, offers to install Tailscale and Docker if either is absent, builds the <code>dejima</code> and <code>dejimad</code> binaries, and registers <code>dejimad</code> as a systemd user service. When it's done, the daemon is running under your user.</p>
   <p class="small">It asks before installing anything, and it's idempotent, so a run that stops partway is safe to repeat. If it just installed Docker for you it will tell you to log out and back in first: the <code>docker</code> group only applies to a new login, and without it every later Docker call would need <code>sudo</code>, including the daemon's own.</p>
@@ -111,7 +111,7 @@ DEJIMA_HOST=your-server.your-tailnet.ts.net:7273 dejima connect your-project</co
     </div>
     <div class="faq-item">
       <h3>Can I run AI coding agents on a VPS?</h3>
-      <p>Yes. Any Ubuntu or Debian VPS works. Install Dejima with one command, enable linger so the daemon survives logout, and reach it from your laptop over Tailscale. A small VPS with two cores and 4&nbsp;GB of RAM runs several agents.</p>
+      <p>Yes. Any Ubuntu or Debian VPS works. Install Dejima with a few commands, enable linger so the daemon survives logout, and reach it from your laptop over Tailscale. A small VPS with two cores and 4&nbsp;GB of RAM runs several agents.</p>
     </div>
     <div class="faq-item">
       <h3>Do I need a screen or desktop on the server?</h3>
