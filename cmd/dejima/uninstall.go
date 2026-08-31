@@ -44,6 +44,23 @@ func islandAtRisk(ctx context.Context, c *api.Client, isl api.IslandInfo) string
 	return strings.Join(risks, " and ")
 }
 
+// plainDaemonError turns a connection error into a phrase a non-engineer can
+// act on. The raw string is written for whoever debugs the daemon; it surfaces
+// here to someone who is uninstalling and, at this moment, mostly wants to know
+// whether their work is safe. "invalid token" answers that question for nobody.
+func plainDaemonError(raw string) string {
+	switch {
+	case strings.Contains(raw, "invalid token"), strings.Contains(raw, "unauthorized"), strings.Contains(raw, "401"):
+		return "this Mac's saved sign-in for it is no longer valid"
+	case strings.Contains(raw, "connection refused"), strings.Contains(raw, "no such file"):
+		return "it isn't running on this Mac"
+	case strings.Contains(raw, "timeout"), strings.Contains(raw, "deadline exceeded"), strings.Contains(raw, "no route to host"):
+		return "this Mac can't reach it right now"
+	default:
+		return raw
+	}
+}
+
 // daemonDownNotice closes out an uninstall that ran without a reachable daemon.
 // The local teardown is done; what it could NOT do is island state, which lives
 // in Docker. Naming the exact commands matters more here than anywhere else in
@@ -51,13 +68,16 @@ func islandAtRisk(ctx context.Context, c *api.Client, isl api.IslandInfo) string
 // so "check your islands" would be advice the operator can no longer act on.
 func daemonDownNotice(purge bool) string {
 	var b strings.Builder
-	b.WriteString("\nDejima uninstalled locally — service, binaries")
+	b.WriteString("\nDone — Dejima is removed from this Mac")
 	if purge {
-		b.WriteString(", and ~/.dejima")
+		b.WriteString(", along with its ~/.dejima settings")
 	}
-	b.WriteString(" removed.\n\n")
-	b.WriteString("The daemon was unreachable, so no island was touched. If any still exist\n")
-	b.WriteString("they're intact — nothing of yours was deleted. To see what's left:\n\n")
+	b.WriteString(".\n\n")
+	b.WriteString("Nothing of yours was deleted. Islands can only be changed by the Dejima\n")
+	b.WriteString("service, and it wasn't answering, so any that exist are untouched — on\n")
+	b.WriteString("whichever Mac runs them, which may not be this one.\n\n")
+	b.WriteString("If islands DO live on this Mac, these two commands list what remains\n")
+	b.WriteString("(the `dejima` command that could show you is the one just removed):\n\n")
 	b.WriteString("  docker ps -a --filter name=dejima\n")
 	b.WriteString("  docker volume ls | grep dejima\n\n")
 	if purge {
@@ -69,7 +89,8 @@ func daemonDownNotice(purge bool) string {
 		b.WriteString("nothing in them is unpushed (`docker volume rm <name>`), or leave them\n")
 		b.WriteString("and reclaim the work from the volume directly.\n")
 	} else {
-		b.WriteString("Your config in ~/.dejima was kept, so a reinstall re-adopts them.\n")
+		b.WriteString("Your settings in ~/.dejima were kept, so installing Dejima again on this\n")
+		b.WriteString("Mac picks any of its islands back up.\n")
 	}
 	return b.String()
 }
@@ -202,15 +223,26 @@ func newUninstallCmd() *cobra.Command {
 			purge := mode == uninstallModePurgeAll
 
 			if daemonDown != "" {
-				fmt.Printf("The daemon isn't reachable (%s).\n", daemonDown)
-				fmt.Println("Uninstalling anyway — but islands can only be removed through the daemon,")
-				fmt.Println("so any that exist are left ALONE, containers and volumes intact.")
+				fmt.Printf("Dejima's background service isn't answering — %s.\n", plainDaemonError(daemonDown))
+				fmt.Println()
+				fmt.Println("That doesn't stop this. Your islands (the separate workspaces your agents")
+				fmt.Println("work in) live on whichever Mac runs Dejima, and only that Mac's service can")
+				fmt.Println("change them. So this removes Dejima from THIS Mac and leaves every island")
+				fmt.Println("exactly as it is — nothing of yours is deleted.")
 				fmt.Println()
 			}
-			fmt.Println("This will permanently:")
+			// "permanently" is only true when something is actually being
+			// destroyed. Printing it above a list whose first line is "leave every
+			// island untouched" reads as a warning about the thing it is promising
+			// not to do — which is how an operator ends up scared of the safe path.
+			if purge {
+				fmt.Println("This will permanently:")
+			} else {
+				fmt.Println("This will:")
+			}
 			switch {
 			case daemonDown != "":
-				fmt.Println("  • leave every island untouched (can't reach the daemon to enumerate them)")
+				fmt.Println("  • leave your islands and everything in them alone")
 			case purge:
 				fmt.Printf("  • purge %s (deleting their volumes)\n", countNoun(len(islands), "island"))
 			default:
@@ -273,13 +305,25 @@ func newUninstallCmd() *cobra.Command {
 			}
 
 			// 2. Uninstall the service (stops the daemon).
+			// Anything the uninstall could not finish, in the operator's words and
+			// collected for the END. Mid-stream notes scroll past and are then
+			// contradicted by a closing "uninstalled" line; the one thing still
+			// needing a human belongs after that line, not before it.
+			var leftovers []string
+
 			if mgr, mErr := serviceMgr(systemSvc); mErr == nil {
-				fmt.Println("  uninstalling the dejimad service…")
-				if err := mgr.Uninstall(); err != nil {
-					fmt.Println("  service uninstall: failed")
+				fmt.Println("  removing the background service…")
+				switch err := mgr.Uninstall(); {
+				case err == nil:
+					fmt.Println("  removed the background service")
+				case errors.Is(err, os.ErrNotExist):
+					// No plist to delete is not a failure — there was no service
+					// registered here. Reporting "failed" for nothing-to-do sends
+					// people hunting for a problem that does not exist.
+					fmt.Println("  no background service was registered on this Mac — nothing to remove")
+				default:
+					fmt.Println("  couldn't remove the background service")
 					fmt.Fprintf(os.Stderr, "  warning: service uninstall: %v\n", err)
-				} else {
-					fmt.Println("  service uninstall: done")
 				}
 			}
 
@@ -295,7 +339,8 @@ func newUninstallCmd() *cobra.Command {
 				case errors.Is(err, os.ErrNotExist):
 					// already gone
 				case errors.Is(err, os.ErrPermission):
-					fmt.Fprintf(os.Stderr, "  note: couldn't remove %s (permission) — `sudo rm %s`\n", bin, bin)
+					leftovers = append(leftovers,
+						fmt.Sprintf("%s needs an administrator to delete it:\n    sudo rm %s", bin, bin))
 				default:
 					fmt.Fprintf(os.Stderr, "  warning: remove %s: %v\n", bin, err)
 				}
@@ -323,9 +368,16 @@ func newUninstallCmd() *cobra.Command {
 			case daemonDown != "":
 				fmt.Print(daemonDownNotice(purge))
 			case purge:
-				fmt.Println("\nDejima uninstalled. All islands and data removed.")
+				fmt.Println("\nDone — Dejima is removed from this Mac, along with all islands and their data.")
 			default:
-				fmt.Println("\nDejima uninstalled. Your islands' volumes + config remain; a reinstall re-adopts them.")
+				fmt.Println("\nDone — Dejima is removed from this Mac. Your islands and their contents")
+				fmt.Println("are still there; installing Dejima again picks them back up.")
+			}
+			if len(leftovers) > 0 {
+				fmt.Println("\nOne thing left for you to do:")
+				for _, l := range leftovers {
+					fmt.Printf("  • %s\n", l)
+				}
 			}
 			return nil
 		},

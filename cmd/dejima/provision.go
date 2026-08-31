@@ -510,6 +510,19 @@ func recordTailnetAddrs(pc *provCtx) {
 }
 
 func provPhaseTooling(pc *provCtx) error {
+	// This phase installs Docker Desktop and Tailscale into /Applications, which
+	// macOS gates behind a permission prompt — and attributes to the TERMINAL
+	// APP, not to Dejima. So the operator gets `"Ghostty" would like to access
+	// data from other apps` in the middle of an install they started, naming a
+	// program they did not think was involved. Reported as "super weird and
+	// disconcerting", which is the correct reaction to an unexplained prompt
+	// about one app reaching into others. Say it is coming, and why, first.
+	fmt.Println("  Heads-up: macOS may ask whether your terminal app can \"access data from")
+	fmt.Println("  other apps\" or manage other applications. That's this step installing")
+	fmt.Println("  Docker and Tailscale into /Applications — macOS credits the prompt to the")
+	fmt.Println("  terminal you're typing in, not to Dejima. Allow it, or those installs fail.")
+	fmt.Println()
+
 	// Homebrew first — everything else installs through it.
 	if _, err := exec.LookPath("brew"); err != nil && !brewOnDisk() {
 		fmt.Println("  Homebrew isn't installed (the package manager for everything below).")
