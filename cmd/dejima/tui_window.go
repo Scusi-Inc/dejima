@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	goruntime "runtime"
 	"strings"
+	"testing"
 )
 
 // canOpenNewWindow reports whether openInNewWindow has a backend it can use
@@ -17,6 +18,27 @@ import (
 // deterministically regardless of GOOS (darwin/windows would otherwise always
 // be true, and macOS would try to script Terminal).
 var canOpenNewWindow = func() bool {
+	// A TEST BINARY NEVER OPENS A WINDOW ON SOMEBODY'S SCREEN.
+	//
+	// This is not defensive; it is a bug caught in the act. TMUX is always set
+	// inside an agent's pane, so this returned true under `go test` and any test
+	// reaching an opener ran a REAL `tmux new-window` against the operator's live
+	// session. Found as three stray windows in another agent's session:
+	//
+	//     agent-d3:2  github-connect  (dejima.test)
+	//     agent-d3:3  github-connect  (dejima.test)
+	//     agent-d3:4  github-connect  (dejima.test)
+	//
+	// dejima.test is the test binary. The operator had been reporting "a script
+	// took over my terminal" for a week; this is one of the scripts.
+	//
+	// Individual tests do stub this to false, and that is exactly the problem —
+	// it relies on every test remembering, and the ones that reached an opener
+	// through a key handler did not know they were about to. Tests that WANT the
+	// window path can still stub this true; the var is unchanged.
+	if testing.Testing() {
+		return false
+	}
 	return os.Getenv("TMUX") != "" || goruntime.GOOS == "darwin" || goruntime.GOOS == "windows"
 }
 
