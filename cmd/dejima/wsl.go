@@ -644,8 +644,34 @@ func startDaemonInWSL(ctx context.Context, distro string) error {
 	// one. Only when no daemon is actually running.
 	_, _ = wsl.Run(ctx, distro, "pgrep -x dejimad >/dev/null 2>&1 || rm -f "+sock)
 
-	if _, err := wsl.Run(ctx, distro,
-		"mkdir -p "+home+"/.dejima && nohup dejimad --foreground >>"+logf+" 2>&1 &"); err != nil {
+	// setsid AND </dev/null, not just nohup. Both matter, and neither is
+	// cosmetic:
+	//
+	//   setsid      puts dejimad in its OWN session. `wsl.exe -- sh -c '… &'`
+	//               returns as soon as sh exits, and WSL tears down that
+	//               session's processes with it. nohup only ignores SIGHUP; it
+	//               does not leave the session, so it does not survive this.
+	//
+	//   </dev/null  detaches stdin from the wsl.exe pipe. A backgrounded child
+	//               still holding that pipe dies when the Windows side closes
+	//               it, and it dies BEFORE it can log anything — which is
+	//               exactly the symptom: `dejima wsl start` timing out after
+	//               60s with NOT ONE new line in dejimad.log, while the same
+	//               binary run in the foreground comes up perfectly.
+	//
+	// The foreground run is the control that proved it: same binary, same
+	// distro, same user, works every time. The difference is only how it is
+	// detached.
+	// setsid comes from util-linux and is present on every distro we target, but
+	// a missing setsid must not become the same silent failure this fixes: an
+	// unresolved command would write "setsid: not found" and start nothing.
+	start := "mkdir -p " + home + "/.dejima && " +
+		"if command -v setsid >/dev/null 2>&1; then " +
+		"setsid nohup dejimad --foreground </dev/null >>" + logf + " 2>&1 & " +
+		"else " +
+		"nohup dejimad --foreground </dev/null >>" + logf + " 2>&1 & " +
+		"fi"
+	if _, err := wsl.Run(ctx, distro, start); err != nil {
 		return fmt.Errorf("start dejimad in %s: %w", distro, err)
 	}
 
