@@ -594,9 +594,8 @@ internally consistent and correct.
 exactly when a new wording appears, and whoever writes the new wording is by
 construction not editing the list. Pin what the sentences *say*, so a rewording
 fails until a human looks. Not a golden over the page either — these are
-marketing pages, mostly prose, and a golden fails on every legitimate edit and
-gets switched off within a week. A description guard in this repo produced 29
-false positives and was deleted rather than shipped.
+marketing pages, mostly prose, and a golden fails on every legitimate edit, which
+is how a guard gets switched off rather than fixed.
 
 **Pin the count, not the presence.** Two of the eight pinned sentences appear
 *twice* — once in FAQPage JSON-LD, once in the visible answer. Presence alone
