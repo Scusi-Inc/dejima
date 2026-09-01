@@ -2422,7 +2422,15 @@ func (m tuiModel) buildImageCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
-		return imageBuildDoneMsg{err: m.client.BuildImage(ctx, io.Discard)}
+		// See tui_create.go: the tail is what makes a failure actionable.
+		tail := newBuildTail(40)
+		if err := m.client.BuildImage(ctx, tail); err != nil {
+			if out := tail.String(); out != "" {
+				return imageBuildDoneMsg{err: fmt.Errorf("%w\n\n%s", err, out)}
+			}
+			return imageBuildDoneMsg{err: err}
+		}
+		return imageBuildDoneMsg{}
 	}
 }
 

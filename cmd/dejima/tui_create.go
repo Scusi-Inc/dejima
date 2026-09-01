@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -290,10 +289,18 @@ func (c *creatorModel) createCmd() tea.Cmd {
 		// build's few extra minutes.
 		if o, err := client.Overview(context.Background()); err == nil && !o.IslandImagePresent {
 			bctx, bcancel := context.WithTimeout(context.Background(), 30*time.Minute)
-			err := client.BuildImage(bctx, io.Discard)
+			// Keep the tail. io.Discard here meant a failed build surfaced as
+			// "docker build failed: exit status 1" with docker's own explanation
+			// thrown away — an exit code is not a bug report, and the operator
+			// hitting it is usually not the one who can read the daemon's logs.
+			tail := newBuildTail(40)
+			err := client.BuildImage(bctx, tail)
 			bcancel()
 			if err != nil {
-				return islandCreatedMsg{err: fmt.Errorf("build island image: %w", err)}
+				if out := tail.String(); out != "" {
+					return islandCreatedMsg{err: fmt.Errorf("build island image: %w\n\n%s", err, out)}
+				}
+				return islandCreatedMsg{err: fmt.Errorf("build island image: %w\n(no output was captured)", err)}
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
