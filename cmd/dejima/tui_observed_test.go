@@ -99,6 +99,39 @@ func assertNoContainmentClaim(t *testing.T, screen string) {
 	}
 }
 
+// A GOLDEN FOR THE REGION, and the reason it is a golden rather than another
+// phrase check is d5's finding: three times now, a sweep for WORDING has missed
+// a CLAIM that used none of the searched words. The last one said "each agent
+// runs in a container" on a page whose sweep looked for "isolated", "walled off"
+// and "from each other" — the claim in full, invisible to the search.
+//
+// assertNoContainmentClaim has that exact weakness: it catches phrases already
+// in its list and cannot catch a new literal, which is the event it exists for.
+// containmentClaim() closes the render side by making the claim come from one
+// place; this closes the guard side by pinning the region's ENTIRE output, so
+// any new string in it — reassuring or not, in any wording — fails until someone
+// looks at it and updates this deliberately.
+//
+// Brittle to cosmetic edits on purpose. This is the one region on screen whose
+// job is to not reassure; a copy change here should cost a conversation.
+func TestObservedRegionOutputIsPinned(t *testing.T) {
+	m := observedModel(t, observedResp(api.ObservedAgent{
+		ID: "loose-1", Label: "codex-laptop", Containment: api.ContainmentObserved,
+		Alive: true, Working: "refactoring the parser",
+		LastActive: time.Now().Add(-3 * time.Minute), Source: "transcript",
+	}))
+	got, h := m.renderObservedRegion(0)
+	const want = "◇ Observed agents · not contained · Dejima can see it and cannot stop it\n" +
+		"  ● codex-laptop                  refactoring the parser · last active 3m ago · via transcript · self-reported"
+	if plain(got) != want {
+		t.Errorf("the observed region's output changed. If that was deliberate, check the new\n"+
+			"text makes no containment claim and update this golden.\ngot:\n%s\nwant:\n%s", plain(got), want)
+	}
+	if h != 2 {
+		t.Errorf("region height = %d, want 2 (header + one agent) — the body sizes off this", h)
+	}
+}
+
 // The zero value is "nobody said". It must render IDENTICALLY to an explicitly
 // observed agent as far as containment goes — asserted as an equality rather
 // than as two separate absences, because two absences can both hold while the
