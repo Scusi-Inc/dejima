@@ -107,8 +107,20 @@ rebuilt one layer down. `StripLineComments` therefore removes whole-line comment
 only and leaves trailing ones, and the stripper carries the control that a
 function returning `""` would fail.
 
+**And when the mechanism is swept across the existing guards, the sweep needs
+its own control.** Converting thirty-five guards to a shared stripper is
+thirty-five opportunities to turn one of them into a guard that now matches
+nothing — and every one of those will still pass, because a guard matching
+nothing is exactly what a green run looks like. "They all still pass" is
+therefore not evidence that the migration worked; it is the same sentence you
+would get if it had failed. Mutation-check a sample as part of the sweep, not all
+thirty-five, but enough that the green has a second source. This is the
+mechanism's own control argument applied one level up, to the migration rather
+than to the tool.
+
 *(The recurrence count and the "documenting it did not prevent it" reading are
-d1's; the fourth instance was reported by d3 against their own guard.)*
+d1's; the fourth instance was reported by d3 against their own guard, along with
+the point about the sweep.)*
 
 ### 3. The guard nothing can violate — needs a lethal mutation
 
