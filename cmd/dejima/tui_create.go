@@ -219,11 +219,7 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 		// operator's own framing was better and is what this now uses: clone a
 		// repo, use a local one, or start with nothing. Finding is a detail
 		// INSIDE the first two, not a peer of them.
-		c.rootChoices = []string{
-			"Clone a repo            " + styleMuted.Render("browse GitHub, or paste a git URL"),
-			"Use a local repo        " + styleMuted.Render("a git repo already on "+tildeify(pwd)+"'s machine"),
-			"Start empty             " + styleMuted.Render("no repo — add files later"),
-		}
+		c.rootChoices = rootSourceChoices(tildeify(pwd))
 		// Do not let the zero value pick the destructive-by-surprise option. An
 		// empty island is cheap and reversible, so leading with it is safe — but
 		// the cursor is set explicitly rather than left at 0 by accident, so the
@@ -287,7 +283,15 @@ func (c *creatorModel) createCmd() tea.Cmd {
 		// Auto-build the island image when the daemon doesn't have it yet
 		// (fresh host) — first island creation Just Works, it just takes the
 		// build's few extra minutes.
-		if o, err := client.Overview(context.Background()); err == nil && !o.IslandImagePresent {
+		// Ask the daemon whether Docker is even up before spending minutes on a
+		// build that cannot succeed. This overview call already happened; only
+		// IslandImagePresent was being read from it, so the answer was fetched
+		// and discarded while the operator waited for the inevitable failure.
+		o, overviewErr := client.Overview(context.Background())
+		if overviewErr == nil && !o.DockerReachable {
+			return islandCreatedMsg{err: dockerUnreachableError(client.DaemonHost())}
+		}
+		if overviewErr == nil && !o.IslandImagePresent {
 			bctx, bcancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			// Keep the tail. io.Discard here meant a failed build surfaced as
 			// "docker build failed: exit status 1" with docker's own explanation
@@ -1425,6 +1429,33 @@ const (
 func (c *creatorModel) writeHeader(b *strings.Builder, text string) {
 	b.WriteString(styleMuted.Render("  " + text))
 	b.WriteString("\n")
+}
+
+// rootSourceChoices builds the three rows of the first create screen.
+//
+// It exists as a function so the TEST can assert on the rows that actually
+// ship. The earlier test declared its own copy of these strings and checked
+// that copy, which meant the row constants could drift from the real list
+// without failing anything — and an off-by-one there runs a different action
+// than the highlighted line, with nothing looking wrong.
+//
+// The leading glyphs are single-width BMP characters on purpose. Emoji are
+// double-width in most terminals and inconsistently so across them, which
+// would misalign the muted descriptions on exactly the machines we cannot see.
+//
+// Order is deliberate and is pinned by tests: cloning leads because it is the
+// common case AND the only one of the three that cannot be reached later from
+// inside the others. Starting empty is last because it is the cheapest to
+// change your mind about.
+func rootSourceChoices(machine string) []string {
+	row := func(icon, label, desc string) string {
+		return fmt.Sprintf("%-24s%s", icon+"  "+label, styleMuted.Render(desc))
+	}
+	return []string{
+		row("\u21e3", "Clone a repo", "browse GitHub, or paste a git URL"),
+		row("\u2302", "Use a local repo", "a git repo already on "+machine+"'s machine"),
+		row("\u25cc", "Start empty", "no repo — add files later"),
+	}
 }
 
 func (c *creatorModel) writeChoice(b *strings.Builder, selected bool, text string) {

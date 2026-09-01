@@ -346,7 +346,33 @@ func checkDocker(ctx context.Context, r *doctorReport) {
 	// started" from "can't reach the socket", and give the right fix for each
 	// instead of always "go install Docker".
 	if where, remote := daemonElsewhere(); remote {
-		r.add("System", "docker", "INFO", "runs on the daemon host ("+where+"), not here", "")
+		// ASK THE DAEMON rather than giving up. "Docker runs elsewhere" is a
+		// fact about geography, not an answer to "is Docker working" — and
+		// doctor is what someone runs precisely when something is wrong.
+		//
+		// A real case: a client Mac drove a Mac mini whose Docker had been dead
+		// for two weeks. Island creation failed with a socket path from the
+		// mini, and `dejima doctor` on the laptop reported docker as INFO,
+		// declining to comment on the one component that was broken. The daemon
+		// had the answer the whole time and reports it in the overview.
+		c, cErr := client()
+		if cErr != nil {
+			r.add("System", "docker", "INFO", "runs on the daemon host ("+where+"), not here", "")
+			return
+		}
+		o, oErr := c.Overview(ctx)
+		if oErr != nil {
+			r.add("System", "docker", "INFO",
+				"runs on "+where+"; couldn't ask the daemon about it", "")
+			return
+		}
+		if o.DockerReachable {
+			r.add("System", "docker", "OK", "reachable on the daemon host ("+where+")", "")
+			return
+		}
+		r.add("System", "docker", "FAIL",
+			"the daemon on "+where+" cannot reach Docker — no island can be built or started",
+			remoteDockerRemedy(where))
 		return
 	}
 	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Output()
@@ -483,6 +509,22 @@ func checkVMMemory(ctx context.Context, r *doctorReport) {
 //
 // A `wsl://` target counts as elsewhere too: the daemon and Docker are inside
 // the WSL2 distro, not on the Windows side where this client runs.
+// remoteDockerRemedy is the fix for a daemon host whose Docker is down. It is
+// written for someone who is NOT sitting at that machine, because by
+// construction they are not: this only fires when the daemon is remote.
+//
+// The ordering is from the incident it came from. "Already running" was the
+// misleading answer there — a Docker process had been hung since the host last
+// restarted, so the app refused to launch again and the CLI reported it as up
+// while the engine had never started.
+func remoteDockerRemedy(where string) string {
+	return "on " + where + ": `docker desktop start`, or open Docker Desktop. " +
+		"If it claims to be running already, a hung process from a previous boot is " +
+		"holding it: `pgrep -fl -i docker`, quit it, then relaunch. " +
+		"To stop it recurring, enable Docker's start-at-login AND automatic login on that machine — " +
+		"a headless host that reboots to a login screen never starts Docker at all."
+}
+
 func daemonElsewhere() (string, bool) {
 	host, label, source := resolveTarget()
 	if strings.TrimSpace(host) == "" {
@@ -496,6 +538,19 @@ func daemonElsewhere() (string, bool) {
 
 func checkIslandImage(ctx context.Context, r *doctorReport) {
 	if where, remote := daemonElsewhere(); remote {
+		// Same reasoning as checkDocker: the daemon knows, so ask it.
+		if c, cErr := client(); cErr == nil {
+			if o, oErr := c.Overview(ctx); oErr == nil {
+				if o.IslandImagePresent {
+					r.add("System", "island image", "OK", "present on the daemon host ("+where+")", "")
+				} else {
+					r.add("System", "island image", "WARN",
+						"missing on the daemon host ("+where+")",
+						"it builds itself on the first island, or press b in the dashboard")
+				}
+				return
+			}
+		}
 		r.add("System", "island image", "INFO", "lives on the daemon host ("+where+"), not here", "")
 		return
 	}
