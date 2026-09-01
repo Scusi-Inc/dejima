@@ -225,6 +225,13 @@ type tuiModel struct {
 	importPane   *importView       // non-nil while the per-island Import files pane is open
 	restartPane  *restartView      // non-nil while the "which agents to restart" checklist is open
 	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
+	// observed is the observed-agent collection: agents Dejima can SEE and cannot
+	// STOP, running outside every island. nil means we have not (or could not)
+	// load it, which renders NOTHING — deliberately distinct from a loaded
+	// response with no agents. A daemon that is unreachable or too old to serve
+	// the endpoint must never be able to tell the operator that no ungated agents
+	// exist. See tui_observed.go.
+	observed *api.ObservedAgentsResponse
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
 	// gate is unused/disabled. See tui_approvals.go.
@@ -783,7 +790,7 @@ func (m tuiModel) Init() tea.Cmd {
 		// fleet, polled on the tick so it animates. Keeps recordings clean.
 		return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd(), tickCmd())
 	}
-	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
+	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchObservedCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
 // latestReleaseMsg carries the newest published release tag, or the reason the
@@ -912,6 +919,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.demoTick++ // advance the synthetic fleet so agent states churn on screen
 		}
 		cmds := []tea.Cmd{tickCmd(), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd()}
+		if c := m.fetchObservedCmd(); c != nil {
+			cmds = append(cmds, c)
+		}
 		if name := m.selectedName(); name != "" {
 			cmds = append(cmds, m.fetchDetailCmd(name))
 		}
@@ -999,6 +1009,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if name := m.selectedName(); name != "" && (m.detail == nil || m.detail.Name != name) {
 			return m, m.fetchDetailCmd(name)
 		}
+		return m, nil
+
+	case observedMsg:
+		if msg.gen != m.gen {
+			return m, nil // stale: issued against a target we've switched away from
+		}
+		m.observed = msg.resp
 		return m, nil
 
 	case overviewMsg:
@@ -3660,11 +3677,21 @@ func (m tuiModel) View() string {
 	// The pinned host-terminal band sits between the header and the island list;
 	// the body sizes off (header + band) height so nothing is pushed off-screen.
 	band, bandH := m.renderBand(m.width - 2)
-	body := m.renderBody(hh + bandH)
+	// Observed agents get a SIBLING region directly beneath the host band, not a
+	// row in the island tree: the two ungated regions sit adjacent, above the
+	// tree, and everything below them is the contained half of the screen. See
+	// tui_observed.go for why this copies the band's grammar rather than
+	// inventing a second treatment.
+	obs, obsH := m.renderObservedRegion(m.width - 2)
+	body := m.renderBody(hh + bandH + obsH)
+	parts := []string{header}
 	if band != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, header, band, body, footer)
+		parts = append(parts, band)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	if obs != "" {
+		parts = append(parts, obs)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, append(parts, body, footer)...)
 }
 
 // renderPanicBanner returns an alarm banner while the daemon is in panic mode

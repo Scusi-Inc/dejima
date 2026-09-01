@@ -280,7 +280,43 @@ func (c *procConn) failure() string {
 	}
 	// Collapse to one line; wsl.exe likes to wrap.
 	raw = strings.Join(strings.Fields(raw), " ")
-	if strings.Contains(raw, "socat") && (strings.Contains(raw, "not found") || strings.Contains(raw, "No such file")) {
+	return classifyStderr(raw)
+}
+
+// classifyStderr turns the subprocess's stderr into a diagnosis.
+//
+// Split out from failure() so it can be tested against real stderr text without
+// standing up a subprocess — the previous rule was wrong for an input nothing
+// exercised, and the only reason it survived was that the test fed it the one
+// string it got right.
+//
+// THE RULE THAT WAS WRONG: `contains "socat" && (contains "not found" ||
+// contains "No such file")`. When the DAEMON'S SOCKET is missing, socat runs
+// perfectly and reports:
+//
+//	socat[123] E connect(5, AF=1 "/root/.dejima/dejimad.sock", 45): No such file or directory
+//
+// which contains both "socat" and "No such file". So a running socat that could
+// not find the daemon was reported as socat not being installed. An operator
+// then installed socat — already present, newest version — and got the same
+// message, with the actual cause (dejimad not running) never named. The correct
+// diagnosis was the very next branch, unreachable because this one matched first.
+//
+// The word "socat" appearing in socat's own output is evidence that socat EXISTS.
+func classifyStderr(raw string) string {
+	// socat prefixes its own diagnostics with "socat[<pid>]". Anything carrying
+	// that is socat RUNNING and failing, which settles the question of whether
+	// it is installed.
+	ranSocat := strings.Contains(raw, "socat[")
+
+	// Only a SHELL saying it could not find the binary means it is absent.
+	// Match the phrasings shells actually produce, not the mere co-occurrence
+	// of a program name and a file error.
+	notFound := strings.Contains(raw, "socat: not found") ||
+		strings.Contains(raw, "socat: command not found") ||
+		strings.Contains(raw, "executable file not found")
+
+	if !ranSocat && notFound {
 		return "socat isn't installed in the distro — run `dejima wsl setup` (or `sudo apt install socat` inside it)"
 	}
 	if strings.Contains(strings.ToLower(raw), "no such file or directory") {

@@ -426,18 +426,33 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
-func installSocat(ctx context.Context, distro string) error {
-	out, err := wsl.Run(ctx, distro, `
+// socatInstallScript installs socat, the tunnel the Windows client uses to reach
+// the daemon's unix socket. Without it the client cannot talk to the daemon at
+// all, which presents as "daemon unreachable" and looks like the daemon is down.
+//
+// EVERY PACKAGE COMMAND IS TRIED DIRECTLY BEFORE SUDO. The previous version led
+// with `sudo -n`, which assumes sudo is installed. A WSL distro commonly runs as
+// ROOT — this one does; its HOME is /root — and a minimal root image need not
+// ship sudo at all. There, `sudo -n apt-get` fails with "command not found"
+// under `set -e` for a machine that never needed sudo in the first place.
+//
+// The same try-then-elevate shape is already used by the daemon install below,
+// which is why that step kept working on the distro where this one did not.
+const socatInstallScript = `
 		set -e
 		if command -v apt-get >/dev/null 2>&1; then
-			sudo -n apt-get update -qq && sudo -n apt-get install -y -qq socat
+			(apt-get update -qq && apt-get install -y -qq socat) ||
+				(sudo -n apt-get update -qq && sudo -n apt-get install -y -qq socat)
 		elif command -v dnf >/dev/null 2>&1; then
-			sudo -n dnf install -y -q socat
+			dnf install -y -q socat || sudo -n dnf install -y -q socat
 		elif command -v apk >/dev/null 2>&1; then
-			sudo -n apk add --quiet socat
+			apk add --quiet socat || sudo -n apk add --quiet socat
 		else
 			echo "no supported package manager (need apt/dnf/apk)" >&2; exit 1
-		fi`)
+		fi`
+
+func installSocat(ctx context.Context, distro string) error {
+	out, err := wsl.Run(ctx, distro, socatInstallScript)
 	return wslStepErr(out, err)
 }
 
@@ -629,8 +644,49 @@ func startDaemonInWSL(ctx context.Context, distro string) error {
 	// one. Only when no daemon is actually running.
 	_, _ = wsl.Run(ctx, distro, "pgrep -x dejimad >/dev/null 2>&1 || rm -f "+sock)
 
-	if _, err := wsl.Run(ctx, distro,
-		"mkdir -p "+home+"/.dejima && nohup dejimad --foreground >>"+logf+" 2>&1 &"); err != nil {
+	// setsid AND </dev/null, not just nohup. Both matter, and neither is
+	// cosmetic:
+	//
+	//   setsid      puts dejimad in its OWN session. `wsl.exe -- sh -c '… &'`
+	//               returns as soon as sh exits, and WSL tears down that
+	//               session's processes with it. nohup only ignores SIGHUP; it
+	//               does not leave the session, so it does not survive this.
+	//
+	//   </dev/null  detaches stdin from the wsl.exe pipe. A backgrounded child
+	//               still holding that pipe dies when the Windows side closes
+	//               it, and it dies BEFORE it can log anything — which is
+	//               exactly the symptom: `dejima wsl start` timing out after
+	//               60s with NOT ONE new line in dejimad.log, while the same
+	//               binary run in the foreground comes up perfectly.
+	//
+	// The foreground run is the control that proved it: same binary, same
+	// distro, same user, works every time. The difference is only how it is
+	// detached.
+	// setsid comes from util-linux and is present on every distro we target, but
+	// a missing setsid must not become the same silent failure this fixes: an
+	// unresolved command would write "setsid: not found" and start nothing.
+	// Install the boot command first. Backgrounding inside the distro cannot
+	// survive on its own — `nohup … &` and `setsid nohup … </dev/null &` were
+	// both tried on a real machine and both left no socket and no process once
+	// the Windows window closed, because WSL tears the distro down with its last
+	// interop session. The boot command means the next thing to touch the distro
+	// starts the daemon, including the client's own dial.
+	if !unitIsCurrent(ctx, distro) {
+		if note, err := ensureWSLDaemonSupervision(ctx, distro); err != nil {
+			fmt.Printf("  ! couldn't make the daemon survive a distro restart: %v\n", err)
+			fmt.Println("    it will still start now, but won't come back by itself")
+		} else if note != "" {
+			fmt.Println("  ✓ " + note)
+		}
+	}
+
+	start := "mkdir -p " + home + "/.dejima && " +
+		"if command -v setsid >/dev/null 2>&1; then " +
+		"setsid nohup dejimad --foreground </dev/null >>" + logf + " 2>&1 & " +
+		"else " +
+		"nohup dejimad --foreground </dev/null >>" + logf + " 2>&1 & " +
+		"fi"
+	if _, err := wsl.Run(ctx, distro, start); err != nil {
 		return fmt.Errorf("start dejimad in %s: %w", distro, err)
 	}
 
