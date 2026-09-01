@@ -117,34 +117,33 @@
             <p>Reboot.</p>
           </li>
           <li>
-            <p>Install Dejima. <span class="sub-note">A normal PowerShell, not Command Prompt.</span></p>
+            <p>Install Dejima, and let it build the Linux host.
+              <span class="sub-note">A normal PowerShell, not Command Prompt. Two questions, both answered by Enter.</span></p>
             <div class="cmd">
               <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
               <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
             </div>
             <details class="disclose">
-              <summary>It asks where your islands will run</summary>
+              <summary>The two questions</summary>
               <div class="disclose-body">
-                <p>Answer <strong>[1] on this machine</strong>, which is the default, so pressing Enter is enough.
-                  That skips the Tailscale setup and the server-address prompt, neither of which applies when the
-                  host is this same box.</p>
+                <p><em>Where will your islands run?</em> Answer <strong>[1] on this machine</strong>, the default. That
+                  skips the Tailscale setup and the server-address prompt, neither of which applies when the host is
+                  this same box.</p>
+                <p><em>Run 'dejima wsl setup' now?</em> Answer <strong>Y</strong>, the default. That's the step that
+                  builds the Linux host, and the installer runs it for you.</p>
               </div>
             </details>
-          </li>
-          <li>
-            <p>Build the Linux host. <span class="sub-note">Open a new PowerShell first: the installer just changed your PATH.</span></p>
-            <div class="cmd">
-              <pre><code>dejima wsl setup</code></pre>
-              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
-            </div>
             <details class="disclose">
-              <summary>What it does, and what not to do first</summary>
+              <summary>What it builds, and what not to do first</summary>
               <div class="disclose-body">
-                <p>Creates the <code>dejima</code> distro, installs Docker and the daemon inside it, builds the island
-                  image, points your client at it. Idempotent, so a failed run is safe to repeat.</p>
+                <p><code>dejima wsl setup</code> creates the <code>dejima</code> distro, installs Docker and the daemon
+                  inside it, builds the island image, and points your client at it. It goes quiet while it downloads and
+                  builds, so don't interrupt it; it gives itself 45 minutes.</p>
                 <p>Let it create the distro. If you open the new distro first and give it a user and a sudo password,
                   setup's unattended steps fail on a permissions error that doesn't point back to the cause.</p>
-                <p>It goes quiet while it downloads and builds. Don't interrupt it; it gives itself 45 minutes.</p>
+                <p>Declining the offer is fine. It's idempotent, so run it yourself whenever you like — but close and
+                  reopen PowerShell first, because the installer has just put <code>dejima</code> on your PATH and this
+                  window still has the old one.</p>
                 <p>Already keep a WSL distro for other work? <code>dejima wsl setup --distro &lt;name&gt;</code> uses that
                   one. It has to be WSL&nbsp;2: WSL 1 has no real kernel and can't run Docker.</p>
               </div>
