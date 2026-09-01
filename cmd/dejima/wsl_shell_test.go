@@ -36,11 +36,24 @@ func TestWSLScriptsParseUnderDash(t *testing.T) {
 	// used precisely because these contain quotes and $, so a backtick inside one
 	// terminates the literal early — which broke the build once while writing the
 	// very comment explaining the dash bug.
-	re := regexp.MustCompile("(?s)wsl\\.Run\\(ctx, distro, `(.*?)`\\)")
+	// EVERY shell raw-string in the file, not just the ones written inline at the
+	// wsl.Run call. A script assembled into a variable first — which any script
+	// needing interpolation must be — was invisible to the call-site pattern, so
+	// the two largest scripts in this file went unchecked the moment they were
+	// added. The extractor must follow the shell, not the call shape.
+	//
+	// Keyed on "set -e" because every in-distro script here begins with it and Go
+	// raw strings are used for plenty of non-shell things.
+	re := regexp.MustCompile("(?s)`([^`]*set -e[^`]*)`")
 	found := re.FindAllStringSubmatch(src, -1)
-	if len(found) == 0 {
-		t.Fatal("no in-distro scripts found — the extraction pattern no longer matches, " +
-			"so this guard is checking nothing while passing")
+	// A floor, not just non-emptiness: the pattern silently matching FEWER
+	// scripts than the file contains is the failure that just happened, and
+	// "found at least one" would not have caught it.
+	const minScripts = 5
+	if len(found) < minScripts {
+		t.Fatalf("found %d in-distro scripts, expected at least %d — the extraction "+
+			"pattern is missing some, so this guard is checking a subset while "+
+			"reporting on the whole file", len(found), minScripts)
 	}
 	for i, m := range found {
 		script := m[1]

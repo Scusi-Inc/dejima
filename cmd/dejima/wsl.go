@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/clientcfg"
+	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/wsl"
 )
 
@@ -330,6 +331,19 @@ func runWSLSetup(parent context.Context, distro string, yes bool) error {
 	}
 	fmt.Println("  ✓ dejimad running")
 
+	// The island image, which used to arrive free with the source build's
+	// `make setup`. Without it a distro has a daemon and no image, and the
+	// operator's first `dejima init` fails AFTER a setup that said it worked.
+	//
+	// After the daemon starts, because `dejima image build` talks to it. Slow on
+	// a first run and near-instant afterwards, so it is announced rather than
+	// silent — a multi-minute quiet stretch is the thing people Ctrl-C.
+	fmt.Println("  • building the island image (first run is slow) …")
+	if err := buildIslandImage(ctx, distro); err != nil {
+		return fmt.Errorf("build island image: %w", err)
+	}
+	fmt.Println("  ✓ island image")
+
 	if err := saveWSLProfile(distro); err != nil {
 		return fmt.Errorf("save connection profile: %w", err)
 	}
@@ -420,22 +434,66 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 	return nil
 }
 
-// installDejimad installs the daemon from the official install script, which
-// also builds the island image.
+// installDejimad installs the daemon from a RELEASE TARBALL, not from source.
+//
+// It used to run `curl … install.sh | bash`, which is a source build — and
+// install.sh installs Go on macOS and FAILS on Linux:
+//
+//	✗ Go is required. Install from https://go.dev/dl/ …
+//
+// A freshly created Ubuntu distro has no Go, so this step could never succeed on
+// a first run. `dejima wsl setup` had never worked end to end; the one person who
+// got a daemon up did it by hand.
+//
+// The release path is also the right one for the network this runs on. A source
+// build clones a repo and downloads a module graph — hundreds of round-trips —
+// and WSL's NAT is where that fails: in one session it produced a go.dev 404, a
+// connection reset mid-install, and an empty GitHub API response. This makes ONE
+// request.
+//
+// VERSION IS PINNED TO THIS CLIENT, not resolved to "latest". I argued the other
+// way when this was someone else's task and was weighing the wrong thing:
+// resolving latest costs an extra API call on precisely the flaky link this
+// change exists to stop depending on, and it can hand a client a daemon from the
+// far side of a release boundary. Pinning needs no lookup and makes the pair
+// coherent by construction. A dev build has no matching release, so it falls
+// back to latest — which is the only case where the extra call is unavoidable.
 func installDejimad(ctx context.Context, distro string) error {
-	// DEJIMA_ROLE=server is not optional here. install.sh now asks SERVER or
-	// CLIENT on /dev/tty, and it asks there precisely because a `curl … | bash`
-	// pipe is not evidence that nobody is watching. This call is a non-interactive
-	// child of `dejima wsl setup`: if a terminal is reachable from inside the
-	// distro, the installer would stop and wait for an answer nobody is there to
-	// give, and `wsl setup` would hang with no output explaining why.
-	//
-	// Whether wsl.exe hands the child a usable /dev/tty is not something to
-	// discover in the field on someone's first install. Answer it here.
+	ver := version.Version
+	if ver == "" || ver == "dev" || !strings.HasPrefix(ver, "v") {
+		ver = "latest"
+	}
+	// $(uname -m) is resolved INSIDE the distro: WSL2 runs the host's
+	// architecture, but reading it here would assume the client and the distro
+	// agree, and an arm64 Windows box with an x64 client is a real configuration.
+	// The version is passed as a shell variable rather than concatenated into the
+	// script, so the script stays ONE raw literal. Concatenation splits it, and
+	// the dash guard then checks a truncated fragment while reporting on the
+	// whole thing — a checker seeing less than it claims, which is the shape this
+	// file exists to catch.
+	script := "want_ver=" + shellSingleQuote(ver) + "\n" + dejimadInstallScript
+	if _, err := wsl.Run(ctx, distro, script); err != nil {
+		return err
+	}
+	return nil
+}
+
+// buildIslandImage builds the island image inside the distro.
+//
+// This step used to come free: install.sh handed off to `make setup`, which runs
+// `make image`. Dropping the source build drops that with it, and a distro with a
+// daemon and no image fails on the operator's first `dejima init` — AFTER a
+// setup that reported success, which is the worst place for it to surface.
+//
+// It needs no checkout: the daemon embeds the build context (islandimage
+// .Materialize), so a release-installed dejimad can build its own image.
+func buildIslandImage(ctx context.Context, distro string) error {
 	_, err := wsl.Run(ctx, distro, `
 		set -e
-		curl -fsSL https://dejima.tech/install.sh | DEJIMA_ROLE=server SKIP_SERVICE=1 bash
-		command -v dejimad >/dev/null 2>&1`)
+		if docker image inspect dejima/island >/dev/null 2>&1; then
+			echo already-built; exit 0
+		fi
+		dejima image build`)
 	return err
 }
 
@@ -513,4 +571,44 @@ func confirmWSL(question string) bool {
 // returning its combined output for error classification.
 func runWSLExe(ctx context.Context, args ...string) (string, error) {
 	return wsl.RunExe(ctx, args...)
+}
+
+// dejimadInstallScript downloads the release tarball and installs both binaries.
+// One raw literal so the dash guard checks all of it; $want_ver is supplied by
+// the caller as a shell assignment prepended to this text.
+const dejimadInstallScript = `
+		set -e
+		arch=$(uname -m)
+		case "$arch" in
+			x86_64)  goarch=amd64 ;;
+			aarch64|arm64) goarch=arm64 ;;
+			*) echo "unsupported architecture: $arch" >&2; exit 1 ;;
+		esac
+		ver="$want_ver"
+		if [ "$ver" = latest ]; then
+			ver=$(curl -fsSL https://api.github.com/repos/Scusi-Inc/dejima/releases/latest \
+				| sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+			[ -n "$ver" ] || { echo "could not resolve the latest release" >&2; exit 1; }
+		fi
+		url="https://github.com/Scusi-Inc/dejima/releases/download/${ver}/dejima_${ver}_linux_${goarch}.tar.gz"
+		# A persistent path, not /tmp. WSL terminates an idle distro seconds after
+		# the last process exits and /tmp is tmpfs, so anything split across two
+		# wsl.exe invocations loses it between them -- which reads as a download
+		# failure rather than a lifecycle one. One invocation today; the path is
+		# persistent so that stays true if someone later splits a step.
+		work="$HOME/.dejima/install"
+		mkdir -p "$work"
+		echo "downloading $url"
+		curl -fsSL "$url" -o "$work/dejima.tar.gz"
+		tar -xzf "$work/dejima.tar.gz" -C "$work"
+		install -m 0755 "$work/dejima" "$work/dejimad" /usr/local/bin/ 2>/dev/null \
+			|| sudo install -m 0755 "$work/dejima" "$work/dejimad" /usr/local/bin/
+		rm -rf "$work"
+		command -v dejimad >/dev/null 2>&1`
+
+// shellSingleQuote quotes a value for POSIX sh. The version comes from our own
+// build, not from user input, but a quoting bug here would corrupt a URL rather
+// than fail loudly.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
