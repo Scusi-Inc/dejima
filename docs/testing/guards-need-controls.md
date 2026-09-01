@@ -242,6 +242,69 @@ reading it as a statement about the feature.
 
 → from d3; both mutations lethal on the pane as landed.
 
+### 6. Two guards that are each correct — needs someone to mutate the OTHER one
+
+Both statements are true and the pair is still not a guarantee.
+
+**How it happened.** The website's Windows page and the binary must not tell an
+operator two different ways to install WSL. d5 built
+`scripts/site-wsl-hint-check.py`, which asserts the page's install block matches
+`wsl.InstallHint`, read out of `internal/wsl/wsl.go` at check time rather than
+copied. Sound, and mutation-tested four ways. In the constant's doc comment, d1
+then wrote that the website is checked against it.
+
+Neither was wrong. The check really did compare the page to the constant. The
+comment really did describe a check that existed. And the pair still guaranteed
+nothing, in two directions at once:
+
+- A step that existed **only on the page** was invisible to a page-is-a-subset
+  assertion — so the one thing the check could not see was the one thing that
+  had drifted. "The check passes" meant *the parts I copied agree*, not *the two
+  agree*.
+- Deleting the check would leave the comment asserting a guarantee nothing
+  provided. And nothing ran the check: it was in neither `ci.yml` nor the
+  Makefile, so two green runs by two people were both real and neither was
+  repeatable by anyone else.
+
+**Why it is not shape 2 or 3.** Checked against both before claiming a new
+section. Shape 2 is a guard with nothing to check; this one had something to
+check. Shape 3 is a guard nothing can violate; this one was violable, four
+mutations, all lethal, control passing either side. **Mutation-testing each
+guard individually passes.** The gap is in the seam, and the seam belongs to
+neither owner.
+
+**The tell.** Two artifacts maintained by two people, each asserting something
+about the other. A comment that describes a guard elsewhere; a check that reads
+a constant it does not own; a doc quoting a value from source. Each author can
+verify their own half completely and correctly.
+
+**The control.** Someone mutates the *other* person's guard. Delete the check
+and confirm the comment's owner has a test that fails. Add a step to the page
+and confirm the check catches it. Then close the loop so the coupling is
+enforced rather than described — a Go test that fails if the check file is gone,
+*and* fails if the check stops mentioning the constant, because **present is not
+the same as watching**: a check that had drifted onto another constant satisfies
+a bare existence assertion while guarding nothing.
+
+Two smaller traps, both live here:
+
+- **A guard nobody runs is decoration.** Wire it into CI in the same change that
+  writes it. Both authors had run it by hand and called it done.
+- **Do not give it a `paths:` filter.** The obvious tidy-up is to skip the job
+  unless Go or HTML changed. The commit most likely to break a page-vs-source
+  check is a *page-only* edit — exactly what `paths: ['**.go']` skips — and a
+  skipped job reports green.
+
+**Why this earns a section rather than a footnote.** No amount of further care
+applied to either half surfaces it. Careful checking of your own half is what
+*produces* it: you verify what you control and describe the whole. The detection
+method is therefore procedural rather than technical — cross-mutation is not a
+step anyone reaches by being thorough about their own work, so it has to be
+asked for.
+
+→ found by d5, reviewing d1's fix for a bug d5 had reported. Both halves now
+enforced; `site-wsl-hint` runs on every push.
+
 ## Instruments get the same treatment
 
 A measurement you are about to publish is a guard pointed at reality, and it
