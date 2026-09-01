@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -190,7 +191,7 @@ func TestObservedAgents_EmptyIsHonestAboutWhy(t *testing.T) {
 // both a field and a location, so if the record could win they would eventually
 // disagree and consumers would trust different ones.
 func TestStampObserved_OverridesWhateverTheRecordSaid(t *testing.T) {
-	in := []AgentInfo{
+	in := []ObservedAgent{
 		{ID: "a1"}, // unset
 		{ID: "a2", Containment: ContainmentContained}, // wrongly claiming containment
 		{ID: "a3", Containment: ContainmentObserved},  // already right
@@ -203,5 +204,54 @@ func TestStampObserved_OverridesWhateverTheRecordSaid(t *testing.T) {
 		if a.Containment.Contained() {
 			t.Errorf("agent %q reports Contained() out of the OBSERVED collection", a.ID)
 		}
+	}
+}
+
+// The island-only fields must not exist on an observed agent. Attachable is the
+// one that matters: attaching is something Dejima can do to an agent it LAUNCHED
+// and cannot do to one it merely watched — and that field drives real affordances
+// in five call sites. A field that does not exist cannot be set by a later
+// refactor or read by a hopeful renderer.
+//
+// Asserted by reflection rather than by reading the struct, so the guard covers
+// a field added later without anyone remembering to update a list.
+func TestObservedAgent_HasNoIslandOnlyFields(t *testing.T) {
+	banned := map[string]string{
+		"Attachable": "Dejima cannot attach to an agent it did not launch; this field renders an Attach affordance",
+		"Tmux":       "an observed agent has no session Dejima owns",
+		"Worktree":   "an observed agent has no worktree Dejima created",
+		"Branch":     "an observed agent's checkout is not Dejima's to know",
+		"Ephemeral":  "spawn lifecycle is an island concept",
+		"SpawnedBy":  "spawn lineage is an island concept",
+	}
+	typ := reflect.TypeOf(ObservedAgent{})
+	for i := 0; i < typ.NumField(); i++ {
+		if why, bad := banned[typ.Field(i).Name]; bad {
+			t.Errorf("ObservedAgent has island-only field %q — %s", typ.Field(i).Name, why)
+		}
+	}
+	// Positive control: the banned list is only meaningful if these names are
+	// real. If AgentInfo stops having Attachable, this guard is checking for a
+	// field nobody would add anyway and should be revisited rather than trusted.
+	ai := reflect.TypeOf(AgentInfo{})
+	if _, ok := ai.FieldByName("Attachable"); !ok {
+		t.Error("AgentInfo no longer has Attachable — this guard's premise has moved " +
+			"and the banned list needs rereading, not extending")
+	}
+}
+
+// Containment must be on the wire even when unset. A consumer has to read
+// containment off the ENTRY, not infer it from which endpoint it arrived on:
+// inferring re-hides the guarantee one layer above where the field fixed it, and
+// a surface reasoning "this came from the observed list" is one refactor away
+// from being handed a merged one.
+func TestObservedAgent_ContainmentIsAlwaysOnTheWire(t *testing.T) {
+	raw, err := json.Marshal(ObservedAgent{ID: "a1"}) // deliberately unstamped
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"containment"`) {
+		t.Errorf("an unstamped observed agent omits containment from the wire (%s) — "+
+			"a missing stamp should be VISIBLE, not absent", raw)
 	}
 }

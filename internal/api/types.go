@@ -166,26 +166,72 @@ const (
 // round and defaults an unset record to gated.
 func (c ContainmentLevel) Contained() bool { return c == ContainmentContained }
 
-// ObservedAgentsResponse is the enumeration seam for agents Dejima can SEE and
-// cannot STOP.
+// ObservedAgent is an agent Dejima can SEE and cannot STOP: running outside any
+// island, reading whatever its user reads, holding whatever credentials its user
+// holds. Dejima records what it reports about itself; nothing gates it.
 //
-// A SEPARATE COLLECTION, NOT A FLAG ON THE ISLAND LIST, and that is the design
-// rather than an implementation detail. An observed agent has no island, so it
-// cannot appear in IslandInfo.Agents — there is nothing to nest it under. The
-// consequence is the useful part: every island-keyed surface is UNREACHABLE from
-// an observed agent by construction, not by anyone remembering a rule.
+// ITS OWN TYPE, NOT AgentInfo, and that is d2's argument rather than mine — I
+// shipped it as a shared type first and they were right. AgentInfo carries Tmux,
+// Branch, Worktree and Attachable, which for an observed agent are meaningless
+// or actively misleading. Attachable is the sharp one: attaching is something
+// Dejima can do to an agent it LAUNCHED and cannot do to one it merely watched,
+// and that field drives real affordances in five call sites. A field that does
+// not exist cannot be set by a later refactor or read by a hopeful renderer.
+//
+// My counter-argument was that two types make every list and count grow a second
+// path, and the ones that forget it silently show only contained agents. It does
+// not hold here: merging the two lists is the exact failure the design forbids,
+// so sharing a type to make merging easy optimises for the thing nobody wants.
+// Separate types make "these are different kinds of thing" true at the type
+// level, which is the same reasoning as the containment field itself, one layer
+// up.
+type ObservedAgent struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	// Containment is carried ON THE RECORD, deliberately, and is NOT omitempty.
+	//
+	// A consumer must be able to read containment off the entry rather than infer
+	// it from which endpoint the entry arrived on. Inferring re-hides the
+	// guarantee one layer up from where the field fixed it: a surface that
+	// reasons "this came from the observed list, so it is observed" is one
+	// refactor away from being handed a merged list.
+	//
+	// Not omitempty because a record that failed to get stamped should appear on
+	// the wire as "" rather than vanish. An absent field and an unset one both
+	// decode to "" and both read as NOT contained, so the ambiguity already
+	// resolves safely — but visible is better than absent when the thing you are
+	// debugging is a missing stamp. (d2 checked this on AgentInfo and correctly
+	// found no bug; recording it here so it is not re-reported.)
+	Containment ContainmentLevel `json:"containment"`
+	// Alive, LastActive and Working are the read-only state — what the agent
+	// reports about ITSELF. Dejima does not verify any of it, which is the whole
+	// difference between observing and gating.
+	Alive      bool      `json:"alive"`
+	LastActive time.Time `json:"last_active,omitempty"`
+	Working    string    `json:"working,omitempty"`
+	// Source records how this agent was discovered, so an operator can answer
+	// "why does Dejima know about this" without guessing.
+	Source string `json:"source,omitempty"`
+}
+
+// ObservedAgentsResponse is the enumeration seam for observed agents.
+//
+// A SEPARATE COLLECTION, NOT A FLAG ON THE ISLAND LIST. An observed agent has no
+// island, so it cannot appear in IslandInfo.Agents — there is nothing to nest it
+// under. The consequence is the useful part: every island-keyed surface is
+// UNREACHABLE from an observed agent by construction, not by anyone remembering
+// a rule.
 //
 // The grants pane is the case that matters. It takes an island name and renders
 // "✓ fully contained" when nothing is granted — which an observed agent
 // satisfies by construction, having no grants because nothing gates it. Because
 // observed agents are never enumerated under an island, that pane has no call
-// site to reach them from. There is no bilingual branch to add and none to get
-// wrong later.
+// site to reach them from.
 type ObservedAgentsResponse struct {
 	// Agents are the observed agents, each stamped ContainmentObserved by the
 	// server. Never contained: this collection is the source of that fact, the
 	// same way an island's agent list is the source of the contained one.
-	Agents []AgentInfo `json:"agents"`
+	Agents []ObservedAgent `json:"agents"`
 	// Registered reports whether any mechanism for registering an observed agent
 	// exists yet. FALSE TODAY, and stated rather than left to be inferred from an
 	// empty list: "none registered" and "registration is not built" are different
