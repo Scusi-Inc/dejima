@@ -39,9 +39,13 @@ func TestDaemonDownNotice_NamesTheLeftovers(t *testing.T) {
 			want: []string{"docker volume ls", "no longer tracked", "won't re-adopt", "~/.dejima"},
 		},
 		{
-			name:  "keep-islands still re-adopts",
+			name:  "keep-islands still recovers the islands",
 			purge: false,
-			want:  []string{"docker volume ls", "re-adopts"},
+			// Asserted as meaning, not vocabulary: this used to require the literal
+			// word "re-adopts", which is Dejima's word for it and not one the
+			// person reading this notice necessarily knows. What has to survive is
+			// the promise — install again and your islands come back.
+			want: []string{"docker volume ls", "installing Dejima again", "islands back"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

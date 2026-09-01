@@ -224,7 +224,19 @@ func (m tuiModel) secretsAddKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
-		if s := msg.String(); len(s) == 1 {
+		// pastableInput, not `len(msg.String()) == 1`. That test asked how many
+		// BYTES the key rendered to, which answers neither question it was
+		// standing in for:
+		//
+		//   * A NUL passes it. len("\x00") is 1, so a paste on Windows — which
+		//     ConPTY delivers character-by-character, leading NUL and all —
+		//     produced "\x00TAURI_SIGNING_PRIVATE_KEY_PASSWORD" and a validation
+		//     error naming a character the operator never typed.
+		//   * Any non-ASCII rune FAILS it and is dropped in silence. "é" is two
+		//     bytes. In the VALUE field that is the worse half: a passphrase with
+		//     an accented character stores wrong, reports success, and fails
+		//     later somewhere else entirely.
+		if s := pastableInput(msg); s != "" {
 			if v.addPhase == 0 {
 				v.nameInput += s
 			} else {

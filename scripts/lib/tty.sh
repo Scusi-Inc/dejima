@@ -18,7 +18,13 @@ bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
 info()   { printf '  %s\n' "$*"; }
 ok()     { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn()   { printf '  \033[33m!\033[0m %s\n' "$*"; }
-fail()   { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; }
+fail()   {
+    printf '  \033[31m✗\033[0m %s\n' "$*" >&2
+    # Name the transcript on the way out. A failed install is the one moment the
+    # operator needs it, and the one moment they are least inclined to go
+    # looking. transcript_note is a no-op when no log was opened.
+    if declare -F transcript_note >/dev/null 2>&1; then transcript_note >&2; fi
+}
 
 # ---------------------------------------------------------------------------
 # Finding the human

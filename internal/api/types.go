@@ -569,6 +569,24 @@ type ClaudeCredentialsStatus struct {
 	HostSource string `json:"host_source,omitempty"`
 }
 
+// UpdateAgentRequest is the body of POST /v1/islands/:name/agents/:id/update.
+type UpdateAgentRequest struct {
+	// Resume continues the previous conversation on the relaunch, where the
+	// framework supports it.
+	Resume bool `json:"resume,omitempty"`
+}
+
+// UpdateAgentResponse reports what ran and whether the agent came back on the
+// new version. Restarted is false when the update SUCCEEDED and the relaunch did
+// not — a state worth naming, because the new version is on disk and the old one
+// is still the process.
+type UpdateAgentResponse struct {
+	Agent     string `json:"agent"`
+	Command   string `json:"command"`
+	Output    string `json:"output,omitempty"`
+	Restarted bool   `json:"restarted"`
+}
+
 // GitHubIdentitiesResponse is the body of GET /v1/credentials/github: the
 // daemon's GitHub identities without their tokens.
 type GitHubIdentitiesResponse struct {

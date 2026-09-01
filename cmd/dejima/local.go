@@ -89,7 +89,15 @@ func newLocalInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println("installing the local inference backend on the daemon host…")
+			// On the daemon host, install from here — this process has the
+			// terminal that the backend's installer needs for sudo. The daemon
+			// call that follows then finds it installed and just registers the
+			// provider. See installLocalBackendHere.
+			if installLocalBackendHere(cmd.Context()) {
+				fmt.Println("registering the `local` provider with the daemon…")
+			} else {
+				fmt.Println("installing the local inference backend on the daemon host…")
+			}
 			if err := c.LocalInstall(cmd.Context(), os.Stdout); err != nil {
 				return err
 			}

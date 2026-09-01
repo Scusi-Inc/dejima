@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quickstart — install Dejima in minutes</title>
-<meta name="description" content="Install Dejima on a Mac mini, Linux server, or cloud VM in minutes. One line to install, one word to run. The installer handles Tailscale, Docker, and the service.">
+<meta name="description" content="Install Dejima on a Mac mini, Linux server, or cloud VM in minutes. A few commands to install, one word to run. The installer handles Tailscale, Docker, and the service.">
 <meta property="og:title" content="Dejima — Quickstart">
-<meta property="og:description" content="Install Dejima in minutes. One line to install, one word to run.">
+<meta property="og:description" content="Install Dejima in minutes. A few commands to install, one word to run.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://dejima.tech/quickstart.html">
 <meta property="og:image" content="https://dejima.tech/assets/og-card.png">
@@ -48,7 +48,7 @@
 
 <section class="hero">
   <h1 class="hero-h">Up and running in minutes</h1>
-  <p class="lede">One line to install, one word to run. The installer handles Tailscale, Docker, and the background service for you, so there's no infrastructure to build.</p>
+  <p class="lede">A few commands to install, one word to run. The installer handles Tailscale, Docker, and the background service for you, so there's no infrastructure to build.</p>
 </section>
 
 <h2 id="start">Get started</h2>
@@ -90,22 +90,48 @@
           <a href="#macos-first-run">what the macOS installer asks you</a>.</p>
       </div>
       <div class="os-panel" data-os="win">
-        <p class="small">Two commands. Open <strong>PowerShell</strong> (<kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em>)
-          &mdash; <strong>not</strong> Command Prompt. First the Windows client:</p>
+        <p class="small"><strong>First, make sure Windows has WSL2 itself.</strong> Dejima creates its own distro, but it
+          can't install the Windows feature that distros run on: that one needs an administrator and a reboot.
+          <code>wsl --status</code> tells the two apart. If it reports a version, you have WSL already and can skip to the
+          client install below, even if it lists no distro, because setup makes its own. If it answers <em>The Windows
+          Subsystem for Linux is not installed</em>, do this first, in an <strong>administrator</strong> PowerShell
+          (right-click <em>Terminal</em> &rarr; <em>Run as administrator</em>):</p>
+        <div class="cmd">
+          <pre><code>wsl --install --no-distribution</code></pre>
+          <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+        </div>
+        <p class="small">Then reboot. <code>--no-distribution</code> stops Windows also installing a stock Ubuntu you'd never
+          use, since setup builds its own <code>dejima</code> distro. Older builds of <code>wsl.exe</code> don't know that flag:
+          run plain <code>wsl --install</code>, reboot, then <code>wsl --update</code>.</p>
+        <p class="small">Now open <strong>PowerShell</strong> (<kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em>),
+          <strong>not</strong> Command Prompt, and install the Windows client:</p>
         <div class="cmd">
           <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
           <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
         </div>
-        <p class="small">Then the host itself, inside WSL2:</p>
+        <p class="small">Partway through it asks for a server's tailnet address. <strong>Leave it blank</strong> and press
+          Enter, because here you are the server. An address typed there is saved as a persistent <code>DEJIMA_HOST</code>,
+          and that outranks the local profile <code>dejima wsl setup</code> writes two steps later. The setup would look like
+          it worked and then point your client somewhere else.</p>
+        <p class="small"><strong>Close PowerShell and open a new one.</strong> The installer adds <code>dejima</code> to your
+          PATH, and a window that was already open keeps the PATH it started with. Skip this and the next command is
+          <code>The term 'dejima' is not recognized</code>.</p>
+        <p class="small">Then build the host itself, inside WSL2:</p>
         <div class="cmd">
           <pre><code>dejima wsl setup</code></pre>
           <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
         </div>
-        <p class="small">Creates a WSL2 distro if you don't have one, installs Docker and the daemon inside it, builds
-          the island image, and points your client at it. Takes a while on a first run, and it's idempotent, so a failed
-          run is safe to repeat. The dashboard's setup screen offers this as a keystroke too, if you'd rather not type it.</p>
+        <p class="small">Creates the <code>dejima</code> WSL2 distro, installs Docker and the daemon inside it, builds the
+          island image, and points your client at it. It's idempotent, so a failed run is safe to repeat. The dashboard's
+          setup screen offers this as a keystroke too, if you'd rather not type it.</p>
+        <p class="small"><strong>Let setup create and own the distro.</strong> Don't open the new distro first and give it a
+          user and a sudo password: setup provisions it unattended as root, and those steps fail on a permissions error that
+          doesn't point back to the cause.</p>
+        <p class="small"><strong>A quiet stretch is normal.</strong> It downloads an Ubuntu image, installs the Docker
+          engine, and builds the island image, printing little while it works. Don't interrupt it because it went silent.
+          The command gives itself 45 minutes before it gives up on its own.</p>
         <p class="small">Already keep a WSL distro for other work? <code>dejima wsl setup --distro &lt;name&gt;</code> uses
-          that one instead of creating <code>dejima</code>. It has to be WSL&nbsp;2, not WSL&nbsp;1 &mdash; WSL 1 has no real
+          that one instead of creating <code>dejima</code>. It has to be WSL&nbsp;2, not WSL&nbsp;1: WSL 1 has no real
           kernel and can't run Docker.</p>
         <p class="platform-note"><strong>This path is new.</strong> Hosting on Windows landed recently and has had far
           less mileage than the macOS and Linux installs. If it breaks, an <a href="https://github.com/Scusi-Inc/dejima/issues" target="_blank" rel="noopener">issue</a>

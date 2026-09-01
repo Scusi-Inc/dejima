@@ -152,6 +152,30 @@ func (m tuiModel) restartKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "g":
 		v.resume = !v.resume
 		return m, nil
+	case "u":
+		// UPDATE the selected agents' frameworks, then relaunch them.
+		//
+		// Restarting an agent gets it a fresh environment; it does NOT get it a
+		// newer version. Every self-installing agent launches with
+		// `command -v X || install X`, so an island keeps whatever version it
+		// first installed, and the agent's own updater cannot help — OpenClaw's
+		// hands off to a service supervisor to restart the process, and Dejima
+		// runs agents in tmux, so it reports "managed-service-handoff-unavailable"
+		// and skips. This pane is where an operator already comes to relaunch
+		// something, so it is where the update belongs.
+		var ids []string
+		for _, it := range v.items {
+			if it.selected {
+				ids = append(ids, it.id)
+			}
+		}
+		if len(ids) == 0 {
+			v.err = "nothing selected — [space] to pick agents to update"
+			return m, nil
+		}
+		v.busy, v.err = true, ""
+		v.notice = fmt.Sprintf("updating %d agent(s) — this can take a few minutes…", len(ids))
+		return m, m.updateAgentsCmd(v.island, ids, v.resume)
 	case "!":
 		// Heavier fallback: recreate the whole island. This is the only thing that
 		// works for the FIRST secret (no mount yet), and it restarts every agent.
@@ -183,6 +207,13 @@ type restartDoneMsg struct {
 	ok     int
 	failed []string
 	err    error
+	// updated distinguishes an UPDATE run from a plain restart, so the result
+	// line does not claim agents were upgraded when they were only relaunched.
+	updated bool
+	// notRelaunched are agents whose update INSTALLED and whose relaunch did not.
+	// The new version is on disk and the old one is still the running process —
+	// reporting those as plain successes is how a version display starts lying.
+	notRelaunched []string
 }
 
 // restartAgentsCmd restarts the chosen agents (sequentially — a recreate storm
@@ -269,6 +300,37 @@ func (v *restartView) view(width int) string {
 		b.WriteString(styleRunning.Render("• "+v.notice) + "\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("[space] toggle   [a] all/none   [g] resume   [⏎] restart selected   [!] recreate island   [esc] cancel"))
+	b.WriteString(styleMuted.Render("[space] toggle   [a] all/none   [g] resume   [⏎] restart   [u] update version   [!] recreate island   [esc] cancel"))
 	return b.String()
+}
+
+// updateAgentsCmd upgrades each selected agent's framework and relaunches it.
+//
+// A much longer timeout than restartAgentsCmd: `npm install -g` into a cold
+// cache on a small VM is minutes. Timing out here would leave a half-installed
+// agent that the next launch tries to run, so the client waits as long as the
+// daemon is willing to.
+func (m tuiModel) updateAgentsCmd(island string, ids []string, resume bool) tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 11*time.Minute)
+		defer cancel()
+		res := restartDoneMsg{island: island, updated: true}
+		for _, id := range ids {
+			out, err := c.UpdateAgent(ctx, island, id, resume)
+			if err != nil {
+				res.failed = append(res.failed, id)
+				res.err = err
+				continue
+			}
+			res.ok++
+			// An update that installed but did not relaunch leaves the NEW version
+			// on disk and the OLD one running. Counting that as success would make
+			// every version display disagree with the process.
+			if !out.Restarted {
+				res.notRelaunched = append(res.notRelaunched, id)
+			}
+		}
+		return res
+	}
 }

@@ -20,6 +20,12 @@ set -euo pipefail
 SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/tty.sh
 . "$SETUP_DIR/lib/tty.sh"
+# shellcheck source=scripts/lib/transcript.sh
+. "$SETUP_DIR/lib/transcript.sh"
+# Idempotent: install.sh already started one and exported DEJIMA_INSTALL_LOG,
+# and `exec make setup` inherits both it and the redirected descriptors. This
+# call is for the operator who runs `make setup` (or this script) directly.
+start_transcript
 trap stop_sudo_keepalive EXIT
 
 OS=$(uname -s)
@@ -103,11 +109,17 @@ fi
 
 if [[ "$TAILSCALE_PRESENT" == "1" ]]; then
     # "not signed in" and "the daemon isn't running" are different problems with
-    # different fixes, and `tailscale status` fails the same way for both. On
-    # macOS `brew install tailscale` is the CLI ONLY — there is no tailscaled
-    # behind it — so `tailscale up` cannot work no matter how many times it is
-    # run, and asking for a sudo password first only spends the operator's
-    # goodwill on a command that is going to fail. Tell them apart.
+    # different fixes, and `tailscale status` fails the same way for both — so
+    # `tailscale up` cannot work no matter how many times it is run, and asking
+    # for a sudo password first only spends the operator's goodwill on a command
+    # that is going to fail. Tell them apart.
+    #
+    # On macOS the Homebrew FORMULA does ship tailscaled (this said otherwise,
+    # and an operator's own `sudo brew services start tailscale` — which listed
+    # .../Cellar/tailscale/*/bin/tailscaled and started cleanly — is what
+    # corrected it). What the formula does NOT do is start it: nothing runs
+    # tailscaled at install time, so the CLI is present and the socket is not.
+    # That is one command, and it was being sent to a reinstall instead.
     ts_err=""
     if ! ts_err="$(tailscale status 2>&1 >/dev/null)"; then :; fi
     if tailscale status >/dev/null 2>&1; then
@@ -116,9 +128,12 @@ if [[ "$TAILSCALE_PRESENT" == "1" ]]; then
     elif [[ "$ts_err" == *"is Tailscale running"* || "$ts_err" == *"failed to connect"* ]]; then
         warn "the tailscale CLI is installed but the Tailscale service isn't running"
         if [[ "$OS" == "Darwin" ]]; then
-            info "On macOS the Homebrew 'tailscale' formula is the CLI only — it ships no"
-            info "background service, so 'tailscale up' cannot connect. Install the app:"
-            info "  brew install --cask tailscale-app   (then open it and sign in)"
+            info "The Homebrew 'tailscale' formula ships tailscaled but never starts it."
+            info "Start it FIRST, then sign in:"
+            info "  sudo brew services start tailscale"
+            info "  sudo tailscale up --ssh --accept-dns=true"
+            info "(Or use the GUI app instead, which manages its own service:"
+            info "  brew install --cask tailscale-app   — then open it and sign in.)"
         else
             info "Start the service, then sign in:"
             info "  sudo systemctl enable --now tailscaled && sudo tailscale up"

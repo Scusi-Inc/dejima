@@ -319,6 +319,25 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Make sure the session exists WITH THE AGENT IN IT before attaching.
+	//
+	// The attach runs `tmux new-session -A`, which CREATES the session when it is
+	// missing — an empty login shell. image/start.sh then guards its own launch
+	// with `if ! tmux has-session`, sees the name taken, and never starts the
+	// agent at all. So attaching a moment too early does not just show the wrong
+	// thing once; it PERMANENTLY replaces the agent with a bare shell, and the
+	// island looks up and healthy.
+	//
+	// The window is small and easy to hit exactly when it matters: recreate the
+	// island to apply a secret ([!] in the secrets pane), and the dashboard
+	// reattaches while the container is still coming up. Reported from the field
+	// as "after the ! restart it ends up at the terminal workspace, not in the
+	// agent" — which reads like a cold start and is not one.
+	//
+	// ensureAgentSession is idempotent and checks for the session first, so when
+	// the entrypoint wins the race this costs one `tmux has-session`.
+	s.ensureAttachTarget(r.Context(), p, spec, tmuxName)
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // local trust boundary; remote auth handled at TCP listener (M4)
 	})
@@ -442,12 +461,7 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	// the latest client and collapses the shared window to tmux's 80x24 fallback,
 	// stomping the real interactive client's size. Match the largest client
 	// already attached instead, so the new client can't shrink the window.
-	if initRows == 0 || initCols == 0 {
-		if r, c, ok := bridge.MaxClientSize(ctx, "docker", p.ContainerName(), tmuxName); ok {
-			initRows, initCols = r, c
-		}
-	}
-
+	initRows, initCols = s.resolveAttachSize(ctx, p, tmuxName, initRows, initCols)
 	sess, err := bridge.AttachToTmux(ctx, "docker", p.ContainerName(), tmuxName, initRows, initCols, initTerm)
 	if err != nil {
 		_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "error", B64: err.Error()})
@@ -736,3 +750,72 @@ func (s *Server) ensureIslandShell(ctx context.Context, p *project.Project) erro
 	}
 	return nil
 }
+
+// ensureAttachTarget starts the agent's tmux session if it is not up yet, so the
+// attach has something real to connect to. Extracted from sessionWS to be
+// testable: the decision happens before the websocket upgrade, which needs a
+// hijackable connection a test recorder cannot provide.
+//
+// Best-effort by design. A bare shell in place of an agent is bad; refusing to
+// connect at all is worse, so a failure is logged and the attach proceeds.
+func (s *Server) ensureAttachTarget(ctx context.Context, p *project.Project, spec *project.AgentSpec, tmuxName string) {
+	if ok, _ := s.tmuxHasSession(ctx, p, tmuxName); ok {
+		return
+	}
+	if err := s.ensureAgentSession(ctx, p, spec, false); err != nil {
+		s.log.Warn("could not start agent session before attach",
+			"island", p.Name, "agent", spec.ID, "err", err)
+	}
+}
+
+// defaultAttachRows/Cols are the last-resort dimensions for an attach whose size
+// could not be determined. They MUST match `default-size` in image/tmux.conf,
+// which is what a detached `tmux new-session -d` already uses — so a sizeless
+// attach lands on the size the session was created at instead of shrinking it.
+// Change the two together.
+const (
+	defaultAttachRows uint16 = 50
+	defaultAttachCols uint16 = 200
+)
+
+// resolveAttachSize decides the dimensions an attach comes up at. Its whole job
+// is that THE ANSWER IS NEVER ZERO.
+//
+// Three sources in order: the size the client sent, the largest client already
+// attached, and finally the image's own default. The third one is the fix — the
+// first two can both fail on a loaded host, and until now the zeros survived.
+func (s *Server) resolveAttachSize(ctx context.Context, p *project.Project, tmuxName string, rows, cols uint16) (uint16, uint16) {
+	if rows > 0 && cols > 0 {
+		return rows, cols
+	}
+	// Match the largest client already attached, so a sizeless attach cannot
+	// shrink the window and even pulls it toward the real client's size.
+	if r, c, ok := maxClientSizeFn(ctx, "docker", p.ContainerName(), tmuxName); ok && r > 0 && c > 0 {
+		return r, c
+	}
+	// MaxClientSize reports ok=false both when no client is attached YET and when
+	// the query FAILS — and it is itself a `docker exec`, so on a saturated host
+	// it loses the same race the handshake just lost. The zeros used to survive
+	// to AttachToTmux, which takes creack/pty's unsized branch, and the 0x0
+	// client became the "latest" client under tmux's `window-size latest`:
+	// exactly the collapse the code above exists to prevent. The guard fell
+	// through to the bug it was written for.
+	//
+	// The symptom that reached us: an operator's 200x50 terminal showing a live
+	// 80x24 region and blank everywhere else, with tmux's own status bar still
+	// drawn because tmux was never unhealthy. Reported three times as "the
+	// terminal went black", on the one island loaded enough to lose both races.
+	s.log.Debug("sizeless attach; using the image default rather than 0x0",
+		"island", p.Name, "session", tmuxName, "rows", defaultAttachRows, "cols", defaultAttachCols)
+	return defaultAttachRows, defaultAttachCols
+}
+
+// maxClientSizeFn is indirected so a test can drive the case that matters most:
+// tmux ANSWERED and the answer is unusable. bridge.MaxClientSize shells out to
+// `docker` directly rather than through the runtime interface, so a fake runtime
+// cannot reach it, and the `r > 0 && c > 0` check above was untestable — a
+// mutation removing it changed nothing, which is how a guard becomes decoration.
+//
+// It is reachable in the field: parseMaxClientSize parses a "0 0" client line
+// happily and returns ok=true with zeros.
+var maxClientSizeFn = bridge.MaxClientSize

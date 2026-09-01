@@ -317,7 +317,11 @@ func (m tuiModel) agentAdderKeyStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.keyInput = a.keyInput[:len(a.keyInput)-1]
 		}
 	default:
-		if s := msg.String(); len(s) == 1 {
+		// See tui_secrets.go: a byte-length test accepts NUL (a Windows paste
+		// arrives character-by-character, leading NUL included) and silently
+		// drops every non-ASCII rune. This is an API KEY field — a dropped
+		// character stores a credential that is wrong and looks stored.
+		if s := pastableInput(msg); s != "" {
 			a.keyInput += s
 		}
 	}

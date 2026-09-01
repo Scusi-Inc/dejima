@@ -228,6 +228,16 @@ func metasOf(views []GitHubIdentityView) []githubid.Meta {
 	return out
 }
 
+// UpdateAgent upgrades an agent's framework inside a running island and
+// relaunches it on the new version.
+func (c *Client) UpdateAgent(ctx context.Context, island, agentID string, resume bool) (UpdateAgentResponse, error) {
+	var out UpdateAgentResponse
+	err := c.do(ctx, http.MethodPost,
+		"/v1/islands/"+url.PathEscape(island)+"/agents/"+url.PathEscape(agentID)+"/update",
+		UpdateAgentRequest{Resume: resume}, &out)
+	return out, err
+}
+
 // ListGitHubIdentitiesFull returns the identities AND the dangling pins — the
 // islands naming an identity the store does not have. Use this where the result
 // is shown to a person: a dangling pin is invisible in the identity list by

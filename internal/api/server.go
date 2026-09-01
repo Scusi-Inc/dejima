@@ -848,6 +848,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
 	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
 	mux.HandleFunc("PUT /v1/islands/{name}/github-identity", s.handleSetIslandGitHubIdentity)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/update", s.handleUpdateAgent)
 	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
 }
 

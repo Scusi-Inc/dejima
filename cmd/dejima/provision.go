@@ -108,6 +108,23 @@ type provCtx struct {
 	state  *provState
 	env    *envProbe
 	manual []manualStep // GUI-only / off-box steps to print at the end
+
+	// incomplete marks phases that RAN but did not achieve their goal, so the
+	// runner does not record them as done. Without this the only two outcomes
+	// were "done" and "abort the wizard", and an optional phase can be neither:
+	// local models failed to install, returned nil so the wizard would carry on,
+	// and was then marked complete — so the reinstall an operator does to fix it
+	// silently skips the very phase they reinstalled for. Declining is NOT
+	// incomplete; that is an answer, and re-asking every run is nagging.
+	incomplete map[string]bool
+}
+
+// markIncomplete records that this phase must run again next time.
+func (pc *provCtx) markIncomplete(id string) {
+	if pc.incomplete == nil {
+		pc.incomplete = map[string]bool{}
+	}
+	pc.incomplete[id] = true
 }
 
 // manualStep is one thing the wizard could not do for the operator.
@@ -212,6 +229,53 @@ func autoLoginUser() string {
 	return strings.TrimSpace(string(out))
 }
 
+// fileVaultOn reports whether FileVault is enabled. `fdesetup status` prints
+// "FileVault is On." / "FileVault is Off." and — like autoLoginUser — needs no
+// sudo, so the check can't be the thing that gets skipped.
+func fileVaultOn() bool {
+	out, err := exec.Command("fdesetup", "status").Output()
+	if err != nil {
+		return false // not macOS, or fdesetup missing: don't invent a constraint
+	}
+	return strings.Contains(string(out), "FileVault is On")
+}
+
+// autoLoginStep returns the "come back after a reboot" step for this Mac.
+// FileVault is a parameter rather than a lookup inside, because it changes the
+// answer completely and that has to be assertable in a test.
+//
+// macOS DISABLES the "Automatically log in as" control while FileVault is on, so
+// the un-branched version walked the operator to a greyed-out setting and then
+// told them, in a loop, that auto-login "still reads as off" — reported from the
+// field as exactly that. The deeper promise fails too: a FileVault Mac stops at
+// the unlock screen at boot, BEFORE any LaunchDaemon runs, so it cannot return
+// from a power cut unattended whatever auto-login or `pmset autorestart` say.
+// That is a decision for the operator, not a setting to poll, so it carries no
+// verify: it belongs on the end-of-run list, not in a walk loop.
+func autoLoginStep(fileVault bool) guidedStep {
+	if fileVault {
+		return guidedStep{
+			why:   whyHost,
+			title: "Decide how this Mac comes back after a reboot (FileVault is on)",
+			detail: "macOS greys out auto-login while FileVault is on, and a FileVault Mac\n" +
+				"stops at the unlock screen at boot — before any daemon starts.\n" +
+				"Unattended recovery (what a dedicated host wants):\n" +
+				"  sudo fdesetup disable\n" +
+				"  then System Settings → Users & Groups → Automatically log in as\n" +
+				"Keeping FileVault: someone unlocks at the screen after every boot.\n" +
+				"  For a PLANNED reboot, `sudo fdesetup authrestart` skips that prompt.",
+		}
+	}
+	return guidedStep{
+		why:    whyHost,
+		title:  "Enable auto-login",
+		detail: "System Settings → Users & Groups → Automatically log in as → this account",
+		verify: func() bool { return autoLoginUser() != "" },
+		done:   "auto-login is on — this Mac comes back by itself after a reboot",
+		notYet: "auto-login still reads as off (macOS may need the panel closed first)",
+	}
+}
+
 // addManual records an OPTIONAL step. Prefer addManualFor when the step has a
 // consequence worth naming; the default here is deliberately the weakest claim.
 func (pc *provCtx) addManual(title, detail string) {
@@ -314,7 +378,9 @@ func runProvisionHost(ctx context.Context, yes, reset bool) error {
 			fmt.Println("  Fix the above, then re-run `dejima onboard --provision-host` to resume.")
 			return nil
 		}
-		st.markDone(ph.id)
+		if !pc.incomplete[ph.id] {
+			st.markDone(ph.id)
+		}
 		saveProvState(st)
 		fmt.Println()
 	}
@@ -366,18 +432,17 @@ func provPhaseSystemConfig(pc *provCtx) error {
 	// be flipped safely from the CLI (it stores the account password), so this is
 	// always a GUI instruction.
 	fmt.Println()
-	fmt.Println("  Auto-login (so the daemon returns after a reboot with no one at the keyboard):")
-	fmt.Println("    System Settings → Users & Groups → Automatically log in as → <your user>")
-	fmt.Println("    (Optional if you installed the daemon as a --system LaunchDaemon, which")
-	fmt.Println("     starts at boot before any login.)")
-	pc.guide(guidedStep{
-		why:    whyHost,
-		title:  "Enable auto-login",
-		detail: "System Settings → Users & Groups → Automatically log in as → this account",
-		verify: func() bool { return autoLoginUser() != "" },
-		done:   "auto-login is on — this Mac comes back by itself after a reboot",
-		notYet: "auto-login still reads as off (macOS may need the panel closed first)",
-	})
+	fv := fileVaultOn()
+	if fv {
+		fmt.Println("  Auto-login: macOS won't allow it while FileVault is on, and a FileVault Mac")
+		fmt.Println("  stops at the unlock screen at boot anyway — so this needs a decision, below.")
+	} else {
+		fmt.Println("  Auto-login (so the daemon returns after a reboot with no one at the keyboard):")
+		fmt.Println("    System Settings → Users & Groups → Automatically log in as → <your user>")
+		fmt.Println("    (Optional if you installed the daemon as a --system LaunchDaemon, which")
+		fmt.Println("     starts at boot before any login.)")
+	}
+	pc.guide(autoLoginStep(fv))
 	return nil
 }
 
@@ -407,10 +472,14 @@ func pmsetValues() map[string]string {
 // tailscaleUpCmdHint is the `tailscale up` guidance, and it carries two caveats
 // because BOTH bit the same operator on the same day.
 //
-// On macOS, `brew install tailscale` is the CLI ONLY — there is no tailscaled
-// behind it — so `tailscale up` fails with "dial unix /var/run/tailscaled.socket:
-// no such file or directory" no matter how often it is run. The cask is what
-// ships the service.
+// On macOS, `brew install tailscale` leaves `tailscale up` failing with "failed
+// to connect to local Tailscale service; is Tailscale running?" — but NOT
+// because the formula is CLI-only, which is what this said. The formula ships
+// tailscaled; nothing starts it. `sudo brew services start tailscale` does, and
+// an operator who ran it (Cellar/tailscale/*/bin/tailscaled, started cleanly) is
+// what corrected this. Prescribing a reinstall for a service that is installed
+// costs a download and still leaves them one command short, so name that command
+// first and keep the cask as the alternative it is.
 //
 // And on a node that is ALREADY on a tailnet, `tailscale up` with a partial flag
 // set refuses: "changing settings via 'tailscale up' requires mentioning all
@@ -418,7 +487,9 @@ func pmsetValues() map[string]string {
 // configured machine — so point at the command Tailscale itself prints rather
 // than pretending we know their flags.
 const tailscaleUpCmdHint = "sudo tailscale up --ssh --accept-dns=true\n" +
-	"(no tailscaled? install the app: brew install --cask tailscale-app)\n" +
+	"(\"is Tailscale running?\" — start the service first, then re-run the above:\n" +
+	"   sudo brew services start tailscale        [Homebrew formula]\n" +
+	"   or install the GUI app: brew install --cask tailscale-app, then open it)\n" +
 	"(already on a tailnet? Tailscale will print the exact command to use — run that one)"
 
 const tailscaleUpHeadlessHint = "Headless / no browser here? Generate an auth key " +
@@ -439,6 +510,19 @@ func recordTailnetAddrs(pc *provCtx) {
 }
 
 func provPhaseTooling(pc *provCtx) error {
+	// This phase installs Docker Desktop and Tailscale into /Applications, which
+	// macOS gates behind a permission prompt — and attributes to the TERMINAL
+	// APP, not to Dejima. So the operator gets `"Ghostty" would like to access
+	// data from other apps` in the middle of an install they started, naming a
+	// program they did not think was involved. Reported as "super weird and
+	// disconcerting", which is the correct reaction to an unexplained prompt
+	// about one app reaching into others. Say it is coming, and why, first.
+	fmt.Println("  Heads-up: macOS may ask whether your terminal app can \"access data from")
+	fmt.Println("  other apps\" or manage other applications. That's this step installing")
+	fmt.Println("  Docker and Tailscale into /Applications — macOS credits the prompt to the")
+	fmt.Println("  terminal you're typing in, not to Dejima. Allow it, or those installs fail.")
+	fmt.Println()
+
 	// Homebrew first — everything else installs through it.
 	if _, err := exec.LookPath("brew"); err != nil && !brewOnDisk() {
 		fmt.Println("  Homebrew isn't installed (the package manager for everything below).")
@@ -609,9 +693,10 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		fmt.Printf("  ✓ Docker VM has %s of %s host RAM — fine\n", humanBytes(vm), humanBytes(host))
 		return nil
 	}
+	recGB := vmmem.RecommendedGB(host)
 	fmt.Printf("  ⚠ Docker VM has only %s of %s host RAM — islands share this pool and will OOM.\n",
 		humanBytes(vm), humanBytes(host))
-	recGB := vmmem.RecommendedGB(host)
+	fmt.Printf("    Set it to %dGB.\n", recGB)
 
 	// colima can resize from the CLI, so do it inline — suggest the vmmem default
 	// (¾ of host RAM, leaving the host ≥4GiB) but let the user confirm or override
@@ -630,7 +715,7 @@ func provPhaseVMRightsize(pc *provCtx) error {
 			if pc.yes {
 				fmt.Println("  --yes: proceeding with the resize (this bounces running islands).")
 			} else if !pc.confirm(fmt.Sprintf("  Resize to %dGB now and bounce running islands?", gb), false) {
-				pc.addManualFor(whyHost, fmt.Sprintf("Resize the Docker VM to %dGB (when islands are idle)", gb), fmt.Sprintf("colima start --memory %d", gb))
+				pc.addManualFor(whyHost, fmt.Sprintf("Set the Docker VM memory to %dGB (when islands are idle)", gb), fmt.Sprintf("colima start --memory %d", gb))
 				return nil
 			}
 		}
@@ -638,7 +723,8 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		// Omit --cpu/--disk so colima keeps its saved values for those.
 		if err := execInteractive("colima", "start", "--memory", strconv.Itoa(gb)); err != nil {
 			fmt.Printf("  ✗ colima start --memory %d: %v\n", gb, err)
-			pc.addManualFor(whyHost, "Right-size the Docker VM", fmt.Sprintf("colima start --memory %d", gb))
+			title, detail := vmRightsizeStep(gb)
+			pc.addManualFor(whyHost, title, detail)
 			return nil
 		}
 		fmt.Printf("  ✓ ran: colima start --memory %d\n", gb)
@@ -646,15 +732,17 @@ func provPhaseVMRightsize(pc *provCtx) error {
 	}
 
 	// Docker Desktop — no CLI resize; point at doctor --fix / the GUI slider.
-	fmt.Printf("    Recommended: ~%dGB. `dejima doctor --fix` scripts the colima resize.\n", recGB)
+	fmt.Printf("    Set Memory to %dGB: Docker Desktop → Settings → Resources → Memory.\n", recGB)
+	fmt.Println("    (`dejima doctor --fix` scripts the equivalent colima resize.)")
 	if pc.confirm("  Run `dejima doctor --fix` now?", true) {
 		if self, err := os.Executable(); err == nil {
 			if err := execInteractive(self, "doctor", "--fix"); err != nil {
 				fmt.Printf("  ✗ doctor --fix: %v\n", err)
+				title, detail := vmRightsizeStep(recGB)
 				pc.guide(guidedStep{
 					why:    whyHost,
-					title:  fmt.Sprintf("Right-size the Docker VM to ~%dGB", recGB),
-					detail: fmt.Sprintf("Docker Desktop → Settings → Resources → Memory   (or: colima start --memory %d)", recGB),
+					title:  title,
+					detail: detail,
 					verify: func() bool { return !vmmem.Undersized(vmmem.HostMemoryBytes(), dockerVMMemoryBytes()) },
 					done:   "the Docker VM has enough memory for islands",
 					notYet: fmt.Sprintf("still reads as under %dGB — Docker Desktop restarts its VM when you apply", recGB),
@@ -662,9 +750,20 @@ func provPhaseVMRightsize(pc *provCtx) error {
 			}
 		}
 	} else {
-		pc.addManualFor(whyHost, fmt.Sprintf("Right-size the Docker VM to ~%dGB", recGB), "Docker Desktop → Settings → Resources → Memory")
+		title, detail := vmRightsizeStep(recGB)
+		pc.addManualFor(whyHost, title, detail)
 	}
 	return nil
+}
+
+// vmRightsizeStep phrases the right-sizing step so the TARGET SIZE is in it.
+// "Right-size the Docker VM" with the click path but no number is a step the
+// operator cannot act on — they are left to work out the figure the wizard
+// already computed. The field note was that it should blatantly say what to set
+// it to, so every path that records this step goes through here.
+func vmRightsizeStep(gb int) (title, detail string) {
+	return fmt.Sprintf("Set the Docker VM memory to %dGB", gb),
+		fmt.Sprintf("Docker Desktop → Settings → Resources → Memory → %dGB\n(or, with colima: colima start --memory %d)", gb, gb)
 }
 
 // promptMemoryGB asks the user to confirm the recommended VM memory size (in GB)
@@ -853,16 +952,23 @@ func provPhaseLocalModels(pc *provCtx) error {
 	c, err := client()
 	if err != nil {
 		fmt.Println("  The daemon wasn't up yet. Set them up from the TUI later: run `dejima`, Local models.")
+		pc.markIncomplete("local-models")
 		return nil
 	}
 	fmt.Println("  Installing the inference backend (Ollama)…")
+	// Install from here, not through the daemon: the wizard runs in the
+	// operator's terminal, and on macOS the backend's installer needs one for
+	// sudo. See installLocalBackendHere.
+	installLocalBackendHere(pc.ctx)
 	if err := c.LocalInstall(pc.ctx, os.Stdout); err != nil {
 		fmt.Printf("  Install didn't finish (%v). Retry any time from the TUI: run `dejima`, Local models.\n", err)
+		pc.markIncomplete("local-models")
 		return nil
 	}
 	st, err := c.LocalStatus(pc.ctx)
 	if err != nil || st.Recommend.Top == nil {
 		fmt.Println("  Pick a model from the TUI when you want one: run `dejima`, Local models.")
+		pc.markIncomplete("local-models")
 		return nil
 	}
 	top := st.Recommend.Top
@@ -873,6 +979,7 @@ func provPhaseLocalModels(pc *provCtx) error {
 	fmt.Printf("  Pulling %s…\n", top.Alias)
 	if err := c.PullLocalModel(pc.ctx, top.Alias, os.Stdout); err != nil {
 		fmt.Printf("  The %s pull didn't finish. Retry from the TUI: run `dejima`, Local models.\n", top.Alias)
+		pc.markIncomplete("local-models")
 		return nil
 	}
 	fmt.Println("  ✓ local models ready — point an agent at the `local` provider (the `v` model editor).")
@@ -928,10 +1035,20 @@ func provPhaseVerify(pc *provCtx) error {
 			fmt.Println("      (`dejima service install --system --tcp :7273 …`) and Tailscale is up.")
 		}
 		fmt.Println()
-		fmt.Println("    On a laptop (same Tailscale account):")
-		fmt.Println("      go install github.com/aoos/dejima/cmd/dejima@latest")
-		fmt.Printf("      export DEJIMA_HOST=%s:7273\n", remote)
-		fmt.Println("      dejima ls")
+		// WRITE THE ADDRESS DOWN NOW. The client installer asks for it on the
+		// OTHER machine, at which point the operator is standing at a laptop
+		// being asked for a number that is only printed here — so they go
+		// hunting, or guess. Say it while they are still at this Mac, and say
+		// what will ask for it. (`go install` used to lead here: the developer
+		// path, for a person who just wants their laptop to talk to this Mac.)
+		fmt.Println("    On your laptop (signed in to the same Tailscale account), run:")
+		fmt.Println("      curl -fsSL https://dejima.tech/install-client.sh | bash")
+		fmt.Println()
+		fmt.Println("    It asks for a \"Server address\". That is this Mac. Type:")
+		fmt.Printf("      %s\n", remote)
+		fmt.Println()
+		fmt.Println("    (If your laptop is already on this tailnet, the installer finds this Mac")
+		fmt.Println("     by itself and offers that address — just press Enter.)")
 		if fqdn != "" && ip != "" {
 			fmt.Println()
 			fmt.Printf("    That name (%s) is this Mac's MagicDNS name — Tailscale's own DNS.\n", fqdn)

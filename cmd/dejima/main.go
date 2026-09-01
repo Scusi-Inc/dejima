@@ -2661,13 +2661,67 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Manage the agents within an island.",
 	}
-	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRenameCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd(), newAgentRestartCmd())
+	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRenameCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd(), newAgentRestartCmd(),
+		newAgentUpdateCmd())
 	return cmd
 }
 
 // newAgentRestartCmd relaunches an agent in place so it picks up a changed
 // environment (e.g. a newly added secret). --resume continues its previous
 // conversation when the framework supports it (claude-code).
+// newAgentUpdateCmd upgrades an agent's framework inside a running island.
+//
+// It exists because every self-installing agent launches with
+// `command -v X || install X` — install-if-missing, never update — so an island
+// pins whatever version it first installed. The agent's own updater cannot fill
+// the gap either: OpenClaw's hands off to a service supervisor to restart the
+// process, and Dejima launches agents directly in tmux, so it reports
+// "managed-service-handoff-unavailable" and skips. Until now the answer was to
+// hand-type `npm install -g` through `dejima exec`.
+func newAgentUpdateCmd() *cobra.Command {
+	var resume bool
+	cmd := &cobra.Command{
+		Use:   "update <island> <agent-id>",
+		Short: "Update an agent's framework in place, then relaunch it on the new version.",
+		Long: "Runs the agent framework's own upgrade inside the island (npm/pipx/pip, per\n" +
+			"agent type) and RELAUNCHES the agent, because updating the package while the\n" +
+			"old process keeps running changes the version on disk and not the one in\n" +
+			"memory.\n\n" +
+			"Agents that ship in the island image (claude-code) are updated by rebuilding\n" +
+			"the image — `dejima upgrade <island>` — and this command says so rather than\n" +
+			"failing vaguely.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			island, id := args[0], args[1]
+			fmt.Printf("updating %s in %s — this can take a few minutes…\n", id, island)
+			out, err := c.UpdateAgent(cmd.Context(), island, id, resume)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("ran: %s\n", out.Command)
+			if strings.TrimSpace(out.Output) != "" {
+				fmt.Println(out.Output)
+			}
+			if out.Restarted {
+				fmt.Printf("\n%s updated and relaunched on the new version.\n", id)
+				return nil
+			}
+			// Naming this state matters: the new version is installed and the OLD
+			// one is still the running process, so every version display would
+			// disagree with reality until someone restarts it.
+			fmt.Printf("\n⚠ %s was UPDATED but did not relaunch — the new version is on disk and\n"+
+				"  the old one is still running. Restart it:  dejima agent restart %s %s\n", id, island, id)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&resume, "resume", false, "continue the previous conversation on relaunch (where the framework supports it)")
+	return cmd
+}
+
 func newAgentRestartCmd() *cobra.Command {
 	var resume bool
 	cmd := &cobra.Command{

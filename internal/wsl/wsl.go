@@ -88,6 +88,24 @@ func Host(distro string) string {
 // mistake worth naming rather than a dial to attempt.
 func Supported() bool { return runtime.GOOS == "windows" }
 
+// InstallHint is the exact command to install WSL, in ONE place because three
+// user-facing sites print it and a fourth (the website) copies it. They had
+// already drifted: the binary said `wsl --install` while the site said
+// `--no-distribution`, so the same operator got two different instructions
+// depending on where they read.
+//
+// --no-distribution is the right one HERE, specifically. Plain `wsl --install`
+// also downloads a default Ubuntu and puts a username/password prompt in front
+// of the operator — a distro Dejima never uses, because `dejima wsl setup`
+// creates its own (see createDistro). Telling someone to install a distro we
+// then ignore costs a download, a reboot-time prompt, and the belief that the
+// thing they set up is the thing we run.
+//
+// The flag needs a reasonably recent wsl.exe. Where it is rejected, plain
+// `wsl --install` still works and simply installs more than is needed, so the
+// hint names both rather than dead-ending on an unrecognised flag.
+const InstallHint = "wsl --install --no-distribution   (older wsl.exe: wsl --install)"
+
 // ErrUnsupported is returned when a `wsl://` target is used off Windows.
 var ErrUnsupported = errors.New("wsl:// targets work only on Windows (WSL interop); use a host:port address here")
 
@@ -366,8 +384,60 @@ func Available() bool {
 	if !Supported() {
 		return false
 	}
-	_, err := exec.LookPath("wsl.exe")
-	return err == nil
+	if _, err := exec.LookPath("wsl.exe"); err != nil {
+		return false
+	}
+	// FINDING wsl.exe IS NOT THE SAME QUESTION AS "IS WSL INSTALLED".
+	//
+	// Windows ships wsl.exe in System32 whether or not the feature is enabled.
+	// On a box without it, the launcher is a stub that prints "The Windows
+	// Subsystem for Linux is not installed" and exits non-zero. So LookPath
+	// succeeded, this reported available, requireWSLPlatform's clear message
+	// ("Install it: an admin PowerShell, then `wsl --install`, then reboot")
+	// never fired, and the operator got a raw passthrough of
+	//
+	//     wsl -l -v: The Windows Subsystem for Linux is not installed.
+	//
+	// from three layers down. The guard was not missing; it was not reached.
+	//
+	// So ask WSL itself. `--status` is the cheap probe: it answers on a healthy
+	// install and emits the not-installed text on a stub. Note this deliberately
+	// does NOT treat a non-zero exit as absence — `--status` also exits non-zero
+	// on an install with no distro yet, which is a state List() already
+	// distinguishes and which `dejima wsl setup` exists to fix.
+	return featurePresent()
+}
+
+// featurePresent asks WSL whether it is actually there.
+//
+// Split from Available so it is REACHABLE FROM A TEST: Available's two guards
+// (Supported, LookPath) are both false on the machines that run the tests, so a
+// test of Available exercises the early returns and never the logic that was
+// wrong. Mutating this function back to `return true` must fail something.
+func featurePresent() bool {
+	cmd := execCommand("wsl.exe", "--status")
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	_ = cmd.Run()
+	return !reportsNotInstalled(decodeWSLText(out.Bytes()) + decodeWSLText(errOut.Bytes()))
+}
+
+// reportsNotInstalled recognises the stub launcher's answer.
+//
+// Matched on the message rather than the exit code, because the exit code cannot
+// tell "WSL is absent" from "WSL is installed with no distro" — opposite
+// situations with opposite next steps: install the feature and reboot, versus
+// run `dejima wsl setup`. Telling someone with a working WSL to reinstall
+// Windows features is the failure this function exists to avoid.
+//
+// Localized Windows installs translate this string. A translated message
+// therefore reads as "installed", and the operator gets the raw passthrough they
+// get today rather than a wrong instruction — the safe direction to be wrong in.
+func reportsNotInstalled(text string) bool {
+	t := strings.ToLower(text)
+	return strings.Contains(t, "windows subsystem for linux is not installed") ||
+		strings.Contains(t, "wsl is not installed")
 }
 
 // List enumerates installed distros. An empty list with no error means WSL is

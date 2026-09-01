@@ -101,6 +101,22 @@ func (s *Server) handleLocalModels(w http.ResponseWriter, r *http.Request) {
 // handleLocalInstall streams a best-effort backend install, then registers the
 // `local` provider on success so models are immediately usable from islands.
 func (s *Server) handleLocalInstall(w http.ResponseWriter, r *http.Request) {
+	// Already there — installed by a previous run, or by hand because on macOS
+	// the installer is the one part the daemon cannot drive (no terminal for its
+	// sudo). Re-running it buys nothing; registration is the half that matters,
+	// so this is the path back for anyone who installed the backend themselves.
+	if installed, _ := s.localBackend().Detect(r.Context()); installed {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "%s is already installed on this host — registering the `local` provider.\n",
+			s.localBackend().Name())
+		if err := s.registerLocalProvider(); err != nil {
+			fmt.Fprintf(w, "provider registration failed: %v\n", err)
+			return
+		}
+		fmt.Fprintln(w, localInstallOKMarker)
+		return
+	}
 	stream, err := s.localBackend().Install(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)

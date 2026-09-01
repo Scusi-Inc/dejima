@@ -168,6 +168,38 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/UpdateResourcesResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/agents/{id}/update:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Agent id
+    post:
+      tags: [agents]
+      summary: Update an agent's framework in place, then relaunch it
+      description: >-
+        Runs the agent framework's own upgrade inside the island (npm/pipx/pip,
+        per agent type) and RELAUNCHES the agent — updating the package while the
+        old process keeps running changes the version on disk and not the one in
+        memory. Agents bundled in the island image (claude-code) return 409
+        naming `dejima upgrade` instead, because their version is the image's.
+      operationId: updateAgent
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAgentRequest" }
+      responses:
+        "200":
+          description: OK — what ran, and whether the agent came back on the new version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateAgentResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The agent is image-bundled, its type is unknown, or the island is not running
   /v1/islands/{name}/github-identity:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     put:
@@ -3292,6 +3324,22 @@ components:
         default: { type: boolean }
         owner: { type: string, description: tenant that owns this identity (empty = host) }
         shared: { type: boolean, description: host identity usable by every tenant's islands }
+    UpdateAgentRequest:
+      type: object
+      properties:
+        resume: { type: boolean, description: continue the previous conversation on relaunch, where the framework supports it }
+    UpdateAgentResponse:
+      type: object
+      properties:
+        agent: { type: string }
+        command: { type: string, description: the upgrade command that ran inside the island }
+        output: { type: string, description: tail of the command output, marked when truncated }
+        restarted:
+          type: boolean
+          description: >-
+            Whether the agent was relaunched on the new version. FALSE means the
+            update succeeded and the relaunch did not — the new version is on
+            disk and the old one is still the running process.
     GitHubIdentitiesResponse:
       type: object
       properties:
