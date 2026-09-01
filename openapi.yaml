@@ -2864,7 +2864,7 @@ components:
         id: { type: string }
         containment:
           type: string
-          enum: [contained]
+          enum: [contained, observed]
           description: >
             Whether Dejima GATES this agent or merely watches it. `contained`
             means the agent runs inside an island: brokered by Port, its host
@@ -2881,9 +2881,15 @@ components:
             lives, not from a stored record, so it cannot drift from the
             collection that already implies it.
 
-            The enum lists only `contained` today; the ungated level is pending a
-            naming decision (`dejima adopt` already means the opposite — migrating
-            a local project INTO an island).
+            `observed` means Dejima can SEE this agent and cannot STOP it: it runs
+            outside any island, reads whatever its user can read, and holds
+            whatever credentials its user holds. Dejima records what it reports
+            about itself; nothing gates it.
+
+            Named `observed` rather than `adopted` deliberately — `dejima adopt`
+            already means the opposite (migrating a local project INTO an island),
+            and one word for both ends of the containment axis would put a
+            false-containment claim in the vocabulary every surface is built from.
         type: { type: string }
         label: { type: string }
         tmux: { type: string }

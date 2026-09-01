@@ -114,16 +114,34 @@ func TestIslandPeerRoster_CarriesContainment(t *testing.T) {
 	}
 }
 
-// The naming collision, pinned so it cannot be reintroduced by someone reaching
-// for the obvious word. `dejima adopt` already ships and means the OPPOSITE —
-// migrating a local project INTO an island. Giving the ungated state that name
-// would hand one verb both ends of the only axis this product has.
-func TestContainmentDoesNotReuseTheAdoptVerb(t *testing.T) {
-	if strings.Contains(strings.ToLower(string(ContainmentContained)), "adopt") {
-		t.Error("the contained level is named with the adopt verb")
+// The ungated level must NOT report Contained(). This is the assertion the whole
+// field exists for: an agent Dejima can see and cannot stop is the case that
+// looks identical to a fully locked island from outside, and the one a reader
+// must never be reassured about.
+func TestContainmentObservedIsNotContained(t *testing.T) {
+	if ContainmentObserved.Contained() {
+		t.Fatal("the observed level reports Contained() — an agent nothing gates " +
+			"would render as gated, which is the exact claim this field exists to prevent")
 	}
-	// Deliberately not asserting the ungated level's name: it is d1's ruling and
-	// is not yet made. This test exists to catch "adopted" arriving as its value
-	// without that decision, which is the outcome nobody would have chosen and
-	// everybody could drift into.
+	if ContainmentObserved == ContainmentContained {
+		t.Error("the two levels are the same value")
+	}
+	if ContainmentObserved == "" {
+		t.Error("the observed level IS the zero value — then an unset record would " +
+			"claim it, and 'nobody said' would stop being distinguishable from a real answer")
+	}
+}
+
+// The naming decision, pinned. `dejima adopt` ships and means the OPPOSITE —
+// migrating a local project INTO an island. Reusing that verb for the ungated
+// state would put a false-containment claim in the vocabulary itself, which is
+// worse-placed than any of the four surfaces we removed one from: a sentence can
+// be rewritten, a word is what every future surface gets built out of.
+func TestContainmentLevelsDoNotReuseTheAdoptVerb(t *testing.T) {
+	for _, lvl := range []ContainmentLevel{ContainmentContained, ContainmentObserved} {
+		if strings.Contains(strings.ToLower(string(lvl)), "adopt") {
+			t.Errorf("level %q is named with the adopt verb, which already means "+
+				"the opposite thing in this product", lvl)
+		}
+	}
 }

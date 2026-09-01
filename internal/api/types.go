@@ -138,12 +138,26 @@ type IslandIdentity struct {
 // fail safe, and a test that no path emits "".
 type ContainmentLevel string
 
-// ContainmentContained is an agent inside an island: gated by the Port broker,
-// its crossings ledgered. The other level is pending a naming decision — the
-// verb "adopt" is already taken by `dejima adopt`, which means the OPPOSITE
-// (migrating a local project INTO an island), so naming the ungated state
-// "adopted" would give one word both ends of the only axis this product has.
-const ContainmentContained ContainmentLevel = "contained"
+const (
+	// ContainmentContained is an agent inside an island: gated by the Port broker,
+	// its crossings ledgered.
+	ContainmentContained ContainmentLevel = "contained"
+	// ContainmentObserved is an agent Dejima can SEE and cannot STOP. It runs
+	// outside any island, reads whatever its user can read, and holds whatever
+	// credentials its user holds. Dejima records what it reports about itself;
+	// nothing gates it.
+	//
+	// NAMED "observed", NOT "adopted", and that was a decision rather than a
+	// preference. `dejima adopt` already ships and means the OPPOSITE — migrating
+	// a local project INTO an island, i.e. maximum containment. One verb for both
+	// ends of the only axis this product has would put a false-containment claim
+	// in the vocabulary itself, where every future surface is built out of it.
+	//
+	// The asymmetry is what settles it: guess wrong about `dejima adopt` and you
+	// get an island nobody needed. Guess wrong about this one and you believe a
+	// loose agent is contained.
+	ContainmentObserved ContainmentLevel = "observed"
+)
 
 // Contained reports whether this level is a positive containment claim. Anything
 // else — including the empty zero value — is not. Written as a method so the
