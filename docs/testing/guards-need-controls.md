@@ -519,6 +519,70 @@ this project spends the most care on.
 
 *(From d3; the one-line version is d1's.)*
 
+### The reference is another artifact, and nothing points at it
+
+**What happened.** Dejima's containment boundary is the island, which is per
+*project*: an island holds several agents, sharing it, each on its own git
+worktree. The website said the wall was around each *agent*. That is false, and
+it is a security claim, so it is the error a reader notices fastest.
+
+It was corrected three times. Each time a person found it by re-asking the
+question; no check ever did. The third instance is the one worth keeping,
+because it explains the other two: the page read **"each agent runs in a
+container"** — the claim in full, containing none of `isolated`, `walled off` or
+`from each other`, which were the words every previous sweep had searched for. I
+had been searching for the *wording* rather than for the *claim*, so each sweep
+could only re-find what it had already found, and its clean result read as
+coverage.
+
+Meanwhile the code was right the whole time, and said so in its own tests.
+
+**The tell.** Two artifacts assert the same fact, they have different owners and
+different review paths, there is no shared test — and **neither file mentions
+the other**. This is weaker than a seam and worse. A seam has two owners and a
+boundary somebody drew; the control for it is that each owner mutates the
+other's guard. Here nobody had drawn a boundary, so there was nothing to stand
+on either side of. Product copy and product code are the instance; docs against
+a config schema, or a README against a CLI's `--help`, are the same shape.
+Thoroughness *within* either artifact cannot reach it, because each is
+internally consistent and correct.
+
+**The control.** Pin the claim-bearing sentences and check them in CI
+(`scripts/site-claim-check.py`). Not a banned-phrase list: a list goes quiet
+exactly when a new wording appears, and whoever writes the new wording is by
+construction not editing the list. Pin what the sentences *say*, so a rewording
+fails until a human looks. Not a golden over the page either — these are
+marketing pages, mostly prose, and a golden fails on every legitimate edit and
+gets switched off within a week. A description guard in this repo produced 29
+false positives and was deleted rather than shipped.
+
+**Pin the count, not the presence.** Two of the eight pinned sentences appear
+*twice* — once in FAQPage JSON-LD, once in the visible answer. Presence alone
+passes a half-fix, and a half-fix is not hypothetical here: correcting the
+visible copy and not the structured-data copy is how this claim stayed live for
+days after it was "fixed", where search engines and models read it.
+
+**And say what it cannot do.** It catches **drift in known claims, never
+invention of new ones.** A new page making the same claim in fresh copy passes
+untouched, because nothing forces new prose through the manifest. A renderer can
+be given a funnel — one function every claim must pass through — and a page
+cannot; there is no single call site for a sentence. The person re-asking the
+question is still load-bearing. This only puts a floor under them.
+
+**The near-miss.** The first mutation written against the mirrored pair
+**matched nothing** — the surrounding markup had been guessed. Without the
+precondition asserting that a mutation applied, a no-op would have printed as a
+passing test, and the guard would have been credited with catching a half-fix it
+had never been shown. That trap is already recorded in this file for Go and for
+YAML; a third format makes it a property of mutation testing rather than of a
+language. **Assert the mutation applied before you trust what the test says
+about it.**
+
+> **When two artifacts assert the same fact and neither one names the other,
+> there is no seam to check — so the check has to manufacture one.**
+
+*(From d5.)*
+
 ## A verification has a timestamp; a gate does not
 
 The two above are references that were wrong at the moment they were read. This
