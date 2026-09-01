@@ -146,6 +146,26 @@ jobs:
       - name: WSL install hint (website ↔ internal/wsl.InstallHint)
         run: python3 scripts/site-wsl-hint-check.py
 
+  # Dejima's containment boundary is the ISLAND, which is per PROJECT — an island
+  # holds several agents sharing it. "Every agent is walled off from the other
+  # agents" is false, and it is a SECURITY claim, so a reader notices.
+  #
+  # It has been fixed on the site three times by hand. Each time a person found
+  # it; no check ever did. site-claim-check.py pins the claim-bearing sentences
+  # so a rewording fails until someone looks — including the mirrored JSON-LD
+  # and visible copies of the same answer, whose counts are pinned because a
+  # half-fix left the claim live in structured data for days.
+  #
+  # Same no-`paths:`-filter reasoning as the job above, and it matters more here:
+  # this guard's whole subject is page copy, so a filter that skipped HTML-only
+  # commits would skip every commit that can break it.
+  site-claims:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Containment claims on the website are unchanged
+        run: python3 scripts/site-claim-check.py
+
   # The installer's "is anyone home?" logic, exercised under a real pty. This is
   # the only automated coverage the fresh-install path has: the clean-Mac runner
   # was torn down, so nothing else executes any of it. Runs anywhere — it stubs

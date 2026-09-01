@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -21,6 +22,8 @@ func newUpdateCmd() *cobra.Command {
 	var checkOnly bool
 	var source string
 	var force bool
+	var daemonToo bool
+	var all bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update Dejima to the latest release (use --check to only look)",
@@ -36,6 +39,7 @@ func newUpdateCmd() *cobra.Command {
 			"    unless you pass --force (containers and agents keep running; you reattach).\n\n" +
 			"Use --check to only report whether an update is available, without applying it.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			daemonToo = daemonToo || all
 			st, err := selfupdate.Check(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("check for updates: %w", err)
@@ -44,7 +48,13 @@ func newUpdateCmd() *cobra.Command {
 			fmt.Printf("latest:   %s\n", st.Latest)
 			fmt.Printf("mode:     %s\n", st.Mode)
 			if !st.UpdateAvailable {
-				fmt.Println("you're up to date.")
+				fmt.Println("this client is up to date.")
+				// The daemon can still be behind — and on the machine where that
+				// matters most (a Windows client driving a daemon in WSL) an
+				// up-to-date CLIENT is exactly when nobody thinks to look. A bare
+				// "you're up to date" there is wrong about the system while being
+				// right about the binary.
+				reportDaemonVersion(cmd.Context(), cmd.OutOrStdout(), daemonToo)
 				return nil
 			}
 			fmt.Printf("\nan update is available (%s → %s).\n", st.Current, st.Latest)
@@ -62,6 +72,7 @@ func newUpdateCmd() *cobra.Command {
 					return fmt.Errorf("apply update: %w", err)
 				}
 				fmt.Println("done — restart any running `dejima` to pick up the new version.")
+				reportDaemonVersion(cmd.Context(), cmd.OutOrStdout(), daemonToo)
 				return nil
 			}
 			dir := source
@@ -94,6 +105,13 @@ func newUpdateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "only report whether an update is available; don't apply it")
 	cmd.Flags().StringVar(&source, "source", "", "path to the dejima checkout (default: found from the current directory)")
 	cmd.Flags().BoolVar(&force, "force", false, "apply a daemon-restarting (source) update even while terminals are attached — closes them fleet-wide")
+	cmd.Flags().BoolVar(&daemonToo, "daemon", false, "also update the daemon this client is pointed at (restarts it; attached terminals reconnect)")
+	// --all is what people reach for, and it is the same thing. Dejima is two
+	// programs — a client and a daemon — and nothing about `dejima update` said
+	// so, which is exactly how an operator ended up on a new client driving an
+	// old daemon while the command reported success. Naming the whole-system
+	// update makes the split discoverable at the moment it matters.
+	cmd.Flags().BoolVar(&all, "all", false, "update this client AND the daemon it's pointed at (same as --daemon; restarts the daemon)")
 	return cmd
 }
 
@@ -156,4 +174,64 @@ func resolveUpdateCheckout() (string, error) {
 	return "", fmt.Errorf(
 		"no dejima checkout found from %s, and this install recorded none.\n"+
 			"Pass one explicitly:  dejima update --source <dir>", cwd)
+}
+
+// reportDaemonVersion closes the gap that made `dejima update` misleading.
+//
+// The command updates THIS BINARY and prints "done". On a machine that also
+// hosts the daemon — a Windows box whose daemon lives in WSL, most obviously —
+// that leaves the daemon on the old version while the command reports success.
+// The operator did exactly this, saw v0.8.89, and found the daemon still on
+// v0.8.87 with the TUI banner still asking to update it.
+//
+// It was not even fixable from the CLI: DaemonUpdate had one caller in the
+// whole tree, the TUI's confirm dialog. So a broken confirm (or a headless
+// machine) left no route at all.
+//
+// Reporting rather than silently applying by default is deliberate: updating
+// the daemon RESTARTS it, and a restart is not something a routine `dejima
+// update` should do to someone without saying so. --daemon opts in.
+func reportDaemonVersion(ctx context.Context, w io.Writer, apply bool) {
+	c, err := client()
+	if err != nil {
+		return // no daemon configured; nothing to say
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	st, err := c.DaemonUpdate(ctx, false, false)
+	if err != nil {
+		// Never turn a successful client update into a failure because the
+		// daemon could not be reached. Say what is unknown and stop.
+		fmt.Fprintf(w, "\nthe daemon's version couldn't be checked (%v)\n", err)
+		fmt.Fprintln(w, "check it yourself with: dejima update --daemon")
+		return
+	}
+	if !st.UpdateAvailable {
+		fmt.Fprintf(w, "daemon:   %s (up to date)\n", st.Current)
+		return
+	}
+
+	if !apply {
+		fmt.Fprintf(w, "\nTHE DAEMON IS STILL ON %s (latest %s).\n", st.Current, st.Latest)
+		fmt.Fprintln(w, "Updating this client did not update it — they are separate programs,")
+		fmt.Fprintln(w, "and on Windows the daemon lives inside WSL rather than on this machine.")
+		fmt.Fprintln(w, "\n  dejima update --daemon      # restarts the daemon; terminals reconnect")
+		return
+	}
+
+	fmt.Fprintf(w, "\nupdating the daemon (%s → %s)…\n", st.Current, st.Latest)
+	res, err := c.DaemonUpdate(ctx, true, false)
+	if err != nil {
+		fmt.Fprintf(w, "daemon update failed: %v\n", err)
+		return
+	}
+	// Deferred is not a failure and must not read as one: the daemon refused
+	// because terminals are attached, and the operator chooses when to drop them.
+	if res.Deferred {
+		fmt.Fprintf(w, "deferred: %d terminal(s) are attached, so the daemon was not restarted.\n", res.AttachedClients)
+		fmt.Fprintln(w, "re-run with --force once they're closed, or detach them first.")
+		return
+	}
+	fmt.Fprintf(w, "daemon updating to %s — it restarts itself; reattach in a moment.\n", res.Latest)
 }

@@ -1649,8 +1649,16 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		default:
-			if len(msg.String()) == 1 {
-				m.confirm.answer += msg.String()
+			// Read the RUNES, not the byte length of the formatted key string.
+			// `len(msg.String()) == 1` is a byte test wearing a character test's
+			// clothes: it drops every multi-byte rune, and on Windows it can
+			// reject an ordinary keypress whose String() carries more than the
+			// character itself — which is how a confirm that says "Type y then
+			// press Enter" silently refuses to accept y. Same defect class as
+			// e92f32c, in the one dialog where the alternative is being unable
+			// to say yes to anything at all.
+			if typed := pastableInput(msg); typed != "" {
+				m.confirm.answer += typed
 			}
 			return m, nil
 		}
