@@ -197,12 +197,32 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 		// teammate driving a REMOTE daemon has no useful local repos to scan, so
 		// burying "Browse my GitHub repos" behind a scan hid the option they most
 		// needed. See viewPick — the same choice also lives there post-scan.
+		// "Start empty" LEADS, and it is the only row here that always works.
+		//
+		// This screen is what a fresh client shows before any repo root is
+		// configured, and it used to offer four ways to name a repo and no way to
+		// skip having one. An operator with no repo yet — or on Windows, where the
+		// two directory rows name CLIENT paths a WSL/remote daemon cannot use —
+		// had nothing on this screen they could complete. Reported from a fresh
+		// Windows install as "no ready way to set up an empty repo or copy some
+		// files over": the empty option existed the whole time, on the screen
+		// AFTER a scan they had no reason to run.
+		//
+		// It leads for the same reason it leads in viewPick, and carries the same
+		// hazard: the cursor's zero value decides what Enter-Enter does. #355
+		// added a test for exactly that; rootCursor is set below to match.
 		c.rootChoices = []string{
+			"Start empty (no repo — add files later)",
 			"Scan this directory (" + tildeify(pwd) + ")",
 			"Choose another directory…",
 			"Browse my GitHub repos…",
 			"Enter a repo URL or path manually",
 		}
+		// Do not let the zero value pick the destructive-by-surprise option. An
+		// empty island is cheap and reversible, so leading with it is safe — but
+		// the cursor is set explicitly rather than left at 0 by accident, so the
+		// next person to reorder the rows has to make the choice on purpose.
+		c.rootCursor = rootRowEmpty
 		return m, nil
 	}
 	c.step = stepPick
@@ -417,16 +437,18 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		switch c.rootCursor {
-		case 0:
+		case rootRowEmpty:
+			return m.creatorEnterNoRepo()
+		case rootRowScan:
 			pwd, _ := os.Getwd()
 			_ = clientcfg.Save(clientcfg.Config{RepoRoot: pwd})
 			c.root, c.step, c.scanning = pwd, stepPick, true
 			return m, discoverCmd(pwd)
-		case 1:
+		case rootRowChooseDir:
 			c.rootTyping, c.rootInput = true, ""
-		case 2:
+		case rootRowGitHub:
 			return m.creatorEnterGitHub()
-		case 3:
+		case rootRowManual:
 			c.step = stepManual
 		}
 	}
@@ -1331,7 +1353,15 @@ func (c *creatorModel) viewName(b *strings.Builder) {
 // the default action of the most-used flow. Repo-less is a rare, deliberate choice;
 // it has to be visible, not default.
 const (
-	pickRowNoRepo    = 0
+	pickRowNoRepo = 0
+	// Rows on the pre-scan root screen. Named because they are referenced from
+	// three places and an off-by-one silently sends the operator somewhere else.
+	rootRowEmpty     = 0
+	rootRowScan      = 1
+	rootRowChooseDir = 2
+	rootRowGitHub    = 3
+	rootRowManual    = 4
+
 	pickRowGitHub    = 1
 	pickRowManual    = 2
 	pickRowFromDir   = 3
