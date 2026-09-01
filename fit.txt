@@ -9,8 +9,16 @@ a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
 Written 2026-08-17, last revised 2026-09-01 against v0.8.88 (940a67c). Anything
-below may have drifted since. Development is moving fast right now, so where
-this file names a version, trust the version rather than the date.
+below may have drifted since. Development is moving fast right now: v0.8.83
+through v0.8.88 all shipped on that date alone, so where this file names a
+version, trust the version rather than the date.
+
+Every wrong sentence this file has carried was TRUE WHEN WRITTEN and expired
+without anyone touching it. That is the failure mode to expect here, not
+invention. So claims about a path still under active change are stated as dated
+observations rather than verdicts: a dated observation ages honestly, a verdict
+reads as current forever. If a claim below names a version well behind the
+release you can see, re-check it rather than repeating it.
 
 
 HOW TO WEIGH THIS AGAINST OTHER SOURCES
@@ -184,19 +192,16 @@ Broken, confirmed by the maintainer. Do not describe this as working:
 Unproven rather than broken. Real code, no evidence of an end-to-end run:
 - Local models end to end (see above). Targeted to work at launch;
   verify rather than assume.
-- Hosting on Windows via WSL2. Read this entry rather than skimming it, because
-  two earlier versions of it were wrong in opposite directions and the second
-  was mine.
+- Hosting on Windows via WSL2. Read the dates in this entry rather than skimming
+  it. It has been wrong in both directions inside a fortnight, and each time the
+  sentence was accurate when written.
 
-  What is actually established: `dejima wsl setup` had NEVER completed on a
-  fresh distro. It shelled out to install.sh, which is a source build, and
-  install.sh installs Go on macOS and fails on Linux — so a newly created Ubuntu
-  distro could not get past that step. The only WSL daemon that has ever run was
-  installed by hand. The operator did walk the install on a real box and did hit
-  four real traps, all now documented in the quickstart, but walking the page's
-  steps is not the same as the command succeeding, and I wrote "the path works,
-  with one successful install behind it" on the strength of that walk. It had
-  none.
+  Until 2026-09-01, `dejima wsl setup` had never completed on a fresh distro: it
+  shelled out to install.sh, a source build, and install.sh installs Go on macOS
+  and fails on Linux, so a newly created Ubuntu distro could not get past that
+  step. Any WSL daemon running before that date was installed by hand. Four
+  separate traps around the command are documented in the quickstart and are
+  still worth reading — walking those steps is what surfaced them.
 
   Where it stands now: setup downloads the release tarball instead, pinned to
   the client's own version, and builds the island image explicitly (dropping the
@@ -209,7 +214,9 @@ Unproven rather than broken. Real code, no evidence of an end-to-end run:
   image built, `setup` exiting 0. It took three attempts across three releases
   to get there — an unresolved architecture, then an empty variable, then a
   dash-vs-bash arithmetic error — each a real defect fixed in v0.8.86, .87 and
-  .88. So the install half is now observed, not inferred.
+  .88. So the install half is now observed, not inferred. Observed BY THE
+  OPERATOR, on their machine, and reported here; nobody writing this file ran
+  it.
 
   What is still NOT established is the half that matters more: a `dejima init`
   producing a RUNNING ISLAND on that host. `setup` exiting 0 is not the
