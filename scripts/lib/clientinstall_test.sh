@@ -120,6 +120,20 @@ else
     bad "PATH entry is not prepended; a stale binary earlier on PATH would win:
 $(grep -i path "$H1/.zshrc" 2>/dev/null)"
 fi
+# DEJIMA_HOST must land in a file this SHELL reads. Choosing the rc file by OS
+# instead of by shell put it in .bashrc for zsh-on-Linux and .zshenv for
+# bash-on-macOS — never read either way, so the variable is never set and the
+# install looks clean while the client cannot find the server.
+if grep -q "DEJIMA_HOST" "$H1/.zshenv" 2>/dev/null; then
+    ok "DEJIMA_HOST written to .zshenv, which zsh actually reads"
+else
+    bad "DEJIMA_HOST not in .zshenv for a zsh user (found: $(find "$H1" -maxdepth 1 -name '.*' -printf '%f ' 2>/dev/null))"
+fi
+if [[ -f "$H1/.bashrc" ]] && grep -q "DEJIMA_HOST" "$H1/.bashrc" 2>/dev/null; then
+    bad "DEJIMA_HOST written to .bashrc for a zsh user — never read"
+else
+    ok "did not write DEJIMA_HOST to a file zsh ignores"
+fi
 if grep -qi "open a new terminal" <<<"$out1"; then
     ok "tells the user to open a new terminal"
 else

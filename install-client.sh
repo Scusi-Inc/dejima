@@ -461,11 +461,27 @@ if [[ -n "$server_host" ]]; then
         ok "saved a durable connection profile ($server_host → $candidate_host)"
     fi
 
-    # Pick the most appropriate rc file: zsh on macOS, bash on Linux.
+    # Pick the rc file by the user's SHELL, not by the OS.
+    #
+    # Choosing by OS assumes macOS means zsh and Linux means bash. Both halves
+    # are wrong often enough to matter: zsh on Linux got DEJIMA_HOST written to
+    # .bashrc, and bash on macOS got it written to .zshenv. Either way the file
+    # is never read, the variable is never set, and nothing reports a problem —
+    # the install looks clean and the client cannot find the server.
+    #
+    # .zshenv rather than .zshrc for zsh, deliberately: it is read by EVERY zsh,
+    # including non-interactive ones, which is what an environment variable
+    # wants. (The PATH entry above goes to .zshrc for the opposite reason — on
+    # macOS, /etc/zprofile runs path_helper AFTER .zshenv and reorders PATH, so
+    # a PATH set there can be silently overridden.)
     rc=""
-    case "$os" in
-        darwin) rc="$HOME/.zshenv" ;;
-        linux)  rc="$HOME/.bashrc" ;;
+    case "$(basename "${SHELL:-}")" in
+        zsh)  rc="$HOME/.zshenv" ;;
+        bash) if [[ "$os" == "darwin" ]]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi ;;
+        *)    case "$os" in
+                  darwin) rc="$HOME/.zshenv" ;;
+                  *)      rc="$HOME/.bashrc" ;;
+              esac ;;
     esac
     line="export DEJIMA_HOST=$candidate_host"
     if [[ -n "$rc" ]] && ! grep -qxF "$line" "$rc" 2>/dev/null; then
