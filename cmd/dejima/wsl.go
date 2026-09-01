@@ -504,7 +504,9 @@ func installDejimad(ctx context.Context, distro string) error {
 	}
 
 	url := fmt.Sprintf("https://github.com/Scusi-Inc/dejima/releases/download/%s/dejima_%s_linux_%s.tar.gz", ver, ver, goarch)
-	script := "url=" + shellSingleQuote(url) + "\n" + dejimadInstallScript
+	// The echo gets the BARE url so the operator sees a clickable address rather
+	// than one wrapped in quotes; curl gets the quoted one.
+	script := fmt.Sprintf(dejimadInstallScript, url, shellSingleQuote(url))
 	if _, err := wsl.Run(ctx, distro, script); err != nil {
 		return err
 	}
@@ -622,20 +624,35 @@ func runWSLExe(ctx context.Context, args ...string) (string, error) {
 // dejimadInstallScript downloads the release tarball and installs both binaries.
 // One raw literal so the dash guard checks all of it; $want_ver is supplied by
 // the caller as a shell assignment prepended to this text.
+// dejimadInstallScript has NO SHELL VARIABLES AT ALL. Only %s, for the URL.
+//
+// It had two — $work and $HOME — and on the operator's machine produced
+//
+//	mkdir: cannot create directory '': No such file or directory
+//
+// while running correctly under dash locally, and with $HOME confirmed set to
+// /root inside that very distro. So something between Go's exec and the distro's
+// sh expands `$` in the script text: `$work` becomes empty, the quotes survive,
+// and mkdir receives ”. d4 had already found that wsl.exe mangles embedded
+// double quotes; this is the same channel chewing something else.
+//
+// I am not going to keep characterising that channel. Every round of this has
+// cost the operator a reinstall, and each fix so far has been a smaller guess
+// than the last. Removing the class of thing that gets mangled ends it: no
+// variables, no substitution, no expansion — a literal path and a literal URL,
+// both decided in Go where they can be tested.
+//
+// /var/tmp, not $HOME and not /tmp: it exists on every distro, survives the idle
+// shutdown that empties tmpfs, and needs no expansion to name.
 const dejimadInstallScript = `
 		set -e
-		# A persistent path, not /tmp. WSL terminates an idle distro seconds after
-		# the last process exits and /tmp is tmpfs, so anything split across two
-		# wsl.exe invocations loses it between them -- which reads as a download
-		# failure rather than a lifecycle one.
-		work="$HOME/.dejima/install"
-		mkdir -p "$work"
-		echo "downloading $url"
-		curl -fsSL "$url" -o "$work/dejima.tar.gz"
-		tar -xzf "$work/dejima.tar.gz" -C "$work"
-		install -m 0755 "$work/dejima" "$work/dejimad" /usr/local/bin/ 2>/dev/null \
-			|| sudo install -m 0755 "$work/dejima" "$work/dejimad" /usr/local/bin/
-		rm -rf "$work"
+		rm -rf /var/tmp/dejima-install
+		mkdir -p /var/tmp/dejima-install
+		echo "downloading %s"
+		curl -fsSL %s -o /var/tmp/dejima-install/dejima.tar.gz
+		tar -xzf /var/tmp/dejima-install/dejima.tar.gz -C /var/tmp/dejima-install
+		install -m 0755 /var/tmp/dejima-install/dejima /var/tmp/dejima-install/dejimad /usr/local/bin/ 2>/dev/null || sudo install -m 0755 /var/tmp/dejima-install/dejima /var/tmp/dejima-install/dejimad /usr/local/bin/
+		rm -rf /var/tmp/dejima-install
 		command -v dejimad >/dev/null 2>&1`
 
 // shellSingleQuote quotes a value for POSIX sh. The version comes from our own

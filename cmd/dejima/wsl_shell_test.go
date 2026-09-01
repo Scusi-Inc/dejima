@@ -56,7 +56,9 @@ func TestWSLScriptsParseUnderDash(t *testing.T) {
 			"reporting on the whole file", len(found), minScripts)
 	}
 	for i, m := range found {
-		script := m[1]
+		// Fill any %s placeholders before parsing: an unformatted script is not
+		// what runs, so checking it would check the wrong text.
+		script := strings.ReplaceAll(m[1], "%s", "'https://example.invalid/x'")
 		cmd := exec.Command("dash", "-n", "-c", script)
 		var errOut strings.Builder
 		cmd.Stderr = &errOut
@@ -172,14 +174,24 @@ func TestInstallScriptCarriesNoLogic(t *testing.T) {
 		{"case ", "branching on a value the Go side already knows"},
 		{"uname", "architecture detection belongs in Go, where the result can be trimmed and named"},
 		{"releases/download", "URL assembly — build the finished URL in Go and pass it"},
+		{"$", "a shell VARIABLE. Something between Go's exec and the distro's sh " +
+			"expands `$` in this script: on a real machine `$work` came through empty, " +
+			"the quotes survived, and mkdir received '' — while the same script ran " +
+			"correctly under dash locally with HOME confirmed set. Inline the value " +
+			"from Go instead; there is nothing here worth a variable"},
 	} {
 		if strings.Contains(dejimadInstallScript, banned.tok) {
 			t.Errorf("the install script contains %q: %s", banned.tok, banned.why)
 		}
 	}
-	// And it must still receive the URL it is meant to use, or the ban above is
-	// satisfied by a script that does nothing.
-	if !strings.Contains(dejimadInstallScript, "$url") {
-		t.Error("the install script never uses $url — it has been emptied rather than simplified")
+	// And it must still be given a URL, or the bans above are satisfied by a
+	// script that does nothing at all.
+	if strings.Count(dejimadInstallScript, "%s") != 2 {
+		t.Errorf("the install script has %d %%s placeholders, want 2 (the echo and the "+
+			"curl) — it has been emptied rather than simplified",
+			strings.Count(dejimadInstallScript, "%s"))
+	}
+	if !strings.Contains(dejimadInstallScript, "curl") {
+		t.Error("the install script no longer downloads anything")
 	}
 }
