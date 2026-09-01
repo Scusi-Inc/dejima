@@ -91,8 +91,10 @@
       </div>
       <div class="os-panel" data-os="win">
         <p class="small"><strong>First, make sure Windows has WSL2 itself.</strong> Dejima creates its own distro, but it
-          can't install the Windows feature that distros run on: that one needs an administrator and a reboot. Skip this if
-          <code>wsl -l -v</code> already lists a WSL&nbsp;2 distro. Otherwise, in an <strong>administrator</strong> PowerShell
+          can't install the Windows feature that distros run on: that one needs an administrator and a reboot.
+          <code>wsl --status</code> tells the two apart. If it reports a version, you have WSL already and can skip to the
+          client install below, even if it lists no distro, because setup makes its own. If it answers <em>The Windows
+          Subsystem for Linux is not installed</em>, do this first, in an <strong>administrator</strong> PowerShell
           (right-click <em>Terminal</em> &rarr; <em>Run as administrator</em>):</p>
         <div class="cmd">
           <pre><code>wsl --install --no-distribution</code></pre>
