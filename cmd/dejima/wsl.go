@@ -423,9 +423,18 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 // installDejimad installs the daemon from the official install script, which
 // also builds the island image.
 func installDejimad(ctx context.Context, distro string) error {
+	// DEJIMA_ROLE=server is not optional here. install.sh now asks SERVER or
+	// CLIENT on /dev/tty, and it asks there precisely because a `curl … | bash`
+	// pipe is not evidence that nobody is watching. This call is a non-interactive
+	// child of `dejima wsl setup`: if a terminal is reachable from inside the
+	// distro, the installer would stop and wait for an answer nobody is there to
+	// give, and `wsl setup` would hang with no output explaining why.
+	//
+	// Whether wsl.exe hands the child a usable /dev/tty is not something to
+	// discover in the field on someone's first install. Answer it here.
 	_, err := wsl.Run(ctx, distro, `
 		set -e
-		curl -fsSL https://dejima.tech/install.sh | SKIP_SERVICE=1 bash
+		curl -fsSL https://dejima.tech/install.sh | DEJIMA_ROLE=server SKIP_SERVICE=1 bash
 		command -v dejimad >/dev/null 2>&1`)
 	return err
 }
@@ -445,9 +454,17 @@ func startDaemonInWSL(ctx context.Context, distro string) error {
 		[ -S "$HOME/.dejima/dejimad.sock" ] && ! pgrep -x dejimad >/dev/null 2>&1 && rm -f "$HOME/.dejima/dejimad.sock"
 		mkdir -p "$HOME/.dejima"
 		nohup dejimad --foreground >>"$HOME/.dejima/dejimad.log" 2>&1 &
-		for i in $(seq 1 60); do
+		# POSIX counter, deliberately not a seq expansion. wsl.Run executes this
+		# through sh -c, which is DASH on Ubuntu, and a distro without coreutils
+		# expands seq to nothing -- leaving an empty for-list, which dash rejects
+		# with "Syntax error: word unexpected (expecting do)". That is our script
+		# failing on the operator machine, and it fired AFTER everything else had
+		# worked: a clean install path with one last landmine at the end.
+		i=0
+		while [ "$i" -lt 60 ]; do
 			[ -S "$HOME/.dejima/dejimad.sock" ] && echo started && exit 0
 			sleep 1
+			i=$((i + 1))
 		done
 		echo "dejimad did not create its socket within 60s; last log lines:" >&2
 		tail -n 20 "$HOME/.dejima/dejimad.log" >&2
