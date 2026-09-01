@@ -69,15 +69,64 @@ func uninstallClient(yes bool) error {
 		fmt.Println("  Homebrew:   brew uninstall dejima")
 	}
 	if runtime.GOOS == "windows" {
-		fmt.Println("  PowerShell: Remove-Item (Get-Command dejima).Source   (close other dejima windows first)")
-	} else {
-		if exe, err := os.Executable(); err == nil {
-			fmt.Printf("  standalone: rm %s\n", exe)
-		}
+		printWindowsLeftovers()
+		return nil
+	}
+	if exe, err := os.Executable(); err == nil {
+		fmt.Printf("  standalone: rm %s\n", exe)
 	}
 	fmt.Println()
 	fmt.Println("Nothing else on this machine is Dejima's — you're done.")
 	return nil
+}
+
+// printWindowsLeftovers names what install-client.ps1 wrote that this command
+// cannot remove, because on Windows "nothing else is Dejima's" was simply false.
+//
+// The PowerShell installer writes three things beyond ~/.dejima: a program
+// directory (%LOCALAPPDATA%\dejima, holding dejima.exe plus any .old-* sidecars
+// self-update left behind), an entry appended to the User PATH, and — when its
+// Tailscale step runs — a User-scope DEJIMA_HOST. The first is a real directory
+// no package manager owns, so `npm uninstall` and `brew uninstall` both no-op
+// on it and leave a working `dejima` on PATH after a "successful" uninstall.
+// The third outranks everything in client.json (see resolveTarget), so leaving
+// it behind means the connection this command claims to have removed is still
+// in force.
+//
+// These are printed rather than removed: the running .exe is locked so it
+// cannot delete itself, and rewriting a user's PATH unprompted is not something
+// an uninstaller should do silently. Naming them precisely is the fix.
+func printWindowsLeftovers() {
+	// Built with a literal separator, not filepath.Join: this string is pasted
+	// into PowerShell by a human, and Join uses the separator of the machine
+	// doing the building. That is right in production (this path is Windows-only)
+	// but it silently yields "…\AppData\Local/dejima" anywhere else, which is the
+	// sort of thing that reads fine in review and looks broken to an operator.
+	prefix := os.Getenv("DEJIMA_PREFIX")
+	if prefix == "" {
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			prefix = strings.TrimRight(local, `\/`) + `\dejima`
+		} else {
+			prefix = `%LOCALAPPDATA%\dejima`
+		}
+	}
+
+	fmt.Println("  installer:  Remove-Item -Recurse " + prefix)
+	fmt.Println("              (close other dejima windows first — a running .exe is locked)")
+	fmt.Println()
+	fmt.Println("Two more things the PowerShell installer wrote, which the steps above do NOT")
+	fmt.Println("remove. Skip them and `dejima` keeps working from a new shell:")
+	fmt.Println()
+	fmt.Println("  1. Its entry on your User PATH:")
+	fmt.Printf("       $p = [Environment]::GetEnvironmentVariable('Path','User')\n")
+	fmt.Printf("       $new = ($p -split ';' | Where-Object { $_ -ne '%s' }) -join ';'\n", prefix)
+	fmt.Printf("       [Environment]::SetEnvironmentVariable('Path', $new, 'User')\n")
+	fmt.Println()
+	fmt.Println("  2. DEJIMA_HOST, if you gave the installer a server address. It overrides")
+	fmt.Println("     every saved profile, so it outlives the connection removed above:")
+	fmt.Println("       [Environment]::SetEnvironmentVariable('DEJIMA_HOST', $null, 'User')")
+	fmt.Println()
+	fmt.Println("Both need a new PowerShell to take effect. Verify with:  Get-Command dejima -All")
 }
 
 // fileExists reports whether path is an existing file (client uninstall only

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -46,5 +47,46 @@ func TestUninstallClientOnUnconfiguredMachine(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := uninstallClient(true); err != nil {
 		t.Errorf("--client on an unconfigured machine should be a clean no-op, got: %v", err)
+	}
+}
+
+// On Windows the installer writes three things this command cannot remove, and
+// the old output claimed "nothing else on this machine is Dejima's" — which was
+// false, and sent at least one operator away believing the CLI was gone while a
+// working dejima.exe sat on their PATH. Each leftover must be named.
+func TestWindowsLeftoversNameEveryUnremovedArtifact(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", `C:\Users\test\AppData\Local`)
+	t.Setenv("DEJIMA_PREFIX", "")
+
+	out := captureStdout(t, printWindowsLeftovers)
+
+	for _, want := range []string{
+		`C:\Users\test\AppData\Local\dejima`, // the program dir no package manager owns
+		"Path",                               // the User PATH entry
+		"DEJIMA_HOST",                        // outranks every saved profile
+		"Get-Command dejima -All",            // how to confirm it actually went
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Windows uninstall output never mentions %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Nothing else on this machine is Dejima's") {
+		t.Error("the all-clear must not be printed on Windows — three artifacts survive")
+	}
+}
+
+// A custom install prefix has to be honoured, or the command confidently tells
+// the operator to delete a directory they never installed into.
+func TestWindowsLeftoversHonoursCustomPrefix(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", `C:\Users\test\AppData\Local`)
+	t.Setenv("DEJIMA_PREFIX", `D:\tools\dejima`)
+
+	out := captureStdout(t, printWindowsLeftovers)
+
+	if !strings.Contains(out, `D:\tools\dejima`) {
+		t.Errorf("custom DEJIMA_PREFIX ignored:\n%s", out)
+	}
+	if strings.Contains(out, `AppData\Local\dejima`) {
+		t.Errorf("named the default prefix despite DEJIMA_PREFIX being set:\n%s", out)
 	}
 }
