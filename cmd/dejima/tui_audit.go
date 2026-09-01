@@ -136,7 +136,7 @@ func (m tuiModel) renderAuditView() string {
 		// true when written; read together without this line, the chain's assurance
 		// gets attached to the row's claim.
 		if note := chainNote(v.entries); note != "" {
-			b.WriteString("\n" + styleMuted.Render("  " + note))
+			b.WriteString("\n" + styleMuted.Render("  "+note))
 		}
 	} else {
 		b.WriteString(styleErrored.Render("⚠ CHAIN TAMPERED — " + v.verErr))
