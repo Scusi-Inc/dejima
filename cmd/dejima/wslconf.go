@@ -71,8 +71,14 @@ func mergeWSLConf(existing, command string) string {
 		}
 		out = append(out, ln)
 	}
-	// A [boot] section that ran to the end of the file without a command.
+	// A [boot] section that ran to the end of the file without a command. Drop
+	// the trailing blank lines the file's final newline produces, or the key
+	// lands after a gap — still inside the section and still valid, but it reads
+	// like it belongs to nothing, in a file the operator will open again.
 	if inBoot && !replaced {
+		for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+			out = out[:len(out)-1]
+		}
 		out = append(out, want)
 	}
 
