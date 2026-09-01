@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -145,6 +147,72 @@ func TestWSLScriptsUseNonInteractiveSudo(t *testing.T) {
 					"prompt here hangs setup with no output explaining why", trimmed)
 				break
 			}
+		}
+	}
+}
+
+// A failure inside the distro must carry what the distro SAID.
+//
+// wsl.Run returns the combined output alongside the error, and every install
+// step used to discard it — so a failure surfaced as "install Docker engine:
+// exit status 1", the one fact the operator already knew, while the apt error or
+// DNS failure that explains it went into a variable nobody read. On the path
+// with the worst network and the least ability to reproduce, every failure was
+// invisible.
+func TestWSLStepErrCarriesTheDistroOutput(t *testing.T) {
+	base := errors.New("exit status 1")
+
+	if got := wslStepErr("", nil); got != nil {
+		t.Errorf("wslStepErr with no error returned %v, want nil", got)
+	}
+	// No output is not a reason to lose the error.
+	if got := wslStepErr("", base); !errors.Is(got, base) {
+		t.Errorf("the underlying error was dropped when output was empty: %v", got)
+	}
+
+	got := wslStepErr("E: Unable to locate package socat", base)
+	if !errors.Is(got, base) {
+		t.Error("the underlying error is no longer unwrappable — callers matching on " +
+			"it would stop seeing it")
+	}
+	if !strings.Contains(got.Error(), "Unable to locate package socat") {
+		t.Errorf("the distro's own words are missing: %v", got)
+	}
+}
+
+// Tailed, not dumped. An image build log is thousands of lines, and printing all
+// of it buries the last twenty that actually say what went wrong.
+func TestWSLStepErrTailsLongOutput(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 500; i++ {
+		fmt.Fprintf(&b, "noise line %d\n", i)
+	}
+	b.WriteString("the real error is here")
+
+	got := wslStepErr(b.String(), errors.New("boom")).Error()
+	if !strings.Contains(got, "the real error is here") {
+		t.Error("the tail dropped the last line, which is the one that matters")
+	}
+	if strings.Contains(got, "noise line 0") {
+		t.Error("the whole log was included — the useful lines are buried")
+	}
+	if n := strings.Count(got, "noise line"); n > 20 {
+		t.Errorf("kept %d noise lines, want at most 20", n)
+	}
+}
+
+// Every step that runs a script in the distro must route its failure through the
+// helper. One that does not is invisible again, and it will be the one nobody
+// tests because it only fails on someone else's machine.
+func TestEveryWSLInstallStepReportsOutput(t *testing.T) {
+	for _, fn := range []string{"installSocat", "installDocker", "installDejimad", "buildIslandImage"} {
+		body := wslFuncBody(t, fn)
+		if !strings.Contains(body, "wsl.Run(") {
+			continue // not a step that shells into the distro
+		}
+		if !strings.Contains(body, "wslStepErr(") {
+			t.Errorf("%s runs a script in the distro but does not report its output on "+
+				"failure — the operator gets an exit status and nothing else", fn)
 		}
 	}
 }

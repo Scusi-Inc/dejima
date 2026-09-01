@@ -393,8 +393,41 @@ func createDistro(ctx context.Context, distro string) error {
 	return nil
 }
 
+// wslStepErr attaches what the distro actually said to a failed step.
+//
+// d4's finding, and the problem is worth stating exactly: wsl.Run returns the
+// combined output AND an error, and every install step here discarded the
+// output. So a failure inside the distro surfaced as "install Docker engine:
+// exit status 1" — the one fact the operator already knew — while the apt error,
+// the DNS failure, the disk-full message that actually explains it went into a
+// variable nobody read. EVERY FAILURE ON THIS PATH WAS INVISIBLE, on the path
+// with the worst network and the least ability to reproduce.
+//
+// Tailed rather than whole: an image build log is thousands of lines, and
+// dumping all of it into a terminal buries the last twenty that matter.
+func wslStepErr(out string, err error) error {
+	if err == nil {
+		return nil
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n--- last output from inside the distro ---\n%s",
+		err, lastLines(out, 20))
+}
+
+// lastLines returns the final n lines of s.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
 func installSocat(ctx context.Context, distro string) error {
-	_, err := wsl.Run(ctx, distro, `
+	out, err := wsl.Run(ctx, distro, `
 		set -e
 		if command -v apt-get >/dev/null 2>&1; then
 			sudo -n apt-get update -qq && sudo -n apt-get install -y -qq socat
@@ -405,7 +438,7 @@ func installSocat(ctx context.Context, distro string) error {
 		else
 			echo "no supported package manager (need apt/dnf/apk)" >&2; exit 1
 		fi`)
-	return err
+	return wslStepErr(out, err)
 }
 
 // installDocker runs Docker's official convenience script inside the distro and
@@ -425,7 +458,7 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 	if !yes && !confirmWSL("Install the Docker engine inside "+distro+" (get.docker.com)?") {
 		return fmt.Errorf("cancelled — install Docker in the distro yourself, then re-run")
 	}
-	_, err := wsl.Run(ctx, distro, strings.ReplaceAll(`
+	out, err := wsl.Run(ctx, distro, strings.ReplaceAll(`
 		set -e
 		if ! command -v docker >/dev/null 2>&1; then
 			curl -fsSL https://get.docker.com | sudo -n sh
@@ -440,7 +473,11 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 		fi
 		docker info >/dev/null 2>&1`, "USER_PLACEHOLDER", who))
 	if err != nil {
-		return fmt.Errorf("%w\n(check inside the distro:  wsl -d %s -- docker info)", err, distro)
+		// The distro's own output first — a docker install fails for reasons only
+		// it can state (no DNS, disk full, an apt lock) — then the command to look
+		// deeper. The hint alone told the operator to go find what we already had.
+		return fmt.Errorf("%w\n(check inside the distro:  wsl -d %s -- docker info)",
+			wslStepErr(out, err), distro)
 	}
 	return nil
 }
@@ -521,8 +558,8 @@ func installDejimad(ctx context.Context, distro string) error {
 	script := fmt.Sprintf(dejimadInstallScript,
 		url, shellSingleQuote(url), asset,
 		shellSingleQuote(sumsURL), shellSingleQuote(asset), asset, asset)
-	if _, err := wsl.Run(ctx, distro, script); err != nil {
-		return err
+	if out, err := wsl.Run(ctx, distro, script); err != nil {
+		return wslStepErr(out, err)
 	}
 	return nil
 }
@@ -550,13 +587,13 @@ func latestReleaseTag(ctx context.Context) (string, error) {
 // It needs no checkout: the daemon embeds the build context (islandimage
 // .Materialize), so a release-installed dejimad can build its own image.
 func buildIslandImage(ctx context.Context, distro string) error {
-	_, err := wsl.Run(ctx, distro, `
+	out, err := wsl.Run(ctx, distro, `
 		set -e
 		if docker image inspect dejima/island >/dev/null 2>&1; then
 			echo already-built; exit 0
 		fi
 		dejima image build`)
-	return err
+	return wslStepErr(out, err)
 }
 
 // startDaemonInWSL brings dejimad up in the background inside the distro and
