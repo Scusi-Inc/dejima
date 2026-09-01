@@ -393,7 +393,15 @@ dejima service uninstall             # stop + deregister the daemon
 sudo rm /usr/local/bin/dejima /usr/local/bin/dejimad
 rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
 </code></pre>
-<p class="small">On a client device, uninstalling is just deleting the <code>dejima</code> binary and removing <code>DEJIMA_HOST</code> from your shell profile. Docker and Tailscale are left in place — Dejima uses them but didn't install-own them; remove them separately if nothing else needs them.</p>
+<p class="small">On a Mac or Linux client device, uninstalling is just deleting the <code>dejima</code> binary and removing <code>DEJIMA_HOST</code> from your shell profile. Docker and Tailscale are left in place — Dejima uses them but didn't install-own them; remove them separately if nothing else needs them.</p>
+<p class="small"><strong>On Windows, three things outlive the uninstall.</strong> <code>dejima uninstall --client</code> removes the saved connection and nothing more, so after it you still have a working <code>dejima</code> on your PATH. That's deliberate rather than broken: a running <code>.exe</code> is locked and can't delete itself, and an uninstaller silently rewriting your PATH is worse than one that tells you. Remove them yourself, in PowerShell:</p>
+<pre><code>Remove-Item -Recurse "$env:LOCALAPPDATA\dejima"   # dejima.exe and any .old-* copies
+[Environment]::SetEnvironmentVariable('DEJIMA_HOST', $null, 'User')
+$p = [Environment]::GetEnvironmentVariable('Path','User') -split ';' |
+       Where-Object { $_ -ne "$env:LOCALAPPDATA\dejima" }
+[Environment]::SetEnvironmentVariable('Path', ($p -join ';'), 'User')
+</code></pre>
+<p class="small">Close any other windows running <code>dejima</code> first, or the first line can't delete the binary. If you installed with <code>DEJIMA_PREFIX</code> set, substitute that path in all three. <strong>Don't skip the <code>DEJIMA_HOST</code> line</strong>: that variable outranks every saved profile, so a leftover one stays in force even though <code>--client</code> reported removing the saved connection. Reinstall later and the client keeps dialling the old server, with nothing on screen explaining why. It's the same precedence that makes leaving the address blank matter during install, at the other end of the lifecycle.</p>
 
 <footer class="footer">
   <span class="footer-brand">Dejima</span>

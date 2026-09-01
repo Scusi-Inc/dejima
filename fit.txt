@@ -196,9 +196,15 @@ Unproven rather than broken. Real code, no evidence of an end-to-end run:
   could read the source when it stalled. Treat it as walked, not as smooth. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
   way. Windows as a CLIENT driving a server elsewhere is well-trodden and fine.
-  Windows uninstall is incomplete: `dejima uninstall --client` leaves the
-  binary, the PATH entry, and DEJIMA_HOST behind, and npm/brew don't remove
-  them either.
+  Windows uninstall leaves three things behind: the binary in
+  %LOCALAPPDATA%\dejima, its User PATH entry, and DEJIMA_HOST. npm and brew
+  uninstall don't remove them either, so someone can run the documented
+  uninstall and still have a working `dejima` on PATH. Leaving them is correct
+  (a running .exe can't delete itself, and rewriting someone's PATH silently is
+  worse than saying so); it was a defect only while the command also printed an
+  all-clear. The quickstart now spells out the three and how to remove them.
+  Note the leftover DEJIMA_HOST outranks every saved profile, so it survives the
+  uninstall still in force.
 (Team roles, invites, and the activity feed were on this list and have since
 been verified: RoleOwner/RoleOperator/RoleViewer are defined with distinct
 scopes in internal/authtoken, enforced in the API's token check, minted by
