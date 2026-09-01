@@ -655,10 +655,17 @@ func (m tuiModel) onGhIdentities(msg ghIdentitiesMsg) (tea.Model, tea.Cmd) {
 				"`gh` is logged in). Once they do, your GitHub repos show up here.\n\n" +
 				"Meanwhile you can still start from a public git URL (back → “Enter a repo URL”)."
 		} else {
-			c.ghHint = "No GitHub identity on the server yet — let's connect one:\n" +
-				"On a machine where `gh` is logged in, run `dejima auth push --github` (it pushes\n" +
-				"your GitHub login to the daemon), or run `gh auth login` on the daemon host.\n" +
-				"Then come back here and your repos will be listed."
+			// [c] rather than a paragraph of homework. This screen used to tell an
+			// owner to go run a command in another terminal and come back — which
+			// is the settings pane's job description, and the settings pane has a
+			// key for it. Reported from a fresh Windows install as "no github
+			// connected (should be guided)": the guidance was there and it was
+			// prose, so the operator read instructions instead of connecting.
+			c.ghHint = "No GitHub identity on the server yet.\n\n" +
+				"Press [c] to connect one now — it opens the guided sign-in in a new\n" +
+				"window. Come back with [r] when it finishes and your repos appear.\n\n" +
+				"(The daemon holds the identity, not this machine, so having `gh`\n" +
+				"logged in locally is not enough on its own.)"
 		}
 		return m, nil
 	case 1:
@@ -689,8 +696,31 @@ func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if c.ghHint != "" { // no identities: any key but movement returns to the picker
-		if s := msg.String(); s == "esc" || s == "enter" || s == "q" {
+	if c.ghHint != "" {
+		switch msg.String() {
+		case "c", "C":
+			// --default: this fires only when NO identity resolves, so the one
+			// being created is the one everything should follow. Leaving it
+			// implicit is how a daemon ends up holding identities and no default,
+			// which is its own week of confusion.
+			if !canOpenNewWindow() {
+				c.ghHint = "Run this in another terminal, then press [r]:\n\n    " + ghConnectCmd
+				return m, nil
+			}
+			if err := m.openGithubConnectWindow(ghConnectArgs); err != nil {
+				c.ghHint = "Couldn't open a window. Run this in another terminal, then [r]:\n\n    " + ghConnectCmd
+				return m, nil
+			}
+			c.ghHint = "Opened the guided sign-in in a new window.\n\n" +
+				"Approve it on GitHub, then press [r] to reload."
+			return m, nil
+		case "r", "R":
+			// Re-ask the daemon rather than assuming the connect worked. If it did
+			// not, the operator lands back on this same screen with the same key,
+			// which is the correct place to be.
+			c.ghLoading, c.ghHint, c.err = true, "", ""
+			return m, c.ghIdentitiesCmd()
+		case "esc", "enter", "q":
 			c.step, c.err, c.ghHint = stepPick, "", ""
 		}
 		return m, nil
@@ -1466,3 +1496,15 @@ func (c *creatorModel) viewFromDir(b *strings.Builder) {
 	}
 	b.WriteString("\n" + styleMuted.Render("[⏎] continue   [tab] git init on/off   [esc] back"))
 }
+
+// ghConnectArgs / ghConnectCmd are ONE decision written once.
+//
+// The window path and the type-it-yourself path must not disagree about the
+// command — a fallback that omits --default hands the operator a daemon holding
+// an identity that nothing resolves to, which is a week of confusion we have
+// already had. Deriving the printed command from the args makes the two
+// incapable of drifting, and lets one assertion cover both.
+const (
+	ghConnectArgs = " --default"
+	ghConnectCmd  = "dejima github connect" + ghConnectArgs
+)
