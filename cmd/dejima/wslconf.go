@@ -24,7 +24,16 @@ import (
 // dial — WSL boots it and this runs, so the daemon is there by the time the
 // connection is made. It survives `wsl --shutdown`, a Windows reboot, and the
 // distro idling out, none of which the previous approach did.
-const wslBootCommand = `setsid dejimad --foreground >>/root/.dejima/dejimad.log 2>&1`
+// The path is ABSOLUTE. The boot context is not a login shell and its PATH does
+// not include /usr/local/bin, so a bare `dejimad` resolves to nothing:
+//
+//	setsid: failed to execute dejimad: No such file or directory
+//
+// which is what the field log showed — the command ran exactly as configured and
+// found nothing to run. An interactive `wsl -d <distro> -- dejimad` works, which
+// is precisely why this was easy to get wrong: the binary is on PATH in every
+// context a person tests by hand, and absent in the one that matters.
+const wslBootCommand = `setsid /usr/local/bin/dejimad --foreground >>/root/.dejima/dejimad.log 2>&1`
 
 // mergeWSLConf adds (or updates) the [boot] command in an existing wsl.conf,
 // leaving every other section and key untouched.

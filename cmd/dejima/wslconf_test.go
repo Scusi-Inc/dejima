@@ -9,7 +9,7 @@ import (
 // disturb anything else — a setup step that quietly resets someone's default
 // user or hostname to install a daemon is a worse bug than the one it fixes.
 func TestMergeWSLConf(t *testing.T) {
-	const cmd = `setsid dejimad --foreground >>/root/.dejima/dejimad.log 2>&1`
+	const cmd = wslBootCommand
 	want := `command = "` + cmd + `"`
 
 	for _, tc := range []struct {
@@ -82,7 +82,7 @@ func TestMergeWSLConf(t *testing.T) {
 // The merge must be idempotent: setup is re-run routinely, and a step that
 // grows the file each time is how a config ends up with five boot commands.
 func TestMergeWSLConfIsIdempotent(t *testing.T) {
-	const cmd = `setsid dejimad --foreground >>/root/.dejima/dejimad.log 2>&1`
+	const cmd = wslBootCommand
 	once := mergeWSLConf("[user]\ndefault = amanda\n", cmd)
 	twice := mergeWSLConf(once, cmd)
 	if once != twice {
@@ -95,12 +95,32 @@ func TestMergeWSLConfIsIdempotent(t *testing.T) {
 // file is one an operator opens and edits, and a key floating after a gap reads
 // as belonging to nothing.
 func TestMergeWSLConfLeavesNoGapInsideTheSection(t *testing.T) {
-	const cmd = `setsid dejimad --foreground >>/root/.dejima/dejimad.log 2>&1`
+	const cmd = wslBootCommand
 	got := mergeWSLConf("[boot]\nsystemd=true\n", cmd)
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	for i, ln := range lines {
 		if strings.TrimSpace(ln) == "" {
 			t.Errorf("blank line at %d inside a single-section file:\n%s", i, got)
+		}
+	}
+}
+
+// The boot command must name dejimad by ABSOLUTE PATH. WSL's boot context is not
+// a login shell and its PATH excludes /usr/local/bin, so a bare name resolves to
+// nothing — the field log recorded exactly that:
+//
+//	setsid: failed to execute dejimad: No such file or directory
+//
+// It is easy to get wrong because an interactive `wsl -d <distro> -- dejimad`
+// finds it every time. The binary is on PATH in every context tested by hand and
+// missing from the one that runs unattended.
+func TestBootCommandUsesAnAbsolutePath(t *testing.T) {
+	if !strings.Contains(wslBootCommand, "/usr/local/bin/dejimad") {
+		t.Errorf("boot command does not use an absolute path, so WSL's minimal boot PATH will not find it: %q", wslBootCommand)
+	}
+	for _, bare := range []string{"setsid dejimad", "exec dejimad", " dejimad "} {
+		if strings.Contains(wslBootCommand, bare) {
+			t.Errorf("boot command invokes dejimad by bare name (%q): %q", bare, wslBootCommand)
 		}
 	}
 }
