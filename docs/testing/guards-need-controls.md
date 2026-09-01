@@ -76,6 +76,40 @@ the package", while a renamed constructor leaves the files readable and the
 matches at zero. A guard can have one non-emptiness assert and still fail open
 through the other.
 
+**The special case that keeps recurring: the guard matches the comment.** A
+source-scanning guard looks for a token; the comment *explaining* that token
+contains it. Delete the real thing, leave the prose, and the guard passes — on
+the sentence about the code rather than the code.
+
+This happened four times in one week: three times on `DEJIMA_ROLE`, then once on
+a checksum step, the last written by someone who had read the write-up of the
+first three *that same afternoon*. That is the useful part. It is not evidence
+about any of the four authors; it is evidence about what a write-up can do.
+**Documenting a failure mode does not prevent it**, and the instinct it provokes
+— write it down harder — is the wrong one.
+
+So the remedy here is mechanical rather than editorial. `internal/srcscan`
+strips comments once, exactly, and any guard that scans source uses it instead of
+remembering:
+
+```go
+src, ok := srcscan.StripGoComments(string(b))   // or StripLineComments(script, "#")
+if !ok {
+    t.Fatal("could not parse the file — scanning it raw would risk a half-stripped miss")
+}
+```
+
+Note which way it errs, because the two mistakes are not symmetric. Strip too
+little and a guard matches a comment: noisy, and instantly visible to whoever is
+staring at the failure. Strip too much and the guard stops seeing real code — it
+passes, silently, for the same reason the code is broken, which is this exact bug
+rebuilt one layer down. `StripLineComments` therefore removes whole-line comments
+only and leaves trailing ones, and the stripper carries the control that a
+function returning `""` would fail.
+
+*(The recurrence count and the "documenting it did not prevent it" reading are
+d1's; the fourth instance was reported by d3 against their own guard.)*
+
 ### 3. The guard nothing can violate — needs a lethal mutation
 
 If no realistic change makes the guard fail, it isn't a guard. Mutation testing
