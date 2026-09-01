@@ -671,11 +671,13 @@ func startDaemonInWSL(ctx context.Context, distro string) error {
 	// the Windows window closed, because WSL tears the distro down with its last
 	// interop session. The boot command means the next thing to touch the distro
 	// starts the daemon, including the client's own dial.
-	if changed, err := ensureWSLBootCommand(ctx, distro); err != nil {
-		fmt.Printf("  ! couldn't install the WSL boot command: %v\n", err)
-		fmt.Println("    the daemon will still start now, but won't come back by itself")
-	} else if changed {
-		fmt.Println("  ✓ WSL boot command installed — the daemon starts with the distro")
+	if !unitIsCurrent(ctx, distro) {
+		if note, err := ensureWSLDaemonSupervision(ctx, distro); err != nil {
+			fmt.Printf("  ! couldn't make the daemon survive a distro restart: %v\n", err)
+			fmt.Println("    it will still start now, but won't come back by itself")
+		} else if note != "" {
+			fmt.Println("  ✓ " + note)
+		}
 	}
 
 	start := "mkdir -p " + home + "/.dejima && " +
