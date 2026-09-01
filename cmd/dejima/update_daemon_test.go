@@ -104,9 +104,44 @@ func TestUpdateHasDaemonFlag(t *testing.T) {
 // site means running RunE, which does a real release check and a real binary
 // replacement. Stubbing both is more machinery than the risk warrants today.
 //
-// A mutation proved this: removing the call passed the whole suite. That is the
-// exact shape this repo keeps finding — a guard that covers the logic and not
-// the wiring — so it is written down instead of being discovered later.
+// A mutation proved this: removing the call passed the whole suite. So did
+// severing `daemonToo = daemonToo || all`, which would make --all silently stop
+// covering the daemon — the exact defect --all exists to fix. That is the shape
+// this repo keeps finding: a guard that covers the logic and not the wiring.
+//
+// Written down rather than left to be discovered. Closing it needs seams around
+// selfupdate.Check and ApplyReleaseSelf so RunE can run without touching the
+// network or replacing a binary; that is worth doing when this file next
+// changes, and is more machinery than today's fix justifies.
 func TestUpdateDaemonCallSiteIsUncovered(t *testing.T) {
 	t.Skip("documented gap: the call site is not covered, only the function it calls")
+}
+
+// --all must exist and must mean the same thing as --daemon. Dejima is two
+// programs; "update" that silently means "update one of them" is what put an
+// operator on a new client driving an old daemon.
+func TestUpdateHasAllFlag(t *testing.T) {
+	cmd := newUpdateCmd()
+	f := cmd.Flags().Lookup("all")
+	if f == nil {
+		t.Fatal("`dejima update` has no --all flag")
+	}
+	if !strings.Contains(strings.ToLower(f.Usage), "daemon") {
+		t.Errorf("--all doesn't say it covers the daemon: %q", f.Usage)
+	}
+	// It restarts the daemon. That must be visible before someone runs it.
+	if !strings.Contains(strings.ToLower(f.Usage), "restart") {
+		t.Errorf("--all doesn't warn that it restarts the daemon: %q", f.Usage)
+	}
+}
+
+// An up-to-date CLIENT is exactly when nobody thinks to check the daemon, so
+// that path has to speak for the daemon too.
+func TestUpToDateClientStillReportsAStaleDaemon(t *testing.T) {
+	daemonAt(t, "v0.8.87", "v0.8.89", true)
+	var buf bytes.Buffer
+	reportDaemonVersion(context.Background(), &buf, false)
+	if !strings.Contains(buf.String(), "v0.8.87") {
+		t.Errorf("a current client says nothing about a stale daemon:\n%s", buf.String())
+	}
 }

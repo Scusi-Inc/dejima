@@ -23,6 +23,7 @@ func newUpdateCmd() *cobra.Command {
 	var source string
 	var force bool
 	var daemonToo bool
+	var all bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update Dejima to the latest release (use --check to only look)",
@@ -38,6 +39,7 @@ func newUpdateCmd() *cobra.Command {
 			"    unless you pass --force (containers and agents keep running; you reattach).\n\n" +
 			"Use --check to only report whether an update is available, without applying it.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			daemonToo = daemonToo || all
 			st, err := selfupdate.Check(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("check for updates: %w", err)
@@ -46,7 +48,13 @@ func newUpdateCmd() *cobra.Command {
 			fmt.Printf("latest:   %s\n", st.Latest)
 			fmt.Printf("mode:     %s\n", st.Mode)
 			if !st.UpdateAvailable {
-				fmt.Println("you're up to date.")
+				fmt.Println("this client is up to date.")
+				// The daemon can still be behind — and on the machine where that
+				// matters most (a Windows client driving a daemon in WSL) an
+				// up-to-date CLIENT is exactly when nobody thinks to look. A bare
+				// "you're up to date" there is wrong about the system while being
+				// right about the binary.
+				reportDaemonVersion(cmd.Context(), cmd.OutOrStdout(), daemonToo)
 				return nil
 			}
 			fmt.Printf("\nan update is available (%s → %s).\n", st.Current, st.Latest)
@@ -98,6 +106,12 @@ func newUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&source, "source", "", "path to the dejima checkout (default: found from the current directory)")
 	cmd.Flags().BoolVar(&force, "force", false, "apply a daemon-restarting (source) update even while terminals are attached — closes them fleet-wide")
 	cmd.Flags().BoolVar(&daemonToo, "daemon", false, "also update the daemon this client is pointed at (restarts it; attached terminals reconnect)")
+	// --all is what people reach for, and it is the same thing. Dejima is two
+	// programs — a client and a daemon — and nothing about `dejima update` said
+	// so, which is exactly how an operator ended up on a new client driving an
+	// old daemon while the command reported success. Naming the whole-system
+	// update makes the split discoverable at the moment it matters.
+	cmd.Flags().BoolVar(&all, "all", false, "update this client AND the daemon it's pointed at (same as --daemon; restarts the daemon)")
 	return cmd
 }
 
