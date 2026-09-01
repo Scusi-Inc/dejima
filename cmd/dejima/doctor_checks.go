@@ -45,7 +45,7 @@ func checkWSLHost(ctx context.Context, r *doctorReport) {
 	if !wsl.Available() {
 		r.add("Connection", "wsl", "FAIL",
 			"the active target is "+host+" but wsl.exe isn't available",
-			"install WSL (admin PowerShell): wsl --install")
+			"install WSL (admin PowerShell): "+wsl.InstallHint)
 		return
 	}
 	rep, err := wsl.Probe(ctx, wsl.Distro(host))

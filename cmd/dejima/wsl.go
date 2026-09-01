@@ -50,9 +50,9 @@ func requireWSLPlatform() error {
 			"dejimad runs natively: `dejima onboard`", runtime.GOOS)
 	}
 	if !wsl.Available() {
-		return fmt.Errorf("WSL isn't installed. Install it (an admin PowerShell, then reboot):\n" +
-			"    wsl --install\n" +
-			"then re-run `dejima wsl setup`")
+		return fmt.Errorf("WSL isn't installed. Install it (an admin PowerShell, then reboot):\n"+
+			"    %s\n"+
+			"then re-run `dejima wsl setup`", wsl.InstallHint)
 	}
 	return nil
 }

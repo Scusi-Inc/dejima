@@ -223,7 +223,7 @@ func firstRunSetUpWSL(ctx context.Context) (bool, error) {
 		// would fail two steps in.
 		fmt.Println("  WSL isn't installed yet. In an " + bold("administrator") + " PowerShell:")
 		fmt.Println()
-		fmt.Println("      wsl --install")
+		fmt.Println("      " + wsl.InstallHint)
 		fmt.Println()
 		fmt.Println("  Reboot, then run:  dejima wsl setup")
 		fmt.Println()
