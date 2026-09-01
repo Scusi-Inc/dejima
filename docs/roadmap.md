@@ -310,6 +310,22 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
     `dejima audit --verify` fails on a ledger nobody touched — a failure that
     reads as TAMPERING.
 
+  **STATUS OF WHAT DID SHIP: DESIGNED AND UNPROVEN, NOT DONE.** d3's flag, and it
+  belongs here because "shipped" will otherwise be read as "working". The
+  containment field, the `GET /v1/agents/observed` collection and the provenance
+  levels are all landed, all correct as far as unit tests and mutation checks can
+  establish, and ALL UNEXERCISED BY REAL DATA — no observed agent has ever
+  existed. That is not a criticism of the deferral; the model landing first is
+  exactly what the spec asked for. It means the first real observed agent is the
+  thing that tests this half, and until then it should be described as designed.
+
+  A consequence for the surfaces: `registered:false` distinguishes "none are
+  registered" from "Dejima has no way to learn about one", and with discovery
+  deferred indefinitely the second is the permanent state. A section rendering
+  "no observed agents" would be claiming Dejima looked. It must either not render
+  while `registered` is false, or say that Dejima cannot yet see agents outside
+  islands.
+
   **The condition for picking it up again is not a date.** Discovery is the
   prerequisite for Phase 2 (graduation), and graduation is the half with an
   obvious story: *you are already running agents unprotected, here is the
