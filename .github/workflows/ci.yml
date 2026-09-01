@@ -119,6 +119,23 @@ jobs:
             scripts/clean-mac/proof-loop.sh \
             scripts/clean-mac/teardown.sh
 
+  # The website and the binary must not tell a Windows operator two different
+  # ways to install WSL. scripts/site-wsl-hint-check.py compares the page's
+  # install block against wsl.InstallHint, read out of the Go source, in BOTH
+  # directions.
+  #
+  # It lands here because it was written and then run by hand. A guard nobody
+  # runs is decoration — and this one guards a comment in internal/wsl/wsl.go
+  # that ASSERTS the check exists, so an unrun check would leave the source
+  # claiming a guarantee nothing was providing. Cheap (no deps, no network), so
+  # it runs on every push rather than nightly.
+  site-wsl-hint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: WSL install hint (website ↔ internal/wsl.InstallHint)
+        run: python3 scripts/site-wsl-hint-check.py
+
   # The installer's "is anyone home?" logic, exercised under a real pty. This is
   # the only automated coverage the fresh-install path has: the clean-Mac runner
   # was torn down, so nothing else executes any of it. Runs anywhere — it stubs

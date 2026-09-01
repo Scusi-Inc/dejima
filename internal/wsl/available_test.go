@@ -1,6 +1,7 @@
 package wsl
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -130,5 +131,29 @@ func TestInstallHintNamesBothForms(t *testing.T) {
 	if !strings.Contains(InstallHint, "wsl --update") {
 		t.Error("the older-wsl.exe fallback stops before `wsl --update`, so the page " +
 			"carries a step the binary does not and the substring check cannot see it")
+	}
+}
+
+// InstallHint's doc comment says the website asserts its command block is a
+// substring of this constant. That comment is a CLAIM ABOUT A GUARD IN ANOTHER
+// FILE, and d5 pointed out what that means: delete the check and the comment
+// goes on asserting a guarantee nothing provides — the exact shape we have spent
+// two weeks pulling out of four surfaces, arriving in our own source.
+//
+// So the coupling runs both ways. The check cannot be deleted without this
+// failing, and the comment cannot outlive it.
+func TestTheWebsiteParityCheckStillExists(t *testing.T) {
+	const check = "../../scripts/site-wsl-hint-check.py"
+	b, err := os.ReadFile(check)
+	if err != nil {
+		t.Fatalf("%s is gone (%v) — InstallHint's comment claims the website is "+
+			"checked against it, and with the check removed that comment is a "+
+			"guarantee nothing is providing. Restore the check, or delete the claim.", check, err)
+	}
+	// Present is not the same as watching this constant. A check that stopped
+	// reading InstallHint would pass this test while guarding nothing.
+	if !strings.Contains(string(b), "InstallHint") {
+		t.Errorf("%s no longer mentions InstallHint, so it is no longer comparing the "+
+			"page against this constant — it exists without guarding anything", check)
 	}
 }
