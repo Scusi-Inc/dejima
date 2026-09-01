@@ -2900,7 +2900,7 @@ components:
             Observed agents, each stamped `containment: observed` by the server.
             Never contained — this collection is the source of that fact, the way
             an island's agent list is the source of the contained one.
-          items: { $ref: "#/components/schemas/AgentInfo" }
+          items: { $ref: "#/components/schemas/ObservedAgent" }
         registered:
           type: boolean
           description: >
@@ -2908,6 +2908,36 @@ components:
             FALSE today. Stated rather than inferred from an empty list, because
             "none registered" and "registration is not built" are different
             answers and only one of them means Dejima looked.
+    ObservedAgent:
+      type: object
+      description: >
+        An agent Dejima can SEE and cannot STOP. Deliberately NOT an `AgentInfo`:
+        that type carries `tmux`, `branch`, `worktree` and `attachable`, which
+        for an observed agent are meaningless or misleading. `attachable` is the
+        sharp one — attaching is something Dejima can do to an agent it LAUNCHED
+        and cannot do to one it merely watched. A field that does not exist
+        cannot be read by a hopeful renderer.
+
+        `alive`, `last_active` and `working` are what the agent reports about
+        ITSELF. Dejima does not verify any of it; that is the whole difference
+        between observing and gating.
+      properties:
+        id: { type: string }
+        label: { type: string }
+        containment:
+          type: string
+          enum: [observed]
+          description: >
+            Always `observed`, and always present on the wire (not omitted when
+            empty). Read containment off THIS FIELD rather than inferring it from
+            which endpoint the entry arrived on — inferring re-hides the
+            guarantee one layer above where the field fixed it. An unstamped
+            record shows as "" rather than vanishing, so a missing stamp is
+            visible while being debugged.
+        alive: { type: boolean, description: "self-reported; Dejima does not verify it" }
+        last_active: { type: string, format: date-time }
+        working: { type: string, description: "self-reported current task, if the agent supplies one" }
+        source: { type: string, description: "how discovery found this agent — so an operator can answer why Dejima knows about it" }
     AgentInfo:
       type: object
       properties:

@@ -22,7 +22,7 @@ func (s *Server) handleObservedAgents(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, ObservedAgentsResponse{
 		// Non-nil so the field marshals as [] rather than null: a client that
 		// distinguishes them will, and "null" is a third state nobody decided on.
-		Agents: []AgentInfo{},
+		Agents: []ObservedAgent{},
 		// Flips to true when a registration path ships. Until then the surface
 		// must not present emptiness as a finding.
 		Registered: false,
@@ -40,8 +40,8 @@ func (s *Server) handleObservedAgents(w http.ResponseWriter, _ *http.Request) {
 // Unused while the list is empty. It exists now because the alternative is that
 // whoever adds registration also has to notice the stamping rule, and the two
 // stamping sites should be findable together.
-func stampObserved(agents []AgentInfo) []AgentInfo {
-	out := make([]AgentInfo, len(agents))
+func stampObserved(agents []ObservedAgent) []ObservedAgent {
+	out := make([]ObservedAgent, len(agents))
 	for i, a := range agents {
 		a.Containment = ContainmentObserved
 		out[i] = a
