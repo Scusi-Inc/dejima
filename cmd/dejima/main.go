@@ -2522,8 +2522,16 @@ func newLsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Observed agents are enumerated here too, in their own section below the
+			// table — "the same treatment wherever islands are enumerated". Loaded
+			// before the no-islands early return on purpose: that message is a claim
+			// about the whole fleet, and printing it alone while an ungated agent is
+			// running would be a completed-search claim with a counter-example on the
+			// same machine.
+			observed := fetchObserved(cmd.Context(), c)
 			if len(items) == 0 {
 				fmt.Println("no islands yet — `dejima init --repo <url>` to create one")
+				printObservedSection(os.Stdout, observed)
 				return nil
 			}
 			// The daemon's version is the reference for the per-island skew note.
@@ -2579,7 +2587,11 @@ func newLsCmd() *cobra.Command {
 						writeRow(i)
 					}
 				}
-				return tw.Flush()
+				if err := tw.Flush(); err != nil {
+					return err
+				}
+				printObservedSection(os.Stdout, observed)
+				return nil
 			}
 
 			header := "NAME\tAGENT\tREPO\tSTATE\tCONTAINER"
@@ -2590,7 +2602,11 @@ func newLsCmd() *cobra.Command {
 			for _, i := range items {
 				writeRow(i)
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			printObservedSection(os.Stdout, observed)
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&showAgents, "agents", "a", false, "expand each island's agents")

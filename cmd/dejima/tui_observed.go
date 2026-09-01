@@ -90,23 +90,7 @@ func (m tuiModel) fetchObservedCmd() tea.Cmd {
 	}
 }
 
-// observedRows is what the region will draw: the agents, and whether the daemon
-// has any way to learn about one at all.
-func (m tuiModel) observedRegionVisible() bool {
-	if m.observed == nil {
-		return false
-	}
-	// Registration doesn't exist yet (Registered is false today), so an empty
-	// list is NOT "we looked and found nothing" — it is "there is no way to have
-	// told us". Rendering an empty section for that claims a completed search,
-	// which is a containment claim wearing an empty state: the same shape as the
-	// green checkmark one surface over.
-	//
-	// If the daemon somehow reports agents while saying registration doesn't
-	// exist, show them anyway. Failing toward SHOWING an ungated agent is the
-	// only safe direction here.
-	return m.observed.Registered || len(m.observed.Agents) > 0
-}
+func (m tuiModel) observedRegionVisible() bool { return observedWorthShowing(m.observed) }
 
 // renderObservedRegion draws the pinned "Observed agents" region and its height
 // in lines, or ("", 0) when there is nothing honest to say.
