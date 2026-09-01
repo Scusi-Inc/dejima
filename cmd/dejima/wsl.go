@@ -426,18 +426,33 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
-func installSocat(ctx context.Context, distro string) error {
-	out, err := wsl.Run(ctx, distro, `
+// socatInstallScript installs socat, the tunnel the Windows client uses to reach
+// the daemon's unix socket. Without it the client cannot talk to the daemon at
+// all, which presents as "daemon unreachable" and looks like the daemon is down.
+//
+// EVERY PACKAGE COMMAND IS TRIED DIRECTLY BEFORE SUDO. The previous version led
+// with `sudo -n`, which assumes sudo is installed. A WSL distro commonly runs as
+// ROOT — this one does; its HOME is /root — and a minimal root image need not
+// ship sudo at all. There, `sudo -n apt-get` fails with "command not found"
+// under `set -e` for a machine that never needed sudo in the first place.
+//
+// The same try-then-elevate shape is already used by the daemon install below,
+// which is why that step kept working on the distro where this one did not.
+const socatInstallScript = `
 		set -e
 		if command -v apt-get >/dev/null 2>&1; then
-			sudo -n apt-get update -qq && sudo -n apt-get install -y -qq socat
+			(apt-get update -qq && apt-get install -y -qq socat) ||
+				(sudo -n apt-get update -qq && sudo -n apt-get install -y -qq socat)
 		elif command -v dnf >/dev/null 2>&1; then
-			sudo -n dnf install -y -q socat
+			dnf install -y -q socat || sudo -n dnf install -y -q socat
 		elif command -v apk >/dev/null 2>&1; then
-			sudo -n apk add --quiet socat
+			apk add --quiet socat || sudo -n apk add --quiet socat
 		else
 			echo "no supported package manager (need apt/dnf/apk)" >&2; exit 1
-		fi`)
+		fi`
+
+func installSocat(ctx context.Context, distro string) error {
+	out, err := wsl.Run(ctx, distro, socatInstallScript)
 	return wslStepErr(out, err)
 }
 
