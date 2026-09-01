@@ -1799,6 +1799,23 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		return m.openCreator()
+	case "L":
+		// Only on the empty first-run screen, and only while the credential is
+		// actually missing — the same condition that renders the offer. A key
+		// that does something on one screen and nothing on another is worse than
+		// no key, so this stays tied to the text advertising it.
+		if len(m.islands) == 0 && m.setupChecked && !m.claudeSeeded {
+			if !canOpenNewWindow() {
+				m.lastNotice = "can't open a window here — press r after setting Claude up on this machine"
+				return m, nil
+			}
+			if err := m.openAuthPushWindow(); err != nil {
+				m.lastError = "couldn't open a window for the Claude setup"
+				return m, nil
+			}
+			m.lastNotice = "opened `dejima auth push` — it copies this machine's Claude login to the server"
+			return m, nil
+		}
 	case "/", "`":
 		// Toggle + focus the pinned host-terminal band (above the island list).
 		// `/` is the primary key; backtick kept as an alias.
@@ -4061,7 +4078,24 @@ func (m tuiModel) renderList(width int) (string, int) {
 		// first attach, with the one surface that mentioned it having told them
 		// otherwise. Codex signs in on its own, into its own state dir.
 		if m.setupChecked && !m.claudeSeeded {
-			body += "\n\n" + styleWaiting.Render("⚠ no Claude credentials yet — run `dejima auth push` (from a machine where\n  `claude` is logged in) so claude-code agents start authenticated.\n  (Other agent types sign in themselves, or need a provider key.)")
+			// AN OFFER, NOT A WARNING.
+			//
+			// This was a ⚠ on the empty-state screen, shown BEFORE any agent is
+			// chosen — so it presented an optional convenience as a missing
+			// prerequisite, to people who may be about to use a provider key or a
+			// shell agent and need none of it. Seeding is a shortcut: without it
+			// you attach once and log in inside the island.
+			//
+			// It also says ONE ACCOUNT, EVERY ISLAND, because that is the part
+			// worth knowing and the part nobody could have guessed: the credential
+			// lives on the daemon, not in an island, so it is seeded once and
+			// every island created afterwards inherits it.
+			body += "\n\n" + styleAccent.Render("[L] Set up Claude for every island") +
+				styleMuted.Render("  (recommended)") +
+				styleMuted.Render("\n  Copies this machine's Claude login to the server, once. Every island\n"+
+					"  created afterwards starts authenticated — you never log in per island.\n"+
+					"  Optional: skip it and log in inside an island, or set a provider key\n"+
+					"  instead ("+styleAccent.Render("s")+" → Provider keys).")
 		}
 		return body, -1
 	}

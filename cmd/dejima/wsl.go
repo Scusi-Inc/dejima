@@ -412,15 +412,25 @@ func installSocat(ctx context.Context, distro string) error {
 // puts the user in the docker group. WSL2 has no systemd by default on older
 // images, so we also make sure the daemon can be started by hand.
 func installDocker(ctx context.Context, distro string, yes bool) error {
+	// The login name is resolved in Go and substituted in. A `$(id -un)` here
+	// would have expanded to nothing through this channel and `|| true` would
+	// have swallowed the resulting usermod error — leaving the user quietly out
+	// of the docker group. Silent-and-swallowed is the failure mode that lasts
+	// longest; nothing would have looked wrong until something needed the group.
+	who, werr := wsl.Run(ctx, distro, "id -un")
+	who = strings.TrimSpace(who)
+	if werr != nil || who == "" {
+		who = "root" // the WSL default; better than an empty usermod target
+	}
 	if !yes && !confirmWSL("Install the Docker engine inside "+distro+" (get.docker.com)?") {
 		return fmt.Errorf("cancelled — install Docker in the distro yourself, then re-run")
 	}
-	_, err := wsl.Run(ctx, distro, `
+	_, err := wsl.Run(ctx, distro, strings.ReplaceAll(`
 		set -e
 		if ! command -v docker >/dev/null 2>&1; then
 			curl -fsSL https://get.docker.com | sudo -n sh
 		fi
-		sudo -n usermod -aG docker "$(id -un)" || true
+		sudo -n usermod -aG docker "USER_PLACEHOLDER" || true
 		# systemd is off in older WSL images; start dockerd directly if so.
 		if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
 			sudo -n systemctl enable --now docker
@@ -428,7 +438,7 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 			sudo -n service docker start || (sudo -n dockerd >/tmp/dockerd.log 2>&1 &)
 			sleep 5
 		fi
-		docker info >/dev/null 2>&1`)
+		docker info >/dev/null 2>&1`, "USER_PLACEHOLDER", who))
 	if err != nil {
 		return fmt.Errorf("%w\n(check inside the distro:  wsl -d %s -- docker info)", err, distro)
 	}
@@ -551,35 +561,76 @@ func buildIslandImage(ctx context.Context, distro string) error {
 // start is the arrangement that actually survives there. `dejima wsl setup` is
 // cheap to re-run after a `wsl --shutdown`.
 func startDaemonInWSL(ctx context.Context, distro string) error {
-	out, err := wsl.Run(ctx, distro, `
-		set -e
-		if [ -S "$HOME/.dejima/dejimad.sock" ] && pgrep -x dejimad >/dev/null 2>&1; then
-			echo already-running; exit 0
-		fi
-		# Clear a stale socket from an unclean shutdown; dejimad refuses to bind over one.
-		[ -S "$HOME/.dejima/dejimad.sock" ] && ! pgrep -x dejimad >/dev/null 2>&1 && rm -f "$HOME/.dejima/dejimad.sock"
-		mkdir -p "$HOME/.dejima"
-		nohup dejimad --foreground >>"$HOME/.dejima/dejimad.log" 2>&1 &
-		# POSIX counter, deliberately not a seq expansion. wsl.Run executes this
-		# through sh -c, which is DASH on Ubuntu, and a distro without coreutils
-		# expands seq to nothing -- leaving an empty for-list, which dash rejects
-		# with "Syntax error: word unexpected (expecting do)". That is our script
-		# failing on the operator machine, and it fired AFTER everything else had
-		# worked: a clean install path with one last landmine at the end.
-		i=0
-		while [ "$i" -lt 60 ]; do
-			[ -S "$HOME/.dejima/dejimad.sock" ] && echo started && exit 0
-			sleep 1
-			i=$((i + 1))
-		done
-		echo "dejimad did not create its socket within 60s; last log lines:" >&2
-		tail -n 20 "$HOME/.dejima/dejimad.log" >&2
-		exit 1`)
+	// This function used to build every path from $HOME and count with $i. On a
+	// real machine that produced
+	//
+	//	sh: 18: [: Illegal number:
+	//
+	// because $i arrived EMPTY — the same channel that had just eaten $work one
+	// function over. I removed the variables from the install script and left
+	// them here, so the operator's first run failed at the step after the one I
+	// had finally fixed.
+	//
+	// So: no shell variables anywhere. Paths are read once and interpolated in
+	// Go; the retry loop lives in Go, where a counter and a comparison are things
+	// that can be tested.
+	home, err := distroHome(ctx, distro)
 	if err != nil {
+		return err
+	}
+	sock := home + "/.dejima/dejimad.sock"
+	logf := home + "/.dejima/dejimad.log"
+
+	if _, err := wsl.Run(ctx, distro, "test -S "+sock+" && pgrep -x dejimad >/dev/null 2>&1"); err == nil {
+		return nil // already up
+	}
+	// Clear a stale socket from an unclean shutdown; dejimad refuses to bind over
+	// one. Only when no daemon is actually running.
+	_, _ = wsl.Run(ctx, distro, "pgrep -x dejimad >/dev/null 2>&1 || rm -f "+sock)
+
+	if _, err := wsl.Run(ctx, distro,
+		"mkdir -p "+home+"/.dejima && nohup dejimad --foreground >>"+logf+" 2>&1 &"); err != nil {
 		return fmt.Errorf("start dejimad in %s: %w", distro, err)
 	}
-	_ = out
-	return nil
+
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if _, err := wsl.Run(ctx, distro, "test -S "+sock); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	// Hand back the daemon's own last words. "It never started" and "it started
+	// and died" need different fixes and look identical from a timeout.
+	tail, _ := wsl.Run(ctx, distro, "tail -n 20 "+logf)
+	if strings.TrimSpace(tail) == "" {
+		tail = "(the log is empty — dejimad may not have started at all)"
+	}
+	return fmt.Errorf("dejimad in %s did not create its socket within 60s. Last log lines:\n%s",
+		distro, strings.TrimSpace(tail))
+}
+
+// distroHome reads the distro's home directory.
+//
+// `printenv HOME`, not `echo $HOME`: this channel eats `$`, which is why no
+// script in this file contains one.
+func distroHome(ctx context.Context, distro string) (string, error) {
+	out, err := wsl.Run(ctx, distro, "printenv HOME")
+	if err != nil {
+		return "", fmt.Errorf("read HOME from %s: %w", distro, err)
+	}
+	home := strings.TrimSpace(out)
+	if home == "" || !strings.HasPrefix(home, "/") {
+		return "", fmt.Errorf("distro %q reported an unusable HOME (%q)", distro, out)
+	}
+	return home, nil
 }
 
 // saveWSLProfile persists the distro as a connection profile and makes it

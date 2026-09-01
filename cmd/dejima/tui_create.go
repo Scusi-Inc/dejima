@@ -211,18 +211,27 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 		// It leads for the same reason it leads in viewPick, and carries the same
 		// hazard: the cursor's zero value decides what Enter-Enter does. #355
 		// added a test for exactly that; rootCursor is set below to match.
+		// THREE SOURCES, named by what the island STARTS FROM rather than by how
+		// you go looking for a repo.
+		//
+		// It was five — start empty, scan this directory, choose another
+		// directory, browse GitHub, enter a URL — which is two questions
+		// interleaved: what should be in /workspace, and how do I find it. The
+		// operator's own framing was better and is what this now uses: clone a
+		// repo, use a local one, or start with nothing. Finding is a detail
+		// INSIDE the first two, not a peer of them.
 		c.rootChoices = []string{
-			"Start empty (no repo — add files later)",
-			"Scan this directory (" + tildeify(pwd) + ")",
-			"Choose another directory…",
-			"Browse my GitHub repos…",
-			"Enter a repo URL or path manually",
+			"Clone a repo            " + styleMuted.Render("browse GitHub, or paste a git URL"),
+			"Use a local repo        " + styleMuted.Render("a git repo already on "+tildeify(pwd)+"'s machine"),
+			"Start empty             " + styleMuted.Render("no repo — add files later"),
 		}
 		// Do not let the zero value pick the destructive-by-surprise option. An
 		// empty island is cheap and reversible, so leading with it is safe — but
 		// the cursor is set explicitly rather than left at 0 by accident, so the
 		// next person to reorder the rows has to make the choice on purpose.
-		c.rootCursor = rootRowEmpty
+		// Clone leads: it is what most people want, and it is the only one of the
+		// three that cannot be reached later from inside the others.
+		c.rootCursor = rootRowClone
 		return m, nil
 	}
 	c.step = stepPick
@@ -386,7 +395,7 @@ func (m tuiModel) creatorGitHubGateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		c.forceNoIdentity = true
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
-	case "esc", "q":
+	case "esc", "ctrl+[", "q":
 		m.creator = nil
 		return m, nil
 	}
@@ -405,7 +414,7 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	if c.rootTyping {
 		switch msg.String() {
-		case "esc":
+		case "esc", "ctrl+[":
 			c.rootTyping = false
 		case "enter":
 			dir := strings.TrimSpace(c.rootInput)
@@ -425,8 +434,16 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "q":
+	// ctrl+[ alongside esc: they are the SAME BYTE, and on Windows Terminal the
+	// operator reported esc not registering while q did. Rather than guess at
+	// that input layer a third time, accept both spellings everywhere.
+	case "esc", "ctrl+[", "q":
 		m.creator = nil
+	case "/":
+		// Reachable from the top screen too, not only after a scan: someone whose
+		// repo is neither on GitHub nor in this directory should not have to run
+		// a scan first to find the row that lets them type a path.
+		c.step, c.manualInput, c.err = stepManual, "", ""
 	case "up", "k":
 		if c.rootCursor > 0 {
 			c.rootCursor--
@@ -437,19 +454,18 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		switch c.rootCursor {
-		case rootRowEmpty:
-			return m.creatorEnterNoRepo()
-		case rootRowScan:
+		case rootRowClone:
+			return m.creatorEnterGitHub()
+		case rootRowLocal:
+			// Scan where they are. "Choose another directory" and "type a URL or
+			// path" are still reachable from the results screen ([/]), which is
+			// where someone who does not find what they wanted actually is.
 			pwd, _ := os.Getwd()
 			_ = clientcfg.Save(clientcfg.Config{RepoRoot: pwd})
 			c.root, c.step, c.scanning = pwd, stepPick, true
 			return m, discoverCmd(pwd)
-		case rootRowChooseDir:
-			c.rootTyping, c.rootInput = true, ""
-		case rootRowGitHub:
-			return m.creatorEnterGitHub()
-		case rootRowManual:
-			c.step = stepManual
+		case rootRowEmpty:
+			return m.creatorEnterNoRepo()
 		}
 	}
 	return m, nil
@@ -465,7 +481,7 @@ func (m tuiModel) creatorPickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		lastRow = pickRowFromDir
 	}
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "ctrl+[", "q":
 		m.creator = nil
 	case "/":
 		c.step, c.manualInput, c.err = stepManual, "", ""
@@ -573,7 +589,7 @@ func (m tuiModel) creatorSelectRepo(repo reposrc.Repo) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorManualKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		if c.root != "" {
 			c.step, c.err = stepPick, ""
 		} else {
@@ -734,7 +750,7 @@ func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorGitHubIdentityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.step, c.err = stepPick, "" // back to the repo picker
 	case "up", "k":
 		if c.ghIdentCur > 0 {
@@ -756,7 +772,7 @@ func (m tuiModel) creatorGitHubIdentityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 func (m tuiModel) creatorGitHubRepoKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		if len(c.ghIdentities) > 1 {
 			c.ghPhase, c.err = ghPickIdentity, "" // back to identity choice
 		} else {
@@ -805,7 +821,7 @@ func (m tuiModel) creatorSelectGitHub(r githubid.Repo) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorSourceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.step = stepPick
 	case "up", "k", "down", "j":
 		c.sourceCursor = 1 - c.sourceCursor
@@ -861,7 +877,7 @@ func (m tuiModel) creatorAgentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorAgentNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.agentNameIn = ""
 		c.step = stepAgent
 	case "enter":
@@ -922,7 +938,7 @@ func (m tuiModel) creatorProviderKeyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // waiting on the store; ignore keys
 	}
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		// Skip: proceed without a key. The agent will need `v` later — the picker
 		// already warns — but we don't force it.
 		c.step = stepAgents
@@ -990,7 +1006,7 @@ func (m tuiModel) creatorAgentsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
-	case "esc":
+	case "esc", "ctrl+[":
 		// Re-pick from scratch: clear the roster and choose the primary again.
 		c.agents = nil
 		c.pickingExtra = false
@@ -1003,7 +1019,7 @@ func (m tuiModel) creatorAgentsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.step = stepPick
 	case "enter":
 		if strings.TrimSpace(c.nameInput) == "" {
@@ -1123,7 +1139,7 @@ func (c *creatorModel) view(width int) string {
 }
 
 func (c *creatorModel) viewRoot(b *strings.Builder) {
-	b.WriteString(styleMuted.Render("Where are your repos? The picker scans this directory for git repos."))
+	b.WriteString(styleMuted.Render("What should this island start from?"))
 	b.WriteString("\n\n")
 	if c.rootTyping {
 		b.WriteString("directory: " + styleAccent.Render(c.rootInput+"_"))
@@ -1133,7 +1149,7 @@ func (c *creatorModel) viewRoot(b *strings.Builder) {
 	for i, choice := range c.rootChoices {
 		c.writeChoice(b, i == c.rootCursor, choice)
 	}
-	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [esc] cancel"))
+	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [/] type a URL or path   [esc] cancel"))
 }
 
 func (c *creatorModel) viewPick(b *strings.Builder) {
@@ -1386,11 +1402,9 @@ const (
 	pickRowNoRepo = 0
 	// Rows on the pre-scan root screen. Named because they are referenced from
 	// three places and an off-by-one silently sends the operator somewhere else.
-	rootRowEmpty     = 0
-	rootRowScan      = 1
-	rootRowChooseDir = 2
-	rootRowGitHub    = 3
-	rootRowManual    = 4
+	rootRowClone = 0 // a repo from elsewhere: GitHub browse or a git URL
+	rootRowLocal = 1 // a git repo already on this machine
+	rootRowEmpty = 2 // nothing; files arrive later
 
 	pickRowGitHub    = 1
 	pickRowManual    = 2
@@ -1434,7 +1448,7 @@ func shortRemote(url string) string {
 func (m tuiModel) creatorFromDirKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.step, c.err = stepPick, ""
 	case "tab":
 		c.fromDirGit = !c.fromDirGit

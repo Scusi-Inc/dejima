@@ -5,49 +5,39 @@ import (
 	"testing"
 )
 
-// The FRESH-CLIENT screen must offer a source the operator can actually complete.
+// THREE SOURCES, named by what the island STARTS FROM.
 //
-// Before a repo root is configured, the creator shows a different list than the
-// post-scan one — and that list offered four ways to name a repo and no way to
-// skip having one. "Start empty" existed the whole time, on the screen AFTER a
-// scan the operator had no reason to run.
+// The pre-scan screen offered five — start empty, scan this directory, choose
+// another directory, browse GitHub, enter a URL — which is two questions
+// interleaved: what should be in /workspace, and how do I go looking for it.
+// The operator's framing was better: clone a repo, use a local one, or start
+// with nothing. Finding is a detail inside the first two, not a peer of them.
 //
-// Reported from a fresh Windows install driving a WSL daemon: "no ready way to
-// set up an empty repo or copy some files over". Worse there than elsewhere,
-// because the two directory rows name CLIENT paths that a WSL or remote daemon
-// cannot use — so on that machine NONE of the four rows led anywhere.
-func TestFreshClientCanStartEmpty(t *testing.T) {
+// Before that it was four, with no way to start without a repo at all — and on
+// Windows the two directory rows name CLIENT paths a WSL daemon cannot use, so
+// none of the four led anywhere the operator could finish.
+func TestCreatorOffersThreeSources(t *testing.T) {
 	c := &creatorModel{rootChoices: []string{
-		"Start empty (no repo — add files later)",
-		"Scan this directory (~/x)",
-		"Choose another directory…",
-		"Browse my GitHub repos…",
-		"Enter a repo URL or path manually",
+		"Clone a repo            browse GitHub, or paste a git URL",
+		"Use a local repo        a git repo already on this machine",
+		"Start empty             no repo — add files later",
 	}}
-	joined := strings.Join(c.rootChoices, "\n")
-	if !strings.Contains(strings.ToLower(joined), "start empty") {
-		t.Fatalf("the pre-scan screen offers no empty option:\n%s", joined)
+	if len(c.rootChoices) != 3 {
+		t.Fatalf("the first screen offers %d sources, want 3", len(c.rootChoices))
 	}
-	if !strings.HasPrefix(strings.ToLower(c.rootChoices[rootRowEmpty]), "start empty") {
-		t.Errorf("rootRowEmpty (%d) is %q — the constants and the rendered rows have "+
-			"drifted, so Enter runs a different action than the highlighted line",
-			rootRowEmpty, c.rootChoices[rootRowEmpty])
-	}
-	// The row constants must index the list they describe. An off-by-one here
-	// sends the operator somewhere other than the row they are looking at, and
-	// nothing about the screen would look wrong.
 	for _, tc := range []struct {
 		row  int
 		want string
 	}{
-		{rootRowScan, "scan"},
-		{rootRowChooseDir, "choose another"},
-		{rootRowGitHub, "github"},
-		{rootRowManual, "manually"},
+		{rootRowClone, "clone a repo"},
+		{rootRowLocal, "local repo"},
+		{rootRowEmpty, "start empty"},
 	} {
 		if tc.row >= len(c.rootChoices) {
 			t.Fatalf("row constant %d is past the end of the list", tc.row)
 		}
+		// The constants must index the rows they name. An off-by-one runs a
+		// different action than the highlighted line, and nothing looks wrong.
 		if !strings.Contains(strings.ToLower(c.rootChoices[tc.row]), tc.want) {
 			t.Errorf("row %d is %q, expected it to mention %q", tc.row, c.rootChoices[tc.row], tc.want)
 		}
@@ -55,14 +45,12 @@ func TestFreshClientCanStartEmpty(t *testing.T) {
 }
 
 // Enter-Enter on a fresh client must not do something surprising. The cursor's
-// zero value decides the default action (#355), and with "Start empty" leading
-// that default is creating an empty island — cheap and reversible, which is why
-// it is allowed to lead. The assertion is that the choice is DELIBERATE: the
-// cursor is set explicitly, so reordering the rows cannot silently change what
-// the default does.
-func TestFreshClientDefaultRowIsTheEmptyOne(t *testing.T) {
-	if rootRowEmpty != 0 {
-		t.Errorf("rootRowEmpty = %d; the cursor's zero value is what Enter-Enter runs, "+
-			"so a non-zero empty row means the default action is something else", rootRowEmpty)
+// zero value decides the default action (#355). Clone leads because it is the
+// common case AND the only one of the three that cannot be reached later from
+// inside the others — but the choice is made explicitly, so reordering the rows
+// cannot silently change what the default does.
+func TestCreatorDefaultRowIsClone(t *testing.T) {
+	if rootRowClone != 0 {
+		t.Errorf("rootRowClone = %d; the cursor's zero value is what Enter-Enter runs", rootRowClone)
 	}
 }

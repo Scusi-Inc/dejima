@@ -24,9 +24,23 @@ func TestFirstRunCredsNudgeDoesNotOverclaim(t *testing.T) {
 	m := tuiModel{setupChecked: true, claudeSeeded: false}
 	body, _ := m.renderList(100)
 
-	if !strings.Contains(body, "no Claude credentials yet") {
-		t.Fatalf("the nudge did not render, so this test asserts nothing about its "+
+	// It is an OFFER now, not a warning: shown before any agent is chosen, it
+	// presented an optional convenience as a missing prerequisite.
+	if !strings.Contains(body, "Set up Claude for every island") {
+		t.Fatalf("the offer did not render, so this test asserts nothing about its "+
 			"wording:\n%s", body)
+	}
+	// It must advertise a key that does something, not tell the operator to go
+	// and type a command — this is the dashboard.
+	if !strings.Contains(body, "[L]") {
+		t.Errorf("the offer names no key, so the only way to act on it is to leave "+
+			"the TUI:\n%s", body)
+	}
+	// And it must say the credential is DAEMON-WIDE, which is the part nobody
+	// could guess and the reason it is worth doing once.
+	if !strings.Contains(strings.ToLower(body), "every island") {
+		t.Errorf("the offer does not say it covers every island, so it reads as a "+
+			"per-island chore:\n%s", body)
 	}
 	// The specific false claim, and the shape of it: naming codex anywhere in a
 	// sentence about what auth push authenticates is the error.
@@ -38,9 +52,11 @@ func TestFirstRunCredsNudgeDoesNotOverclaim(t *testing.T) {
 	}
 	// And it must still say what auth push DOES do, or removing the false half
 	// would leave a warning with no action.
-	if !strings.Contains(body, "claude-code") {
-		t.Errorf("the nudge no longer says which agent type it helps, so the operator "+
-			"has a warning and no action:\n%s", body)
+	// Still optional, and still says so: someone about to use a provider key or a
+	// shell agent needs none of this.
+	if !strings.Contains(strings.ToLower(body), "optional") {
+		t.Errorf("the offer does not say it is optional, so it reads as a prerequisite "+
+			"to people who do not need it:\n%s", body)
 	}
 }
 
@@ -49,8 +65,8 @@ func TestFirstRunCredsNudgeDoesNotOverclaim(t *testing.T) {
 func TestFirstRunCredsNudgeWaitsForTheCheck(t *testing.T) {
 	m := tuiModel{setupChecked: false, claudeSeeded: false}
 	body, _ := m.renderList(100)
-	if strings.Contains(body, "no Claude credentials yet") {
-		t.Errorf("warned about missing credentials before the check landed — that is a "+
+	if strings.Contains(body, "Set up Claude for every island") {
+		t.Errorf("offered credential setup before the check landed — that is a "+
 			"claim about state nobody has read yet:\n%s", body)
 	}
 }

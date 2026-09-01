@@ -49,7 +49,12 @@ func TestWSLScriptsParseUnderDash(t *testing.T) {
 	// A floor, not just non-emptiness: the pattern silently matching FEWER
 	// scripts than the file contains is the failure that just happened, and
 	// "found at least one" would not have caught it.
-	const minScripts = 5
+	// Four, deliberately lowered from five: startDaemonInWSL's script no longer
+	// exists — its wait loop moved into Go, because a shell counter was the third
+	// thing this channel ate. The floor tracks reality; lowering it BECAUSE THE
+	// TEST FAILED would be loosening a ratchet, so it moves only alongside a
+	// script actually being removed.
+	const minScripts = 4
 	if len(found) < minScripts {
 		t.Fatalf("found %d in-distro scripts, expected at least %d — the extraction "+
 			"pattern is missing some, so this guard is checking a subset while "+
@@ -68,6 +73,39 @@ func TestWSLScriptsParseUnderDash(t *testing.T) {
 		}
 	}
 	t.Logf("checked %d in-distro script(s) under dash", len(found))
+
+	// NO SHELL VARIABLES IN ANY IN-DISTRO SCRIPT. Not a style rule — the class
+	// that kept coming back.
+	//
+	// Something between Go's exec and the distro's sh expands `$` in the script
+	// text. It cost three separate failures on the operator's machine, each
+	// looking unrelated to the last and each on a different function:
+	//
+	//	unsupported architecture:                     ($arch, empty)
+	//	mkdir: cannot create directory ''             ($work, empty)
+	//	sh: 18: [: Illegal number:                    ($i, empty)
+	//
+	// Twice I fixed one function and left the variables in the next. The value
+	// always exists on the Go side; interpolate it there, where it can be tested,
+	// and the shell never has to carry it.
+	//
+	// A silently-swallowed one is worse than any of the above: `usermod -aG
+	// docker "$(id -un)" || true` would expand to an empty target, fail, and be
+	// swallowed by the `|| true`, leaving the user out of the docker group with
+	// nothing to see.
+	for i, m := range found {
+		if strings.Contains(m[1], "$") {
+			var lines []string
+			for _, l := range strings.Split(m[1], "\n") {
+				if strings.Contains(l, "$") {
+					lines = append(lines, strings.TrimSpace(l))
+				}
+			}
+			t.Errorf("in-distro script %d uses a shell variable: %v\n"+
+				"This channel eats `$`. Resolve the value in Go and interpolate it.",
+				i+1, lines)
+		}
+	}
 
 	// PARSING IS NOT ENOUGH, and the bug that prompted this file proves it:
 	// `for i in $(seq 1 60); do` is VALID dash and fails only at runtime, when
