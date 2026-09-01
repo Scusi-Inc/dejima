@@ -444,13 +444,22 @@ unmutated base is usually the cheapest way to guarantee the first half.
 
 ## The instrument was fine; the reference was not
 
-Every shape above is a check that could not see. These two saw perfectly and
-answered a question nobody had asked. Nothing in the output betrays it, because
-the output is *correct* — the assumption lives in the step from output to
-conclusion, which happens in the operator's head where no control can reach it.
+Every shape above is a check that could not see. These saw perfectly and answered
+a question nobody had asked. Nothing in the output betrays it, because the output
+is *correct* — the assumption lives in the step from output to conclusion, which
+happens in the operator's head where no control can reach it.
 
 The remedy is therefore not a better instrument. It is naming the reference out
 loud, before reading the result.
+
+The entries below split into two kinds, and the difference decides what the
+remedy can be. In the first three the reference **existed** and was misread: a
+moved branch tip, a count standing in for an identity, a schema that shifted
+under a hash. Naming it out loud is enough, because there is something to name.
+In the last one there was **no reference at all** — two artifacts asserting the
+same fact with nothing pointing either way — and no amount of care within either
+one could have reached it. That is why its control is the odd one out: it does
+not read a reference more carefully, it manufactures one that never existed.
 
 ### A diff compares against a reference, and the reference moves
 
@@ -583,11 +592,41 @@ about it.**
 
 *(From d5.)*
 
+### A field added to a hashed struct rewrites history unless it omits when empty
+
+**What happened.** The audit ledger hash-chains each entry by marshalling it, so
+the serialised bytes *are* the reference. Adding a `Provenance` field to that
+struct — brokered / witnessed / self-reported, so a self-reported row can be told
+from a brokered one — changes the marshalled form of every row. Without
+`omitempty`, the new field serialises on historical entries too, every chain
+value shifts, and `dejima audit --verify` fails on a ledger nobody has touched.
+
+**The tell.** Verification fails on a file you did not edit, immediately after a
+schema change. If the only thing between the last green verify and this red one
+is a struct field, suspect the serialisation, not the data.
+
+**The control.** A test asserting an unstamped entry does not serialise the
+field at all. That is the whole guarantee: the zero value must be *absent*, not
+empty-but-present, or the bytes differ.
+
+**The near-miss.** `omitempty` reads as a style choice on almost every other
+struct in the tree, which is exactly why it is easy to drop in review. Here it is
+load-bearing. And note the direction, which is the same as the moved-reference
+cases above and the reason this sits with them: the failure does not read as "we
+changed a struct". It reads as **tampering** — the single most alarming and least
+informative thing an audit tool can say — and it points the reader at the ledger
+file rather than at the commit that actually caused it.
+
+> **If a struct is hashed, its schema is part of the reference. Any field that
+> can be empty must be absent when it is, or you have rewritten history.**
+
+*(From d3.)*
+
 ## A verification has a timestamp; a gate does not
 
-The two above are references that were wrong at the moment they were read. This
-one is a reference that was right, and then moved: a check that saw correctly,
-and then the thing it saw changed.
+Those above are references that were wrong at the moment they were read, or
+absent entirely. This one is a reference that was right, and then moved: a check
+that saw correctly, and then the thing it saw changed.
 
 **What happened.** Before adding a field to an API type, I checked whether
 `openapi.yaml` needed an entry. Two pieces of evidence, both verified rather
