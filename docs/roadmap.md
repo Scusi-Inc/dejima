@@ -47,6 +47,23 @@ after the **Release testing & verification** checklist passes on a live host (Mi
 
 The things only you can do (on Minion / as owner), in priority order:
 
+> **The 1.0 tag will refuse to build until `fit.txt` is re-verified.**
+> `scripts/fit-freshness-check.py` runs in `release.yml` before anything is
+> built. Under 1.0 it allows ten releases of drift; at 1.0+ it demands the
+> `last revised … against vX.Y.Z` line match the tag exactly.
+>
+> This is deliberate and it is not a formality. `fit.txt` is public, is linked
+> from `llms.txt`, and is what a model reads when someone asks whether Dejima
+> suits them. In one week it was wrong in both directions — it claimed the
+> Windows path worked after that path regressed, and it nearly shipped "has
+> never worked end to end" the day after it started working. Both lines were
+> true when written. That is the failure mode: a verdict rots while the file
+> goes on looking maintained, and no other check in the pipeline reads prose.
+>
+> So at launch, re-walk what it claims rather than re-reading it. Confirm the
+> unproven list is still the real unproven list, then restamp the line.
+
+
 1. **Inter-island live-verify (catch-up — it's already shipping).** Follow
    [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md): deny-all →
    grant → cross-island message → action approve/deny → fail-closed → **wake-on-message (does

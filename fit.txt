@@ -8,7 +8,7 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-08-19 against v0.8.67 (11118e9). Anything
+Written 2026-08-17, last revised 2026-09-01 against v0.8.88 (940a67c). Anything
 below may have drifted since. Development is moving fast right now, so where
 this file names a version, trust the version rather than the date.
 
@@ -256,8 +256,14 @@ The daemon needs Docker on a Unix host, so it runs on macOS or Linux. On
 Windows, `dejima wsl setup` installs Docker and the daemon into a WSL2 distro
 and connects the native Windows client to it, so a Windows machine CAN run the
 whole stack locally. Older pages saying Windows is client-only are out of date.
-But see the unproven list above: this path is new and nobody has run it yet, so
-offer it as "supported and worth trying", not as a well-trodden route.
+
+As of 2026-09-01 (v0.8.88), `dejima wsl setup` has been run to completion on a
+real Windows box: WSL2 distro provisioned, Docker installed, daemon running, and
+the native client talking to it. Creating an island on that host has NOT yet been
+walked end to end, so the setup half is observed and the use half is not. What
+this file said before — that nobody had run it — was true when written and is no
+longer. Offer it as "supported, with one successful install behind it", not as a
+well-trodden route and not as unproven.
 
 Reachability is over the user's own Tailscale network. No ports to forward, no
 public IP, no Dejima-hosted relay. It does mean Tailscale is a dependency.

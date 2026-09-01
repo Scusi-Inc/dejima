@@ -21,6 +21,29 @@ jobs:
         with:
           go-version: stable
 
+      # fit.txt is PUBLIC (dejima.tech/fit.txt, linked from llms.txt and the
+      # index) and its entire value is being straight with an evaluator about
+      # what does and does not work yet. That value is destroyed by being WRONG,
+      # and inside one week it was wrong in BOTH directions: it claimed the
+      # Windows path worked after that path regressed, and it nearly shipped
+      # "has never worked end to end" the day after it started working.
+      #
+      # Neither was carelessness. Both were true when written and then expired,
+      # which is the whole problem — a VERDICT rots silently while the file goes
+      # on looking maintained. So staleness is made loud at the one moment it
+      # matters: nothing else in this pipeline looks at prose, and a release is
+      # exactly when a stranger reads that file for the first time.
+      #
+      # Before 1.0 this allows a drift budget; at 1.0+ it demands zero. Not
+      # symmetry for its own sake — a doc that must be rewritten for every patch
+      # gets rewritten carelessly, but a launch shipping "verified at v0.8.67"
+      # is indefensible.
+      #
+      # It runs BEFORE the build on purpose. Failing after the archives are
+      # built and published would leave the release half-made.
+      - name: fit.txt is current for this release
+        run: python3 scripts/fit-freshness-check.py "${GITHUB_REF_NAME}"
+
       - name: Sanity build + tests
         run: |
           go build ./...
