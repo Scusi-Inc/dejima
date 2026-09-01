@@ -248,8 +248,9 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   discoverability and duplicates the CLI, so it is an addition to revisit later,
   not a replacement.
 
-- **Adopting agents Dejima didn't launch** *(design written, Phase 1 approved to
-  build — see [`agent-adoption.md`](agent-adoption.md))* — changes the pitch from
+- **Adopting agents Dejima didn't launch** *(design written; **DISCOVERY
+  DEFERRED TO POST-1.0**, 2026-09-01 — see
+  [`agent-adoption.md`](agent-adoption.md))* — changes the pitch from
   "run your agents in containers" (a migration, which asks for a decision before
   giving anything back) to "whatever you're already running, Dejima can see it,
   ledger it, and gradually pull it into containment" (an adoption ramp). Someone
@@ -268,6 +269,53 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   started; it depends on a preflight diff of what the agent will lose and on the
   dirty-worktree guard, since a graduation that clones fresh destroys uncommitted
   work exactly the way `agent rm` did.
+
+  **DEFERRED POST-1.0 (operator, 2026-09-01): DISCOVERY.** The piece that finds
+  agents Dejima did not launch — transcript directories and running processes,
+  explicit and operator-initiated. Everything else in Phase 1 is either shipped
+  or in flight; discovery is what would make it *do* something, and it is the
+  part that should wait.
+
+  Why it waits, and the reasoning matters more than the decision because it will
+  be re-argued:
+
+  - **Nobody who uses Dejima today has agents to discover.** Its value is for
+    someone already running Claude Code loose who installs Dejima and wants their
+    existing work reflected rather than starting over. That is an ACQUISITION
+    argument, and acquisition is not where 1.0 is.
+  - **It is the only feature that needs host access with no grant.** Every other
+    host-file path goes through Port — scoped, brokered, ledgered. A discovery
+    scan is a filesystem walk outside that machinery, in a product whose claim is
+    that host access is audited. Defensible (read-only, operator-initiated) and
+    still the first exception, which is expensive to explain.
+  - **It is permanent maintenance on other vendors' internals.** Transcript
+    layouts and process signatures belong to Anthropic, OpenAI and Block, change
+    without notice, and differ per framework.
+
+  The spec argues Phase 1 is worth shipping alone because *observing is easy and
+  gating is hard*. That is true about COST and does not establish VALUE, which is
+  where it fails today.
+
+  **What is already banked, and is not wasted** — this is what makes deferring
+  cheap rather than a write-off. All of it is the expensive-to-retrofit half:
+
+  - the containment level as a non-optional field whose zero value cannot
+    reassure (retrofitting a level onto a shipped model, after surfaces read it,
+    is precisely how the bugs we spent two weeks removing were made);
+  - the naming, which caught two collisions before they shipped — `observed` vs
+    the existing `adopt` verb, and `witnessed` vs `observed` a second time in the
+    ledger, reached independently three days apart by the identical route;
+  - ledger provenance with `omitempty`, which found a real bug: a field
+    serialising on every row rewrites the hash of every historical row, so
+    `dejima audit --verify` fails on a ledger nobody touched — a failure that
+    reads as TAMPERING.
+
+  **The condition for picking it up again is not a date.** Discovery is the
+  prerequisite for Phase 2 (graduation), and graduation is the half with an
+  obvious story: *you are already running agents unprotected, here is the
+  one-click way to fix that*. If graduation becomes the bet, build discovery
+  first and this deferral ends. If it stays a maybe, discovery is scaffolding for
+  a building nobody has decided to put up.
 
 - **Dejima running locally on Windows** *(research done, see
   [`windows-native-daemon.md`](windows-native-daemon.md))* — today `local` in the

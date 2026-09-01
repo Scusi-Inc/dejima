@@ -136,7 +136,11 @@ nothing.
   and its honest rendering are the thing that makes everything after it safe.
 - **Discovery** of local agents (transcript directories, running processes) —
   explicit and operator-initiated, never a background scan that surprises
-  someone.
+  someone. **DEFERRED POST-1.0 (operator, 2026-09-01.)** Nothing else in Phase 1
+  depends on it existing; it is what would make the rest *do* something, and it
+  is the only piece needing host access outside Port. Full reasoning, and what is
+  already banked, in the roadmap entry. Phase 1 therefore ships as the honest
+  data model and the naming, with no producer of observed agents yet.
 - **Read-only state**: which agent, what it is working on, last activity,
   whether it is alive.
 - **Ledger entries marked self-reported**, distinct at a glance from brokered
