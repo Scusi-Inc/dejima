@@ -288,6 +288,30 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .hc .hc-sub { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.6rem; }
 
 /* Collapsible "Before you start" disclosures ------------------------- */
+/* Install substeps: ONE LINE, then the command. Everything else goes in a
+   <details> below it. Nine paragraphs for three commands is how an install page
+   stops being read at all — the caveats are each true and each one pushes the
+   thing you came for further down the screen. */
+.substeps { list-style: none; counter-reset: sub; margin: 0.5rem 0 0; padding: 0; }
+.substeps > li { counter-increment: sub; margin: 0 0 1rem; min-width: 0; }
+.substeps > li > p:first-child { margin: 0; color: var(--hover); font-weight: 600;
+  font-size: 0.95rem; display: flex; align-items: baseline; gap: 0.5rem; }
+.substeps > li > p:first-child::before { content: counter(sub); flex: 0 0 1.35rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 1.35rem; border-radius: 999px; background: var(--border);
+  color: var(--fg); font-size: 0.78rem; font-weight: 700; align-self: center; }
+.sub-note { color: var(--muted); font-weight: 400; font-size: 0.85rem; }
+/* A reboot is a step you take but not a command you run, so it sits between the
+   numbers rather than consuming one. The numbers count commands. */
+.substeps > li.pause { counter-increment: none; margin-bottom: 0.7rem; }
+.substeps > li.pause > p:first-child { color: var(--muted); font-weight: 400; }
+.substeps > li.pause > p:first-child::before { content: "\21BB"; background: none;
+  color: var(--muted); font-size: 0.95rem; font-weight: 400; }
+.substeps .disclose { margin: 0.45rem 0 0; }
+.substeps .disclose > summary { padding: 0.55rem 2.2rem 0.55rem 0.9rem; font-size: 0.85rem; }
+.substeps .disclose-body { padding: 0.1rem 0.9rem 0.8rem; font-size: 0.9rem; }
+.substeps .disclose-body p { margin: 0.55rem 0 0; }
+
 .disclose { border: 1px solid var(--border); border-radius: 8px; margin: 0.6rem 0;
   background: var(--code-bg); }
 .disclose > summary { cursor: pointer; padding: 0.8rem 2.4rem 0.8rem 1.1rem;
