@@ -129,6 +129,13 @@ jobs:
   # that ASSERTS the check exists, so an unrun check would leave the source
   # claiming a guarantee nothing was providing. Cheap (no deps, no network), so
   # it runs on every push rather than nightly.
+  #
+  # NO `paths:` FILTER, DELIBERATELY. The obvious tidy-up is to skip this unless
+  # Go or HTML changed. Don't: the commit most likely to break it is a page-only
+  # edit, which is exactly what a `paths: ['**.go']` filter would skip — and a
+  # skipped job reports green. The whole job is one python3 invocation with no
+  # dependencies; there is nothing here worth optimising away. (d5 checked this
+  # after the job landed, which is the only reason it is written down.)
   site-wsl-hint:
     runs-on: ubuntu-latest
     steps:
