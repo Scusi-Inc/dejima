@@ -33,13 +33,23 @@ Islands are built and run on that machine, not on this one — so starting
 Docker here won't help, and neither will sudo (that changes which config
 this CLI reads, not which machine does the work).
 
-On %s:
-  • Make sure Docker Desktop is running. It's a desktop app: if that Mac
-    rebooted and nobody signed in, Docker never started.
-  • Then this will succeed there:  docker info
-  • So a reboot recovers on its own, turn on Docker Desktop → Settings →
-    General → "Start Docker Desktop when you sign in", and set that Mac to
-    log in automatically.
+On %s, in a terminal:
+
+  docker desktop status     what it thinks is going on
+  docker desktop start      start the engine
+  docker info               the Server: section should fill in
+
+If "docker info" prints a Client: block but says the Server is unreachable,
+that is this exact problem: the CLI is fine, the engine is not running, and
+retrying will fail identically until it is.
+
+If "docker desktop start" won't run, Docker Desktop has no desktop session to
+start in — it is a GUI app. Connect with Screen Sharing, sign in, and launch
+it from Applications once; terminals work afterwards.
+
+Then stop it recurring: Docker Desktop → Settings → General → "Start Docker
+Desktop when you sign in", and set that Mac to log in automatically. Without
+both, every reboot of a headless Mac takes Dejima down with this error.
 
 Nothing was created, and no island was harmed — this stopped before the
 build started.`, where, where)
