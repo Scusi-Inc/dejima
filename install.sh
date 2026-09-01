@@ -149,12 +149,93 @@ case "$OS" in
         ;;
 esac
 
+# Go, which this installer needs because it BUILDS Dejima from source.
+#
+# macOS has always installed it via Homebrew. Linux said "Go is required, go get
+# it from go.dev" and stopped — so the documented "install on a Mac mini or Linux
+# box" path worked on one of those and dead-ended on the other, at the very first
+# step, for anyone without a toolchain. That is most people; a server is not a
+# development machine.
+#
+# Installed the same way the Go project recommends: the official tarball into
+# /usr/local/go. Deliberately NOT the distro package — Debian and Ubuntu ship a Go
+# well behind go.mod's requirement, so `apt install golang-go` succeeds and then
+# the build fails with a version error, which is a worse failure than this one
+# because it arrives later and names the wrong thing.
+install_go_linux() {
+    local want arch file url sums sha tmp
+    # From go.mod, so this cannot drift from what the build actually needs.
+    want="$(sed -n 's/^go \([0-9.]*\).*/\1/p' "$SRC_DIR/go.mod" 2>/dev/null | head -1)"
+    [[ -n "$want" ]] || want="1.26.3"
+    case "$(uname -m)" in
+        x86_64)        arch=amd64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *) fail "no prebuilt Go for $(uname -m) — install Go $want from https://go.dev/dl/ and re-run." ;;
+    esac
+    file="go${want}.linux-${arch}.tar.gz"
+    url="https://go.dev/dl/${file}"
+
+    info "Installing Go ${want} (one-time, ~70MB) …"
+    tmp="$(mktemp -d)"
+    curl -fsSL "$url" -o "$tmp/$file" \
+        || fail "couldn't download $url — check the network and re-run."
+
+    # VERIFY BEFORE EXTRACTING. This tarball becomes the compiler that builds a
+    # daemon which runs as a service and holds credentials; taking it on trust
+    # because it came over HTTPS is the wrong standard for that. go.dev publishes
+    # the checksums, so there is no excuse not to check.
+    sums="$(curl -fsSL 'https://go.dev/dl/?mode=json&include=all' 2>/dev/null || true)"
+    sha="$(printf '%s' "$sums" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for rel in data:
+    for f in rel.get('files', []):
+        if f.get('filename') == '$file':
+            print(f.get('sha256', ''))
+            sys.exit(0)
+" 2>/dev/null || true)"
+    if [[ -n "$sha" ]]; then
+        local got
+        got="$(sha256sum "$tmp/$file" 2>/dev/null | awk '{print $1}')"
+        [[ -z "$got" ]] && got="$(shasum -a 256 "$tmp/$file" 2>/dev/null | awk '{print $1}')"
+        if [[ -n "$got" && "$got" != "$sha" ]]; then
+            rm -rf "$tmp"
+            fail "Go download failed its checksum (expected $sha, got $got). Not installing it."
+        fi
+        info "  checksum verified"
+    else
+        # Say so rather than implying a check happened. An unverifiable download
+        # is a decision the operator is entitled to know about.
+        info "  ⚠ couldn't fetch go.dev's checksum list — installing UNVERIFIED"
+    fi
+
+    local sudo_cmd=""
+    [[ -w /usr/local ]] || sudo_cmd="sudo"
+    $sudo_cmd rm -rf /usr/local/go
+    $sudo_cmd tar -C /usr/local -xzf "$tmp/$file" || { rm -rf "$tmp"; fail "couldn't extract Go into /usr/local"; }
+    rm -rf "$tmp"
+
+    # This shell needs it NOW (make setup runs next), and future shells need it
+    # too — a Go that works only inside this script would make the next command
+    # the operator types fail for no visible reason.
+    export PATH="/usr/local/go/bin:$PATH"
+    if [[ -d /etc/profile.d ]]; then
+        # shellcheck disable=SC2016  # $PATH must stay LITERAL: it expands at login, not now.
+        printf 'export PATH=/usr/local/go/bin:$PATH\n' | $sudo_cmd tee /etc/profile.d/go.sh >/dev/null 2>&1 || true
+    fi
+    command -v go >/dev/null 2>&1 || fail "Go installed to /usr/local/go but is not on PATH — add /usr/local/go/bin and re-run."
+    info "  ✓ Go $(go version 2>/dev/null | awk '{print $3}')"
+}
+
 if ! command -v go >/dev/null 2>&1; then
     if [[ "$OS" == "Darwin" ]]; then
         info "Installing Go via Homebrew (one-time)…"
         brew install go
     else
-        fail "Go is required. Install from https://go.dev/dl/ (or via your distro's package manager) and re-run."
+        install_go_linux
     fi
 fi
 

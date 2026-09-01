@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/clientcfg"
+	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/wsl"
 )
@@ -461,21 +462,66 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 func installDejimad(ctx context.Context, distro string) error {
 	ver := version.Version
 	if ver == "" || ver == "dev" || !strings.HasPrefix(ver, "v") {
-		ver = "latest"
+		var err error
+		if ver, err = latestReleaseTag(ctx); err != nil {
+			return err
+		}
 	}
-	// $(uname -m) is resolved INSIDE the distro: WSL2 runs the host's
-	// architecture, but reading it here would assume the client and the distro
-	// agree, and an arm64 Windows box with an x64 client is a real configuration.
-	// The version is passed as a shell variable rather than concatenated into the
-	// script, so the script stays ONE raw literal. Concatenation splits it, and
-	// the dash guard then checks a truncated fragment while reporting on the
-	// whole thing — a checker seeing less than it claims, which is the shape this
-	// file exists to catch.
-	script := "want_ver=" + shellSingleQuote(ver) + "\n" + dejimadInstallScript
+
+	// ARCHITECTURE IS RESOLVED IN GO, from a one-word command, and the URL is
+	// built here too.
+	//
+	// The first version did all of it in the shell — `arch=$(uname -m)`, a case
+	// statement, and ${} interpolation into a URL. It failed on the operator's
+	// machine with "unsupported architecture:" and NOTHING after the colon, so
+	// the substitution came back empty or the case never matched. Which layer
+	// mangled it (Windows argument quoting, wsl.exe's own re-parsing, a stray
+	// CR) was not worth determining, because the fix for all of them is the
+	// same: stop asking a fragile channel to carry logic it does not need to.
+	//
+	// `uname -m` is now the whole script. TrimSpace handles the CR that a
+	// Windows-side round trip can leave on it — which is itself a candidate for
+	// the original failure, since "x86_64\r" matches no case arm.
+	rawArch, err := wsl.Run(ctx, distro, "uname -m")
+	if err != nil {
+		return fmt.Errorf("read architecture from %s: %w", distro, err)
+	}
+	arch := strings.TrimSpace(rawArch)
+	var goarch string
+	switch arch {
+	case "x86_64", "amd64":
+		goarch = "amd64"
+	case "aarch64", "arm64":
+		goarch = "arm64"
+	case "":
+		// Name what came back rather than reporting an empty architecture as
+		// unsupported, which is what the first version did and which said
+		// nothing about the cause.
+		return fmt.Errorf("could not read the architecture of distro %q — `uname -m` returned nothing "+
+			"(raw: %q). Try `wsl -d %s -- uname -m` by hand", distro, rawArch, distro)
+	default:
+		return fmt.Errorf("unsupported architecture %q in distro %q — Dejima publishes linux amd64 and arm64", arch, distro)
+	}
+
+	url := fmt.Sprintf("https://github.com/Scusi-Inc/dejima/releases/download/%s/dejima_%s_linux_%s.tar.gz", ver, ver, goarch)
+	script := "url=" + shellSingleQuote(url) + "\n" + dejimadInstallScript
 	if _, err := wsl.Run(ctx, distro, script); err != nil {
 		return err
 	}
 	return nil
+}
+
+// latestReleaseTag resolves the newest published release. Only reached by a dev
+// build, which has no matching release to pin to.
+func latestReleaseTag(ctx context.Context) (string, error) {
+	info, err := selfupdate.LatestReleaseInfo(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve the latest release: %w", err)
+	}
+	if info.Tag == "" {
+		return "", fmt.Errorf("the latest release has no version tag")
+	}
+	return info.Tag, nil
 }
 
 // buildIslandImage builds the island image inside the distro.
@@ -578,24 +624,10 @@ func runWSLExe(ctx context.Context, args ...string) (string, error) {
 // the caller as a shell assignment prepended to this text.
 const dejimadInstallScript = `
 		set -e
-		arch=$(uname -m)
-		case "$arch" in
-			x86_64)  goarch=amd64 ;;
-			aarch64|arm64) goarch=arm64 ;;
-			*) echo "unsupported architecture: $arch" >&2; exit 1 ;;
-		esac
-		ver="$want_ver"
-		if [ "$ver" = latest ]; then
-			ver=$(curl -fsSL https://api.github.com/repos/Scusi-Inc/dejima/releases/latest \
-				| sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
-			[ -n "$ver" ] || { echo "could not resolve the latest release" >&2; exit 1; }
-		fi
-		url="https://github.com/Scusi-Inc/dejima/releases/download/${ver}/dejima_${ver}_linux_${goarch}.tar.gz"
 		# A persistent path, not /tmp. WSL terminates an idle distro seconds after
 		# the last process exits and /tmp is tmpfs, so anything split across two
 		# wsl.exe invocations loses it between them -- which reads as a download
-		# failure rather than a lifecycle one. One invocation today; the path is
-		# persistent so that stays true if someone later splits a step.
+		# failure rather than a lifecycle one.
 		work="$HOME/.dejima/install"
 		mkdir -p "$work"
 		echo "downloading $url"

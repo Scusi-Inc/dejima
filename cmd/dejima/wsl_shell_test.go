@@ -148,3 +148,38 @@ func readSource(t *testing.T, name string) string {
 	}
 	return string(b)
 }
+
+// The install script must carry no LOGIC — no command substitution, no case
+// matching, no URL assembly. Only a finished URL and the commands that use it.
+//
+// The first version resolved the architecture in the shell with `arch=$(uname
+// -m)` and a case statement, and failed on a real machine with
+//
+//	unsupported architecture:
+//
+// and nothing after the colon: the substitution came back empty, or the case
+// never matched a value carrying a stray CR. Which layer mangled it — Windows
+// argument quoting, wsl.exe's own re-parsing, a line ending — was never
+// determined, because the fix for all of them is the same. Anything the Go side
+// can decide, the Go side decides; the shell gets values, not decisions.
+//
+// This guards the principle rather than the incident, because the next person to
+// need a variable in there will reach for $( ) exactly as I did.
+func TestInstallScriptCarriesNoLogic(t *testing.T) {
+	for _, banned := range []struct{ tok, why string }{
+		{"$(", "command substitution — resolve it in Go and pass the value in"},
+		{"`", "backtick substitution — same reason, and it also breaks the Go raw string"},
+		{"case ", "branching on a value the Go side already knows"},
+		{"uname", "architecture detection belongs in Go, where the result can be trimmed and named"},
+		{"releases/download", "URL assembly — build the finished URL in Go and pass it"},
+	} {
+		if strings.Contains(dejimadInstallScript, banned.tok) {
+			t.Errorf("the install script contains %q: %s", banned.tok, banned.why)
+		}
+	}
+	// And it must still receive the URL it is meant to use, or the ban above is
+	// satisfied by a script that does nothing.
+	if !strings.Contains(dejimadInstallScript, "$url") {
+		t.Error("the install script never uses $url — it has been emptied rather than simplified")
+	}
+}
