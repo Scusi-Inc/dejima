@@ -780,6 +780,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("PUT /v1/credentials/providers/{provider}", s.handlePutProviderCred)
 	mux.HandleFunc("DELETE /v1/credentials/providers/{provider}", s.handleDeleteProviderCred)
 	mux.HandleFunc("GET /v1/agent-types", s.handleAgentTypes)
+	mux.HandleFunc("GET /v1/agents/observed", s.handleObservedAgents)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}/config", s.configureAgent)
 	mux.HandleFunc("GET /v1/events/subscriptions", s.listSubscriptions)
 	mux.HandleFunc("POST /v1/events/subscribe", s.subscribeWebhook)

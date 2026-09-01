@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -142,6 +145,63 @@ func TestContainmentLevelsDoNotReuseTheAdoptVerb(t *testing.T) {
 		if strings.Contains(strings.ToLower(string(lvl)), "adopt") {
 			t.Errorf("level %q is named with the adopt verb, which already means "+
 				"the opposite thing in this product", lvl)
+		}
+	}
+}
+
+// --- the enumeration seam --------------------------------------------------
+
+// An observed agent has no island, so it cannot live in IslandInfo.Agents. This
+// endpoint is where it lives instead — and the separation is the safety
+// property, not a schema preference: every island-keyed surface is unreachable
+// from an observed agent because there is no island name to reach it with.
+func TestObservedAgents_EmptyIsHonestAboutWhy(t *testing.T) {
+	s := &Server{}
+	r := httptest.NewRequest(http.MethodGet, "/v1/agents/observed", nil)
+	w := httptest.NewRecorder()
+	s.handleObservedAgents(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp ObservedAgentsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Agents) != 0 {
+		t.Errorf("agents = %+v, want none — nothing can register one yet", resp.Agents)
+	}
+	// The pair is the point. An empty list ALONE would let a client render "no
+	// observed agents" as a finding, when the truth is that Dejima has no way to
+	// learn about one. Those are different sentences and only one means it looked.
+	if resp.Registered {
+		t.Error("registered is true, but no registration path exists — a client " +
+			"would present emptiness as a finding")
+	}
+	// [] not null: a client that distinguishes them will, and null is a third
+	// state nobody decided on.
+	if !strings.Contains(w.Body.String(), `"agents":[]`) {
+		t.Errorf("agents marshalled as null rather than []: %s", w.Body.String())
+	}
+}
+
+// The stamping rule, mirrored from agentInfos: the level is decided by which
+// COLLECTION an agent came from, never read off a record. Containment lives in
+// both a field and a location, so if the record could win they would eventually
+// disagree and consumers would trust different ones.
+func TestStampObserved_OverridesWhateverTheRecordSaid(t *testing.T) {
+	in := []AgentInfo{
+		{ID: "a1"}, // unset
+		{ID: "a2", Containment: ContainmentContained}, // wrongly claiming containment
+		{ID: "a3", Containment: ContainmentObserved},  // already right
+	}
+	for _, a := range stampObserved(in) {
+		if a.Containment != ContainmentObserved {
+			t.Errorf("agent %q left the observed collection as %q — the collection "+
+				"is the source of this fact, not the record", a.ID, a.Containment)
+		}
+		if a.Containment.Contained() {
+			t.Errorf("agent %q reports Contained() out of the OBSERVED collection", a.ID)
 		}
 	}
 }
