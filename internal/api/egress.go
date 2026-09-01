@@ -72,7 +72,7 @@ func (s *Server) handlePatchEgressPolicy(w http.ResponseWriter, r *http.Request)
 	if id, ok := IdentityFromContext(r.Context()); ok && id.Subject != "" {
 		by = id.Subject
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type:     "egress.policy",
 		Island:   name,
 		Detail:   fmt.Sprintf("mode=%s allow=%v deny=%v", result.Mode, result.Allow, result.Deny),

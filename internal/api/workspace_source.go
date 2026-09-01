@@ -99,7 +99,7 @@ func (s *Server) seedWorkspaceFromDir(ctx context.Context, p *project.Project, s
 	if err := p.Save(); err != nil {
 		return err
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "port.grant", Island: p.Name, Scope: scope.Name,
 		Path: scope.HostPath, Mode: scope.Mode, Decision: "allowed",
 		Detail: "granted to seed /workspace at create",
@@ -119,7 +119,7 @@ func (s *Server) seedWorkspaceFromDir(ctx context.Context, p *project.Project, s
 			s.log.Error("dropping the seed scope", "island", p.Name, "err", err)
 			return
 		}
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "port.revoke", Island: p.Name, Scope: scope.Name,
 			Path: scope.HostPath, Decision: "allowed",
 			Detail: "seed complete; scope was create-time only",

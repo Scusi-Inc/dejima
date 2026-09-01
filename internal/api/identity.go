@@ -77,7 +77,7 @@ func (s *Server) setIslandIdentity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "identity.set", Island: name,
 		Detail: fmt.Sprintf("color=%s glyph=%s", color, glyph), Decision: "allowed",
 	})
@@ -104,7 +104,7 @@ func (s *Server) clearIslandIdentity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "identity.clear", Island: name, Decision: "allowed",
 	})
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))

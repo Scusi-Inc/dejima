@@ -3,12 +3,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/project"
 )
 
@@ -253,5 +256,46 @@ func TestObservedAgent_ContainmentIsAlwaysOnTheWire(t *testing.T) {
 	if !strings.Contains(string(raw), `"containment"`) {
 		t.Errorf("an unstamped observed agent omits containment from the wire (%s) — "+
 			"a missing stamp should be VISIBLE, not absent", raw)
+	}
+}
+
+// ledgerAppend takes provenance as a REQUIRED ARGUMENT, so a writer that forgets
+// it does not compile. That is the strongest form of this guarantee anywhere in
+// the design — for ContainmentLevel, Go cannot make a struct field required and
+// an unstamped record is caught by a test instead. Here the stamp is a
+// parameter, so the compiler holds it.
+//
+// What the compiler CANNOT check is that the argument reaches the entry. This
+// asserts that: a caller passing a provenance gets it recorded, rather than the
+// parameter being accepted and dropped.
+func TestLedgerAppendStampsTheEntry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ledger.ResetDefault()
+	s := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := s.ledgerAppend(ledger.ProvenanceWitnessed, ledger.Entry{
+		Type: "island.created", Island: "isl",
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	lg, err := ledger.Default()
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	entries, err := lg.Read()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("nothing was appended")
+	}
+	got := entries[len(entries)-1]
+	if got.Provenance != ledger.ProvenanceWitnessed {
+		t.Errorf("provenance = %q, want %q — the parameter is accepted and dropped, "+
+			"so every row would carry the unknown zero while the call sites look correct",
+			got.Provenance, ledger.ProvenanceWitnessed)
+	}
+	if got.Provenance.Verified() != true {
+		t.Error("a witnessed row does not report Verified()")
 	}
 }

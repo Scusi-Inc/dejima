@@ -137,7 +137,7 @@ func isReadMethod(m string) bool {
 // inside ledgerAppend).
 func (s *Server) recordRequest(r *http.Request, status int) {
 	actor, role := s.resolveActor(r)
-	_ = s.ledgerAppend(ledger.Entry{
+	_ = s.ledgerAppend(ledger.ProvenanceWitnessed, ledger.Entry{
 		Type:     auditTypeAPIRequest,
 		Island:   auditIslandFromPath(r.URL.Path),
 		Method:   r.Method,
@@ -258,7 +258,7 @@ func (s *Server) auditLifecycle(e events.Event) {
 	if !s.auditEnabled || !auditableLifecycle[e.Type] {
 		return
 	}
-	_ = s.ledgerAppend(ledger.Entry{
+	_ = s.ledgerAppend(ledger.ProvenanceWitnessed, ledger.Entry{
 		Type:       string(e.Type),
 		Island:     e.Island,
 		Agent:      e.Agent, // id stays the lookup handle
