@@ -185,7 +185,7 @@ paths:
         old process keeps running changes the version on disk and not the one in
         memory. Agents bundled in the island image (claude-code) return 409
         naming `dejima upgrade` instead, because their version is the image's.
-      operationId: updateAgent
+      operationId: updateAgentFramework
       requestBody:
         required: false
         content:
@@ -3327,13 +3327,13 @@ components:
     UpdateAgentRequest:
       type: object
       properties:
-        resume: { type: boolean, description: continue the previous conversation on relaunch, where the framework supports it }
+        resume: { type: boolean, description: "continue the previous conversation on relaunch, where the framework supports it" }
     UpdateAgentResponse:
       type: object
       properties:
         agent: { type: string }
         command: { type: string, description: the upgrade command that ran inside the island }
-        output: { type: string, description: tail of the command output, marked when truncated }
+        output: { type: string, description: "tail of the command output, marked when truncated" }
         restarted:
           type: boolean
           description: >-
