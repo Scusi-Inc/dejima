@@ -297,6 +297,29 @@ func isPermission(err error) bool {
 	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
 }
 
+// ElevationAdvice is what to tell someone whose update could not elevate.
+//
+// It names the remedy that works for THEIR install, which the previous wording
+// did not. `sudo -n` needs a NOPASSWD rule, and the only thing that writes one
+// is `dejima service install --system` — so that was the only remedy offered.
+// On a CLIENT-ONLY machine that advice is actively wrong: the client is in a
+// root-owned /usr/local/bin, it has never run a service install, and it should
+// not, because that installs a DAEMON SERVICE the operator does not want. It
+// sent someone to set up a server in order to update a client. (Reported from
+// a real client-only Mac, 2026-09-01.)
+//
+// `sudo dejima update` needs no rule and fixes both layouts: as root the
+// install dir is writable, so the staged binary lands beside the target and the
+// plain rename succeeds without reaching the elevation path at all.
+//
+// Exported and separate from the error so it can be asserted on without
+// invoking sudo — a test that shells out here would pass for the wrong reason
+// on any CI runner with passwordless sudo, which is most of them.
+func ElevationAdvice() string {
+	return "re-run as `sudo dejima update` (on a machine running the daemon, " +
+		"`sudo dejima service install --system` grants passwordless updates instead)"
+}
+
 // elevatedInstall places src at target using sudo, for the normal layout where
 // the install dir is root-owned but the daemon runs as the operator.
 //
@@ -317,7 +340,7 @@ func elevatedInstall(ctx context.Context, src, target string) error {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return fmt.Errorf("sudo install %s: %s — passwordless sudo for this is set up by `sudo dejima service install --system`", target, msg)
+		return fmt.Errorf("sudo install %s: %s — %s", target, msg, ElevationAdvice())
 	}
 	return nil
 }
