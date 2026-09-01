@@ -3701,6 +3701,36 @@ components:
       type: object
       properties:
         seq: { type: integer }
+        provenance:
+          type: string
+          enum: [brokered, witnessed, self-reported]
+          description: >
+            HOW Dejima knows this row is true. Three genuinely different claims,
+            and presenting them identically is how a strong one gets inherited by
+            a weak one.
+
+            `brokered` — the daemon ALLOWED the action; it went through the
+            broker. `witnessed` — the daemon SAW a contained action happen
+            without gating it. `self-reported` — the subject's own account of
+            itself, tailed from something the agent wrote. Dejima did not see it
+            and cannot verify it.
+
+            A CLIENT MUST RENDER self-reported ROWS DISTINCTLY. An observed
+            agent, or anything that has compromised it, can write whatever it
+            likes, and omission is trivial — it simply does not write the line.
+            "Here is an audit trail" and "here is an audit trail, some rows of
+            which are the subject's own account of itself" are different
+            products, and if the rows look alike the integrity claim of the whole
+            ledger degrades to that of its weakest one.
+
+            ABSENT MEANS UNKNOWN, NOT BROKERED. It appears on rows written before
+            this field existed — brokered in fact, since self-reporting did not
+            exist then — but a client must not infer that, because the reasoning
+            stops holding the moment a new writer forgets to stamp.
+
+            Named `witnessed` rather than `observed` deliberately: `observed` is
+            already the containment level of an UNGATED AGENT, and one word for
+            both would be a second collision on the axis this product is about.
         time: { type: string, format: date-time }
         type: { type: string, description: "port.grant | port.revoke | trade.read | trade.write | capability.* | mcp.* | api.request | <lifecycle event>" }
         island: { type: string }
