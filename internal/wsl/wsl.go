@@ -578,7 +578,7 @@ func Probe(ctx context.Context, distro string) (Report, error) {
 
 // run executes a shell script inside the distro and returns its stdout.
 func run(ctx context.Context, distro, script string) (string, error) {
-	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", script)
+	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", homePreamble+script)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
@@ -611,6 +611,29 @@ func run(ctx context.Context, distro, script string) (string, error) {
 func Run(ctx context.Context, distro, script string) (string, error) {
 	return run(ctx, distro, script)
 }
+
+// homePreamble guarantees $HOME is set for every in-distro script.
+//
+// `wsl.exe -d <distro> -- sh -c …` does NOT pass HOME, and /bin/sh on Ubuntu is
+// dash, which — unlike bash — does not synthesise it from the passwd entry. So
+// $HOME was the EMPTY STRING in every script here, and the failure surfaced as
+//
+//	mkdir: cannot create directory '': No such file or directory
+//
+// which names neither HOME nor the shell. It went unnoticed because the scripts
+// that use $HOME had never successfully run: the one path that did work went
+// through `curl … | bash`, and bash fills HOME in, so the same distro looked
+// fine from one command and broken from another.
+//
+// This matters beyond a work directory: dejimad derives its socket and config
+// from HOME, so a daemon started with it empty would write to /.dejima and the
+// client would look somewhere else entirely — a much quieter failure than this
+// one.
+//
+// getent first (correct for any user), /root last (correct for the WSL default,
+// and better than nothing). `:` with := assigns only when unset or empty.
+const homePreamble = `: "${HOME:=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)}"; : "${HOME:=/root}"; export HOME
+`
 
 // RunExe invokes wsl.exe with *management* arguments (--install, --set-version,
 // …) rather than a command inside a distro. It returns the combined output even
