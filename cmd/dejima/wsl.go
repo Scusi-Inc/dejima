@@ -393,8 +393,41 @@ func createDistro(ctx context.Context, distro string) error {
 	return nil
 }
 
+// wslStepErr attaches what the distro actually said to a failed step.
+//
+// d4's finding, and the problem is worth stating exactly: wsl.Run returns the
+// combined output AND an error, and every install step here discarded the
+// output. So a failure inside the distro surfaced as "install Docker engine:
+// exit status 1" — the one fact the operator already knew — while the apt error,
+// the DNS failure, the disk-full message that actually explains it went into a
+// variable nobody read. EVERY FAILURE ON THIS PATH WAS INVISIBLE, on the path
+// with the worst network and the least ability to reproduce.
+//
+// Tailed rather than whole: an image build log is thousands of lines, and
+// dumping all of it into a terminal buries the last twenty that matter.
+func wslStepErr(out string, err error) error {
+	if err == nil {
+		return nil
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n--- last output from inside the distro ---\n%s",
+		err, lastLines(out, 20))
+}
+
+// lastLines returns the final n lines of s.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
 func installSocat(ctx context.Context, distro string) error {
-	_, err := wsl.Run(ctx, distro, `
+	out, err := wsl.Run(ctx, distro, `
 		set -e
 		if command -v apt-get >/dev/null 2>&1; then
 			sudo -n apt-get update -qq && sudo -n apt-get install -y -qq socat
@@ -405,7 +438,7 @@ func installSocat(ctx context.Context, distro string) error {
 		else
 			echo "no supported package manager (need apt/dnf/apk)" >&2; exit 1
 		fi`)
-	return err
+	return wslStepErr(out, err)
 }
 
 // installDocker runs Docker's official convenience script inside the distro and
@@ -425,7 +458,7 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 	if !yes && !confirmWSL("Install the Docker engine inside "+distro+" (get.docker.com)?") {
 		return fmt.Errorf("cancelled — install Docker in the distro yourself, then re-run")
 	}
-	_, err := wsl.Run(ctx, distro, strings.ReplaceAll(`
+	out, err := wsl.Run(ctx, distro, strings.ReplaceAll(`
 		set -e
 		if ! command -v docker >/dev/null 2>&1; then
 			curl -fsSL https://get.docker.com | sudo -n sh
@@ -440,7 +473,11 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 		fi
 		docker info >/dev/null 2>&1`, "USER_PLACEHOLDER", who))
 	if err != nil {
-		return fmt.Errorf("%w\n(check inside the distro:  wsl -d %s -- docker info)", err, distro)
+		// The distro's own output first — a docker install fails for reasons only
+		// it can state (no DNS, disk full, an apt lock) — then the command to look
+		// deeper. The hint alone told the operator to go find what we already had.
+		return fmt.Errorf("%w\n(check inside the distro:  wsl -d %s -- docker info)",
+			wslStepErr(out, err), distro)
 	}
 	return nil
 }
@@ -516,9 +553,13 @@ func installDejimad(ctx context.Context, distro string) error {
 	url := fmt.Sprintf("https://github.com/Scusi-Inc/dejima/releases/download/%s/dejima_%s_linux_%s.tar.gz", ver, ver, goarch)
 	// The echo gets the BARE url so the operator sees a clickable address rather
 	// than one wrapped in quotes; curl gets the quoted one.
-	script := fmt.Sprintf(dejimadInstallScript, url, shellSingleQuote(url))
-	if _, err := wsl.Run(ctx, distro, script); err != nil {
-		return err
+	sumsURL := fmt.Sprintf("https://github.com/Scusi-Inc/dejima/releases/download/%s/SHA256SUMS", ver)
+	asset := fmt.Sprintf("dejima_%s_linux_%s.tar.gz", ver, goarch)
+	script := fmt.Sprintf(dejimadInstallScript,
+		url, shellSingleQuote(url), asset,
+		shellSingleQuote(sumsURL), shellSingleQuote(asset), asset, asset)
+	if out, err := wsl.Run(ctx, distro, script); err != nil {
+		return wslStepErr(out, err)
 	}
 	return nil
 }
@@ -546,13 +587,13 @@ func latestReleaseTag(ctx context.Context) (string, error) {
 // It needs no checkout: the daemon embeds the build context (islandimage
 // .Materialize), so a release-installed dejimad can build its own image.
 func buildIslandImage(ctx context.Context, distro string) error {
-	_, err := wsl.Run(ctx, distro, `
+	out, err := wsl.Run(ctx, distro, `
 		set -e
 		if docker image inspect dejima/island >/dev/null 2>&1; then
 			echo already-built; exit 0
 		fi
 		dejima image build`)
-	return err
+	return wslStepErr(out, err)
 }
 
 // startDaemonInWSL brings dejimad up in the background inside the distro and
@@ -700,9 +741,30 @@ const dejimadInstallScript = `
 		rm -rf /var/tmp/dejima-install
 		mkdir -p /var/tmp/dejima-install
 		echo "downloading %s"
-		curl -fsSL %s -o /var/tmp/dejima-install/dejima.tar.gz
-		tar -xzf /var/tmp/dejima-install/dejima.tar.gz -C /var/tmp/dejima-install
-		install -m 0755 /var/tmp/dejima-install/dejima /var/tmp/dejima-install/dejimad /usr/local/bin/ 2>/dev/null || sudo install -m 0755 /var/tmp/dejima-install/dejima /var/tmp/dejima-install/dejimad /usr/local/bin/
+		curl -fsSL %s -o /var/tmp/dejima-install/%s
+		# Verify before installing, and note the SHAPE: no shell variables
+		# anywhere. This channel eats the dollar sign, which is why architecture is
+		# resolved
+		# in Go above — the same constraint applies here, so the asset name is
+		# interpolated and sha256sum -c does the comparison itself.
+		#
+		# It matters because the reason this stopped building from source is a link
+		# that drops connections mid-transfer. The same link truncates a tarball,
+		# and an unverified one installs a corrupt daemon that fails later and
+		# elsewhere. A MISSING SHA256SUMS is tolerated (an older release may not
+		# publish one); a MISMATCH is fatal.
+		cd /var/tmp/dejima-install
+		if curl -fsSL %s -o SHA256SUMS 2>/dev/null && grep %s SHA256SUMS > want.sha; then
+			sha256sum -c want.sha
+		else
+			echo "warning: no published checksum for %s; skipping verification" >&2
+		fi
+		tar -xzf /var/tmp/dejima-install/%s -C /var/tmp/dejima-install
+		# sudo -n, never bare sudo. This runs as a non-interactive child of the
+		# setup command: a password prompt here has no terminal to appear on, and
+		# the setup would hang with no output explaining why. Failing loudly beats
+		# stalling silently.
+		install -m 0755 /var/tmp/dejima-install/dejima /var/tmp/dejima-install/dejimad /usr/local/bin/ 2>/dev/null || sudo -n install -m 0755 /var/tmp/dejima-install/dejima /var/tmp/dejima-install/dejimad /usr/local/bin/
 		rm -rf /var/tmp/dejima-install
 		command -v dejimad >/dev/null 2>&1`
 

@@ -222,12 +222,22 @@ func TestInstallScriptCarriesNoLogic(t *testing.T) {
 			t.Errorf("the install script contains %q: %s", banned.tok, banned.why)
 		}
 	}
-	// And it must still be given a URL, or the bans above are satisfied by a
-	// script that does nothing at all.
-	if strings.Count(dejimadInstallScript, "%s") != 2 {
-		t.Errorf("the install script has %d %%s placeholders, want 2 (the echo and the "+
-			"curl) — it has been emptied rather than simplified",
-			strings.Count(dejimadInstallScript, "%s"))
+	// And it must still be given values from Go, or the bans above are satisfied
+	// by a script that does nothing at all.
+	//
+	// A FLOOR, NOT AN EXACT COUNT, and the change is deliberate. This was `!= 2`,
+	// which read as a ceiling on interpolation — but interpolating a Go-computed
+	// value is the ENDORSED pattern here; it is what every ban above tells you to
+	// do instead. Pinning the count therefore blocked the remedy while the bans
+	// demanded it: adding checksum verification (a sums URL and an asset name,
+	// both resolved in Go) tripped this guard for doing exactly the right thing.
+	//
+	// The stated purpose in the old comment was "must still be given a URL" —
+	// a floor. The implementation was stricter than its own rationale, and the
+	// strictness was the part with no argument behind it.
+	if n := strings.Count(dejimadInstallScript, "%s"); n < 2 {
+		t.Errorf("the install script has %d %%s placeholders, want at least 2 (the echo "+
+			"and the curl) — it has been emptied rather than simplified", n)
 	}
 	if !strings.Contains(dejimadInstallScript, "curl") {
 		t.Error("the install script no longer downloads anything")
