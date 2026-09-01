@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,12 +196,37 @@ func (m tuiModel) openCreator() (tea.Model, tea.Cmd) {
 		// teammate driving a REMOTE daemon has no useful local repos to scan, so
 		// burying "Browse my GitHub repos" behind a scan hid the option they most
 		// needed. See viewPick — the same choice also lives there post-scan.
-		c.rootChoices = []string{
-			"Scan this directory (" + tildeify(pwd) + ")",
-			"Choose another directory…",
-			"Browse my GitHub repos…",
-			"Enter a repo URL or path manually",
-		}
+		// "Start empty" LEADS, and it is the only row here that always works.
+		//
+		// This screen is what a fresh client shows before any repo root is
+		// configured, and it used to offer four ways to name a repo and no way to
+		// skip having one. An operator with no repo yet — or on Windows, where the
+		// two directory rows name CLIENT paths a WSL/remote daemon cannot use —
+		// had nothing on this screen they could complete. Reported from a fresh
+		// Windows install as "no ready way to set up an empty repo or copy some
+		// files over": the empty option existed the whole time, on the screen
+		// AFTER a scan they had no reason to run.
+		//
+		// It leads for the same reason it leads in viewPick, and carries the same
+		// hazard: the cursor's zero value decides what Enter-Enter does. #355
+		// added a test for exactly that; rootCursor is set below to match.
+		// THREE SOURCES, named by what the island STARTS FROM rather than by how
+		// you go looking for a repo.
+		//
+		// It was five — start empty, scan this directory, choose another
+		// directory, browse GitHub, enter a URL — which is two questions
+		// interleaved: what should be in /workspace, and how do I find it. The
+		// operator's own framing was better and is what this now uses: clone a
+		// repo, use a local one, or start with nothing. Finding is a detail
+		// INSIDE the first two, not a peer of them.
+		c.rootChoices = rootSourceChoices(tildeify(pwd))
+		// Do not let the zero value pick the destructive-by-surprise option. An
+		// empty island is cheap and reversible, so leading with it is safe — but
+		// the cursor is set explicitly rather than left at 0 by accident, so the
+		// next person to reorder the rows has to make the choice on purpose.
+		// Clone leads: it is what most people want, and it is the only one of the
+		// three that cannot be reached later from inside the others.
+		c.rootCursor = rootRowClone
 		return m, nil
 	}
 	c.step = stepPick
@@ -259,12 +283,28 @@ func (c *creatorModel) createCmd() tea.Cmd {
 		// Auto-build the island image when the daemon doesn't have it yet
 		// (fresh host) — first island creation Just Works, it just takes the
 		// build's few extra minutes.
-		if o, err := client.Overview(context.Background()); err == nil && !o.IslandImagePresent {
+		// Ask the daemon whether Docker is even up before spending minutes on a
+		// build that cannot succeed. This overview call already happened; only
+		// IslandImagePresent was being read from it, so the answer was fetched
+		// and discarded while the operator waited for the inevitable failure.
+		o, overviewErr := client.Overview(context.Background())
+		if overviewErr == nil && !o.DockerReachable {
+			return islandCreatedMsg{err: dockerUnreachableError(client.DaemonHost())}
+		}
+		if overviewErr == nil && !o.IslandImagePresent {
 			bctx, bcancel := context.WithTimeout(context.Background(), 30*time.Minute)
-			err := client.BuildImage(bctx, io.Discard)
+			// Keep the tail. io.Discard here meant a failed build surfaced as
+			// "docker build failed: exit status 1" with docker's own explanation
+			// thrown away — an exit code is not a bug report, and the operator
+			// hitting it is usually not the one who can read the daemon's logs.
+			tail := newBuildTail(40)
+			err := client.BuildImage(bctx, tail)
 			bcancel()
 			if err != nil {
-				return islandCreatedMsg{err: fmt.Errorf("build island image: %w", err)}
+				if out := tail.String(); out != "" {
+					return islandCreatedMsg{err: fmt.Errorf("build island image: %w\n\n%s", err, out)}
+				}
+				return islandCreatedMsg{err: fmt.Errorf("build island image: %w\n(no output was captured)", err)}
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -366,7 +406,7 @@ func (m tuiModel) creatorGitHubGateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		c.forceNoIdentity = true
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
-	case "esc", "q":
+	case "esc", "ctrl+[", "q":
 		m.creator = nil
 		return m, nil
 	}
@@ -385,7 +425,7 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	if c.rootTyping {
 		switch msg.String() {
-		case "esc":
+		case "esc", "ctrl+[":
 			c.rootTyping = false
 		case "enter":
 			dir := strings.TrimSpace(c.rootInput)
@@ -405,8 +445,16 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "q":
+	// ctrl+[ alongside esc: they are the SAME BYTE, and on Windows Terminal the
+	// operator reported esc not registering while q did. Rather than guess at
+	// that input layer a third time, accept both spellings everywhere.
+	case "esc", "ctrl+[", "q":
 		m.creator = nil
+	case "/":
+		// Reachable from the top screen too, not only after a scan: someone whose
+		// repo is neither on GitHub nor in this directory should not have to run
+		// a scan first to find the row that lets them type a path.
+		c.step, c.manualInput, c.err = stepManual, "", ""
 	case "up", "k":
 		if c.rootCursor > 0 {
 			c.rootCursor--
@@ -417,17 +465,18 @@ func (m tuiModel) creatorRootKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		switch c.rootCursor {
-		case 0:
+		case rootRowClone:
+			return m.creatorEnterGitHub()
+		case rootRowLocal:
+			// Scan where they are. "Choose another directory" and "type a URL or
+			// path" are still reachable from the results screen ([/]), which is
+			// where someone who does not find what they wanted actually is.
 			pwd, _ := os.Getwd()
 			_ = clientcfg.Save(clientcfg.Config{RepoRoot: pwd})
 			c.root, c.step, c.scanning = pwd, stepPick, true
 			return m, discoverCmd(pwd)
-		case 1:
-			c.rootTyping, c.rootInput = true, ""
-		case 2:
-			return m.creatorEnterGitHub()
-		case 3:
-			c.step = stepManual
+		case rootRowEmpty:
+			return m.creatorEnterNoRepo()
 		}
 	}
 	return m, nil
@@ -443,7 +492,7 @@ func (m tuiModel) creatorPickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		lastRow = pickRowFromDir
 	}
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "ctrl+[", "q":
 		m.creator = nil
 	case "/":
 		c.step, c.manualInput, c.err = stepManual, "", ""
@@ -551,7 +600,7 @@ func (m tuiModel) creatorSelectRepo(repo reposrc.Repo) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorManualKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		if c.root != "" {
 			c.step, c.err = stepPick, ""
 		} else {
@@ -633,10 +682,17 @@ func (m tuiModel) onGhIdentities(msg ghIdentitiesMsg) (tea.Model, tea.Cmd) {
 				"`gh` is logged in). Once they do, your GitHub repos show up here.\n\n" +
 				"Meanwhile you can still start from a public git URL (back → “Enter a repo URL”)."
 		} else {
-			c.ghHint = "No GitHub identity on the server yet — let's connect one:\n" +
-				"On a machine where `gh` is logged in, run `dejima auth push --github` (it pushes\n" +
-				"your GitHub login to the daemon), or run `gh auth login` on the daemon host.\n" +
-				"Then come back here and your repos will be listed."
+			// [c] rather than a paragraph of homework. This screen used to tell an
+			// owner to go run a command in another terminal and come back — which
+			// is the settings pane's job description, and the settings pane has a
+			// key for it. Reported from a fresh Windows install as "no github
+			// connected (should be guided)": the guidance was there and it was
+			// prose, so the operator read instructions instead of connecting.
+			c.ghHint = "No GitHub identity on the server yet.\n\n" +
+				"Press [c] to connect one now — it opens the guided sign-in in a new\n" +
+				"window. Come back with [r] when it finishes and your repos appear.\n\n" +
+				"(The daemon holds the identity, not this machine, so having `gh`\n" +
+				"logged in locally is not enough on its own.)"
 		}
 		return m, nil
 	case 1:
@@ -667,8 +723,31 @@ func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if c.ghHint != "" { // no identities: any key but movement returns to the picker
-		if s := msg.String(); s == "esc" || s == "enter" || s == "q" {
+	if c.ghHint != "" {
+		switch msg.String() {
+		case "c", "C":
+			// --default: this fires only when NO identity resolves, so the one
+			// being created is the one everything should follow. Leaving it
+			// implicit is how a daemon ends up holding identities and no default,
+			// which is its own week of confusion.
+			if !canOpenNewWindow() {
+				c.ghHint = "Run this in another terminal, then press [r]:\n\n    " + ghConnectCmd
+				return m, nil
+			}
+			if err := m.openGithubConnectWindow(ghConnectArgs); err != nil {
+				c.ghHint = "Couldn't open a window. Run this in another terminal, then [r]:\n\n    " + ghConnectCmd
+				return m, nil
+			}
+			c.ghHint = "Opened the guided sign-in in a new window.\n\n" +
+				"Approve it on GitHub, then press [r] to reload."
+			return m, nil
+		case "r", "R":
+			// Re-ask the daemon rather than assuming the connect worked. If it did
+			// not, the operator lands back on this same screen with the same key,
+			// which is the correct place to be.
+			c.ghLoading, c.ghHint, c.err = true, "", ""
+			return m, c.ghIdentitiesCmd()
+		case "esc", "enter", "q":
 			c.step, c.err, c.ghHint = stepPick, "", ""
 		}
 		return m, nil
@@ -682,7 +761,7 @@ func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorGitHubIdentityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.step, c.err = stepPick, "" // back to the repo picker
 	case "up", "k":
 		if c.ghIdentCur > 0 {
@@ -704,7 +783,7 @@ func (m tuiModel) creatorGitHubIdentityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 func (m tuiModel) creatorGitHubRepoKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		if len(c.ghIdentities) > 1 {
 			c.ghPhase, c.err = ghPickIdentity, "" // back to identity choice
 		} else {
@@ -753,7 +832,7 @@ func (m tuiModel) creatorSelectGitHub(r githubid.Repo) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorSourceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.step = stepPick
 	case "up", "k", "down", "j":
 		c.sourceCursor = 1 - c.sourceCursor
@@ -809,7 +888,7 @@ func (m tuiModel) creatorAgentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorAgentNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.agentNameIn = ""
 		c.step = stepAgent
 	case "enter":
@@ -870,7 +949,7 @@ func (m tuiModel) creatorProviderKeyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // waiting on the store; ignore keys
 	}
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		// Skip: proceed without a key. The agent will need `v` later — the picker
 		// already warns — but we don't force it.
 		c.step = stepAgents
@@ -938,7 +1017,7 @@ func (m tuiModel) creatorAgentsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
-	case "esc":
+	case "esc", "ctrl+[":
 		// Re-pick from scratch: clear the roster and choose the primary again.
 		c.agents = nil
 		c.pickingExtra = false
@@ -951,7 +1030,7 @@ func (m tuiModel) creatorAgentsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.step = stepPick
 	case "enter":
 		if strings.TrimSpace(c.nameInput) == "" {
@@ -1071,7 +1150,7 @@ func (c *creatorModel) view(width int) string {
 }
 
 func (c *creatorModel) viewRoot(b *strings.Builder) {
-	b.WriteString(styleMuted.Render("Where are your repos? The picker scans this directory for git repos."))
+	b.WriteString(styleMuted.Render("What should this island start from?"))
 	b.WriteString("\n\n")
 	if c.rootTyping {
 		b.WriteString("directory: " + styleAccent.Render(c.rootInput+"_"))
@@ -1081,7 +1160,7 @@ func (c *creatorModel) viewRoot(b *strings.Builder) {
 	for i, choice := range c.rootChoices {
 		c.writeChoice(b, i == c.rootCursor, choice)
 	}
-	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [esc] cancel"))
+	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [/] type a URL or path   [esc] cancel"))
 }
 
 func (c *creatorModel) viewPick(b *strings.Builder) {
@@ -1331,7 +1410,13 @@ func (c *creatorModel) viewName(b *strings.Builder) {
 // the default action of the most-used flow. Repo-less is a rare, deliberate choice;
 // it has to be visible, not default.
 const (
-	pickRowNoRepo    = 0
+	pickRowNoRepo = 0
+	// Rows on the pre-scan root screen. Named because they are referenced from
+	// three places and an off-by-one silently sends the operator somewhere else.
+	rootRowClone = 0 // a repo from elsewhere: GitHub browse or a git URL
+	rootRowLocal = 1 // a git repo already on this machine
+	rootRowEmpty = 2 // nothing; files arrive later
+
 	pickRowGitHub    = 1
 	pickRowManual    = 2
 	pickRowFromDir   = 3
@@ -1344,6 +1429,33 @@ const (
 func (c *creatorModel) writeHeader(b *strings.Builder, text string) {
 	b.WriteString(styleMuted.Render("  " + text))
 	b.WriteString("\n")
+}
+
+// rootSourceChoices builds the three rows of the first create screen.
+//
+// It exists as a function so the TEST can assert on the rows that actually
+// ship. The earlier test declared its own copy of these strings and checked
+// that copy, which meant the row constants could drift from the real list
+// without failing anything — and an off-by-one there runs a different action
+// than the highlighted line, with nothing looking wrong.
+//
+// The leading glyphs are single-width BMP characters on purpose. Emoji are
+// double-width in most terminals and inconsistently so across them, which
+// would misalign the muted descriptions on exactly the machines we cannot see.
+//
+// Order is deliberate and is pinned by tests: cloning leads because it is the
+// common case AND the only one of the three that cannot be reached later from
+// inside the others. Starting empty is last because it is the cheapest to
+// change your mind about.
+func rootSourceChoices(machine string) []string {
+	row := func(icon, label, desc string) string {
+		return fmt.Sprintf("%-24s%s", icon+"  "+label, styleMuted.Render(desc))
+	}
+	return []string{
+		row("\u21e3", "Clone a repo", "browse GitHub, or paste a git URL"),
+		row("\u2302", "Use a local repo", "a git repo already on "+machine+"'s machine"),
+		row("\u25cc", "Start empty", "no repo — add files later"),
+	}
 }
 
 func (c *creatorModel) writeChoice(b *strings.Builder, selected bool, text string) {
@@ -1374,7 +1486,7 @@ func shortRemote(url string) string {
 func (m tuiModel) creatorFromDirKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		c.step, c.err = stepPick, ""
 	case "tab":
 		c.fromDirGit = !c.fromDirGit
@@ -1436,3 +1548,15 @@ func (c *creatorModel) viewFromDir(b *strings.Builder) {
 	}
 	b.WriteString("\n" + styleMuted.Render("[⏎] continue   [tab] git init on/off   [esc] back"))
 }
+
+// ghConnectArgs / ghConnectCmd are ONE decision written once.
+//
+// The window path and the type-it-yourself path must not disagree about the
+// command — a fallback that omits --default hands the operator a daemon holding
+// an identity that nothing resolves to, which is a week of confusion we have
+// already had. Deriving the printed command from the args makes the two
+// incapable of drifting, and lets one assertion cover both.
+const (
+	ghConnectArgs = " --default"
+	ghConnectCmd  = "dejima github connect" + ghConnectArgs
+)

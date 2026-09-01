@@ -51,21 +51,40 @@ def install_hint() -> str:
 
 
 def install_block(page: str) -> str:
-    """The page region that gives install instructions.
+    """The page region that gives WSL install instructions.
 
-    Scoped deliberately: the command block plus the paragraph that follows it,
-    which is where the fallback lives. The rest of the Windows panel names
-    commands that are NOT install steps (`wsl --status` probes for the feature,
-    `dejima wsl setup` builds the distro), and those must not be dragged into a
-    comparison against a constant that is only about installing WSL itself.
+    Scoped by an explicit `data-wsl-install-hint` marker on the page, NOT by
+    position. The first version of this walked from the command block to the
+    next `</p>`, which was correct for the layout it was written against and
+    silently wrong the moment that layout changed — a restructure moved
+    `wsl --status` into a disclosure, and a positional region would have swept
+    it in and failed on correct copy.
+
+    The scope matters because the Windows panel names commands that are NOT
+    install steps: `wsl --status` probes for the feature and `dejima wsl setup`
+    builds the distro. Neither belongs in a comparison against a constant that
+    is only about installing WSL itself. Marking the region says so in the page,
+    where the person editing the page can see it.
     """
-    start = page.find("<pre><code>wsl --install")
+    marker = "<div data-wsl-install-hint>"
+    start = page.find(marker)
     if start == -1:
-        sys.exit("FAIL: quickstart.html has no `wsl --install` command block")
-    end = page.find("</p>", page.find("</pre>", start))
-    if end == -1:
-        sys.exit("FAIL: no closing </p> after the install block")
-    return re.sub(r"<[^>]+>", " ", page[start:end])
+        sys.exit(
+            "FAIL: quickstart.html has no `data-wsl-install-hint` element.\n"
+            "      That marker scopes this check. Without it the check cannot\n"
+            "      know which commands it is meant to compare, so it fails\n"
+            "      rather than guessing at a region."
+        )
+    # Walk to the matching </div>; the region contains nested divs.
+    depth, i = 0, start
+    for m in re.finditer(r"<div\b|</div>", page[start:]):
+        depth += 1 if m.group().startswith("<div") else -1
+        if depth == 0:
+            i = start + m.end()
+            break
+    else:
+        sys.exit("FAIL: `data-wsl-install-hint` element is never closed")
+    return re.sub(r"<[^>]+>", " ", page[start:i])
 
 
 def main() -> int:

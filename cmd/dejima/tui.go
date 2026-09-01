@@ -1816,6 +1816,23 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		return m.openCreator()
+	case "L":
+		// Only on the empty first-run screen, and only while the credential is
+		// actually missing — the same condition that renders the offer. A key
+		// that does something on one screen and nothing on another is worse than
+		// no key, so this stays tied to the text advertising it.
+		if len(m.islands) == 0 && m.setupChecked && !m.claudeSeeded {
+			if !canOpenNewWindow() {
+				m.lastNotice = "can't open a window here — press r after setting Claude up on this machine"
+				return m, nil
+			}
+			if err := m.openAuthPushWindow(); err != nil {
+				m.lastError = "couldn't open a window for the Claude setup"
+				return m, nil
+			}
+			m.lastNotice = "opened `dejima auth push` — it copies this machine's Claude login to the server"
+			return m, nil
+		}
 	case "/", "`":
 		// Toggle + focus the pinned host-terminal band (above the island list).
 		// `/` is the primary key; backtick kept as an alias.
@@ -2422,7 +2439,15 @@ func (m tuiModel) buildImageCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
-		return imageBuildDoneMsg{err: m.client.BuildImage(ctx, io.Discard)}
+		// See tui_create.go: the tail is what makes a failure actionable.
+		tail := newBuildTail(40)
+		if err := m.client.BuildImage(ctx, tail); err != nil {
+			if out := tail.String(); out != "" {
+				return imageBuildDoneMsg{err: fmt.Errorf("%w\n\n%s", err, out)}
+			}
+			return imageBuildDoneMsg{err: err}
+		}
+		return imageBuildDoneMsg{}
 	}
 }
 
@@ -4074,10 +4099,38 @@ func (m tuiModel) renderList(width int) (string, int) {
 		// read as decoration, so people didn't know it was the thing to press.
 		body := styleSelected.Render("▶ + Set up your first island") + "\n\n" +
 			styleAccent.Render("Press ⏎ to start") + styleMuted.Render(" — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
-		// Nudge missing Claude creds before the first island, so claude-code/codex
-		// agents don't start unauthenticated and fail at first attach.
+		// Nudge missing Claude creds before the first island, so a claude-code
+		// agent doesn't start unauthenticated and fail at first attach.
+		//
+		// CLAUDE-CODE ONLY. This used to say "claude-code/codex agents start
+		// authenticated", which is false: `dejima auth push` pushes a CLAUDE
+		// session (agentcreds.LoadClaude — that is the only thing the package
+		// loads), and codex is OpenAI. A Claude session does not authenticate it.
+		//
+		// A wrong sentence about credentials, on the first screen a new operator
+		// sees, is worse than no sentence: someone who ran auth push and then
+		// added a codex agent would believe it was set up and meet the failure at
+		// first attach, with the one surface that mentioned it having told them
+		// otherwise. Codex signs in on its own, into its own state dir.
 		if m.setupChecked && !m.claudeSeeded {
-			body += "\n\n" + styleWaiting.Render("⚠ no Claude credentials yet — run `dejima auth push` (from a machine where\n  `claude` is logged in) so claude-code/codex agents start authenticated.")
+			// AN OFFER, NOT A WARNING.
+			//
+			// This was a ⚠ on the empty-state screen, shown BEFORE any agent is
+			// chosen — so it presented an optional convenience as a missing
+			// prerequisite, to people who may be about to use a provider key or a
+			// shell agent and need none of it. Seeding is a shortcut: without it
+			// you attach once and log in inside the island.
+			//
+			// It also says ONE ACCOUNT, EVERY ISLAND, because that is the part
+			// worth knowing and the part nobody could have guessed: the credential
+			// lives on the daemon, not in an island, so it is seeded once and
+			// every island created afterwards inherits it.
+			body += "\n\n" + styleAccent.Render("[L] Set up Claude for every island") +
+				styleMuted.Render("  (recommended)") +
+				styleMuted.Render("\n  Copies this machine's Claude login to the server, once. Every island\n"+
+					"  created afterwards starts authenticated — you never log in per island.\n"+
+					"  Optional: skip it and log in inside an island, or set a provider key\n"+
+					"  instead ("+styleAccent.Render("s")+" → Provider keys).")
 		}
 		return body, -1
 	}

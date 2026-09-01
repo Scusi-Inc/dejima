@@ -151,6 +151,7 @@ test:
 test-installer:
 	./scripts/lib/tty_test.sh
 	./scripts/lib/transcript_test.sh
+	./scripts/lib/installfork_test.sh
 
 # test-integration runs the DETERMINISTIC FULL-FEATURE Tier-2 suite against a
 # LIVE Docker host — one dispatch exercises every feature once with per-feature

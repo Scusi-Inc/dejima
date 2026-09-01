@@ -305,6 +305,58 @@ asked for.
 → found by d5, reviewing d1's fix for a bug d5 had reported. Both halves now
 enforced; `site-wsl-hint` runs on every push.
 
+### 7. The guard that matches TEXT as a proxy for MEANING — needs a funnel, not a longer list
+
+Text is escapable in both directions, and a guard built on it fails both ways at
+once: prose satisfies it, and a synonym evades it.
+
+**Four instances in a single day**, across four people's work, which is what
+earned it a section:
+
+- **A claim sweep searched for wording, not the claim.** A page said "each agent
+  runs in a container" — the per-agent isolation claim, made in full — and
+  survived every sweep because it contained none of the words those sweeps
+  looked for: no "isolated", no "walled off", no "from each other". Found on the
+  third pass, by re-asking the question against a different failure rather than
+  re-running the same search.
+- **The coverage gate counted a mention as a test.** `cliReferenced` matches
+  `dejima <verb>` anywhere in the test corpus, so a COMMENT explaining a bug
+  about a command marked that command covered — and the ratchet then asked for
+  the deletion of the waiver protecting it. Prose registering as coverage.
+- **A source-level guard read its own explanation.** A check asserted the
+  function body contained `DEJIMA_ROLE`; the body contained a comment saying why
+  `DEJIMA_ROLE` is set, so deleting it from the actual command changed nothing.
+- **An openapi route extractor read comments**, so a commented-out route became
+  a documented one.
+
+**The tell.** The guard's definition of the thing is a string, and the thing can
+be expressed in a string the guard does not hold. Ask: *could someone make this
+claim, or this call, in words my list does not contain?* If yes, the list is a
+sample rather than a definition — and it will be a smaller sample every time
+someone paraphrases.
+
+**The control.** Two, and the second matters more:
+
+1. **Strip what is not code before matching.** Comments are not calls; prose is
+   not coverage. Cheap, mechanical, and it removes the false-positive half.
+2. **Funnel the thing through one function, then guard the funnel.** This is the
+   half that closes it. A vocabulary list catches a phrase already in it; it
+   cannot catch a NEW phrase, because the person introducing one is by
+   construction not editing the list. Make the claim impossible to render without
+   going through `containmentClaim(level)` — or the command impossible to invoke
+   without going through one constant — and the question stops being "did the
+   author remember the list" and becomes "did the author render a string at
+   all", which a scan can answer.
+
+**The anti-pattern to name, because it is the tempting fix.** When the guard
+fires on something legitimate, do NOT loosen the list to accommodate it. A claim
+list edited to let one string through stops being a claim list. Exclude that one
+case AT THE CALL SITE, by exact text, with a control that fails if the text is
+ever reworded — so the exclusion cannot outlive the reason for it.
+
+→ instances from d5 (the sweep, the exclusion pattern), d2 (the funnel argument),
+d4 (the extractor), and three of d1's own in one afternoon.
+
 ## Instruments get the same treatment
 
 A measurement you are about to publish is a guard pointed at reality, and it

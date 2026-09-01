@@ -459,3 +459,31 @@ func appleStr(s string) string {
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	return `"` + s + `"`
 }
+
+// openAuthPushWindow runs `dejima auth push` in its own window.
+//
+// Its own window because it may prompt, and because on a machine where the
+// Claude login lives in a keychain the OS asks for permission — which cannot
+// happen inside the dashboard's alternate screen.
+func (m tuiModel) openAuthPushWindow() error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "auth-push"
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s auth push",
+		shquote(m.activeHost), shquote(title), shquote(exe))
+	switch {
+	case os.Getenv("TMUX") != "":
+		if tmuxFocusWindow(title) {
+			return nil
+		}
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "auth push", "", "", title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima auth push` in another terminal")
+	}
+}

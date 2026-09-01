@@ -88,7 +88,7 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	// Ledger the management event. The NAME and fingerprint, never the value —
 	// an audit log that leaks the thing it audits would be worse than none.
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "secret.set", Island: island, Scope: key,
 		Detail: "fingerprint " + meta.Fingerprint, Actor: actorFromRequest(r),
 	})
@@ -114,7 +114,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	if refreshErr := s.refreshIslandSecrets(island); refreshErr != nil {
 		s.log.Warn("island secrets mount not refreshed", "island", island, "err", refreshErr)
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "secret.remove", Island: island, Scope: key, Actor: actorFromRequest(r),
 	})
 	w.WriteHeader(http.StatusNoContent)

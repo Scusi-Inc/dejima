@@ -1406,7 +1406,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 	isSpawn := TokenIslandFromContext(r.Context()) != ""
 	if isSpawn {
 		if err := s.authorizeSpawn(p, spec); err != nil {
-			s.ledgerAppend(ledger.Entry{
+			s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 				Type: "spawn.deny", Island: name, Scope: spec.Type,
 				Detail: err.Error(), Actor: "agent:" + spec.SpawnedBy, Decision: "denied",
 			})
@@ -1425,7 +1425,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		// Reserve a lifetime-budget slot (max_total) atomically — still under the
 		// projectLock — and ledger the spawn with its lineage.
 		_, _ = spawn.Update(func(st *spawn.Store) error { st.Consume(name); return nil })
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "spawn.create", Island: name, Scope: spec.Type,
 			Detail: "sub-agent " + id + " spawned by " + spec.SpawnedBy, Actor: "agent:" + spec.SpawnedBy, Decision: "allowed",
 		})
@@ -1539,7 +1539,7 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 	if isTokenReap {
 		// Ledger the agent-initiated teardown (a privileged crossing), matching the
 		// auto-reaper's spawn.reap shape so audit sees both paths uniformly.
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "spawn.reap", Island: name,
 			Detail:   "self-reaped sub-agent " + id + " (spawned by " + agentCopy.SpawnedBy + ")",
 			Decision: "allowed",
