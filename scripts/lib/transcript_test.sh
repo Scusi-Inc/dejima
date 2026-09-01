@@ -46,6 +46,33 @@ else
     bad "earlier output is missing from the log"
 fi
 
+# 2b. THE FAST-EXIT CASE, which the original version of this file missed.
+#     It tested a script that echoed twice and ended normally, and passed. A
+#     script that FAILS two lines in — the run whose log matters most — lost
+#     everything but the header, because `exec > >(tee …)` gives no PID to wait
+#     for and the shell was gone before tee drained.
+# Run it under a PTY HARNESS that tears the process group down, because a plain
+# `bash -c '…; exit 1'` does NOT reproduce the loss — process substitution often
+# drains fine there, and a version of this check that used it passed against the
+# broken implementation. The condition is a parent going away, which is what an
+# installer run under `curl | bash` inside a terminal that closes looks like.
+PTYRUN="$LIB_DIR/ptyrun.py"
+mkdir -p "$TMP/fast"
+if command -v timeout >/dev/null 2>&1 && [[ -x "$PTYRUN" || -f "$PTYRUN" ]]; then
+    printf '' | HOME="$TMP/fast" timeout 30 python3 "$PTYRUN" pipe -c \
+        ". '$LIB_DIR/transcript.sh'; start_transcript; echo LINE_BEFORE_FAILURE; exit 1" \
+        >/dev/null 2>&1 || true
+else
+    run_case fast 'start_transcript; echo LINE_BEFORE_FAILURE; exit 1' >/dev/null 2>&1
+fi
+logf="$(find "$TMP/fast" -name 'dejima-install-*.log' 2>/dev/null | head -1)"
+if [[ -n "$logf" ]] && grep -q LINE_BEFORE_FAILURE "$logf"; then
+    ok "output survives an IMMEDIATE failing exit (the run that matters most)"
+else
+    bad "a fast failing exit left only the header — the log is empty exactly when
+     someone needs it"
+fi
+
 # 3. The header says which machine and when, because that is the first question.
 if [[ -n "$log2" ]] && grep -q "^date:" "$log2" && grep -q "^host:" "$log2"; then
     ok "the log is self-describing (date + host)"

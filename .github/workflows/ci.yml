@@ -102,6 +102,7 @@ jobs:
             scripts/lib/transcript.sh \
             scripts/lib/tty_test.sh \
             scripts/lib/transcript_test.sh \
+            scripts/lib/installfork_test.sh \
             scripts/verify-secrets-propagation.sh \
             scripts/verify-ssh-forward-semantics.sh \
             scripts/integration.sh \

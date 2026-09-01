@@ -95,12 +95,34 @@ try {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 
+# --- Where will the islands run? -----------------------------------------
+# Asked FIRST, because it decides whether the next two sections happen at all.
+#
+# Without it this script assumed a remote server: it installed Tailscale, asked
+# for a tailnet address, and closed by saying the server stack is Unix-only and
+# to go install it on a Mac mini. A Windows operator whose islands run in WSL2 on
+# the SAME machine was walked through networking they did not need, asked for an
+# address that does not exist, told to leave it blank, and then pointed at
+# another computer. `dejima wsl setup` was never mentioned.
+#
+# One question removes all of that for the local case.
+$localHost = $false
+if ([Environment]::UserInteractive -and -not $env:DEJIMA_HOST) {
+  Write-Host ""
+  Write-Bold "Where will your islands run?"
+  Write-Info "  [1] On this machine, inside WSL2  (Dejima builds a local Linux host)"
+  Write-Info "  [2] On another machine  (a Mac mini or Linux box already running Dejima)"
+  $where = Read-Host "Choose [1/2] (default 1)"
+  if (-not $where -or $where -match '^1') { $localHost = $true }
+}
+
 # --- Tailscale ------------------------------------------------------------
 # The network the client uses to reach the daemon. Sign-in is GUI-driven on
 # Windows, so we install the package and point the user at the tray icon.
 Write-Host ""
-Write-Bold "Tailscale"
 $haveTS = $false
+if (-not $localHost) {
+Write-Bold "Tailscale"
 if (Get-Command tailscale -ErrorAction SilentlyContinue) {
   Write-Info "tailscale CLI found"
   $haveTS = $true
@@ -132,16 +154,18 @@ if ($haveTS) {
   Write-Info "Sign in to Tailscale via the system-tray icon (right-click -> Log in)."
   Write-Info "Use the SAME tailnet as your Dejima server."
 }
+}  # end: remote-server branch (Tailscale is not needed for a WSL host)
 
 # --- DEJIMA_HOST ----------------------------------------------------------
 # Prompt for the server's tailnet IP/hostname; probe :7273; persist as a
 # User-scope environment variable so future PowerShell sessions inherit it.
+$candidate = $null
+if (-not $localHost) {
 Write-Host ""
 Write-Bold "Server address"
 Write-Info "On the SERVER (mac mini / linux box), run 'tailscale ip -4' to find its address."
 Write-Info "Example: 100.84.12.7"
 
-$candidate = $null
 if ([Environment]::UserInteractive) {
   $serverHost = Read-Host "Enter your server's tailnet IP or hostname (blank to skip)"
   if ($serverHost) {
@@ -164,9 +188,32 @@ if ([Environment]::UserInteractive) {
   }
 }
 
+}  # end: remote-server branch
+
 Write-Host ""
 Write-Bold "Next steps"
-if ($candidate) {
+if ($localHost) {
+  Write-Host @"
+
+  Close + reopen PowerShell so the new PATH is picked up. Then build the
+  local host -- this installs Docker and the Dejima daemon inside a WSL2
+  distro on this machine:
+
+       dejima wsl setup
+
+  First run takes a while (it creates the distro and builds an image).
+  After it finishes:
+
+       dejima              # opens the dashboard
+
+  If WSL is not installed yet, an ADMINISTRATOR PowerShell:
+
+       wsl --install --no-distribution
+       (older wsl.exe: wsl --install, reboot, then wsl --update)
+
+  then reboot and run 'dejima wsl setup'.
+"@
+} elseif ($candidate) {
   Write-Host @"
 
   Close + reopen PowerShell so the new PATH and DEJIMA_HOST are picked up.

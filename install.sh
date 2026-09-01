@@ -46,10 +46,20 @@ if [[ -z "${DEJIMA_INSTALL_LOG:-}" ]]; then
             printf 'dejima install transcript\ndate:    %s\nhost:    %s\nref:     %s\n\n' \
                 "$(date)" "$(uname -a 2>/dev/null || echo unknown)" "${DEJIMA_REF:-master}"
         } >>"$DEJIMA_INSTALL_LOG"
-        # tee, so the operator still sees the install. This makes stdout a pipe —
-        # the condition #341 wrongly read as "nobody is here". lib/tty.sh answers
-        # that on /dev/tty, so prompts and sudo still find the human.
-        exec > >(tee -a "$DEJIMA_INSTALL_LOG") 2>&1
+        # A FIFO plus an explicit wait, NOT `exec > >(tee …)`: process
+        # substitution gives no PID to wait for, so on a fast exit the shell is
+        # gone before tee drains and the log keeps only the header — precisely
+        # the run whose log matters most.
+        DEJIMA_FIFO="$(mktemp -u)"
+        if mkfifo "$DEJIMA_FIFO" 2>/dev/null; then
+            tee -a "$DEJIMA_INSTALL_LOG" <"$DEJIMA_FIFO" &
+            DEJIMA_LOG_TEE=$!
+            exec >"$DEJIMA_FIFO" 2>&1
+            rm -f "$DEJIMA_FIFO"
+            trap 'exec 1>&- 2>&-; wait "$DEJIMA_LOG_TEE" 2>/dev/null' EXIT
+        else
+            unset DEJIMA_INSTALL_LOG
+        fi
     else
         unset DEJIMA_INSTALL_LOG
     fi
@@ -73,6 +83,51 @@ fail()  {
 is_commit_sha() { [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; }
 
 bold "Dejima installer"
+
+# --- Which install is this? ----------------------------------------------
+# ASKED FIRST, before Go, Docker, or a clone. This script builds the SERVER
+# stack; install-client.sh drops a ~15MB CLI and nothing else.
+#
+# It used to be one road. Someone who only wanted to drive a server elsewhere
+# was walked through a Go toolchain, a Homebrew Docker Desktop install, an image
+# build and a launchd service — with no signpost that a one-minute script
+# existed. Every failure they could hit was in work they never needed to do, and
+# a fresh-Mac install failed three times in the field that way.
+#
+# /dev/tty, not stdin: `curl … | bash` makes stdin a pipe while a person watches
+# from the keyboard, which is exactly the misreading that produced #341. Piped
+# and non-interactive runs fall through to the server path, which is what an
+# unattended installer should do.
+# `[[ -e /dev/tty ]]` is the WRONG test and this is the third variant of that
+# mistake this week: the device node exists on a process with no controlling
+# terminal, and opening it then fails with ENXIO. Probe by OPENING it, in a
+# subshell so a failed redirect is not fatal under `set -e` — which is exactly
+# what scripts/lib/tty.sh does, for exactly this reason. That library is not
+# available here; the repo has not been cloned yet.
+if [[ -z "${DEJIMA_ROLE:-}" ]] && ( exec </dev/tty ) 2>/dev/null; then
+    echo
+    info "Two ways to run Dejima:"
+    info "  [1] SERVER  — this machine hosts the islands (needs Docker; ~10 min)"
+    info "  [2] CLIENT  — this machine drives a Dejima server somewhere else (~1 min)"
+    echo
+    printf '  Which is this? [1/2] (default 1): '
+    read -r role </dev/tty 2>/dev/null || role=""
+    case "$role" in
+        2)
+            echo
+            bold "That's the client install — this script builds the server."
+            info "Run this instead (no Go, no Docker, no daemon):"
+            echo
+            info "    curl -fsSL https://dejima.tech/install-client.sh | bash"
+            echo
+            info "On Windows, use PowerShell:"
+            info "    irm https://dejima.tech/install-client.ps1 | iex"
+            echo
+            exit 0
+            ;;
+    esac
+fi
+
 info "source:  $SRC_DIR (ref: $REF)"
 info "binaries will be installed to ${PREFIX:-/usr/local}/bin"
 echo
