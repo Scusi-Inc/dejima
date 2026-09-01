@@ -191,9 +191,62 @@ if ([Environment]::UserInteractive) {
 
 }  # end: remote-server branch
 
+# --- Build the local host now? -------------------------------------------
+# The point of asking local-vs-server up front was to COLLAPSE two commands into
+# one. Printing `dejima wsl setup` in Next Steps and calling that done left the
+# operator with the same two commands and one fewer prompt, which is not what was
+# promised.
+#
+# Invoked by FULL PATH, not through PATH. The installer just added $prefix to the
+# User PATH, and this PowerShell session does not have it — which is the entire
+# reason "close and reopen PowerShell" was a step. Calling the exe directly
+# removes that step for the local path.
+#
+# Asked rather than assumed: this is minutes of work (it creates a distro,
+# installs Docker, and builds an image), so starting it unannounced would be a
+# surprise, not a convenience. Declining is a first-class answer and prints what
+# to run later.
+$builtHost = $false
+if ($localHost -and [Environment]::UserInteractive) {
+  Write-Host ""
+  Write-Bold "Build the local host now?"
+  Write-Info "This installs Docker and the Dejima daemon inside a WSL2 distro."
+  Write-Info "First run takes a while -- it creates the distro and builds an image."
+  $go = Read-Host "Run 'dejima wsl setup' now? [Y/n]"
+  if (-not $go -or $go -match '^[Yy]') {
+    $exe = Join-Path $prefix 'dejima.exe'
+    if (Test-Path $exe) {
+      Write-Host ""
+      & $exe wsl setup
+      if ($LASTEXITCODE -eq 0) {
+        $builtHost = $true
+      } else {
+        Write-Host ""
+        Write-Host "  [!] 'dejima wsl setup' exited $LASTEXITCODE." -ForegroundColor Yellow
+        Write-Info "It is idempotent -- fix what it reported and run it again:"
+        Write-Info "    dejima wsl setup"
+      }
+    } else {
+      Write-Info "couldn't find $exe -- run 'dejima wsl setup' after reopening PowerShell"
+    }
+  }
+}
+
 Write-Host ""
 Write-Bold "Next steps"
-if ($localHost) {
+if ($builtHost) {
+  Write-Host @"
+
+  Your local host is up. Close + reopen PowerShell so 'dejima' is on PATH, then:
+
+       dejima                       # opens the dashboard
+       dejima init --name test      # create your first island
+
+  ---
+  Meant to connect to a Dejima server on ANOTHER machine instead? Re-run this
+  installer and answer [2].
+"@
+} elseif ($localHost) {
   Write-Host @"
 
   Close + reopen PowerShell so the new PATH is picked up. Then build the
