@@ -4047,10 +4047,21 @@ func (m tuiModel) renderList(width int) (string, int) {
 		// read as decoration, so people didn't know it was the thing to press.
 		body := styleSelected.Render("▶ + Set up your first island") + "\n\n" +
 			styleAccent.Render("Press ⏎ to start") + styleMuted.Render(" — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
-		// Nudge missing Claude creds before the first island, so claude-code/codex
-		// agents don't start unauthenticated and fail at first attach.
+		// Nudge missing Claude creds before the first island, so a claude-code
+		// agent doesn't start unauthenticated and fail at first attach.
+		//
+		// CLAUDE-CODE ONLY. This used to say "claude-code/codex agents start
+		// authenticated", which is false: `dejima auth push` pushes a CLAUDE
+		// session (agentcreds.LoadClaude — that is the only thing the package
+		// loads), and codex is OpenAI. A Claude session does not authenticate it.
+		//
+		// A wrong sentence about credentials, on the first screen a new operator
+		// sees, is worse than no sentence: someone who ran auth push and then
+		// added a codex agent would believe it was set up and meet the failure at
+		// first attach, with the one surface that mentioned it having told them
+		// otherwise. Codex signs in on its own, into its own state dir.
 		if m.setupChecked && !m.claudeSeeded {
-			body += "\n\n" + styleWaiting.Render("⚠ no Claude credentials yet — run `dejima auth push` (from a machine where\n  `claude` is logged in) so claude-code/codex agents start authenticated.")
+			body += "\n\n" + styleWaiting.Render("⚠ no Claude credentials yet — run `dejima auth push` (from a machine where\n  `claude` is logged in) so claude-code agents start authenticated.\n  (Other agent types sign in themselves, or need a provider key.)")
 		}
 		return body, -1
 	}
