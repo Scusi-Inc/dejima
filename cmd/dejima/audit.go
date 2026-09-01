@@ -87,6 +87,23 @@ func newAuditCmd() *cobra.Command {
 					return fmt.Errorf("ledger verification FAILED: %s", resp.Error)
 				}
 				fmt.Printf("ledger OK — %d entries, hash chain intact\n", resp.Total)
+				// `--verify` is the sentence someone quotes to a team lead, so it has to
+				// say what it verified. The chain proves nobody edited these rows; it
+				// says nothing about whether a self-reported one happened.
+				if note := chainNote(resp.Entries); note != "" {
+					fmt.Println(note)
+					if n := provenanceNote(resp.Entries); n != "" {
+						fmt.Println(n)
+					}
+				}
+				// Verification covers the WHOLE chain regardless of filters; the
+				// provenance scan above only saw what was returned. Without this line, a
+				// filtered `--verify` that happens to return no self-reported rows prints
+				// an unqualified "ledger OK" — silence reading as "and every row is
+				// vouched for", which is the reassuring direction to be wrong in.
+				if resp.Returned < resp.Total {
+					fmt.Printf("(provenance assessed over the %d rows returned, not all %d)\n", resp.Returned, resp.Total)
+				}
 				return nil
 			}
 			if len(resp.Entries) == 0 {
@@ -94,14 +111,21 @@ func newAuditCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "SEQ\tWHEN\tTYPE\tISLAND\tACTOR\tDETAIL\tDECISION")
+			// The leading column carries a mark only for rows Dejima cannot vouch
+			// for; an all-brokered ledger prints exactly as it did before. It leads
+			// the row because it qualifies everything after it.
+			fmt.Fprintln(tw, "\tSEQ\tWHEN\tTYPE\tISLAND\tACTOR\tDETAIL\tDECISION")
 			for _, e := range resp.Entries {
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					provenanceMark(e.Provenance),
 					e.Seq, e.Time.Local().Format("2006-01-02 15:04:05"),
 					e.Type, e.Island, e.Actor, auditDetail(e), e.Decision)
 			}
 			if err := tw.Flush(); err != nil {
 				return err
+			}
+			if note := provenanceNote(resp.Entries); note != "" {
+				fmt.Println(note)
 			}
 			if resp.Returned < resp.Total {
 				fmt.Fprintf(os.Stderr, "\nshowing %d of %d entries (filtered)\n", resp.Returned, resp.Total)
