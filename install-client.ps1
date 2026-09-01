@@ -112,6 +112,7 @@ if ([Environment]::UserInteractive -and -not $env:DEJIMA_HOST) {
   Write-Bold "Where will your islands run?"
   Write-Info "  [1] On this machine, inside WSL2  (Dejima builds a local Linux host)"
   Write-Info "  [2] On another machine  (a Mac mini or Linux box already running Dejima)"
+  Write-Info "      -- choose [2] if you are following a 'connect to your server' guide"
   $where = Read-Host "Choose [1/2] (default 1)"
   if (-not $where -or $where -match '^1') { $localHost = $true }
 }
@@ -212,6 +213,11 @@ if ($localHost) {
        (older wsl.exe: wsl --install, reboot, then wsl --update)
 
   then reboot and run 'dejima wsl setup'.
+
+  ---
+  Meant to connect to a Dejima server on ANOTHER machine? This branch skipped
+  the Tailscale and server-address setup you need for that. Re-run this
+  installer and answer [2].
 "@
 } elseif ($candidate) {
   Write-Host @"
