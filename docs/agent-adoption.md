@@ -141,6 +141,28 @@ nothing.
   is the only piece needing host access outside Port. Full reasoning, and what is
   already banked, in the roadmap entry. Phase 1 therefore ships as the honest
   data model and the naming, with no producer of observed agents yet.
+
+  **Decided before the deferral, and binding when it resumes — the scan's
+  boundary.** Discovery runs on the DAEMON HOST, scans only the DAEMON USER's own
+  processes and home, and NEVER crosses users — not even for an owner. Its output
+  names which host was scanned, every time, unasked.
+
+  The cross-tenant case decides it. The daemon has roles and owners, so a walk of
+  process lists and home directories can enumerate another tenant's agents,
+  including transcript paths that name their projects. That leaks the names of
+  someone's work to a person holding no grant over it. Dejima's claim is that
+  host access is scoped and audited; a feature reading other users' home
+  directories because the daemon happens to run privileged would be the largest
+  exception in the product, introduced for a convenience nobody asked for. If
+  serving that case is ever wanted, it is a Port grant — brokered and ledgered —
+  not a filesystem walk.
+
+  A second, smaller consequence to design around rather than paper over: the
+  command is typed on a CLIENT, which may be a different machine from the daemon.
+  So an operator on a laptop driving a Mac mini discovers the MINI's agents, not
+  their own. That is correct and it will surprise everyone, because "discover my
+  agents" reads as local. Naming the host in the output is the honest minimum,
+  not the fix; the command itself should be hard to misread.
 - **Read-only state**: which agent, what it is working on, last activity,
   whether it is alive.
 - **Ledger entries marked self-reported**, distinct at a glance from brokered
