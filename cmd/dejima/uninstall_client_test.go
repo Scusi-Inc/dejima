@@ -90,3 +90,49 @@ func TestWindowsLeftoversHonoursCustomPrefix(t *testing.T) {
 		t.Errorf("named the default prefix despite DEJIMA_PREFIX being set:\n%s", out)
 	}
 }
+
+// The Windows defect, arriving on Unix later: install-client.sh appends a PATH
+// line to a shell startup file, and the all-clear was about to be false in the
+// same way it had been on Windows.
+func TestShellPathLeftoverIsNamedWhenPresent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	rc := filepath.Join(home, ".zshrc")
+	body := "alias ll='ls -l'\n\n# added by the dejima installer\nexport PATH=\"$HOME/.local/bin:$PATH\"\n"
+	if err := os.WriteFile(rc, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() { printShellPathLeftovers() })
+
+	if !strings.Contains(out, rc) {
+		t.Errorf("the rc file holding the installer's PATH line was not named:\n%s", out)
+	}
+	if strings.Contains(out, "Nothing else on this machine") {
+		t.Error("the all-clear must not appear when a leftover was found")
+	}
+}
+
+// The other half, and the one that keeps the all-clear honest: a machine whose
+// PATH already contained the install dir never got an rc edit, so there is
+// genuinely nothing left and the command must still say so.
+func TestNoShellLeftoverReportsNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// An rc file exists but carries no Dejima line.
+	if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte("alias ll='ls -l'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	out := captureStdout(t, func() { found = printShellPathLeftovers() })
+
+	if found {
+		t.Error("an rc file with no installer marker must not count as a leftover")
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("nothing should be printed when there is nothing to report:\n%s", out)
+	}
+}

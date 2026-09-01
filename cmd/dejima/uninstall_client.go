@@ -75,9 +75,67 @@ func uninstallClient(yes bool) error {
 	if exe, err := os.Executable(); err == nil {
 		fmt.Printf("  standalone: rm %s\n", exe)
 	}
+	if printShellPathLeftovers() {
+		return nil
+	}
 	fmt.Println()
 	fmt.Println("Nothing else on this machine is Dejima's — you're done.")
 	return nil
+}
+
+// printShellPathLeftovers names the PATH line install-client.sh appends to a
+// shell startup file, and reports whether it found any.
+//
+// This is the same defect as the Windows one below, arriving on Unix later: the
+// installer now drops the binary in ~/.local/bin and, when that is not already
+// on PATH, appends
+//
+//	# added by the dejima installer
+//	export PATH="$HOME/.local/bin:$PATH"
+//
+// to ~/.zshrc, ~/.bash_profile or ~/.bashrc. Removing the binary leaves that
+// line pointing at a directory Dejima no longer occupies, and the all-clear
+// would be false in exactly the way it was on Windows.
+//
+// Printed, not edited: a shell startup file is a thing people hand-tune, and an
+// uninstaller rewriting one unasked is worse than an uninstaller that tells you
+// precisely which line to delete. The installer's marker comment makes it exact
+// — this reports only files that actually contain it, so a machine that never
+// needed the PATH edit still gets the honest all-clear.
+func printShellPathLeftovers() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	const marker = "added by the dejima installer"
+
+	var found []string
+	for _, name := range []string{".zshrc", ".bash_profile", ".bashrc", ".profile"} {
+		p := filepath.Join(home, name)
+		b, readErr := os.ReadFile(p)
+		if readErr == nil && strings.Contains(string(b), marker) {
+			found = append(found, p)
+		}
+	}
+	if len(found) == 0 {
+		return false
+	}
+
+	// Each file is named ONCE, in the actionable form. An earlier version also
+	// listed the paths on their own above this — which mutation testing showed
+	// was redundant rather than thorough: deleting the list changed nothing the
+	// operator could act on, because the command below already carries the path.
+	fmt.Println()
+	fmt.Println("One thing the installer wrote that the step above does NOT remove: a PATH")
+	fmt.Printf("entry in your shell startup file. Delete the two lines marked %q, or:\n", marker)
+	fmt.Println()
+	for _, p := range found {
+		fmt.Printf("  sed -i.bak '/%s/,+1d' %s\n", marker, p)
+	}
+	fmt.Println()
+	fmt.Println("Harmless if left — it points at a directory Dejima no longer occupies. Takes")
+	fmt.Println("effect in a new shell.")
+	return true
 }
 
 // printWindowsLeftovers names what install-client.ps1 wrote that this command
