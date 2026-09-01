@@ -665,6 +665,19 @@ func startDaemonInWSL(ctx context.Context, distro string) error {
 	// setsid comes from util-linux and is present on every distro we target, but
 	// a missing setsid must not become the same silent failure this fixes: an
 	// unresolved command would write "setsid: not found" and start nothing.
+	// Install the boot command first. Backgrounding inside the distro cannot
+	// survive on its own — `nohup … &` and `setsid nohup … </dev/null &` were
+	// both tried on a real machine and both left no socket and no process once
+	// the Windows window closed, because WSL tears the distro down with its last
+	// interop session. The boot command means the next thing to touch the distro
+	// starts the daemon, including the client's own dial.
+	if changed, err := ensureWSLBootCommand(ctx, distro); err != nil {
+		fmt.Printf("  ! couldn't install the WSL boot command: %v\n", err)
+		fmt.Println("    the daemon will still start now, but won't come back by itself")
+	} else if changed {
+		fmt.Println("  ✓ WSL boot command installed — the daemon starts with the distro")
+	}
+
 	start := "mkdir -p " + home + "/.dejima && " +
 		"if command -v setsid >/dev/null 2>&1; then " +
 		"setsid nohup dejimad --foreground </dev/null >>" + logf + " 2>&1 & " +
