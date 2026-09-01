@@ -334,6 +334,10 @@ sudo usermod -aG docker $USER       # log out and back in for the group to take 
 <section class="walkthrough">
   <h2 id="help">Stuck? Have an AI help</h2>
   <p>Installation question or an error you can't place? Paste this into your own AI, fill in your specifics, and it'll help using Dejima's own docs.</p>
+  <p class="small"><strong>If the macOS or Linux installer failed</strong>, it wrote a transcript to
+    <code>~/dejima-install-&lt;timestamp&gt;.log</code> and printed that path. Attach it to a
+    <a href="https://github.com/Scusi-Inc/dejima/issues" target="_blank" rel="noopener">GitHub issue</a> — it says what
+    happened and in what order, which a description of the failure can't. The Windows installer doesn't write one.</p>
   <div class="fitcheck">
     <div class="fit-actions">
       <button type="button" class="copy-btn" data-copy>Copy prompt</button>
@@ -349,7 +353,9 @@ First, FETCH and read these so your answers match the official docs:
 - Per-platform setup guides: https://dejima.tech/guides/
 
 My setup: [one machine, or a server plus a laptop] on [macOS / Linux / Windows].
-My question or the error I'm seeing: [describe it].</textarea>
+My question or the error I'm seeing: [describe it].
+
+If I'm on macOS or Linux and the installer failed, it wrote a transcript to ~/dejima-install-<timestamp>.log and printed the path. Ask me for the relevant part of it rather than guessing at the cause — and tell me which part you need, since it records my hostname and paths.</textarea>
   </div>
 </section>
 
