@@ -123,11 +123,11 @@
               <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
             </div>
             <details class="disclose">
-              <summary>It asks for a server address</summary>
+              <summary>It asks where your islands will run</summary>
               <div class="disclose-body">
-                <p><strong>Leave it blank</strong> and press Enter, because here you are the server. An address typed
-                  there is saved as <code>DEJIMA_HOST</code>, which outranks the local profile step&nbsp;3 writes, so
-                  setup would look like it worked and then point your client somewhere else.</p>
+                <p>Answer <strong>[1] on this machine</strong>, which is the default, so pressing Enter is enough.
+                  That skips the Tailscale setup and the server-address prompt, neither of which applies when the
+                  host is this same box.</p>
               </div>
             </details>
           </li>
@@ -217,7 +217,7 @@
             </div>
           </div>
           <div class="os-panel" data-os="win">
-            <p class="small">Open <strong>PowerShell</strong> (Press <kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em> / <em>Windows PowerShell</em>) &mdash; <strong>not</strong> Command Prompt.</p>
+            <p class="small">Open <strong>PowerShell</strong> (Press <kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em> / <em>Windows PowerShell</em>) &mdash; <strong>not</strong> Command Prompt. It asks where your islands run: answer <strong>[2] on another machine</strong>, since your server is the box above.</p>
             <div class="cmd">
               <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
               <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
@@ -419,7 +419,7 @@ $p = [Environment]::GetEnvironmentVariable('Path','User') -split ';' |
        Where-Object { $_ -ne "$env:LOCALAPPDATA\dejima" }
 [Environment]::SetEnvironmentVariable('Path', ($p -join ';'), 'User')
 </code></pre>
-<p class="small">Close any other windows running <code>dejima</code> first, or the first line can't delete the binary. If you installed with <code>DEJIMA_PREFIX</code> set, substitute that path in all three. <strong>Don't skip the <code>DEJIMA_HOST</code> line</strong>: that variable outranks every saved profile, so a leftover one stays in force even though <code>--client</code> reported removing the saved connection. Reinstall later and the client keeps dialling the old server, with nothing on screen explaining why. It's the same precedence that makes leaving the address blank matter during install, at the other end of the lifecycle.</p>
+<p class="small">Close any other windows running <code>dejima</code> first, or the first line can't delete the binary. If you installed with <code>DEJIMA_PREFIX</code> set, substitute that path in all three. <strong>Don't skip the <code>DEJIMA_HOST</code> line</strong>: that variable outranks every saved profile, so a leftover one stays in force even though <code>--client</code> reported removing the saved connection. Reinstall later and the client keeps dialling the old server, with nothing on screen explaining why.</p>
 
 <footer class="footer">
   <span class="footer-brand">Dejima</span>
