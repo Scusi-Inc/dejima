@@ -166,6 +166,34 @@ const (
 // round and defaults an unset record to gated.
 func (c ContainmentLevel) Contained() bool { return c == ContainmentContained }
 
+// ObservedAgentsResponse is the enumeration seam for agents Dejima can SEE and
+// cannot STOP.
+//
+// A SEPARATE COLLECTION, NOT A FLAG ON THE ISLAND LIST, and that is the design
+// rather than an implementation detail. An observed agent has no island, so it
+// cannot appear in IslandInfo.Agents — there is nothing to nest it under. The
+// consequence is the useful part: every island-keyed surface is UNREACHABLE from
+// an observed agent by construction, not by anyone remembering a rule.
+//
+// The grants pane is the case that matters. It takes an island name and renders
+// "✓ fully contained" when nothing is granted — which an observed agent
+// satisfies by construction, having no grants because nothing gates it. Because
+// observed agents are never enumerated under an island, that pane has no call
+// site to reach them from. There is no bilingual branch to add and none to get
+// wrong later.
+type ObservedAgentsResponse struct {
+	// Agents are the observed agents, each stamped ContainmentObserved by the
+	// server. Never contained: this collection is the source of that fact, the
+	// same way an island's agent list is the source of the contained one.
+	Agents []AgentInfo `json:"agents"`
+	// Registered reports whether any mechanism for registering an observed agent
+	// exists yet. FALSE TODAY, and stated rather than left to be inferred from an
+	// empty list: "none registered" and "registration is not built" are different
+	// answers, and a client that renders an empty section for the second one is
+	// claiming Dejima looked and found nothing.
+	Registered bool `json:"registered"`
+}
+
 // AgentInfo is the public view of one agent within an island.
 type AgentInfo struct {
 	ID string `json:"id"`

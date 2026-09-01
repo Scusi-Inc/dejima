@@ -1978,6 +1978,39 @@ paths:
       responses:
         "101": { description: Switching Protocols (WebSocket) }
         "403": { $ref: "#/components/responses/HostTerminalsDisabled" }
+  /v1/agents/observed:
+    get:
+      tags: [agents]
+      summary: Agents Dejima observes but does not gate
+      operationId: listObservedAgents
+      description: >
+        Agents Dejima can SEE and cannot STOP: running outside any island,
+        reading whatever their user reads, holding whatever credentials their
+        user holds. Dejima records what they report about themselves; nothing
+        gates them.
+
+        A SEPARATE COLLECTION, not a flag on the island list. An observed agent
+        has no island, so it cannot appear in `IslandInfo.agents` — and that is
+        the point rather than a limitation. Every island-keyed surface is
+        unreachable from an observed agent by construction. The grants pane is
+        the case that matters: it takes an island name and renders "fully
+        contained" when nothing is granted, which an observed agent satisfies by
+        construction, having no grants because nothing gates it. With no island
+        to key on, that pane has no way to be asked about one.
+
+        Each returned agent carries `containment: observed`, stamped by the
+        server from the collection it came from — never read off a stored record.
+
+        RETURNS AN EMPTY LIST WITH `registered: false` TODAY. There is no
+        registration path yet, and the flag exists so a client can tell "none are
+        registered" from "registration does not exist". Rendering an empty
+        section for the second claims Dejima looked and found nothing.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObservedAgentsResponse" }
   /v1/agent-types:
     get:
       tags: [daemon]
@@ -2858,6 +2891,23 @@ components:
           description: >
             false for a tenant island, where this grant does not apply at all —
             tenants use a per-island GitHub identity, never the host's login.
+    ObservedAgentsResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          description: >
+            Observed agents, each stamped `containment: observed` by the server.
+            Never contained — this collection is the source of that fact, the way
+            an island's agent list is the source of the contained one.
+          items: { $ref: "#/components/schemas/AgentInfo" }
+        registered:
+          type: boolean
+          description: >
+            Whether any mechanism for registering an observed agent exists yet.
+            FALSE today. Stated rather than inferred from an empty list, because
+            "none registered" and "registration is not built" are different
+            answers and only one of them means Dejima looked.
     AgentInfo:
       type: object
       properties:
