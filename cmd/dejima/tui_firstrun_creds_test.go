@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// The first-run credentials nudge must not claim `dejima auth push` authenticates
+// The first-run credentials nudge must not claim the credential push authenticates
 // agents it does not.
 //
 // It said "so claude-code/codex agents start authenticated". That is false:
-// auth push pushes a CLAUDE session — agentcreds.LoadClaude is the only thing
+// the push sends a CLAUDE session — agentcreds.LoadClaude is the only thing
 // the package loads — and codex is OpenAI. A Claude session does not
 // authenticate it.
 //
@@ -31,7 +31,7 @@ func TestFirstRunCredsNudgeDoesNotOverclaim(t *testing.T) {
 	// The specific false claim, and the shape of it: naming codex anywhere in a
 	// sentence about what auth push authenticates is the error.
 	if strings.Contains(strings.ToLower(body), "codex") {
-		t.Errorf("the first-run credentials nudge mentions codex. `dejima auth push` "+
+		t.Errorf("the first-run credentials nudge mentions codex. The credential push "+
 			"pushes a Claude session (agentcreds.LoadClaude); codex is OpenAI and signs "+
 			"in on its own. Telling an operator otherwise on the first screen is a "+
 			"credentials claim that is simply untrue:\n%s", body)
