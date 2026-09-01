@@ -76,6 +76,52 @@ the package", while a renamed constructor leaves the files readable and the
 matches at zero. A guard can have one non-emptiness assert and still fail open
 through the other.
 
+**The special case that keeps recurring: the guard matches the comment.** A
+source-scanning guard looks for a token; the comment *explaining* that token
+contains it. Delete the real thing, leave the prose, and the guard passes — on
+the sentence about the code rather than the code.
+
+This happened four times in one week: three times on `DEJIMA_ROLE`, then once on
+a checksum step, the last written by someone who had read the write-up of the
+first three *that same afternoon*. That is the useful part. It is not evidence
+about any of the four authors; it is evidence about what a write-up can do.
+**Documenting a failure mode does not prevent it**, and the instinct it provokes
+— write it down harder — is the wrong one.
+
+So the remedy here is mechanical rather than editorial. `internal/srcscan`
+strips comments once, exactly, and any guard that scans source uses it instead of
+remembering:
+
+```go
+src, ok := srcscan.StripGoComments(string(b))   // or StripLineComments(script, "#")
+if !ok {
+    t.Fatal("could not parse the file — scanning it raw would risk a half-stripped miss")
+}
+```
+
+Note which way it errs, because the two mistakes are not symmetric. Strip too
+little and a guard matches a comment: noisy, and instantly visible to whoever is
+staring at the failure. Strip too much and the guard stops seeing real code — it
+passes, silently, for the same reason the code is broken, which is this exact bug
+rebuilt one layer down. `StripLineComments` therefore removes whole-line comments
+only and leaves trailing ones, and the stripper carries the control that a
+function returning `""` would fail.
+
+**And when the mechanism is swept across the existing guards, the sweep needs
+its own control.** Converting thirty-five guards to a shared stripper is
+thirty-five opportunities to turn one of them into a guard that now matches
+nothing — and every one of those will still pass, because a guard matching
+nothing is exactly what a green run looks like. "They all still pass" is
+therefore not evidence that the migration worked; it is the same sentence you
+would get if it had failed. Mutation-check a sample as part of the sweep, not all
+thirty-five, but enough that the green has a second source. This is the
+mechanism's own control argument applied one level up, to the migration rather
+than to the tool.
+
+*(The recurrence count and the "documenting it did not prevent it" reading are
+d1's; the fourth instance was reported by d3 against their own guard, along with
+the point about the sweep.)*
+
 ### 3. The guard nothing can violate — needs a lethal mutation
 
 If no realistic change makes the guard fail, it isn't a guard. Mutation testing
@@ -486,13 +532,22 @@ unmutated base is usually the cheapest way to guarantee the first half.
 
 ## The instrument was fine; the reference was not
 
-Every shape above is a check that could not see. These two saw perfectly and
-answered a question nobody had asked. Nothing in the output betrays it, because
-the output is *correct* — the assumption lives in the step from output to
-conclusion, which happens in the operator's head where no control can reach it.
+Every shape above is a check that could not see. These saw perfectly and answered
+a question nobody had asked. Nothing in the output betrays it, because the output
+is *correct* — the assumption lives in the step from output to conclusion, which
+happens in the operator's head where no control can reach it.
 
 The remedy is therefore not a better instrument. It is naming the reference out
 loud, before reading the result.
+
+The entries below split into two kinds, and the difference decides what the
+remedy can be. In the first three the reference **existed** and was misread: a
+moved branch tip, a count standing in for an identity, a schema that shifted
+under a hash. Naming it out loud is enough, because there is something to name.
+In the last one there was **no reference at all** — two artifacts asserting the
+same fact with nothing pointing either way — and no amount of care within either
+one could have reached it. That is why its control is the odd one out: it does
+not read a reference more carefully, it manufactures one that never existed.
 
 ### A diff compares against a reference, and the reference moves
 
@@ -624,11 +679,41 @@ about it.**
 
 *(From d5.)*
 
+### A field added to a hashed struct rewrites history unless it omits when empty
+
+**What happened.** The audit ledger hash-chains each entry by marshalling it, so
+the serialised bytes *are* the reference. Adding a `Provenance` field to that
+struct — brokered / witnessed / self-reported, so a self-reported row can be told
+from a brokered one — changes the marshalled form of every row. Without
+`omitempty`, the new field serialises on historical entries too, every chain
+value shifts, and `dejima audit --verify` fails on a ledger nobody has touched.
+
+**The tell.** Verification fails on a file you did not edit, immediately after a
+schema change. If the only thing between the last green verify and this red one
+is a struct field, suspect the serialisation, not the data.
+
+**The control.** A test asserting an unstamped entry does not serialise the
+field at all. That is the whole guarantee: the zero value must be *absent*, not
+empty-but-present, or the bytes differ.
+
+**The near-miss.** `omitempty` reads as a style choice on almost every other
+struct in the tree, which is exactly why it is easy to drop in review. Here it is
+load-bearing. And note the direction, which is the same as the moved-reference
+cases above and the reason this sits with them: the failure does not read as "we
+changed a struct". It reads as **tampering** — the single most alarming and least
+informative thing an audit tool can say — and it points the reader at the ledger
+file rather than at the commit that actually caused it.
+
+> **If a struct is hashed, its schema is part of the reference. Any field that
+> can be empty must be absent when it is, or you have rewritten history.**
+
+*(From d3.)*
+
 ## A verification has a timestamp; a gate does not
 
-The two above are references that were wrong at the moment they were read. This
-one is a reference that was right, and then moved: a check that saw correctly,
-and then the thing it saw changed.
+Those above are references that were wrong at the moment they were read, or
+absent entirely. This one is a reference that was right, and then moved: a check
+that saw correctly, and then the thing it saw changed.
 
 **What happened.** Before adding a field to an API type, I checked whether
 `openapi.yaml` needed an entry. Two pieces of evidence, both verified rather
