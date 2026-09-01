@@ -357,6 +357,48 @@ ever reworded — so the exclusion cannot outlive the reason for it.
 → instances from d5 (the sweep, the exclusion pattern), d2 (the funnel argument),
 d4 (the extractor), and three of d1's own in one afternoon.
 
+## The mutation that never applied, and printed as a pass
+
+Every shape above is found by mutating the code and watching the guard fail. So
+the mutation is itself an instrument, and it has one failure mode that is worse
+than all the others: **a mutation that does not apply is indistinguishable from
+a guard that catches it.** Both print `ok`.
+
+This is not hypothetical and it is not rare. In a single day:
+
+- d1 ran three mutations against a source file holding icons as `\uXXXX`
+  escapes, while the patch strings carried the rendered glyph. Nothing matched.
+  All three printed `ok`, and the honest reading of that terminal output was
+  "the guard caught every one" — the exact opposite of the truth.
+- d2 hit it in the tooling they had built *after* their own invalid-control
+  incident, specifically to prevent this: a mutation's precondition rejected the
+  patch because `gofmt` had reformatted the line being matched, so the test ran
+  against an unmutated tree and reported `ok`.
+
+Both were caught only because an assertion demanded the substitution actually
+land. Without that assertion, both would have been recorded as verified.
+
+**The control: assert the mutation applied at exactly one site, and fail the run
+if it did not.** Count matches before patching; refuse on zero and refuse on
+more than one. Zero means the patch missed; more than one means you changed
+something you were not reasoning about, and the guard may be failing for the
+wrong reason — which reads as success just as convincingly.
+
+Two smaller lessons that travel with it:
+
+- **Never pipe the gate into anything.** d2's `&&` chain committed while `*
+  gofmt: 1` was printed directly above it, because the pipeline reported
+  `tail`'s exit status. The command ran, it reported the problem correctly, and
+  the thing being read for pass/fail was not the thing that knew. Run it
+  unpiped and check the exit code.
+- **A guard you cannot see fail has not been tested**, and that includes the
+  ones you wrote to test other guards. Mutation tooling is not exempt from the
+  discipline it enforces; d2's instance is the proof, since it happened inside
+  the fix for the same problem.
+
+→ instances from d1 (three in one afternoon) and d2 (inside the tooling built to
+prevent it).
+
 ## Instruments get the same treatment
 
 A measurement you are about to publish is a guard pointed at reality, and it
