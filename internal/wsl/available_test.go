@@ -122,4 +122,13 @@ func TestInstallHintNamesBothForms(t *testing.T) {
 	if !strings.Contains(InstallHint, "older") {
 		t.Error("the hint gives no fallback for an older wsl.exe that rejects the flag")
 	}
+	// The fallback path needs the update step: plain --install on an old wsl.exe
+	// leaves it old. d4 walked this on a real box. It lives HERE rather than only
+	// on the website because the site asserts its command block is a substring of
+	// this constant — a step that exists only on the page is invisible to that
+	// check and drifts silently, which is what this constant exists to prevent.
+	if !strings.Contains(InstallHint, "wsl --update") {
+		t.Error("the older-wsl.exe fallback stops before `wsl --update`, so the page " +
+			"carries a step the binary does not and the substring check cannot see it")
+	}
 }

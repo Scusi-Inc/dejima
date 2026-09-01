@@ -101,10 +101,18 @@ func Supported() bool { return runtime.GOOS == "windows" }
 // then ignore costs a download, a reboot-time prompt, and the belief that the
 // thing they set up is the thing we run.
 //
-// The flag needs a reasonably recent wsl.exe. Where it is rejected, plain
-// `wsl --install` still works and simply installs more than is needed, so the
-// hint names both rather than dead-ending on an unrecognised flag.
-const InstallHint = "wsl --install --no-distribution   (older wsl.exe: wsl --install)"
+// The flag needs a reasonably recent wsl.exe. Where it is rejected, the fallback
+// is the plain form, a reboot, and then `wsl --update` to get a wsl.exe new
+// enough for everything after — d4 walked that path on a real box, which is why
+// the update step is here rather than inferred.
+//
+// The update step lives in THIS constant rather than only on the website
+// because d5 asserts the page's command block is a substring of this string,
+// read out of this file at check time. A step that exists only on the page is
+// invisible to that check and can drift silently — which is the whole failure
+// this constant was created to end.
+const InstallHint = "wsl --install --no-distribution\n" +
+	"      (older wsl.exe: wsl --install, reboot, then wsl --update)"
 
 // ErrUnsupported is returned when a `wsl://` target is used off Windows.
 var ErrUnsupported = errors.New("wsl:// targets work only on Windows (WSL interop); use a host:port address here")
