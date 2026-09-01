@@ -27,6 +27,12 @@ func dockerUnreachableError(host string) error {
 	if host != "" {
 		where = host
 	}
+	// ST1005 wants error strings uncapitalised and unpunctuated, which is right
+	// for errors that get wrapped into a sentence. This one is never wrapped: it
+	// is rendered as its own panel in the TUI and read as prose by someone who
+	// is stuck. Lowercasing it and stripping the full stops would make it worse
+	// at the only job it has.
+	//nolint:staticcheck // ST1005: user-facing panel copy, not a wrappable error
 	return fmt.Errorf(`Docker isn't running on %s.
 
 Islands are built and run on that machine, not on this one — so starting

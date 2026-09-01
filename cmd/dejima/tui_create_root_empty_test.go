@@ -87,9 +87,9 @@ func TestSourceRowsHaveSingleWidthIcons(t *testing.T) {
 		if at < 0 {
 			t.Fatalf("row %d has no recognisable description: %q", i, r)
 		}
-		runes := len([]rune(r[:at]))
-		// Styling can wrap the description, so measure the visible prefix only.
-		runes = len([]rune(stripANSI(r[:at])))
+		// Styling can wrap the description, so measure the VISIBLE prefix only —
+		// counting raw bytes would count escape sequences as columns.
+		runes := len([]rune(stripANSI(r[:at])))
 		if col == -1 {
 			col = runes
 		} else if runes != col {
