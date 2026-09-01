@@ -34,6 +34,55 @@ import (
 // an older build: chainValue re-marshals the parsed Entry, and an absent field
 // marshals identically whether the writer knew about it or not. Do NOT drop
 // omitempty on an existing or new field — it would silently break every chain.
+// Provenance says HOW Dejima knows an entry is true. Three genuinely different
+// claims, and presenting them identically is how a strong one gets inherited by
+// a weak one.
+//
+//	brokered      the daemon ALLOWED the action    → "this was allowed"
+//	witnessed     the daemon SAW it happen         → "this happened"
+//	self-reported the agent said it happened       → "the agent reported this"
+//
+// The third is the dangerous one. An observed agent — or anything that has
+// compromised it — can write whatever it likes, and omission is trivial: do not
+// write the line. "Here is an audit trail" and "here is an audit trail, some
+// rows of which are the subject's own account of itself" are different products.
+//
+// THE ZERO VALUE IS "" AND MEANS UNKNOWN, NOT BROKERED. Same rule as
+// ContainmentLevel: the zero must never be the reassuring answer. In practice ""
+// appears only on entries written before this field existed — which are brokered
+// in fact, because self-reporting did not exist then — but that reasoning rots
+// the moment a new writer forgets to stamp, so the record says unknown and the
+// reader is not invited to assume.
+//
+// NAMED "witnessed", NOT "observed", DELIBERATELY. `observed` is already the
+// containment level for an UNGATED AGENT (api.ContainmentObserved), and a
+// provenance meaning "the daemon saw a contained action happen" would be the
+// second collision of exactly the kind d1 just ruled on for adopt/observe. One
+// word, two meanings, on the axis the product is about.
+type Provenance string
+
+const (
+	// ProvenanceBrokered — the daemon made the decision and the action went
+	// through it. The strongest claim, and the one every existing Port/Trade row
+	// is entitled to.
+	ProvenanceBrokered Provenance = "brokered"
+	// ProvenanceWitnessed — the daemon saw a contained action happen without
+	// gating it. Weaker than brokered, stronger than self-reported: Dejima's own
+	// observation of something inside containment.
+	ProvenanceWitnessed Provenance = "witnessed"
+	// ProvenanceSelfReported — the subject's own account of itself, tailed from
+	// something the agent wrote. Dejima did not see it and cannot verify it.
+	ProvenanceSelfReported Provenance = "self-reported"
+)
+
+// Verified reports whether Dejima itself is the source of this claim. Written as
+// a method so the cautious reading lives in ONE place: `!= self-reported`
+// scattered across renderers is how one of them ends up treating the unknown
+// zero value as trustworthy.
+func (p Provenance) Verified() bool {
+	return p == ProvenanceBrokered || p == ProvenanceWitnessed
+}
+
 type Entry struct {
 	Seq        uint64    `json:"seq"`
 	Time       time.Time `json:"time"`
@@ -47,7 +96,12 @@ type Entry struct {
 	Bytes      int64     `json:"bytes,omitempty"`
 	SHA256     string    `json:"sha256,omitempty"`   // content hash of the file (trades)
 	Decision   string    `json:"decision,omitempty"` // allowed | denied
-	Detail     string    `json:"detail,omitempty"`
+	// Provenance says HOW Dejima knows this entry is true. See the Provenance
+	// type — the short version is that a self-reported row and a brokered row
+	// must never be indistinguishable, because the integrity claim of the whole
+	// ledger degrades to that of its weakest row.
+	Provenance Provenance `json:"provenance,omitempty"`
+	Detail     string     `json:"detail,omitempty"`
 	// Operational audit fields (api.request + lifecycle records).
 	Method string `json:"method,omitempty"` // HTTP method (api.request)
 	Status int    `json:"status,omitempty"` // HTTP status code (api.request)

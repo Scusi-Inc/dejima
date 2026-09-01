@@ -79,7 +79,7 @@ func (s *Server) handleGrantHostGitHubCredential(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "github.host-credential.grant", Island: name, Decision: "allowed",
 		Actor: actor, Detail: "island may use the host operator's gh login (account-wide read)",
 	})
@@ -113,7 +113,7 @@ func (s *Server) handleRevokeHostGitHubCredential(w http.ResponseWriter, r *http
 	if removed.Grandfathered {
 		detail = "grandfathered grant revoked (island no longer inherits the host login)"
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "github.host-credential.revoke", Island: name, Decision: "allowed",
 		Actor: actor, Detail: detail,
 	})

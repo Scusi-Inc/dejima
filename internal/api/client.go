@@ -663,6 +663,19 @@ func (c *Client) PortIntakeRecursive(ctx context.Context, name, scope, srcRel, d
 	return &out, nil
 }
 
+// ListObservedAgents returns the agents Dejima watches but does not gate.
+//
+// Deliberately its own call rather than a filter over ListIslands: an observed
+// agent has no island to be listed under, and keeping the collections separate
+// is what stops an island-keyed surface being reachable from one.
+func (c *Client) ListObservedAgents(ctx context.Context) (*ObservedAgentsResponse, error) {
+	var out ObservedAgentsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/agents/observed", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // AuditQuery are the optional filters for reading or exporting the ledger. The
 // zero value reads the whole ledger. Verification always covers the full chain
 // regardless of any filter — these only narrow what is returned.

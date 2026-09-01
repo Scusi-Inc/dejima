@@ -73,7 +73,7 @@ func (s *Server) handleGrantCapability(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "capability.grant", Island: name, Scope: grant.Target, Decision: "allowed",
 	})
 	writeJSON(w, http.StatusCreated, capabilityView(grant))
@@ -97,7 +97,7 @@ func (s *Server) handleRevokeCapability(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "capability.revoke", Island: name, Scope: removed.Target, Decision: "allowed",
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -137,7 +137,7 @@ func (s *Server) handleCapabilityExecute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if _, ok := p.CapabilityGrantByTarget(req.Target); !ok {
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "capability.deny", Island: island, Scope: req.Target,
 			Decision: "denied", Detail: "not granted",
 		})
@@ -155,7 +155,7 @@ func (s *Server) handleCapabilityExecute(w http.ResponseWriter, r *http.Request)
 	})
 	if execErr != nil {
 		status, reason := classifyCapError(execErr)
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "capability.deny", Island: island, Scope: req.Target,
 			Decision: "denied", Detail: reason,
 		})

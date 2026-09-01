@@ -114,15 +114,152 @@ type IslandIdentity struct {
 	Glyph string `json:"glyph"`
 }
 
+// ContainmentLevel says whether Dejima GATES an agent or merely watches it.
+//
+// It exists because those two states are indistinguishable from the outside and
+// the difference is the entire product. An agent Dejima observes but does not
+// gate has no Port scopes, no MCP grants, no links and no capabilities — not
+// because everything is denied, but because nothing is asked. The grants pane
+// cannot tell those apart: at total == 0 with credentials confirmed it renders
+// "✓ fully contained" in green (tui_grants.go:201). It is not being lied to; it
+// is being asked a question it has no way to answer.
+//
+// THE ZERO VALUE IS "" AND IS NOT A LEVEL. That is the load-bearing decision. If
+// the zero value were a valid level, every record that forgot to set it would
+// silently CLAIM that level — and the claim that matters is the reassuring one,
+// so the failure would always land in the dangerous direction. "" means nobody
+// said, it is distinguishable from every real answer, and every reader must
+// treat it as NOT CONTAINED. The least reassuring answer is the safe default;
+// the most reassuring one never is.
+//
+// Go cannot make a struct field required, so this is not a compile-time
+// guarantee and should not be described as one. What holds it up: a zero that
+// names no level, a server that stamps the level at the boundary, readers that
+// fail safe, and a test that no path emits "".
+type ContainmentLevel string
+
+const (
+	// ContainmentContained is an agent inside an island: gated by the Port broker,
+	// its crossings ledgered.
+	ContainmentContained ContainmentLevel = "contained"
+	// ContainmentObserved is an agent Dejima can SEE and cannot STOP. It runs
+	// outside any island, reads whatever its user can read, and holds whatever
+	// credentials its user holds. Dejima records what it reports about itself;
+	// nothing gates it.
+	//
+	// NAMED "observed", NOT "adopted", and that was a decision rather than a
+	// preference. `dejima adopt` already ships and means the OPPOSITE — migrating
+	// a local project INTO an island, i.e. maximum containment. One verb for both
+	// ends of the only axis this product has would put a false-containment claim
+	// in the vocabulary itself, where every future surface is built out of it.
+	//
+	// The asymmetry is what settles it: guess wrong about `dejima adopt` and you
+	// get an island nobody needed. Guess wrong about this one and you believe a
+	// loose agent is contained.
+	ContainmentObserved ContainmentLevel = "observed"
+)
+
+// Contained reports whether this level is a positive containment claim. Anything
+// else — including the empty zero value — is not. Written as a method so the
+// fail-safe reading is in ONE place: `if a.Containment == ContainmentContained`
+// scattered across call sites is how one of them ends up written the other way
+// round and defaults an unset record to gated.
+func (c ContainmentLevel) Contained() bool { return c == ContainmentContained }
+
+// ObservedAgent is an agent Dejima can SEE and cannot STOP: running outside any
+// island, reading whatever its user reads, holding whatever credentials its user
+// holds. Dejima records what it reports about itself; nothing gates it.
+//
+// ITS OWN TYPE, NOT AgentInfo, and that is d2's argument rather than mine — I
+// shipped it as a shared type first and they were right. AgentInfo carries Tmux,
+// Branch, Worktree and Attachable, which for an observed agent are meaningless
+// or actively misleading. Attachable is the sharp one: attaching is something
+// Dejima can do to an agent it LAUNCHED and cannot do to one it merely watched,
+// and that field drives real affordances in five call sites. A field that does
+// not exist cannot be set by a later refactor or read by a hopeful renderer.
+//
+// My counter-argument was that two types make every list and count grow a second
+// path, and the ones that forget it silently show only contained agents. It does
+// not hold here: merging the two lists is the exact failure the design forbids,
+// so sharing a type to make merging easy optimises for the thing nobody wants.
+// Separate types make "these are different kinds of thing" true at the type
+// level, which is the same reasoning as the containment field itself, one layer
+// up.
+type ObservedAgent struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	// Containment is carried ON THE RECORD, deliberately, and is NOT omitempty.
+	//
+	// A consumer must be able to read containment off the entry rather than infer
+	// it from which endpoint the entry arrived on. Inferring re-hides the
+	// guarantee one layer up from where the field fixed it: a surface that
+	// reasons "this came from the observed list, so it is observed" is one
+	// refactor away from being handed a merged list.
+	//
+	// Not omitempty because a record that failed to get stamped should appear on
+	// the wire as "" rather than vanish. An absent field and an unset one both
+	// decode to "" and both read as NOT contained, so the ambiguity already
+	// resolves safely — but visible is better than absent when the thing you are
+	// debugging is a missing stamp. (d2 checked this on AgentInfo and correctly
+	// found no bug; recording it here so it is not re-reported.)
+	Containment ContainmentLevel `json:"containment"`
+	// Alive, LastActive and Working are the read-only state — what the agent
+	// reports about ITSELF. Dejima does not verify any of it, which is the whole
+	// difference between observing and gating.
+	Alive      bool      `json:"alive"`
+	LastActive time.Time `json:"last_active,omitempty"`
+	Working    string    `json:"working,omitempty"`
+	// Source records how this agent was discovered, so an operator can answer
+	// "why does Dejima know about this" without guessing.
+	Source string `json:"source,omitempty"`
+}
+
+// ObservedAgentsResponse is the enumeration seam for observed agents.
+//
+// A SEPARATE COLLECTION, NOT A FLAG ON THE ISLAND LIST. An observed agent has no
+// island, so it cannot appear in IslandInfo.Agents — there is nothing to nest it
+// under. The consequence is the useful part: every island-keyed surface is
+// UNREACHABLE from an observed agent by construction, not by anyone remembering
+// a rule.
+//
+// The grants pane is the case that matters. It takes an island name and renders
+// "✓ fully contained" when nothing is granted — which an observed agent
+// satisfies by construction, having no grants because nothing gates it. Because
+// observed agents are never enumerated under an island, that pane has no call
+// site to reach them from.
+type ObservedAgentsResponse struct {
+	// Agents are the observed agents, each stamped ContainmentObserved by the
+	// server. Never contained: this collection is the source of that fact, the
+	// same way an island's agent list is the source of the contained one.
+	Agents []ObservedAgent `json:"agents"`
+	// Registered reports whether any mechanism for registering an observed agent
+	// exists yet. FALSE TODAY, and stated rather than left to be inferred from an
+	// empty list: "none registered" and "registration is not built" are different
+	// answers, and a client that renders an empty section for the second one is
+	// claiming Dejima looked and found nothing.
+	Registered bool `json:"registered"`
+}
+
 // AgentInfo is the public view of one agent within an island.
 type AgentInfo struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Label      string `json:"label,omitempty"`
-	Tmux       string `json:"tmux,omitempty"`
-	Branch     string `json:"branch,omitempty"`
-	Worktree   string `json:"worktree,omitempty"`
-	Attachable bool   `json:"attachable"`
+	ID string `json:"id"`
+	// Containment is stamped by the SERVER at the boundary, from the source of
+	// truth — never carried up from a stored record. An agent enumerated as part
+	// of an island is contained BECAUSE it is in an island; that is what toInfo
+	// knows and the record does not.
+	//
+	// Both a field and a location encode containment, so they can disagree.
+	// Stamping at the boundary is what stops them: the field restates what the
+	// collection already implies, for clients that merge the two lists, rather
+	// than making an independent claim that can drift from where the agent
+	// actually lives.
+	Containment ContainmentLevel `json:"containment,omitempty"`
+	Type        string           `json:"type"`
+	Label       string           `json:"label,omitempty"`
+	Tmux        string           `json:"tmux,omitempty"`
+	Branch      string           `json:"branch,omitempty"`
+	Worktree    string           `json:"worktree,omitempty"`
+	Attachable  bool             `json:"attachable"`
 	// CreatedAt is when the agent was added to the island — the basis for its
 	// displayed uptime/age. Zero for legacy agents persisted before this field.
 	CreatedAt time.Time `json:"created_at,omitempty"`

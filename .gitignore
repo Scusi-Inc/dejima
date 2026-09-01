@@ -34,3 +34,10 @@ go.work.sum
 # Claude Code writes settings atomically via a temp sibling; a concurrent
 # `git add -A` catches it mid-write and commits a file that never existed.
 .claude/settings.local.json.tmp.*
+
+# Core dumps. A crashing toolchain writes these into the working tree, and they
+# contain PROCESS MEMORY — including GH_TOKEN and any other secret in the
+# environment. One was swept into a commit by `git add -A` and only stopped by
+# GitHub push protection.
+core
+core.*

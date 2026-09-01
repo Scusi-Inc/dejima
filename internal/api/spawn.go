@@ -146,7 +146,7 @@ func (s *Server) setSpawnGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type:   "spawn.grant",
 		Island: name,
 		Detail: fmt.Sprintf("max_concurrent=%d max_total=%d types=%v ttl=%s mem=%s cpus=%s",
@@ -174,7 +174,7 @@ func (s *Server) revokeSpawnGrant(w http.ResponseWriter, r *http.Request) {
 	if id, ok := IdentityFromContext(r.Context()); ok && id.Subject != "" {
 		by = id.Subject
 	}
-	s.ledgerAppend(ledger.Entry{Type: "spawn.revoke", Island: name, Actor: by, Decision: "allowed"})
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{Type: "spawn.revoke", Island: name, Actor: by, Decision: "allowed"})
 	// Revoking the grant pulls the authorization out from under any live ephemeral
 	// sub-agents, so reap them now rather than leaving orphans running.
 	s.reapAllEphemeral(r.Context(), name)

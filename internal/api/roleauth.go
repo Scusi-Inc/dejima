@@ -87,6 +87,7 @@ var roleRouteCap = map[string]roleCap{
 	"GET /v1/credentials/github/{name}/repos":       capRead,
 	"GET /v1/credentials/providers":                 capRead, // masked, no keys
 	"GET /v1/agent-types":                           capRead,
+	"GET /v1/agents/observed":                       capRead, // who Dejima watches but cannot gate
 	"GET /v1/events/subscriptions":                  capRead,
 	"GET /v1/clients":                               capRead,
 	"GET /v1/overview":                              capRead,

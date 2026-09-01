@@ -140,7 +140,7 @@ func (s *Server) finishReap(ctx context.Context, p *project.Project, island stri
 			s.removeAgentSession(c, p, &ac)
 		}()
 		s.emit(events.Event{Type: events.TypeIslandAgentRemoved, Island: island, Agent: ac.ID, Payload: map[string]any{"reason": "reaped"}})
-		s.ledgerAppend(ledger.Entry{Type: "spawn.reap", Island: island, Detail: "reaped sub-agent " + ac.ID, Decision: "allowed"})
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{Type: "spawn.reap", Island: island, Detail: "reaped sub-agent " + ac.ID, Decision: "allowed"})
 	}
 	_ = ctx
 }

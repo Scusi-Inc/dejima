@@ -86,7 +86,7 @@ func (s *Server) handleGrantMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "mcp.grant", Island: name, Scope: grant.Server, Decision: "allowed",
 	})
 	writeJSON(w, http.StatusCreated, mcpGrantView(grant))
@@ -109,7 +109,7 @@ func (s *Server) handleRevokeMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no mcp grant %q", name, server))
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "mcp.revoke", Island: name, Scope: removed.Server, Decision: "allowed",
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -197,7 +197,7 @@ func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 
 // ledgerMCPDeny records a refused or failed call (best-effort).
 func (s *Server) ledgerMCPDeny(island, server, reason string) {
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "mcp.deny", Island: island, Scope: server, Decision: "denied", Detail: reason,
 	})
 }
