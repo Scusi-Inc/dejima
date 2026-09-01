@@ -287,7 +287,15 @@ func (c *creatorModel) createCmd() tea.Cmd {
 		// Auto-build the island image when the daemon doesn't have it yet
 		// (fresh host) — first island creation Just Works, it just takes the
 		// build's few extra minutes.
-		if o, err := client.Overview(context.Background()); err == nil && !o.IslandImagePresent {
+		// Ask the daemon whether Docker is even up before spending minutes on a
+		// build that cannot succeed. This overview call already happened; only
+		// IslandImagePresent was being read from it, so the answer was fetched
+		// and discarded while the operator waited for the inevitable failure.
+		o, overviewErr := client.Overview(context.Background())
+		if overviewErr == nil && !o.DockerReachable {
+			return islandCreatedMsg{err: dockerUnreachableError(client.DaemonHost())}
+		}
+		if overviewErr == nil && !o.IslandImagePresent {
 			bctx, bcancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			// Keep the tail. io.Discard here meant a failed build surfaced as
 			// "docker build failed: exit status 1" with docker's own explanation
