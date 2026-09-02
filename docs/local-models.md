@@ -151,9 +151,19 @@ workflows rather than let tool-use-heavy skills silently underperform.
 2. ✅ **Daemon API + CLI** — `/v1/local/*` endpoints, `dejima local` verbs, auto
    provider registration. (No egress grant needed: `host.docker.internal` is
    already in the egress NO_PROXY set, so islands reach the host endpoint direct.)
-3. ✅ **TUI** — read-only "Local models" settings sub-page; local models surface
-   in the `v` model editor automatically once the `local` provider is registered.
-   (Streaming install/pull stay in the CLI, where streaming belongs.)
+3. ✅ **TUI** — the "Local models" settings sub-page: status, plus the one or two
+   steps the current status allows (install the backend, pull the recommended
+   model, register the provider). Local models surface in the `v` model editor
+   automatically once the `local` provider is registered.
+
+   Streaming install/pull still *run* in the CLI — the page doesn't reimplement
+   them, it presses ⏎ on them. `tea.ExecProcess` hands the child the real
+   terminal, so the progress bar and the installer's sudo prompt work exactly as
+   they do from a shell, and `DEJIMA_PAUSE_AFTER=1` holds the last screen until
+   Enter so the dashboard's repaint doesn't wipe the result. That was the
+   original reason for keeping it read-only: the macOS installer needs a
+   terminal (see `installLocalBackendHere`), which the alt-screen TUI can't give
+   a child without suspending — and suspending is exactly what ExecProcess does.
 4. ✅ **Agent tiers** — `Handler.Bundled`/`InstallCmd`, the `aider` handler
    (self-installs via pipx), surfaced on the agent-types API.
 5. ✅ **Rest** — ts+py SDK, `doctor` check, the provisioning-wizard "local models"

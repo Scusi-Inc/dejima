@@ -49,8 +49,26 @@ func main() {
 		// Cobra already printed the error. If it's a can't-reach-the-daemon
 		// failure on a machine pointed at a host, offer a one-shot troubleshooter.
 		maybeOfferConnectionHelp(err)
+		pauseAfterRun()
 		os.Exit(1)
 	}
+	pauseAfterRun()
+}
+
+// pauseAfterRun holds the terminal until Enter when DEJIMA_PAUSE_AFTER is set.
+// The TUI sets it for the commands it hands the terminal to (tea.ExecProcess,
+// e.g. the Local models page running `dejima local install`): the dashboard
+// repaints the whole screen the instant the child exits, so without this the
+// installer's summary — or the error explaining why it stopped — is wiped
+// before it can be read. It lives here, after Execute, because cobra prints a
+// RunE error only once RunE has returned. A no-op for anyone running the CLI
+// by hand, and for a non-interactive stdin (EOF returns straight away).
+func pauseAfterRun() {
+	if os.Getenv("DEJIMA_PAUSE_AFTER") == "" {
+		return
+	}
+	fmt.Fprint(os.Stderr, "\npress Enter to return to the dashboard… ")
+	stdinReader.ReadString('\n')
 }
 
 // maybeOfferConnectionHelp surfaces help when a command can't reach the daemon.
