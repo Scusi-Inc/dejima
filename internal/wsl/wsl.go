@@ -132,6 +132,7 @@ func Dial(ctx context.Context, distro string) (net.Conn, error) {
 		distro = DefaultDistro
 	}
 	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", socketExpr)
+	isolateConsole(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("wsl stdin: %w", err)
@@ -460,6 +461,7 @@ func Available() bool {
 // wrong. Mutating this function back to `return true` must fail something.
 func featurePresent() bool {
 	cmd := execCommand("wsl.exe", "--status")
+	isolateConsole(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
@@ -492,6 +494,7 @@ func List(ctx context.Context) ([]Distribution, error) {
 		return nil, ErrUnsupported
 	}
 	cmd := execCommand("wsl.exe", "-l", "-v")
+	isolateConsole(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
@@ -615,6 +618,7 @@ func Probe(ctx context.Context, distro string) (Report, error) {
 // run executes a shell script inside the distro and returns its stdout.
 func run(ctx context.Context, distro, script string) (string, error) {
 	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", homePreamble+script)
+	isolateConsole(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
@@ -680,6 +684,7 @@ func RunExe(ctx context.Context, args ...string) (string, error) {
 		return "", ErrUnsupported
 	}
 	cmd := execCommand("wsl.exe", args...)
+	isolateConsole(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
