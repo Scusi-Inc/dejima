@@ -194,6 +194,8 @@
             <p class="small">Scrolled past it? Run <code>tailscale ip -4</code> on this machine and add
               <code>:7273</code>.</p>
           </div>
+          <p class="small">On a fresh Mac this stops to ask you a couple of questions and waits on Docker Desktop's
+            licence screen. <a href="#macos-first-run">Here's what to expect</a>, including the pause that looks like a hang.</p>
         </div>
         <div class="step">
           <p class="step-label"><span class="step-n">2</span>Provision the host</p>
@@ -201,9 +203,8 @@
             <pre><code>dejima onboard --provision-host</code></pre>
             <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
-          <p class="small">macOS: turns a fresh Mac mini into a server in one command (never-sleep power, Tailscale, Docker, the daemon). On Linux the installer already registered the service, so just run <code>dejima</code> to confirm it's up.</p>
-          <p class="small">On a fresh Mac, step 1 stops to ask you a couple of questions and waits on Docker Desktop's
-            licence screen. <a href="#macos-first-run">Here's what to expect</a>, including the pause that looks like a hang.</p>
+          <p class="small"><strong>macOS:</strong> turns a fresh Mac mini into a server in one command &mdash; never-sleep power, Tailscale, Docker, the daemon.</p>
+          <p class="small"><strong>Linux:</strong> step 1 already registered the service, so you can skip this. Run <code>dejima</code> to confirm it's up.</p>
         </div>
       </div>
 
@@ -262,7 +263,20 @@
             <pre><code>dejima</code></pre>
             <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
-          <p class="small">If you used the guided installer above, it captured your server's address, so this just connects. Installed via brew or npm? Point it at your server once with <code>dejima profile add mini &lt;host&gt;:7273 &amp;&amp; dejima profile switch mini</code>. Joining a teammate's server instead? They send you an invite (they run <code>dejima token invite --role operator</code>) and you run <code>dejima join &lt;invite&gt;</code>. See <a href="connect/">connect to a server</a> for the full flow, including turning on Tailscale MagicDNS so the invite carries a stable name.</p>
+          <p class="small">If you used the guided installer above, it captured your server's address, so this just connects.</p>
+          <details class="disclose">
+            <summary>Installed with brew or npm instead?</summary>
+            <div class="disclose-body">
+              <p>Those install only the CLI, so point it at your server once, using the address from
+                <strong>On the server</strong> step&nbsp;1:</p>
+              <div class="cmd">
+                <pre><code>dejima profile add mini 100.101.102.103:7273
+dejima profile switch mini</code></pre>
+                <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+            </div>
+          </details>
+          <p class="small">Joining a teammate's server instead? They send you an invite and you run <code>dejima join &lt;invite&gt;</code>. See <a href="connect/">connect to a server</a> for that flow, including Tailscale MagicDNS so the invite carries a stable name.</p>
         </div>
       </div>
     </div>
@@ -271,7 +285,7 @@
 </div>
 
 <h2 id="before">Good to know</h2>
-<p>The two commands above assume a couple of things. On most machines the installer handles them for you; here's what they are, in case you need to set them up by hand.</p>
+<p>The commands above assume a couple of things. On most machines the installer handles them for you; here's what they are, in case you need to set them up by hand.</p>
 
 <details class="disclose">
   <summary>Dejima needs Tailscale</summary>
