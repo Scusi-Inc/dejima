@@ -366,6 +366,11 @@ type settingsModel struct {
 	// Local-models sub-page state, fetched async when the page opens.
 	localStatus *localmodel.Status
 	localErr    string
+	// localActs are the runnable rows derived from localStatus — there is
+	// nothing to move through until the status lands, and what's offered
+	// depends on it (install a missing backend, pull the recommended model).
+	localActs   []localAction
+	localNotice string // outcome of the last action run from this page
 	// Provider-keys sub-page. provCreds is what the daemon holds; provCands is
 	// every provider an agent COULD use, so the page can offer one that has no
 	// key yet — ListProviderCredentials returns nothing at all on a fresh daemon,
@@ -434,7 +439,7 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case settingsEditor:
 		rows = len(editorChoices)
 	case settingsLocal:
-		rows = 0 // read-only status page — nothing to move through
+		rows = len(s.localActs) // only the actions the current status allows
 	}
 	// The provider-keys page owns its keys entirely: j, k and q are legal
 	// characters in an API key, and the shared handling below would eat them as
@@ -521,10 +526,101 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			s.page, s.sel = settingsTop, 0
 			return m, nil
+		case settingsLocal:
+			if s.sel < 0 || s.sel >= len(s.localActs) {
+				return m, nil
+			}
+			s.localNotice = ""
+			return m, runLocalActionCmd(s.localActs[s.sel])
 		}
 		return m, nil
 	}
 	return m, nil
+}
+
+// localAction is a runnable row on the local-models sub-page. Each one shells
+// out to the matching `dejima local …` subcommand rather than calling the API
+// from here: install may have to run the backend's own installer on THIS
+// machine, with a terminal for its sudo prompt (see installLocalBackendHere),
+// and a pull streams a multi-GB progress bar. tea.ExecProcess hands the child
+// the real terminal and takes it back afterwards, so both behave exactly as
+// they do from a shell — which is also why neither is reimplemented here.
+type localAction struct {
+	label string   // the row
+	verb  string   // names the action in the outcome notice
+	args  []string // argv after the dejima binary
+}
+
+// localActions derives the runnable rows from the backend status. Everything
+// not listed stays CLI-only (`dejima local rm`, `dejima local off`): those are
+// destructive or rare, and this page is the setup path.
+func localActions(ls *localmodel.Status) []localAction {
+	if ls == nil {
+		return nil
+	}
+	backend := string(ls.Backend)
+	if backend == "" {
+		backend = "the backend"
+	}
+	if !ls.Installed {
+		// Nothing else is possible until the backend exists on the host.
+		return []localAction{{
+			label: "Install " + backend + " on the host",
+			verb:  "install",
+			args:  []string{"local", "install"},
+		}}
+	}
+	var acts []localAction
+	if top := ls.Recommend.Top; top != nil && !localModelPulled(ls, *top) {
+		acts = append(acts, localAction{
+			label: fmt.Sprintf("Pull %s (%s) — recommended for this host", top.Alias, top.Params),
+			verb:  "pull " + top.Alias,
+			args:  []string{"local", "pull", top.Alias},
+		})
+	}
+	// Installing an already-installed backend is just provider registration —
+	// the path back for a host where someone installed the backend by hand, or
+	// where `dejima local off` deregistered it. See handleLocalInstall.
+	acts = append(acts, localAction{
+		label: "Register the `local` provider with the daemon",
+		verb:  "register",
+		args:  []string{"local", "install"},
+	})
+	return acts
+}
+
+// localModelPulled reports whether a curated model is already on the host,
+// matching either the alias the catalog knows it by or the backend ref.
+func localModelPulled(ls *localmodel.Status, m localmodel.Model) bool {
+	for _, got := range ls.Models {
+		if got.Ref == m.Ref || (got.Alias != "" && got.Alias == m.Alias) {
+			return true
+		}
+	}
+	return false
+}
+
+// localActionMsg reports that a local-models action finished (or couldn't be
+// started at all).
+type localActionMsg struct {
+	verb string
+	err  error
+}
+
+// runLocalActionCmd suspends the TUI, runs `dejima <args…>` on the real
+// terminal, and resumes. DEJIMA_PAUSE_AFTER keeps the child's last screen up
+// until Enter — without it the installer's summary (or its error) is wiped by
+// the redraw the moment it exits.
+func runLocalActionCmd(act localAction) tea.Cmd {
+	exe, err := os.Executable()
+	if err != nil {
+		return func() tea.Msg { return localActionMsg{verb: act.verb, err: err} }
+	}
+	c := exec.Command(exe, act.args...)
+	c.Env = append(os.Environ(), "DEJIMA_PAUSE_AFTER=1")
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return localActionMsg{verb: act.verb, err: err}
+	})
 }
 
 // localStatusMsg carries the managed local-model status into the settings
@@ -1185,12 +1281,34 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Land the status in the settings sub-page only if it's still open on it.
 		if s := m.settings; s != nil && s.page == settingsLocal {
 			if msg.err != nil {
-				s.localErr = msg.err.Error()
+				s.localErr, s.localActs = msg.err.Error(), nil
 			} else {
 				s.localStatus, s.localErr = msg.status, ""
+				s.localActs = localActions(msg.status)
+			}
+			// What's offered changes with the status (an install removes its own
+			// row), so a cursor left over from the previous list can point past
+			// the end of this one.
+			if s.sel >= len(s.localActs) {
+				s.sel = 0
 			}
 		}
 		return m, nil
+
+	case localActionMsg:
+		s := m.settings
+		if s == nil || s.page != settingsLocal {
+			return m, nil
+		}
+		if msg.err != nil {
+			s.localNotice = styleErrored.Render("✗ " + msg.verb + " didn't finish: " + msg.err.Error())
+		} else {
+			s.localNotice = styleRunning.Render("✓ " + msg.verb + " finished")
+		}
+		// Re-ask the daemon rather than assuming: the status is what decides
+		// which rows the page now offers, and the child may have half-succeeded.
+		s.localStatus, s.localErr, s.localActs = nil, "", nil
+		return m, m.fetchLocalStatusCmd()
 
 	case latestReleaseMsg:
 		if msg.latest != "" {
@@ -5592,7 +5710,7 @@ func (m tuiModel) renderSettings() string {
 			case ls.Installed:
 				state = styleWaiting.Render("installed (not running)")
 			default:
-				state = styleMuted.Render("not installed — run `dejima local install`")
+				state = styleMuted.Render("not installed")
 			}
 			b.WriteString(fmt.Sprintf("backend:  %s\n", ls.Backend))
 			b.WriteString("status:   " + state + "\n")
@@ -5602,7 +5720,17 @@ func (m tuiModel) renderSettings() string {
 			}
 			b.WriteString("\n")
 			if len(ls.Models) == 0 {
-				b.WriteString(styleMuted.Render("no models pulled — `dejima local pull <model>`") + "\n")
+				// The CLI hint is for the case the rows can't cover: a model
+				// outside the curated catalog. When there's a Pull row below,
+				// repeating a command to retype is what this page stopped being.
+				hint := "no models pulled — `dejima local pull <model>`"
+				for _, act := range st.localActs {
+					if strings.HasPrefix(act.verb, "pull") {
+						hint = "no models pulled"
+						break
+					}
+				}
+				b.WriteString(styleMuted.Render(hint) + "\n")
 			} else {
 				b.WriteString("pulled models:\n")
 				for _, mdl := range ls.Models {
@@ -5613,11 +5741,28 @@ func (m tuiModel) renderSettings() string {
 					b.WriteString(line + "\n")
 				}
 			}
-			if ls.Recommend.Top != nil {
+			if top := ls.Recommend.Top; top != nil && localModelPulled(ls, *top) {
+				// Already pulled, so there's no row for it — say why it's the one
+				// to point an agent at.
 				b.WriteString("\n" + styleMuted.Render(fmt.Sprintf(
-					"recommended for this host: %s (%s) — `dejima local pull %s`",
-					ls.Recommend.Top.Alias, ls.Recommend.Top.Params, ls.Recommend.Top.Alias)) + "\n")
+					"recommended for this host: %s (%s) — pulled", top.Alias, top.Params)) + "\n")
 			}
+		}
+		if st.localNotice != "" {
+			b.WriteString("\n" + st.localNotice + "\n")
+		}
+		if len(st.localActs) > 0 {
+			b.WriteString("\n")
+			for i, act := range st.localActs {
+				lead, style := "   ", lipgloss.NewStyle()
+				if i == st.sel {
+					lead, style = styleAccent.Render(" ▸ "), styleSelected
+				}
+				b.WriteString(lead + style.Render(act.label) + "\n")
+			}
+			b.WriteString("\n")
+			b.WriteString(styleMuted.Render("↑/↓ move · ⏎ run (hands over the terminal) · esc back"))
+			return b.String()
 		}
 		b.WriteString("\n")
 		b.WriteString(styleMuted.Render("esc back"))
