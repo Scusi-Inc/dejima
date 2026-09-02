@@ -263,12 +263,49 @@ func (c *procConn) setReadErr(err error) {
 // "unexpected EOF".
 func (c *procConn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
+
+	// wsl.exe writes SOME failures to STDOUT, not stderr — and this stream IS
+	// stdout, because that is the tunnel. So its error text arrives where the
+	// HTTP response should be, and net/http parses it:
+	//
+	//	malformed HTTP status code "\x00o\x00p\x00e\x00r\x00a\x00t\x00i\x00o\x00n"
+	//	Unsolicited response received on idle HTTP channel starting with
+	//	  "A\x00n\x00 \x00o\x00p\x00e\x00r\x00a\x00t\x00i\x00o\x00n\x00 …"
+	//
+	// which is Windows UTF-16 for "An operation on a socket could not be
+	// performed because the system lacked sufficient buffer space or because a
+	// queue was full. Error code: Wsl/Service/0x80072747". The operator saw
+	// pages of that spliced through their dashboard, and `dejima logs` failed
+	// with the mangled status line rather than with the actual fault.
+	//
+	// The discriminator is reliable: a dejimad response begins "HTTP/1.1", whose
+	// second byte is 'T'. UTF-16LE text has a NUL as its second byte. Nothing
+	// this daemon sends can look like that.
+	if n >= 2 && b[1] == 0x00 && b[0] != 0x00 {
+		msg := strings.Join(strings.Fields(decodeWSLText(b[:n])), " ")
+		return 0, fmt.Errorf("wsl distro %q: %s", c.distro, wslServiceHint(msg))
+	}
+
 	if err != nil && n == 0 {
 		if msg := c.failure(); msg != "" {
 			return n, fmt.Errorf("wsl distro %q: %s", c.distro, msg)
 		}
 	}
 	return n, err
+}
+
+// wslServiceHint adds the remedy for WSL service faults that have one. The raw
+// Windows text names the condition and nothing an operator can act on.
+func wslServiceHint(msg string) string {
+	// 0x80072747 is WSAENOBUFS: the WSL VM has run out of socket resources.
+	// Every dashboard poll opens a fresh wsl.exe + socat pair, so a long
+	// session churns through them; `wsl --shutdown` clears the VM state and the
+	// daemon comes back with the distro.
+	if strings.Contains(msg, "0x80072747") || strings.Contains(msg, "lacked sufficient buffer space") {
+		return msg + " — WSL has run out of socket resources. Run `wsl --shutdown` in " +
+			"PowerShell, then reopen; the daemon restarts with the distro."
+	}
+	return msg
 }
 
 // failure renders the subprocess's stderr as a diagnosis, "" when it said
