@@ -407,6 +407,12 @@ var editorChoices = []editorChoice{
 	{"VS Code Insiders", "code-insiders"},
 }
 
+// switchKey is the accelerator for the connection switcher: both the key
+// handleKey binds and the key the header prints. One constant, because the two
+// drifting apart is exactly what went wrong — `s` switched servers, then became
+// the row menu, and the header kept advertising it for another release.
+const switchKey = "C"
+
 // settingsTopLen is the number of rows on the top preferences page.
 const settingsTopLen = 9 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models · provider keys
 // NB: voice dictation was row 6; it is roadmapped, not wired — see docs/roadmap.md.
@@ -2061,6 +2067,13 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Direct shortcuts to the global Dejima settings, regardless of the
 		// highlighted row (power-user accelerators; `s` on a plain row does the same).
 		return m.openSettings(), nil
+	case switchKey:
+		// Switch which server the dashboard is attached to. The header advertises
+		// this key next to the server it names, which is where you notice you are
+		// on the wrong one; it also stays reachable at Settings → Connection
+		// target. `s` used to do this and now opens the highlighted row's menu —
+		// the header went on saying "[s] switch" long after it stopped switching.
+		return m.openSwitcher()
 	case ">":
 		// In-island /workspace shell for the selected island. (Enter opens the
 		// island's agents; `>` — a shell prompt — opens the contained shell.)
@@ -4070,16 +4083,19 @@ func (m tuiModel) renderHeader() string {
 	}
 	logo := strings.Join(logoLines, "\n")
 
-	// server: <label>  ·  [s] switch  [·  ssh <addr>]
-	// [s] opens settings, where "connection target" changes which server the
-	// dashboard attaches to. The ssh hint appears only when the daemon has the
-	// SSH-façade listener on (--ssh); `dejima ssh config <island> --install`
-	// resolves the full address.
+	// server: <label>  ·  [C] switch  [·  ssh <addr>]
+	// [C] opens the connection switcher (also at Settings → Connection target).
+	// It said [s] until `s` became the row menu, at which point the header was
+	// pointing the operator at a menu for the island they happened to be on —
+	// so the key named here and the key that switches must stay the same one,
+	// which TestHeaderSwitchKeyActuallySwitches holds down. The ssh hint appears
+	// only when the daemon has the SSH-façade listener on (--ssh);
+	// `dejima ssh config <island> --install` resolves the full address.
 	serverLine := styleMuted.Render("server: ") + styleAccent.Render(label)
 	if m.activeSource == "env" {
 		serverLine += styleMuted.Render(" via $DEJIMA_HOST")
 	}
-	serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("[s]") + styleMuted.Render(" switch")
+	serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("["+switchKey+"]") + styleMuted.Render(" switch")
 	// Team controls are owner-only; surface the hint unless we know the caller is
 	// a teammate (fail-open before the daemon reports identity, matching the lens).
 	if m.callerRole == "" || m.callerRole == "owner" {
@@ -5223,6 +5239,7 @@ func (m tuiModel) renderHelp() string {
 		{"H", "server menu — update daemon · set up SSH fleet-wide · build image · refresh"},
 		{"u / U", "update Dejima — the client first, then the daemon if needed (daemon update warns + gates: it restarts the daemon, closing all terminals fleet-wide). Also in [H]"},
 		{"S / ,", "global Dejima settings — editor · group-by-repo · connection target (which server) · provider keys. Also `s` on empty space, or the top nav button in any row's settings menu"},
+		{switchKey, "switch server — saved connections, add/join one, or drop back to the local socket. The same list as Settings → Connection target, one key from the header that names the server you're on"},
 		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
 		{"b", "rebuild the island image on the daemon host — the step BEFORE [s] → Upgrade, which only recreates against the image already there. Also in [H] and in an island's [s] menu"},
 		{"R", "refresh now"},

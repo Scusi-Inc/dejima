@@ -493,6 +493,12 @@ var errSetupIncomplete = errors.New("setup incomplete — dejimad is not reachab
 // daemonHealthy reports whether the daemon for the *current target* answers a
 // health check quickly. This is the single source of truth for "did setup
 // actually work?" — distinct from "the wizard printed all its steps."
+// daemonHealthyFn is a seam. Without it markSetupDoneIfHealthy cannot be tested
+// at all, and a mutation deleting the handoff reprint from it PASSED — the tests
+// drove printHandoffAddress directly, so the CALL SITE was unguarded. That is
+// the guard-covers-the-logic-not-the-wiring shape, and here it was closeable.
+var daemonHealthyFn = daemonHealthy
+
 func daemonHealthy(ctx context.Context) bool {
 	c, err := client()
 	if err != nil {
@@ -503,6 +509,43 @@ func daemonHealthy(ctx context.Context) bool {
 	return c.Health(hctx) == nil
 }
 
+// printHandoffAddress reprints the address a laptop needs to reach this host.
+//
+// It is printed exactly ONCE otherwise — by setup.sh during step 1 — and by the
+// time the run finishes the operator is minutes and several screens of Docker
+// and Tailscale output away from it. It is also THE ONLY THING FROM THE WHOLE
+// SERVER RUN THAT HAS TO BE CARRIED TO ANOTHER MACHINE. A value printed once,
+// early, in a long scroll, and needed later on a different computer is the
+// definition of something to reprint at the end.
+//
+// The success branch is the right place because it already knows the daemon is
+// reachable, so it can say what to reach it AT.
+//
+// Silence is wrong in the no-Tailscale case too: nothing is broken, and saying
+// so is the difference between "my setup failed" and "this only affects reaching
+// it from elsewhere". The wording follows setup.sh, which operators will have
+// seen once already, so the two screens pattern-match.
+func printHandoffAddress() {
+	hostPort, rawIP, ok := daemonInviteHost()
+	if !ok {
+		fmt.Println()
+		fmt.Println("   No remote address yet — Tailscale isn't up on this machine.")
+		fmt.Println("   Dejima is installed and working LOCALLY; this only affects reaching")
+		fmt.Println("   it from your laptop or phone. Nothing here needs redoing.")
+		fmt.Println("   To finish it: bring Tailscale up, then run `dejima doctor` here —")
+		fmt.Println("   it prints the DEJIMA_HOST to copy.")
+		return
+	}
+	fmt.Println()
+	fmt.Println("   Your DEJIMA_HOST is: " + bold(hostPort))
+	if rawIP {
+		// MagicDNS off: the raw IP works from this tailnet but is the fragile
+		// form for a node-shared teammate, who may see the node re-addressed.
+		fmt.Println("   (a raw tailnet IP — a MagicDNS name would be more durable)")
+	}
+	fmt.Println("   That line is the whole handoff. `dejima doctor` reprints it here.")
+}
+
 // markSetupDoneIfHealthy is the honest end of every setup flow. It records the
 // run as done (writes the first-run dismissal marker) ONLY if dejimad is now
 // reachable. When it isn't, it leaves the marker UNWRITTEN — so the first-run
@@ -510,10 +553,11 @@ func daemonHealthy(ctx context.Context) bool {
 // (the exact failure that bit the dejimaqa box) — and prints the concrete next
 // step. Returns whether setup is verified working.
 func markSetupDoneIfHealthy(ctx context.Context) bool {
-	if daemonHealthy(ctx) {
+	if daemonHealthyFn(ctx) {
 		_ = writeDismissalMarker()
 		fmt.Println()
 		fmt.Println(bold("✅ Setup verified — dejimad is reachable."))
+		printHandoffAddress()
 		return true
 	}
 	if resolveHost() == "" {
