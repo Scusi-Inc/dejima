@@ -225,6 +225,16 @@ type tuiModel struct {
 	importPane   *importView       // non-nil while the per-island Import files pane is open
 	restartPane  *restartView      // non-nil while the "which agents to restart" checklist is open
 	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
+	// escSeqState/escSeqAt track a split escape sequence across keypresses, so a
+	// terminal that delivers ESC [ A as three of them cannot fire the binding on
+	// "A". nowFn is injected so the window is testable without sleeping. See
+	// escseq.go.
+	escSeqState int
+	escSeqAt    time.Time
+	nowFn       func() time.Time
+	// keyLog records every received key when DEJIMA_KEYLOG is set. nil (and a
+	// no-op) otherwise. See keylog.go.
+	keyLog *keyLogger
 	// observed is the observed-agent collection: agents Dejima can SEE and cannot
 	// STOP, running outside every island. nil means we have not (or could not)
 	// load it, which renders NOTHING — deliberately distinct from a loaded
@@ -336,6 +346,8 @@ func initialTUIModel(c *api.Client) tuiModel {
 	cfg, _ := clientcfg.Load()
 	m := tuiModel{
 		client:       c,
+		nowFn:        time.Now,
+		keyLog:       openKeyLog(),
 		dirtyOps:     map[string]string{},
 		expanded:     map[string]bool{},
 		activeHost:   host,
@@ -449,7 +461,7 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.settingsProvidersKey(msg)
 	}
 	switch msg.String() {
-	case "esc", "q", "ctrl+c", "left", "h":
+	case "esc", "ctrl+[", "q", "ctrl+c", "left", "h":
 		if s.page == settingsEditor || s.page == settingsLocal || s.page == settingsProviders { // back to the top page, don't close
 			s.page, s.sel = settingsTop, 0
 			return m, nil
@@ -1051,6 +1063,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Recorded BEFORE any handling, so the log shows what the terminal sent
+		// rather than what we made of it — the whole point is to settle whether
+		// escape sequences arrive intact. No-op unless DEJIMA_KEYLOG is set.
+		m.keyLog.record(msg)
 		return m.handleKey(msg)
 
 	case tickMsg:
@@ -1816,6 +1832,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// FIRST, before any binding can act on it: drop a byte that is a fragment of
+	// an escape sequence a terminal failed to deliver atomically. On such a
+	// terminal the up arrow arrives as esc, then "[", then "A" — and "A" opens
+	// the audit ledger. See escseq.go. This is above the overlay dispatch on
+	// purpose: every pane binds letters, so a guard inside one of them would
+	// leave the rest exposed.
+	mm, swallow := m.swallowEscapeSequenceByte(msg)
+	m = mm
+	if swallow {
+		return m, nil
+	}
 	// A success notice lingers until the next keystroke, then clears (an action
 	// may set a fresh one — e.g. setup-ssh sets it via runConfirmed below).
 	m.lastNotice = ""
@@ -1825,7 +1852,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// and the Enter, leaving the modal unusable.
 	if m.confirm != nil {
 		switch msg.String() {
-		case "esc", "ctrl+c":
+		case "esc", "ctrl+[", "ctrl+c":
 			m.confirm = nil
 			return m, nil
 		case "enter":
@@ -1879,7 +1906,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The help overlay owns keys while shown.
 	if m.help {
 		switch msg.String() {
-		case "?", "esc", "q":
+		case "?", "esc", "ctrl+[", "q":
 			m.help = false
 		case "a":
 			m.helpMore = !m.helpMore // expand / collapse the reference dropdown
@@ -2321,7 +2348,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// direct keys (/, b, R) still work. The daemon self-update lives ONLY here,
 		// behind an explicit fleet-wide-restart warning.
 		return m.openServerMenu(), nil
-	case "esc":
+	case "esc", "ctrl+[":
 		// Dismiss whichever sticky banner is showing (no overlay here): a failure, an
 		// applied-but-needs-restart notice, or a built-image-needs-upgrade notice.
 		// (Green fades itself.)
@@ -3190,7 +3217,7 @@ func partitionBoundary(items []actionMenuItem) (boundary, rest []actionMenuItem)
 // own accelerator key selects it directly.
 func (m tuiModel) actionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	case "esc", "ctrl+[", "q", "ctrl+c":
 		m.menu = nil
 		return m, nil
 	case "j", "down":
@@ -3379,7 +3406,7 @@ func (m tuiModel) resEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	case "esc", "ctrl+[", "q", "ctrl+c":
 		m.resEditor = nil
 		return m, nil
 	case "down", "j":
@@ -4653,7 +4680,7 @@ func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "/", "`", "left", "q":
+	case "esc", "ctrl+[", "/", "`", "left", "q":
 		return collapse()
 	case "j", "down":
 		if m.bandSel < m.bandRowCount()-1 {

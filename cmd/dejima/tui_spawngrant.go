@@ -154,7 +154,7 @@ func (m tuiModel) spawnGrantKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	case "esc", "ctrl+[", "q", "ctrl+c":
 		m.spawnGrant = nil
 		return m, nil
 	case "down", "j":

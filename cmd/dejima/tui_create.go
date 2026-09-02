@@ -389,7 +389,10 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorGitHubGateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "c", "C":
+	// Lowercase only. Uppercase C is the tail byte of the right-arrow sequence
+	// (ESC [ C), so on a terminal that delivers a sequence as separate
+	// keypresses, pressing Right lands here.
+	case "c":
 		// --default: this gate only fires when NO identity resolves, so the one
 		// being created is the one everything should follow. Leaving it implicit
 		// is how a daemon ends up with identities and no default.
@@ -399,10 +402,12 @@ func (m tuiModel) creatorGitHubGateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			c.err = "opened `dejima github connect` — approve it on GitHub, then press Enter to retry"
 		}
 		return m, nil
-	case "enter", "r", "R":
+	case "enter", "r": // not "R": ESC O R is F3
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
-	case "f", "F":
+	// not "F": ESC [ F is End — and this branch creates the island with NO
+	// GitHub identity, which is too consequential to be reachable from an arrow.
+	case "f":
 		c.forceNoIdentity = true
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
@@ -725,7 +730,7 @@ func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if c.ghHint != "" {
 		switch msg.String() {
-		case "c", "C":
+		case "c": // not "C": ESC [ C is the right arrow
 			// --default: this fires only when NO identity resolves, so the one
 			// being created is the one everything should follow. Leaving it
 			// implicit is how a daemon ends up holding identities and no default,
@@ -741,13 +746,13 @@ func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			c.ghHint = "Opened the guided sign-in in a new window.\n\n" +
 				"Approve it on GitHub, then press [r] to reload."
 			return m, nil
-		case "r", "R":
+		case "r": // not "R": ESC O R is F3
 			// Re-ask the daemon rather than assuming the connect worked. If it did
 			// not, the operator lands back on this same screen with the same key,
 			// which is the correct place to be.
 			c.ghLoading, c.ghHint, c.err = true, "", ""
 			return m, c.ghIdentitiesCmd()
-		case "esc", "enter", "q":
+		case "esc", "ctrl+[", "enter", "q":
 			c.step, c.err, c.ghHint = stepPick, "", ""
 		}
 		return m, nil
