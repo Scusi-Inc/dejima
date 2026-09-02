@@ -106,7 +106,7 @@
 <p><strong>You shouldn't have to become an infrastructure engineer to run agents safely.</strong> That usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
 <ul>
   <li><strong>Ease.</strong> A few commands install it; run <code>dejima</code> and the TUI walks you to a sandboxed agent in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same handful of commands.</li>
-  <li><strong>Security.</strong> Every project is walled off from your machine, your files, and your other projects; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
+  <li><strong>Security.</strong> Every project is sealed off from your machine, your files, and your other work; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
   <li><strong>Audit.</strong> Every privileged crossing is written to a tamper-evident, hash-chained ledger you can read, export, and verify — so you can <em>prove</em> what an agent did, not just hope.</li>
 </ul>
 <p class="small">Running agents for a team that has to <em>prove</em> what they did? See <a href="teams.html">Dejima for teams →</a></p>
