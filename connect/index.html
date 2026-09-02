@@ -74,7 +74,7 @@
     <p class="step-label"><span class="step-n">1</span>Mint an invite</p>
     <div class="cmd">
       <pre><code>dejima token invite --role operator --owner amanda</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">This prints a paste-safe invite blob (it carries a secret, so treat it like a password). <code>--owner amanda</code> gives the teammate their <strong>own private fleet</strong> on the server, separate from yours; leave it off only if you want them acting in your islands. Use <code>--role viewer</code> for read-only, or scope to one island with <code>--island foo</code>. Revoke anytime with <code>dejima token revoke</code>.</p>
     <p class="small">The invite auto-fills the address a teammate dials — preferring the server's <strong>MagicDNS name</strong> (like <code>minion.tailXXXX.ts.net</code>) over its raw tailnet IP. This works whether you mint on the server or from a laptop connected to it. It matters because a <em>shared</em> node can show up under a different <code>100.x</code> IP in the teammate's Tailscale, so an invite baked with a raw IP may not connect — the name resolves from both sides. This needs <strong>MagicDNS turned on</strong> (next step); without it the invite falls back to the raw IP and warns you. Pass <code>--host name:7273</code> to override.</p>
@@ -106,12 +106,12 @@
     <p class="step-label"><span class="step-n">2</span>Install the Dejima client</p>
     <div class="cmd">
       <pre><code>npm i -g dejima</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">Or the guided installer, which also captures the server's address for you:</p>
     <div class="cmd">
       <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">On a fresh Mac it installs to <code>~/.local/bin</code> and adds it to your PATH, so
       <strong>open a new terminal</strong> before you run <code>dejima</code>. To stay in this one:
@@ -127,12 +127,12 @@
     <p class="step-label"><span class="step-n">3</span>Join, and open it</p>
     <div class="cmd">
       <pre><code>dejima join &lt;invite&gt;</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">Paste the invite blob the operator sent. That saves the server and your token as your active connection. Then open the dashboard:</p>
     <div class="cmd">
       <pre><code>dejima</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">You're in your own fleet on that server. Launch an island and you're working.</p>
   </div>
@@ -189,14 +189,18 @@
 <script>
 // Copy buttons on the command boxes: copy the sibling <code>.
 (function () {
+  var CHECK = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
   document.querySelectorAll('.cmd-copy').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var code = btn.closest('.cmd').querySelector('code');
       if (!code) return;
       function done() {
-        var was = btn.textContent;
-        btn.textContent = 'Copied';
-        setTimeout(function () { btn.textContent = was; }, 1400);
+        var was = btn.innerHTML;
+        btn.innerHTML = CHECK;
+        btn.classList.add('is-copied');
+        setTimeout(function () {
+          btn.innerHTML = was; btn.classList.remove('is-copied');
+        }, 1400);
       }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(code.textContent).then(done, done);

@@ -81,7 +81,7 @@
       <div class="os-panel is-active" data-os="unix">
         <div class="cmd">
           <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
-          <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         </div>
         <p class="small">Sets up Tailscale, the island image, and the background daemon (and Docker, on macOS).
           Idempotent, so it's safe to re-run.</p>
@@ -98,11 +98,11 @@
         <ol class="substeps">
           <li>
             <p>Enable Linux on Windows.
-              <span class="sub-note">Administrator PowerShell. Safe to run even if you already have WSL.</span></p>
+              <span class="sub-note">Safe to run even if you already have WSL.</span></p>
             <div data-wsl-install-hint>
               <div class="cmd">
-                <pre><code>wsl --install --no-distribution</code></pre>
-                <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+                <pre><span class="cmd-pre">RUN AS ADMIN</span><code>wsl --install --no-distribution</code></pre>
+                <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
               </div>
               <details class="disclose">
                 <summary>If that flag is rejected</summary>
@@ -121,7 +121,7 @@
               <span class="sub-note">A normal PowerShell, not Command Prompt. Two questions, both answered by Enter.</span></p>
             <div class="cmd">
               <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
-              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             </div>
             <details class="disclose">
               <summary>The two questions</summary>
@@ -150,10 +150,6 @@
             </details>
           </li>
         </ol>
-        <p class="platform-note"><strong>This path is new.</strong> Hosting on Windows landed recently and has had far
-          less mileage than the macOS and Linux installs &mdash; the step that installs the daemon was rewritten this week.
-          If it breaks, an <a href="https://github.com/Scusi-Inc/dejima/issues" target="_blank" rel="noopener">issue</a>
-          is genuinely useful. Driving a server from Windows as a client is the well-trodden route, and it's the section below.</p>
       </div>
     </div>
 
@@ -161,7 +157,7 @@
       <p class="step-label"><span class="step-n">2</span>Run it</p>
       <div class="cmd">
         <pre><code>dejima</code></pre>
-        <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+        <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
       </div>
       <p class="small">The dashboard opens and walks you to your first sandboxed agent. That's the whole setup.</p>
     </div>
@@ -183,14 +179,14 @@
           <p class="step-label"><span class="step-n">1</span>Install</p>
           <div class="cmd">
             <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
         </div>
         <div class="step">
           <p class="step-label"><span class="step-n">2</span>Provision the host</p>
           <div class="cmd">
             <pre><code>dejima onboard --provision-host</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
           <p class="small">macOS: turns a fresh Mac mini into a server in one command (never-sleep power, Tailscale, Docker, the daemon). On Linux the installer already registered the service, so just run <code>dejima</code> to confirm it's up. Either way, note the <code>DEJIMA_HOST</code> it prints (e.g. <code>100.84.12.7:7273</code>).</p>
           <p class="small">On a fresh Mac, step 1 stops to ask you a couple of questions and waits on Docker Desktop's
@@ -213,7 +209,7 @@
           <div class="os-panel is-active" data-os="unix">
             <div class="cmd">
               <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
-              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             </div>
             <p class="small">On a fresh Mac this installs to <code>~/.local/bin</code> and adds it to your PATH, so
               <strong>open a new terminal</strong> before the next step. To stay in this one:
@@ -223,13 +219,13 @@
             <p class="small">Open <strong>PowerShell</strong> (Press <kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em> / <em>Windows PowerShell</em>) &mdash; <strong>not</strong> Command Prompt. It asks where your islands run: answer <strong>[2] on another machine</strong>, since your server is the box above.</p>
             <div class="cmd">
               <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
-              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             </div>
             <p class="small">If you see <code>'irm' is not recognized as an internal or external command</code>, you're in Command Prompt
               (<code>cmd.exe</code>) &mdash; <code>irm</code> and <code>iex</code> are PowerShell commands. Reopen in PowerShell, or paste this, which works from Command Prompt too:</p>
             <div class="cmd">
               <pre><code>powershell -NoProfile -Command "irm https://dejima.tech/install-client.ps1 | iex"</code></pre>
-              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             </div>
           </div>
           <details class="disclose">
@@ -237,11 +233,11 @@
             <div class="disclose-body">
               <div class="cmd">
                 <pre><code>brew install Scusi-Inc/dejima/dejima</code></pre>
-                <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+                <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
               </div>
               <div class="cmd">
                 <pre><code>npm i -g dejima</code></pre>
-                <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+                <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
               </div>
               <p class="small">Homebrew (macOS) or npm (any platform, handy on Windows or if you already use Node). These install just the CLI, so you point it at your server in step&nbsp;2.</p>
             </div>
@@ -251,7 +247,7 @@
           <p class="step-label"><span class="step-n">2</span>Connect</p>
           <div class="cmd">
             <pre><code>dejima</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
           <p class="small">If you used the guided installer above, it captured your server's address, so this just connects. Installed via brew or npm? Point it at your server once with <code>dejima profile add mini &lt;host&gt;:7273 &amp;&amp; dejima profile switch mini</code>. Joining a teammate's server instead? They send you an invite (they run <code>dejima token invite --role operator</code>) and you run <code>dejima join &lt;invite&gt;</code>. See <a href="connect/">connect to a server</a> for the full flow, including turning on Tailscale MagicDNS so the invite carries a stable name.</p>
         </div>
@@ -444,15 +440,19 @@ $p = [Environment]::GetEnvironmentVariable('Path','User') -split ';' |
 <script>
 // Copy buttons on the Get-started command boxes: copy the sibling <code>.
 (function () {
+  var CHECK = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
   document.querySelectorAll('.cmd-copy').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var code = btn.closest('.cmd').querySelector('code');
       if (!code) return;
       var text = code.textContent;
       function done() {
-        var was = btn.textContent;
-        btn.textContent = 'Copied';
-        setTimeout(function () { btn.textContent = was; }, 1400);
+        var was = btn.innerHTML;
+        btn.innerHTML = CHECK;
+        btn.classList.add('is-copied');
+        setTimeout(function () {
+          btn.innerHTML = was; btn.classList.remove('is-copied');
+        }, 1400);
       }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done, done);
