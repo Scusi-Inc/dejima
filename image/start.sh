@@ -24,7 +24,7 @@ report_clone_failure() {
     case "$err" in
         *"Authentication failed"*|*"could not read Username"*|*"Permission denied"*|*"terminal prompts disabled"*|*"HTTP 403"*|*"403 Forbidden"*)
             reason="auth"
-            hint="this island can't authenticate to the git remote. Check its GitHub identity (\`dejima auth status\`) and (re)push a token (\`dejima auth push --github\`), then recreate the island or re-clone." ;;
+            hint="this island can't authenticate to the git remote. Check its GitHub identity (\`dejima auth status\`); connect one with \`dejima github connect\` — a guided sign-in that needs no local gh — then re-clone with \`dejima upgrade <island>\`." ;;
         *"not found"*|*"Could not resolve host"*|*"does not exist"*)
             reason="not-found"
             hint="the remote couldn't be reached or found — check the repo URL, and that the identity can see it (private repos need a token with access)." ;;
