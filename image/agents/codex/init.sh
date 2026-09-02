@@ -115,7 +115,20 @@ NOTIFY_LINE='notify = ["/home/dejima/.codex/hooks/dejima-notify.sh"]'
 if [[ ! -f "$CONFIG" ]]; then
     echo "$NOTIFY_LINE" > "$CONFIG"
 elif ! grep -qE '^[[:space:]]*notify[[:space:]]*=' "$CONFIG"; then
-    printf '\n%s\n' "$NOTIFY_LINE" >> "$CONFIG"
+    # PREPEND, never append. In TOML a bare key belongs to whatever table header
+    # precedes it, so appending `notify = [...]` to a config that ends in a
+    # [table] — which every real config does — files it under that table and
+    # leaves the top-level key Codex reads ABSENT. Verified against a host config
+    # ending in [projects."/workspace"]: the key parsed as
+    # projects./workspace.notify and Codex never saw it.
+    #
+    # Silently, of course. The hook is installed, the file "has" notify, and no
+    # event is ever emitted. This is the case the surrounding code exists to
+    # serve: a config.toml copied from the operator's host.
+    tmp=$(mktemp "$CONFIG.XXXXXX")
+    printf '%s\n\n' "$NOTIFY_LINE" > "$tmp"
+    cat "$CONFIG" >> "$tmp"
+    mv "$tmp" "$CONFIG"
 fi
 
 # --- island primer ---------------------------------------------------------

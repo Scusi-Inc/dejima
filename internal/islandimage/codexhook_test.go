@@ -130,3 +130,146 @@ func TestCodexNotifyHookPostsWhatCodexGivesIt(t *testing.T) {
 		})
 	}
 }
+
+// A hook that cannot post must leave a trace.
+//
+// The unconfigured branch was a bare `exit 0`: no output, no file, nothing in a
+// log. That made "the hook never ran", "the daemon rejected it" and "the
+// autonomy variables are missing from this agent's environment" the same
+// observation, which is how a broken hook reads as a missing feature.
+//
+// Best-effort must still mean traceable. It must ALSO still exit 0 — a hook that
+// fails the agent's turn because the daemon is unreachable is a worse bug than
+// the silence.
+func TestCodexNotifyHookLeavesATraceWhenItCannotPost(t *testing.T) {
+	for _, bin := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available here", bin)
+		}
+	}
+	script := filepath.Join("..", "..", "image", "agents", "codex", "hooks", "notify.sh")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the codex notify hook is missing, so this guard checks nothing: %v", err)
+	}
+	log := filepath.Join(t.TempDir(), "notify.log")
+
+	cmd := exec.Command("bash", script, `{"type":"agent-turn-complete"}`)
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"DEJIMA_NOTIFY_LOG=" + log,
+		// DEJIMA_HOST and DEJIMA_TOKEN deliberately absent: the unconfigured case.
+		"DEJIMA_PROJECT_NAME=testisland",
+		"DEJIMA_AGENT_ID=d9",
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the hook must not fail the agent's turn when it cannot post: %v\n%s", err, out)
+	}
+
+	b, readErr := os.ReadFile(log)
+	if readErr != nil {
+		t.Fatalf("the hook posted nothing and recorded nothing — an operator has no "+
+			"way to tell a broken hook from an absent feature: %v", readErr)
+	}
+	if !strings.Contains(string(b), "DEJIMA_HOST") {
+		t.Errorf("the trace does not name the missing variables, so it does not "+
+			"tell the operator what to fix. got: %s", b)
+	}
+}
+
+// The `notify` key must land ABOVE every table header in config.toml.
+//
+// init.sh appended it. In TOML a bare key belongs to whatever table header
+// precedes it, so appending to a config that ends in a [table] — which every
+// real config does — files `notify` under that table and leaves the top-level
+// key Codex reads absent. The agent then emits nothing, silently, with the hook
+// installed and the word "notify" plainly present in the file.
+//
+// This runs the REAL block out of init.sh rather than asserting on its text: the
+// bug was in what the file ends up looking like, and a source assertion would
+// just restate the patch. Running all of init.sh is not an option (it copies
+// from /opt/dejima and mutates $HOME), so the block is extracted and executed —
+// the same approach the WSL dash guard uses on that file's in-distro scripts.
+func TestCodexInitPutsNotifyAboveAnyTableHeader(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available here")
+	}
+	src, err := os.ReadFile(filepath.Join("..", "..", "image", "agents", "codex", "init.sh"))
+	if err != nil {
+		t.Fatalf("read init.sh: %v", err)
+	}
+	block := extractNotifyBlock(t, string(src))
+
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	// An operator config copied from the host: top-level keys, then a table.
+	// This is the shape the surrounding code exists to preserve.
+	const existing = "model = \"gpt-5\"\n\n[projects.\"/workspace\"]\ntrust_level = \"trusted\"\n"
+	if err := os.WriteFile(cfg, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", "-c", "set -euo pipefail\nHOME_CODEX="+dir+"\n"+block)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the notify block failed: %v\n%s", err, out)
+	}
+
+	got, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifyAt, tableAt := -1, -1
+	for i, line := range strings.Split(string(got), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if notifyAt < 0 && strings.HasPrefix(trimmed, "notify") {
+			notifyAt = i
+		}
+		if tableAt < 0 && strings.HasPrefix(trimmed, "[") {
+			tableAt = i
+		}
+	}
+	if notifyAt < 0 {
+		t.Fatalf("no notify key was written at all:\n%s", got)
+	}
+	if tableAt >= 0 && notifyAt > tableAt {
+		t.Errorf("notify landed on line %d, below the table header on line %d — TOML "+
+			"reads it as a key of that table, so Codex sees no top-level notify and "+
+			"the agent reports nothing:\n%s", notifyAt, tableAt, got)
+	}
+	// The operator's own settings must survive.
+	if !strings.Contains(string(got), "trust_level") || !strings.Contains(string(got), "model") {
+		t.Errorf("the existing config was not preserved:\n%s", got)
+	}
+}
+
+// extractNotifyBlock pulls the config-writing block out of init.sh: from the
+// CONFIG= assignment through the `fi` that closes it. It FAILS rather than
+// skips when it cannot find the block — a guard that cannot locate its subject
+// is not passing, it is checking nothing.
+func extractNotifyBlock(t *testing.T, src string) string {
+	t.Helper()
+	lines := strings.Split(src, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "CONFIG=") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatal("init.sh no longer assigns CONFIG= — this guard cannot find the " +
+			"block it checks, so it must fail rather than pass quietly")
+	}
+	for i := start; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "fi" {
+			block := strings.Join(lines[start:i+1], "\n")
+			if !strings.Contains(block, "NOTIFY_LINE") {
+				t.Fatalf("the extracted block does not mention NOTIFY_LINE; the "+
+					"extraction is picking up the wrong region:\n%s", block)
+			}
+			return block
+		}
+	}
+	t.Fatal("no closing fi found after CONFIG=")
+	return ""
+}
