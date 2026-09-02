@@ -19,7 +19,7 @@ import (
 // Run for real under /bin/sh against a socket that appears late, which is the
 // cold-boot shape. Asserting on the string would only restate it.
 func TestSocketExprWaitsForALateSocket(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortHome(t)
 	sock := filepath.Join(dir, ".dejima", "dejimad.sock")
 	if err := os.MkdirAll(filepath.Dir(sock), 0o755); err != nil {
 		t.Fatal(err)
@@ -32,13 +32,22 @@ func TestSocketExprWaitsForALateSocket(t *testing.T) {
 		"#!/bin/sh\n[ -S \""+sock+"\" ] && touch "+marker+"\nexit 0\n")
 
 	// The socket shows up after the first sleep, as it does on a cold boot.
+	//
+	// THE LISTEN ERROR MUST ESCAPE THIS GOROUTINE. It used to be assigned in
+	// here and only tested for nil, which makes "the fixture never came up"
+	// indistinguishable from "socketExpr never waited" — and the first one is
+	// what actually happened on macOS, so CI reported a bug in the code under
+	// test that the code under test did not have.
+	listened := make(chan error, 1)
 	go func() {
 		time.Sleep(1200 * time.Millisecond)
 		l, err := listenUnix(sock)
-		if err == nil {
-			defer l.Close()
-			time.Sleep(6 * time.Second)
+		listened <- err
+		if err != nil {
+			return
 		}
+		defer l.Close()
+		time.Sleep(6 * time.Second)
 	}()
 
 	cmd := exec.Command("/bin/sh", "-c", socketExpr)
@@ -46,6 +55,10 @@ func TestSocketExprWaitsForALateSocket(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("socketExpr failed: %v\n%s", err, out)
+	}
+	if lerr := <-listened; lerr != nil {
+		t.Fatalf("the fixture never opened a socket, so there was nothing for "+
+			"socketExpr to wait for: %v", lerr)
 	}
 	if _, statErr := os.Stat(marker); statErr != nil {
 		t.Error("socat ran before the socket existed — a cold distro would report " +
@@ -56,7 +69,7 @@ func TestSocketExprWaitsForALateSocket(t *testing.T) {
 // A WARM socket must cost nothing. The wait exists for the cold case; paying it
 // on every dial would add seconds to a dashboard that polls.
 func TestSocketExprDoesNotWaitWhenTheSocketIsThere(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortHome(t)
 	sock := filepath.Join(dir, ".dejima", "dejimad.sock")
 	if err := os.MkdirAll(filepath.Dir(sock), 0o755); err != nil {
 		t.Fatal(err)
@@ -101,4 +114,27 @@ func write(t *testing.T, path, body string) {
 
 func listenUnix(path string) (interface{ Close() error }, error) {
 	return net.Listen("unix", path)
+}
+
+// shortHome returns a temp dir short enough that a socket path under it fits.
+//
+// t.TempDir() cannot be used for this. On macOS it returns something shaped like
+//
+//	/var/folders/xw/8mv0_ph15xz1_z3q5g7v0000gn/T/TestSocketExprWaitsForALateSocket3844221709/001
+//
+// and appending /.dejima/dejimad.sock puts the path at 113 bytes against
+// darwin's 104-byte sun_path limit, so bind fails with "invalid argument".
+// Linux's limit is 108 and its temp paths are short, which is why this passed
+// on one runner and failed on the other.
+//
+// The warm test survived it by skipping on any listen error; the cold test
+// swallowed the error and failed with a message about socketExpr instead.
+func shortHome(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "dejima-cold-")
+	if err != nil {
+		t.Fatalf("temp dir under /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
