@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/aoos/dejima/internal/wsl"
@@ -44,6 +45,61 @@ import (
 // LACKS WHAT EVERY INTERACTIVE CONTEXT SUPPLIES FOR FREE. `wsl -d <distro> --
 // dejimad` has PATH and HOME and works every time, which is exactly why testing
 // by hand cannot find any of this.
+// dejimadUnitFor builds the unit, with the listener overrides a NATIVE docker
+// engine needs.
+//
+// WHY THE OVERRIDES ARE HERE AND NOT IN THE DAEMON'S DEFAULTS. dejimad binds the
+// egress proxy and the token-autonomy listener to 127.0.0.1, and tells containers
+// to reach them at host.docker.internal. That works on Docker Desktop and colima
+// because a VM sits in the middle and forwards the name to the host's loopback.
+// A WSL distro runs a NATIVE engine — installDocker installs from get.docker.com
+// — so there is no VM, host.docker.internal resolves to the bridge gateway, and
+// A CONTAINER CANNOT REACH THE HOST'S LOOPBACK. The operator's first island
+// failed with:
+//
+//	fatal: unable to access 'https://github.com/…': Failed to connect to
+//	host.docker.internal port 7280 after 0 ms: Couldn't connect to server
+//
+// Fixing the DEFAULT is a daemon-wide change that affects every platform and is
+// being done separately. This is the installer configuring the host it is
+// installing on, which it can do precisely because it knows the host is WSL with
+// a native engine.
+//
+// The bind stays HOST-INTERNAL: a bridge gateway is reachable from containers on
+// that bridge and from the distro, not from the LAN. assertHostInternalBind
+// already permits exactly this and refuses only wildcards — its own comment
+// names "a docker bridge gateway" as the allowed case.
+//
+// When no gateway can be detected the overrides are omitted rather than guessed,
+// leaving today's behaviour, and setup says so.
+func dejimadUnitFor(bridgeGateway string) string {
+	env := "Environment=HOME=/root\n"
+	if bridgeGateway != "" {
+		env += "Environment=DEJIMAD_EGRESS_PROXY=" + bridgeGateway + ":7280\n"
+		env += "Environment=DEJIMAD_TOKEN_TCP=" + bridgeGateway + ":7274\n"
+	}
+	return strings.Replace(dejimadUnit, "Environment=HOME=/root\n", env, 1)
+}
+
+// distroBridgeGateway reports the docker bridge gateway inside the distro, or ""
+// when it cannot be determined. docker0 specifically: that is what Docker maps
+// host-gateway to by default, and host-gateway is what host.docker.internal
+// resolves to inside a container.
+func distroBridgeGateway(ctx context.Context, distro string) string {
+	out, err := wsl.Run(ctx, distro,
+		`ip -4 -o addr show docker0 2>/dev/null | awk '{print $4}' | cut -d/ -f1`)
+	if err != nil {
+		return ""
+	}
+	addr := strings.TrimSpace(out)
+	// Must be a plain IPv4 literal; anything else is a parse surprise, and a
+	// wrong bind is worse than none.
+	if net.ParseIP(addr) == nil || strings.Contains(addr, ":") {
+		return ""
+	}
+	return addr
+}
+
 const dejimadUnit = `[Unit]
 Description=Dejima daemon
 After=network.target docker.service
@@ -95,7 +151,7 @@ func ensureWSLDaemonSupervision(ctx context.Context, distro string) (string, err
 	// PowerShell, wsl.exe and sh. Hand-quoting it is how a command ends up
 	// evaluated by the wrong shell — which happened to the operator on this very
 	// file, with PowerShell swallowing a `>>` and writing to a Windows path.
-	enc := b64(dejimadUnit)
+	enc := b64(dejimadUnitFor(distroBridgeGateway(ctx, distro)))
 	script := "echo " + enc + " | base64 -d > /etc/systemd/system/dejimad.service && " +
 		"systemctl daemon-reload && systemctl enable --now dejimad"
 	if _, err := wsl.Run(ctx, distro, script); err != nil {
@@ -108,7 +164,7 @@ func ensureWSLDaemonSupervision(ctx context.Context, distro string) (string, err
 // can stay quiet on a re-run instead of announcing work it did not do.
 func unitIsCurrent(ctx context.Context, distro string) bool {
 	out, err := wsl.Run(ctx, distro, "cat /etc/systemd/system/dejimad.service 2>/dev/null || true")
-	return err == nil && strings.TrimSpace(out) == strings.TrimSpace(dejimadUnit)
+	return err == nil && strings.TrimSpace(out) == strings.TrimSpace(dejimadUnitFor(distroBridgeGateway(ctx, distro)))
 }
 
 // b64/unb64 exist so the round-trip is testable as the thing that actually runs,

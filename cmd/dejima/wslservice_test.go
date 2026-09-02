@@ -67,3 +67,49 @@ func TestUnitSurvivesBase64RoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// A NATIVE docker engine cannot reach the host's loopback from a container, so
+// the listeners have to move onto the bridge. The operator's first island failed
+// with exactly this:
+//
+//	Failed to connect to host.docker.internal port 7280 after 0 ms
+//
+// Docker Desktop and colima hide it because a VM forwards the name to loopback.
+// WSL installs a native engine, so there is no VM and no forwarding.
+func TestUnitMovesListenersOntoTheBridge(t *testing.T) {
+	got := dejimadUnitFor("172.17.0.1")
+
+	for _, want := range []string{
+		"Environment=HOME=/root",
+		"Environment=DEJIMAD_EGRESS_PROXY=172.17.0.1:7280",
+		"Environment=DEJIMAD_TOKEN_TCP=172.17.0.1:7274",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("unit is missing %q:\n%s", want, got)
+		}
+	}
+	// HOME must survive: without it the daemon exits instantly with
+	// "locate home dir: $HOME is not defined".
+	if strings.Count(got, "Environment=HOME=/root") != 1 {
+		t.Errorf("HOME appears %d times, want exactly 1", strings.Count(got, "Environment=HOME=/root"))
+	}
+	// Never a wildcard. assertHostInternalBind refuses those, and rightly.
+	for _, bad := range []string{"0.0.0.0", "::"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("unit binds a wildcard (%q), which the daemon refuses and which would "+
+				"expose the autonomy listener to the LAN:\n%s", bad, got)
+		}
+	}
+}
+
+// No gateway detected: omit the overrides rather than guess. A wrong bind is
+// worse than today's behaviour, and setup says what it could not determine.
+func TestUnitOmitsOverridesWhenNoGatewayFound(t *testing.T) {
+	got := dejimadUnitFor("")
+	if strings.Contains(got, "DEJIMAD_EGRESS_PROXY") || strings.Contains(got, "DEJIMAD_TOKEN_TCP") {
+		t.Errorf("invented a listener address with no gateway detected:\n%s", got)
+	}
+	if !strings.Contains(got, "Environment=HOME=/root") {
+		t.Errorf("dropped HOME while omitting the overrides:\n%s", got)
+	}
+}
