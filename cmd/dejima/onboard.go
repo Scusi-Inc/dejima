@@ -435,12 +435,24 @@ var promptOut io.Writer = os.Stdout
 var cliOut io.Writer = os.Stdout
 
 func readSingleKey(prompt string) string {
+	ans, _ := readSingleKeyResult(prompt)
+	return ans
+}
+
+// readSingleKeyResult also reports whether an answer was actually READ.
+//
+// readSingleKey collapses "the operator pressed Enter" and "there is nobody
+// there" into the same empty string. That is safe only while empty means no —
+// the moment a prompt defaults to yes, EOF stops meaning "declined" and starts
+// meaning "consented", and a piped or serviced invocation installs things
+// nobody agreed to. --yes is how a script says yes.
+func readSingleKeyResult(prompt string) (string, bool) {
 	fmt.Fprint(promptOut, prompt)
 	line, err := stdinReader.ReadString('\n')
-	if err != nil {
-		return ""
+	if err != nil && strings.TrimSpace(line) == "" {
+		return "", false
 	}
-	return strings.TrimSpace(line)
+	return strings.TrimSpace(line), true
 }
 
 // ---------------------------------------------------------------------------
@@ -1391,3 +1403,32 @@ var (
 		return context.WithCancel(context.Background())
 	}
 )
+
+// confirmDefault asks a yes/no question, deriving the DISPLAYED default and the
+// RETURNED default from one boolean so the two cannot disagree.
+//
+// They used to be two artifacts sitting next to each other. confirmWSL printed a
+// literal `[y/N]` and separately branched to no-on-empty — internally consistent,
+// so review saw nothing wrong. The bug was that the honest answer was the wrong
+// one: Enter cancelled `dejima wsl setup` at both questions the command exists to
+// ask, while install-client.ps1 had just taught the same operator, in the same
+// sitting, that Enter means yes.
+//
+// The pairing is the part worth removing. "[y/N] that actually defaults to yes"
+// and "[Y/n] that actually defaults to no" both ship silently and both read fine
+// in review; the operator finds out by pressing Enter and losing the run.
+func confirmDefault(question string, defYes bool) bool {
+	suffix := "[y/N]"
+	if defYes {
+		suffix = "[Y/n]"
+	}
+	ans, answered := readSingleKeyResult(question + " " + suffix + ": ")
+	if !answered {
+		// Nobody is there. A yes-default must not turn silence into consent.
+		return false
+	}
+	if ans == "" {
+		return defYes
+	}
+	return strings.EqualFold(ans, "y") || strings.EqualFold(ans, "yes")
+}
