@@ -168,7 +168,25 @@ ENV HOME=/home/dejima \
 # corruption its Ink renderer otherwise produces over tmux + Windows Terminal
 # (pairs with the `sync` terminal-feature in image/tmux.conf). ^ still tracks
 # latest patches; it only guarantees a floor with the fix.
-RUN npm install -g @anthropic-ai/claude-code@^2.1.200 @openai/codex
+#
+# VERIFY THE AGENTS RUN, do not just install them. `npm install -g` SUCCEEDS
+# EVEN WHEN A PLATFORM BINARY FAILS TO INSTALL: codex ships its executable as an
+# OPTIONAL dependency per platform (@openai/codex-linux-arm64 and friends), and
+# npm treats a failed optional dependency as non-fatal by design. The image then
+# builds green with an agent that dies on first run:
+#
+#   Error: Missing optional dependency @openai/codex-linux-arm64.
+#   Reinstall Codex: npm install -g @openai/codex@latest
+#
+# An operator hit that after creating a codex agent — the island came up, the
+# agent was "installed", and the binary was not there. Creating the agent cannot
+# fix it, because the agent uses this image rather than installing anything.
+#
+# So assert the end state: if either CLI cannot report its own version, the build
+# fails here rather than shipping an island that looks complete.
+RUN npm install -g @anthropic-ai/claude-code@^2.1.200 @openai/codex \
+ && claude --version \
+ && codex --version
 
 # Containers stay alive via dejima-start.sh, which manages tmux + agent process.
 ENTRYPOINT ["/usr/local/bin/dejima-start.sh"]
