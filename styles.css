@@ -272,10 +272,19 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 /* command box with an inline copy button */
 .cmd { position: relative; margin: 0.3rem 0 0; min-width: 0; }
 .cmd pre { margin: 0; padding-right: 4.6rem; }
-.cmd-copy { position: absolute; top: 0.45rem; right: 0.45rem; background: var(--accent);
-  color: var(--bg); border: 0; border-radius: 6px; padding: 0.28rem 0.7rem;
-  font-weight: 600; cursor: pointer; font-size: 0.78rem; transition: opacity 0.12s; }
+.cmd-copy { position: absolute; top: 0.4rem; right: 0.4rem; background: var(--accent);
+  color: var(--bg); border: 0; border-radius: 6px; padding: 0.34rem;
+  cursor: pointer; line-height: 0; transition: opacity 0.12s; }
 .cmd-copy:hover { opacity: 0.85; }
+.cmd-copy .ico { width: 0.95rem; height: 0.95rem; display: block;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; }
+/* A label on the command line that is NOT part of the command. It lives outside
+   the <code>, and the copy handler reads querySelector('code').textContent — so
+   it cannot be copied by the button, and user-select stops a drag catching it
+   either. Muted, because it says how to run the line rather than what to run. */
+.cmd-pre { color: var(--muted); user-select: none; -webkit-user-select: none;
+  margin-right: 0.7rem; font-size: 0.85em; letter-spacing: 0.04em; }
 /* host + client side by side inside scenario 2 */
 /* Stacked full-width: "First" (server) over "Then" (your computer), so long
    install commands get the whole column and don't need a horizontal scrollbar. */

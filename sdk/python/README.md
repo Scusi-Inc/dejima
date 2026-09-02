@@ -21,7 +21,7 @@ pip install 'dejima[ws]'      # + WebSocket PTY attach()
 from dejima import Client
 
 # host/token from $DEJIMA_HOST and $DEJIMA_TOKEN, or pass explicitly:
-dj = Client(host="100.84.12.7:7273")
+dj = Client(host="100.101.102.103:7273")
 
 isl = dj.create_island(repo="git@github.com:you/foo.git", agent="claude-code")
 print(isl["name"], isl["state"])

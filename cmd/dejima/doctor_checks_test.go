@@ -27,7 +27,7 @@ func TestFlagValue(t *testing.T) {
 
 func TestIsLoopbackAddr(t *testing.T) {
 	loop := []string{"127.0.0.1:7274", "[::1]:7274", "localhost:7274", "127.0.0.1"}
-	notLoop := []string{"0.0.0.0:7274", "100.77.85.107:7274", "minion:7273", "::"}
+	notLoop := []string{"0.0.0.0:7274", "100.101.102.103:7274", "minion:7273", "::"}
 	for _, a := range loop {
 		if !isLoopbackAddr(a) {
 			t.Errorf("isLoopbackAddr(%q) = false, want true", a)
@@ -167,7 +167,7 @@ func TestIslandSkewNote(t *testing.T) {
 func TestFixProfilePort(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := clientcfg.Save(clientcfg.Config{
-		Profiles: []clientcfg.Profile{{Name: "minion", Host: "100.77.85.107"}},
+		Profiles: []clientcfg.Profile{{Name: "minion", Host: "100.101.102.103"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestFixProfilePort(t *testing.T) {
 		t.Error("expected a non-empty outcome message")
 	}
 	cfg, _ := clientcfg.Load()
-	if cfg.Profiles[0].Host != "100.77.85.107:7273" {
-		t.Errorf("host = %q, want 100.77.85.107:7273", cfg.Profiles[0].Host)
+	if cfg.Profiles[0].Host != "100.101.102.103:7273" {
+		t.Errorf("host = %q, want 100.101.102.103:7273", cfg.Profiles[0].Host)
 	}
 }

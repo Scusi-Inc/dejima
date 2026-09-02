@@ -27,7 +27,7 @@ func exitErr(t *testing.T, code int) error {
 // the container and restarts every agent in the island to fix a problem that
 // isn't in the container at all. That misrouting is the bug this guards.
 func TestSSHFailureHintOnPublickeyDenial(t *testing.T) {
-	const stderr = "wildfire@100.77.85.107: Permission denied (publickey).\n"
+	const stderr = "wildfire@100.101.102.103: Permission denied (publickey).\n"
 	hint := sshFailureHint(stderr, exitErr(t, 255))
 	if hint == "" {
 		t.Fatal("a publickey denial must be classified as an ssh-layer failure")

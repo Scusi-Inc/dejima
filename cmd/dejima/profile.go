@@ -121,7 +121,7 @@ func newProfileAddCmd() *cobra.Command {
 			name := strings.TrimSpace(args[0])
 			host := normalizeHost(args[1])
 			if host == "" {
-				return fmt.Errorf("host is required (e.g. 100.77.85.107:7273)")
+				return fmt.Errorf("host is required (e.g. 100.101.102.103:7273)")
 			}
 			if err := clientcfg.AddProfile(name, host); err != nil {
 				return err
