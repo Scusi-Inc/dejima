@@ -250,6 +250,11 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	if tokenAddr == "" {
 		tokenAddr = defaultTokenAddr
 	}
+	// Before assertHostInternalBind, not after: the guard must see the address we
+	// will actually listen on. A relocation that happened afterwards would be
+	// unguarded, which is how a wildcard eventually slips past a check that only
+	// ever inspected the default.
+	tokenAddr = hostInternalBind(context.Background(), log, tokenAddr, tokenExplicit)
 	var tokenSrv *http.Server
 	var tokenLn net.Listener
 	if err := assertHostInternalBind(log, "token listener", "--token-tcp", tokenAddr); err != nil {
@@ -286,6 +291,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	var egressSrv *http.Server
 	var egressLn net.Listener
 	if egressAddr != "" {
+		egressAddr = hostInternalBind(context.Background(), log, egressAddr, egressExplicit)
 		// A bind problem is fatal only when the operator explicitly asked for the
 		// proxy; the default-on proxy degrades gracefully (warn + run without it)
 		// so a busy port or a non-host-internal default can never block startup.
