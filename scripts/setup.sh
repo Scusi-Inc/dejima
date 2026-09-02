@@ -22,6 +22,11 @@ SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SETUP_DIR/lib/tty.sh"
 # shellcheck source=scripts/lib/transcript.sh
 . "$SETUP_DIR/lib/transcript.sh"
+# Docker Desktop's first launch: probing the CLI without leaking the kernel's
+# kill notice, and deciding what to tell an operator watching a screen that may
+# have nothing on it. Tested by scripts/lib/dockerwait_test.sh.
+# shellcheck source=scripts/lib/dockerwait.sh
+. "$SETUP_DIR/lib/dockerwait.sh"
 # Idempotent: install.sh already started one and exported DEJIMA_INSTALL_LOG,
 # and `exec make setup` inherits both it and the redirected descriptors. This
 # call is for the operator who runs `make setup` (or this script) directly.
@@ -199,7 +204,7 @@ fi
 # 2. Docker check
 # ---------------------------------------------------------------------------
 bold "2. Docker"
-if docker version >/dev/null 2>&1; then
+if docker_cli_ok; then
     ok "Docker is reachable ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'server unknown'))"
 elif command -v docker >/dev/null 2>&1; then
     warn "the 'docker' CLI is on PATH but the daemon isn't reachable"
@@ -232,10 +237,10 @@ elif command -v docker >/dev/null 2>&1; then
 
     info "Waiting up to 90s for the Docker daemon to come up…"
     for _ in $(seq 1 90); do
-        if docker version >/dev/null 2>&1; then break; fi
+        if docker_cli_ok; then break; fi
         sleep 1
     done
-    if docker version >/dev/null 2>&1; then
+    if docker_cli_ok; then
         ok "Docker is now reachable (via $started)"
     else
         fail "$started started but \`docker version\` is still not reachable after 90s"
@@ -283,7 +288,7 @@ else
                         exit 1
                     }
                     # shellcheck disable=SC2016
-                    if docker version >/dev/null 2>&1; then
+                    if docker_cli_ok; then
                         ok "Docker is now reachable (via colima)"
                     else
                         fail 'colima started but `docker version` is not reachable'
@@ -330,37 +335,14 @@ else
                         info "  xattr -dr com.apple.quarantine /Applications/Docker.app"
                     fi
                     info "Waiting for the Docker daemon (up to 5 min; first launch is slow)…"
-                    docker_up=0
-                    for i in $(seq 1 300); do
-                        if docker version >/dev/null 2>&1; then docker_up=1; break; fi
-                        # A silent multi-minute pause is indistinguishable from a
-                        # hang — which is what prompted a Ctrl-C last time, and
-                        # the Ctrl-C is what left Docker.app half-linked.
-                        if (( i % 30 == 0 )); then
-                            info "  …still waiting (${i}s) — CHECK THIS MAC'S SCREEN: first launch"
-                            info "     shows a licence agreement that must be accepted"
-                        fi
-                        sleep 1
-                    done
-                    if [[ "$docker_up" == "1" ]]; then
+                    if docker_wait_for_daemon 300; then
                         ok "Docker is now reachable"
                     else
                         fail "Docker still not reachable after 5 minutes"
-                        # "Docker Desktop is open, waiting to be clicked" and "Docker
-                        # Desktop never started" look identical from here but need
-                        # opposite actions, so say which one it is.
-                        if pgrep -f "Docker Desktop" >/dev/null 2>&1 || pgrep -x Docker >/dev/null 2>&1; then
-                            info "Docker Desktop IS running — it is waiting for you ON THE SCREEN."
-                            info "First launch shows a licence agreement and asks to install a"
-                            info "privileged helper. The daemon does not exist until both are done,"
-                            info "and neither can be accepted over SSH."
-                            info "Go to this Mac's display (or screen-share in) and click through."
-                        else
-                            info "Docker Desktop is NOT running. Open it once:"
-                            info "  open -a Docker"
-                            info "If macOS refuses with error -10673, it is quarantined:"
-                            info "  xattr -dr com.apple.quarantine /Applications/Docker.app"
-                        fi
+                        if docker_desktop_running; then dd_running=1; else dd_running=0; fi
+                        while IFS= read -r line; do
+                            info "$line"
+                        done < <(docker_wait_advice "$dd_running" "$(console_user)" "$(whoami)")
                         info ""
                         info "Then re-run the installer — it is idempotent and picks up here:"
                         info "  curl -fsSL https://dejima.tech/install.sh | bash"
