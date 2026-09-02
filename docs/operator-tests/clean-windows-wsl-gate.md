@@ -42,6 +42,87 @@ Phase 2, after a Windows reboot, checks the daemon is still there and the island
 came back — with a marker written into its workspace, so it proves the *island*
 returned rather than that a container with the right name exists.
 
+## Getting to a virgin machine first
+
+The script rebuilds a *distro*. To re-test the **documented path from step one** —
+`wsl --install --no-distribution`, the reboot, the installer, `dejima wsl setup` —
+you need WSL itself gone, and that is where the operator spent an hour finding
+out the published removal steps are incomplete.
+
+Order matters: uninstall the client while its binary still exists to tell you
+things, then the distro, then the feature.
+
+```powershell
+dejima uninstall --client
+Remove-Item -Recurse -Force $env:LOCALAPPDATA\dejima
+Remove-Item -Recurse -Force $env:USERPROFILE\.dejima -EA SilentlyContinue
+$p = [Environment]::GetEnvironmentVariable('Path','User')
+[Environment]::SetEnvironmentVariable('Path',
+    (($p -split ';' | Where-Object { $_ -ne "$env:LOCALAPPDATA\dejima" }) -join ';'), 'User')
+[Environment]::SetEnvironmentVariable('DEJIMA_HOST', $null, 'User')
+```
+
+```powershell
+wsl --terminate <distro>
+wsl --unregister <distro>     # deletes ext4.vhdx and every island volume in it
+```
+
+Then, **elevated**, and note `/norestart` means the removal applies at boot:
+
+```powershell
+dism.exe /online /disable-feature /featurename:Microsoft-Windows-Subsystem-Linux /norestart
+dism.exe /online /disable-feature /featurename:VirtualMachinePlatform /norestart
+```
+
+### The step nothing documents, and the reason this section exists
+
+After all of that, **File Explorer still shows a "Linux" entry in the sidebar**,
+and it survives the reboot. It is a shell registration that neither
+`--unregister` nor disabling the optional components removes:
+
+```powershell
+Get-Item 'HKLM:\SOFTWARE\Classes\CLSID\{B2B4A4D1-2754-4140-A2EB-9A76D9D7CDC6}'
+#   (default)                      : Linux
+#   System.IsPinnedToNameSpaceTree : 1
+```
+
+Elevated, with a backup first:
+
+```powershell
+reg export "HKLM\SOFTWARE\Classes\CLSID\{B2B4A4D1-2754-4140-A2EB-9A76D9D7CDC6}" "$env:USERPROFILE\wsl-nav-key-backup.reg" /y
+Remove-Item 'HKLM:\SOFTWARE\Classes\CLSID\{B2B4A4D1-2754-4140-A2EB-9A76D9D7CDC6}' -Recurse -Force
+Stop-Process -Name explorer -Force
+```
+
+**Why it only sometimes appears**, because that difference is what made it hard
+to believe the machine was clean: an earlier wipe on the same box left no such
+entry. That WSL had been installed as the **Store package**, which takes its
+Explorer registration with it when uninstalled. This one was the **inbox optional
+component**, where `winget uninstall --id Microsoft.WSL` reports *no installed
+package found* and the registration is left behind. Same end state, two removal
+paths, and only one of them self-cleans.
+
+Nothing is behind the icon — the data really is gone by that point. But a visible
+"Linux" drive is reasonable evidence that a wipe is incomplete, and telling
+someone to ignore it is worse than spending five minutes removing it.
+
+`wsl.exe` itself never goes away. Windows ships the stub in System32 regardless,
+which is the same fact that made `wsl.Available()` return true on a machine with
+no WSL — see `internal/wsl`.
+
+### Verify
+
+```powershell
+wsl --status          # should report the optional components are disabled
+Get-Command dejima -All
+Test-Path $env:LOCALAPPDATA\dejima
+[Environment]::GetEnvironmentVariable('DEJIMA_HOST','User')
+Get-WindowsOptionalFeature -Online | Where-Object FeatureName -match 'Linux|VirtualMachine' | Select-Object FeatureName, State
+```
+
+The last one needs elevation and is the only check that distinguishes `Disabled`
+from `DisablePending`.
+
 ## Running it
 
 ```powershell
