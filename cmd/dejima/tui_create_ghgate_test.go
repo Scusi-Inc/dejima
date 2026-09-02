@@ -96,3 +96,35 @@ func TestCreatorGitHubGateDoesNotOfferConnectToTeammates(t *testing.T) {
 }
 
 var _ = api.GitHubIdentityView{}
+
+// THE POST-CREATE GATE is a different function from the identity screen above,
+// and until a mutation pointed at it survived a passing suite, nothing covered
+// it. It fires when the daemon refuses a create because a private repo has no
+// identity — which is the exact moment the operator needs to connect one, and
+// the moment they are least inclined to read a paragraph.
+func TestCreatorPostCreateGateHandsOffToTheInPaneSignIn(t *testing.T) {
+	m := tuiModel{creator: &creatorModel{step: stepGitHubGate, gateRepo: "aoos/private"}}
+
+	out, cmd := m.creatorGitHubGateKey(key("c"))
+	mm := out.(tuiModel)
+
+	if mm.creator != nil {
+		t.Error("[c] at the gate left the creator open — the create it was mid-way " +
+			"through has already been refused")
+	}
+	if mm.github == nil || mm.github.connect == nil {
+		t.Fatal("[c] at the gate did not start a sign-in in the GitHub pane")
+	}
+	if cmd == nil {
+		t.Error("[c] issued no command, so nothing asks the daemon for a code")
+	}
+	if !mm.github.connect.makeDefault {
+		t.Error("this gate fires only when NO identity resolves, so the one being " +
+			"created must become the default")
+	}
+	// It must not have gone back to reporting a window it cannot see.
+	if body := plain(mm.renderGithubView()); strings.Contains(body, "opened") &&
+		strings.Contains(body, "github connect") {
+		t.Errorf("the gate reports opening something it cannot observe:\n%s", body)
+	}
+}
