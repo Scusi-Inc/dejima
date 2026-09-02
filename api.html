@@ -196,7 +196,7 @@ pip install 'dejima[ws]'      # + attach() PTY streams
 
 from dejima import Client
 
-dj = Client()                 # or Client(host="100.84.12.7:7273", token="…")
+dj = Client()                 # or Client(host="100.101.102.103:7273", token="…")
 isl = dj.create_island(repo="git@github.com:you/foo.git", agent="claude-code")
 dj.add_agent(isl["name"], type="codex")
 print(dj.exec(isl["name"], ["git", "status", "--short"]))

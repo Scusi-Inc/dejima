@@ -395,7 +395,7 @@ elif [[ -n "$discovered" ]]; then
     info "Type the one you want below."
 else
     info "TYPE THE ADDRESS of the Mac you installed Dejima on — its Tailscale IP,"
-    info "which looks like 100.84.12.7. To find it, run this ON THAT MAC:"
+    info "which looks like 100.101.102.103. To find it, run this ON THAT MAC:"
     info "    tailscale ip -4"
     info "(If Tailscale isn't signed in on this Mac yet, press Enter to skip — you"
     info " can set the address later with: dejima profile add <name> <ip>:7273)"
@@ -411,7 +411,7 @@ if [[ -e /dev/tty && -z "${DEJIMA_HOST_PREFILL:-}" ]]; then
         read -r -p "▸ Server address [$default_host]: " server_host </dev/tty 2>/dev/null || true
         server_host="${server_host:-$default_host}"
     else
-        read -r -p "▸ Type your server's Tailscale IP, e.g. 100.84.12.7 (or press Enter to skip): " server_host </dev/tty 2>/dev/null || true
+        read -r -p "▸ Type your server's Tailscale IP, e.g. 100.101.102.103 (or press Enter to skip): " server_host </dev/tty 2>/dev/null || true
     fi
 elif [[ -n "${DEJIMA_HOST_PREFILL:-}" ]]; then
     server_host="$DEJIMA_HOST_PREFILL"

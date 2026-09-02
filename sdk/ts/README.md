@@ -26,7 +26,7 @@ Requires Node 18+ (uses the global `fetch` and `AbortController`). ESM-only.
 import { Client } from "@dejima/sdk";
 
 // host/token from $DEJIMA_HOST and $DEJIMA_TOKEN, or pass explicitly:
-const dj = new Client({ host: "100.84.12.7:7273" });
+const dj = new Client({ host: "100.101.102.103:7273" });
 
 const isl = await dj.createIsland("git@github.com:you/foo.git", { agent: "claude-code" });
 console.log(isl.name, isl.state);

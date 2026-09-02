@@ -871,7 +871,7 @@ func printClientInstall(ctx context.Context, e *envProbe) error {
 		fmt.Println()
 	}
 
-	host := strings.TrimSpace(readSingleKey("Daemon host (e.g. minion.tail2f808e.ts.net): "))
+	host := strings.TrimSpace(readSingleKey("Daemon host (e.g. mac-mini.tailnet1234.ts.net): "))
 	if host == "" {
 		fmt.Println("Skipped (no host provided). Set it later: export DEJIMA_HOST=<host>:7273")
 		return nil
