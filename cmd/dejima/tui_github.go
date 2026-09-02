@@ -52,7 +52,7 @@ func (m tuiModel) loadGithubIdentitiesCmd() tea.Cmd {
 func (m tuiModel) githubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.github
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "ctrl+[", "q":
 		m.github = nil
 		return m, nil
 	case "r":

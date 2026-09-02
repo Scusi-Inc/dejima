@@ -77,7 +77,7 @@ func (v *auditView) applyLoaded(msg auditLoadedMsg) {
 func (m tuiModel) auditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.audit
 	switch msg.String() {
-	case "esc", "q", "A":
+	case "esc", "ctrl+[", "q", "A":
 		m.audit = nil
 		return m, nil
 	case "r":

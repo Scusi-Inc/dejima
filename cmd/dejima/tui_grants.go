@@ -121,7 +121,7 @@ func (m tuiModel) grantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch msg.String() {
-	case "esc", "q", "T":
+	case "esc", "ctrl+[", "q", "T":
 		m.grants = nil
 		return m, nil
 	case "G":

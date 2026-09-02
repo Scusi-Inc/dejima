@@ -140,7 +140,7 @@ func (m tuiModel) scopeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if v.adding {
 		switch msg.String() {
-		case "esc":
+		case "esc", "ctrl+[":
 			v.adding = false
 			v.pathIn = ""
 			return m, nil
@@ -177,7 +177,7 @@ func (m tuiModel) scopeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "esc", "q", "P":
+	case "esc", "ctrl+[", "q", "P":
 		m.scope = nil
 		return m, nil
 	case "r":

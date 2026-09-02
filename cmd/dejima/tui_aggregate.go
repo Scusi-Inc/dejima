@@ -55,7 +55,7 @@ func (v *aggregateView) applyLoaded(msg aggregateLoadedMsg) {
 
 func (m tuiModel) aggregateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q", "%", "ctrl+c":
+	case "esc", "ctrl+[", "q", "%", "ctrl+c":
 		m.aggregate = nil
 		return m, nil
 	case "r":

@@ -92,7 +92,7 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// swList
 	switch msg.String() {
-	case "esc", "q", "s", "ctrl+c":
+	case "esc", "ctrl+[", "q", "s", "ctrl+c":
 		m.switcher = nil
 	case "up", "k":
 		if s.cursor > 0 {
@@ -128,7 +128,7 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step, s.err = swList, ""
 	case "enter":
 		old := s.profiles[s.cursor].Name
@@ -203,7 +203,7 @@ func (m tuiModel) switcherConfirmDeleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	switch msg.String() {
 	case "y", "Y":
 		return m.switcherDelete()
-	case "n", "N", "esc", "q", "ctrl+c":
+	case "n", "N", "esc", "ctrl+[", "q", "ctrl+c":
 		s.step, s.err = swList, ""
 	}
 	return m, nil
@@ -254,7 +254,7 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherAddLabelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step = swList
 	case "enter":
 		if strings.TrimSpace(s.label) == "" {
@@ -274,7 +274,7 @@ func (m tuiModel) switcherAddLabelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step = swAddLabel
 	case "enter":
 		host := normalizeHost(s.host)
@@ -306,7 +306,7 @@ func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherJoinKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step, s.err = swList, ""
 		return m, nil
 	case "enter":
