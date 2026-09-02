@@ -532,10 +532,10 @@ unmutated base is usually the cheapest way to guarantee the first half.
 
 ## The instrument was fine; the reference was not
 
-Every shape above is a check that could not see. These saw perfectly and answered
-a question nobody had asked. Nothing in the output betrays it, because the output
-is *correct* — the assumption lives in the step from output to conclusion, which
-happens in the operator's head where no control can reach it.
+Every shape above is a check that could not see. Most of these saw perfectly and
+answered a question nobody had asked. Nothing in the output betrays it, because
+the output is *correct* — the assumption lives in the step from output to
+conclusion, which happens in the operator's head where no control can reach it.
 
 The remedy is therefore not a better instrument. It is naming the reference out
 loud, before reading the result.
@@ -543,11 +543,18 @@ loud, before reading the result.
 The entries below split into two kinds, and the difference decides what the
 remedy can be. In the first three the reference **existed** and was misread: a
 moved branch tip, a count standing in for an identity, a schema that shifted
-under a hash. Naming it out loud is enough, because there is something to name.
-In the last one there was **no reference at all** — two artifacts asserting the
-same fact with nothing pointing either way — and no amount of care within either
-one could have reached it. That is why its control is the odd one out: it does
-not read a reference more carefully, it manufactures one that never existed.
+under a hash. The instrument was fine in each; naming the reference out loud is
+enough, because there is something to name.
+
+The last one is the exception on both counts, and the heading above does not
+describe it. There was **no reference at all** — two artifacts asserting the same
+fact with nothing pointing either way — *and* the instrument was wrong too: the
+sweep searched for the claim's usual wording rather than for the claim, so it
+could only ever re-find what it had already found. Neither half alone explains
+it. Fixing the instrument would have produced a better search with still nothing
+to compare against; naming the reference was impossible while there wasn't one.
+That is why its control is the odd one out — it does not read a reference more
+carefully, it manufactures one that never existed.
 
 ### A diff compares against a reference, and the reference moves
 
