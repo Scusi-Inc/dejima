@@ -19,7 +19,29 @@ HOST="${DEJIMA_HOST:-}"
 TOKEN="${DEJIMA_TOKEN:-}"
 ISLAND="${DEJIMA_PROJECT_NAME:-unknown}"
 AGENT="${DEJIMA_AGENT_ID:-}"
-payload_json="${1:-{}}"
+# argv[1] is the event JSON.
+#
+# NOT "${1:-{}}". In that form the first `}` closes the expansion, so the default
+# is `{` and a literal `}` is appended to whatever comes out — meaning a supplied
+# argument comes back as `{"type":"agent-turn-complete"}}` and every real
+# invocation produces invalid JSON. jq then fails, `set -e` exits 2, and no event
+# is ever posted.
+#
+# The only path that parsed was the no-argument default, which is the one Codex
+# never takes: the hook worked exactly when it had nothing to report. shellcheck
+# passes it clean, because it is valid shell that means something other than it
+# looks like. Codex agents had therefore never emitted a single event.
+payload_json="${1-}"
+if [[ -z "$payload_json" ]]; then
+    payload_json='{}'
+fi
+
+# A payload we cannot parse must not take the hook down with it. jq dying under
+# `set -e` is exactly how this went quiet — no event, no error, nothing on screen
+# — so degrade to an empty payload and still report that the event happened.
+if ! printf '%s' "$payload_json" | jq -e . >/dev/null 2>&1; then
+    payload_json='{}'
+fi
 
 if [[ -z "$HOST" || -z "$TOKEN" ]]; then
     exit 0
