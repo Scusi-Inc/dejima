@@ -363,6 +363,11 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .callout { border: 1px solid var(--border); border-left: 3px solid var(--accent);
   background: var(--code-bg); border-radius: 4px; padding: 0.9rem 1.1rem; margin: 1.6rem 0; }
 .callout p { margin: 0.3rem 0; }
+/* Inside a step column a callout is a note about the command just above it, not
+   a section break, so it sits close and stays narrow. */
+.callout-tight { margin: 0.7rem 0 0; padding: 0.7rem 0.9rem; }
+.callout-tight p { font-size: 0.9rem; }
+.callout-tight p.small { color: var(--muted); margin-top: 0.45rem; }
 .walkthrough { margin: 2.6rem 0; }
 .walkthrough > p { color: var(--muted); font-size: 0.95rem; margin: 0.3rem 0 0.9rem; }
 

@@ -186,6 +186,14 @@
             <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
             <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
+          <div class="callout callout-tight">
+            <p><strong>Write down the address it prints.</strong> Near the end it says
+              <code>Your DEJIMA_HOST is: 100.101.102.103:7273</code>. That is what every other computer
+              needs to reach this server, and it is the one thing from this run you have to carry
+              elsewhere.</p>
+            <p class="small">Scrolled past it? Run <code>tailscale ip -4</code> on this machine and add
+              <code>:7273</code>.</p>
+          </div>
         </div>
         <div class="step">
           <p class="step-label"><span class="step-n">2</span>Provision the host</p>
@@ -193,7 +201,7 @@
             <pre><code>dejima onboard --provision-host</code></pre>
             <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
-          <p class="small">macOS: turns a fresh Mac mini into a server in one command (never-sleep power, Tailscale, Docker, the daemon). On Linux the installer already registered the service, so just run <code>dejima</code> to confirm it's up. Either way, note the <code>DEJIMA_HOST</code> it prints (e.g. <code>100.101.102.103:7273</code>).</p>
+          <p class="small">macOS: turns a fresh Mac mini into a server in one command (never-sleep power, Tailscale, Docker, the daemon). On Linux the installer already registered the service, so just run <code>dejima</code> to confirm it's up.</p>
           <p class="small">On a fresh Mac, step 1 stops to ask you a couple of questions and waits on Docker Desktop's
             licence screen. <a href="#macos-first-run">Here's what to expect</a>, including the pause that looks like a hang.</p>
         </div>
