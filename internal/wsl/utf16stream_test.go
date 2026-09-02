@@ -28,7 +28,7 @@ func TestUTF16OnTheTunnelBecomesAnError(t *testing.T) {
 		"Error code: Wsl/Service/0x80072747\r\n")
 
 	// The discriminator, exactly as Read applies it.
-	if !(len(raw) >= 2 && raw[1] == 0x00 && raw[0] != 0x00) {
+	if len(raw) < 2 || raw[1] != 0x00 || raw[0] == 0x00 {
 		t.Fatal("the UTF-16 discriminator does not match real wsl.exe output")
 	}
 
