@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/aoos/dejima/internal/srcscan"
 )
 
 // Every assertion here is a failure that happened on a real machine first, in
@@ -111,5 +114,120 @@ func TestUnitOmitsOverridesWhenNoGatewayFound(t *testing.T) {
 	}
 	if !strings.Contains(got, "Environment=HOME=/root") {
 		t.Errorf("dropped HOME while omitting the overrides:\n%s", got)
+	}
+}
+
+// Rewriting the unit must RESTART the daemon. `systemctl enable --now` starts a
+// STOPPED unit and leaves a RUNNING one alone — so on a machine where setup had
+// already run, rewriting the file would change the config on disk and nothing
+// else. The daemon would keep its old listeners while setup reported success,
+// which is the exact "reports success, isn't true" shape this whole WSL
+// investigation was about.
+func TestUnitRewriteRestartsTheDaemon(t *testing.T) {
+	// The install script is built inline in ensureWSLDaemonSupervision; assert on
+	// the command sequence it must contain. This is a source-level check because
+	// the property is "the restart step exists", and its absence has no runtime
+	// signature on a machine with no systemd.
+	body := codeOf(t)
+	if !strings.Contains(body, "systemctl restart dejimad") {
+		t.Error("the unit is written without restarting the daemon; a rewritten unit " +
+			"would never take effect on an already-running daemon")
+	}
+	if !strings.Contains(body, "systemctl daemon-reload") {
+		t.Error("systemd is never told to re-read the unit file")
+	}
+}
+
+// Detection must ask DOCKER, not only the OS interface. On a fresh distro
+// docker0 does not exist until dockerd has started, and setup probes moments
+// after installing it — so an interface-only probe returns nothing exactly when
+// it matters, and the operator's first clone on a clean machine fails with
+// "Failed to connect to host.docker.internal port 7280".
+func TestGatewayDetectionAsksDockerNotJustTheInterface(t *testing.T) {
+	body := codeOf(t)
+	if !strings.Contains(body, "docker network inspect bridge") {
+		t.Error("detection never asks Docker, so it cannot answer before docker0 exists " +
+			"or on an image without iproute2")
+	}
+	// And it must still try the interface, for engines where the docker CLI is
+	// unavailable to this user.
+	if !strings.Contains(body, "ip -4 -o addr show docker0") {
+		t.Error("dropped the interface probe; it is the fallback when the docker CLI is not usable")
+	}
+	// A retry, because dockerd coming up is the race that was lost.
+	if !strings.Contains(body, "attempt < 5") {
+		t.Error("no retry — detection races dockerd's startup and loses on a fresh distro")
+	}
+}
+
+// codeOf returns wslservice.go with its COMMENTS STRIPPED, so the guards below
+// cannot be satisfied by the prose that explains the code.
+//
+// This is not hypothetical here: a mutation deleting the `docker network
+// inspect bridge` probe PASSED, because the doc comment above it names the same
+// command. That is the fourth-plus instance of a comment satisfying a
+// source-level guard in this repo, which is why internal/srcscan exists.
+func codeOf(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile("wslservice.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok := srcscan.StripGoComments(string(src))
+	if !ok {
+		// A stripper that cannot parse must not hand back the original and let
+		// the guard match prose again.
+		t.Fatal("could not strip comments; these guards cannot run safely on raw source")
+	}
+	return out
+}
+
+// Supervision must be installed BEFORE the "daemon is already running" early
+// return, or it never runs on the machine that most needs it: one already set
+// up once.
+//
+// The operator re-ran `dejima wsl setup` three times against a healthy daemon
+// and got a clean report every time — socat present, Docker present, dejimad
+// running, image built, connection verified — while the unit was never touched
+// and the listener overrides never arrived. Nothing on screen suggested a step
+// had been skipped, because from setup's point of view none had been.
+//
+// Installing supervision is about the NEXT restart. Whether the daemon happens
+// to be up right now has nothing to do with whether its unit is correct.
+func TestSupervisionIsInstalledBeforeTheAlreadyRunningReturn(t *testing.T) {
+	src, err := os.ReadFile("wsl.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, ok := srcscan.StripGoComments(string(src))
+	if !ok {
+		t.Fatal("could not strip comments; this guard cannot run safely on raw source")
+	}
+	start := strings.Index(code, "func startDaemonInWSL")
+	if start < 0 {
+		// A guard that cannot find what it checks must fail, not pass.
+		t.Fatal("startDaemonInWSL not found — this guard can no longer see what it checks")
+	}
+	body := code[start:]
+	if end := strings.Index(body, "\nfunc "); end > 0 {
+		body = body[:end]
+	}
+
+	sup := strings.Index(body, "ensureWSLDaemonSupervision")
+	// A CODE marker, not a comment one. The first version searched for the
+	// phrase "already up", which exists only in the comment on that return —
+	// and since this guard strips comments first, it found nothing and SKIPPED.
+	// A skip reports ok. The mutation putting the bug back passed against it.
+	early := strings.Index(body, "pgrep -x dejimad")
+	if sup < 0 {
+		t.Fatal("startDaemonInWSL never installs supervision")
+	}
+	if early < 0 {
+		t.Fatal("the already-running probe is gone; this guard can no longer see what it checks")
+	}
+	if sup > early {
+		t.Error("supervision is installed AFTER the already-running early return, so a host " +
+			"whose daemon is up never gets its unit corrected — setup reports a clean run " +
+			"and changes nothing")
 	}
 }

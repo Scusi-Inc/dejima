@@ -883,6 +883,44 @@ func applyClientUpdateCmd(ver string) tea.Cmd {
 	}
 }
 
+// daemonUpdateVerifyMsg carries what the daemon reports about itself once it is
+// back, after an update whose response we never got to read.
+type daemonUpdateVerifyMsg struct {
+	version string
+	want    string
+	err     error
+}
+
+// verifyDaemonUpdateCmd waits for the restarted daemon and asks its version.
+//
+// This exists because the SUCCESS PATH OF A DAEMON UPDATE LOOKS LIKE A NETWORK
+// FAILURE: the daemon replaces its binary and restarts, which is the whole
+// point, and the connection carrying the response dies as a direct consequence.
+// A client that reports the transport error tells the operator their update
+// failed at the exact moment it worked.
+func (m tuiModel) verifyDaemonUpdateCmd(want string) tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		// Poll rather than sleep-once: a restart takes as long as it takes, and
+		// on WSL the transport has to re-establish a subprocess as well.
+		for attempt := 0; attempt < 20; attempt++ {
+			time.Sleep(3 * time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			o, err := c.Overview(ctx)
+			cancel()
+			if err == nil && o != nil && o.DaemonVersion != "" {
+				return daemonUpdateVerifyMsg{version: o.DaemonVersion, want: want}
+			}
+		}
+		return daemonUpdateVerifyMsg{want: want, err: errDaemonNeverReturned}
+	}
+}
+
+// errDaemonNeverReturned distinguishes "the daemon did not come back" from "it
+// came back on the old version". Those have different causes and different
+// remedies, and collapsing them is how a diagnosis names the wrong thing.
+var errDaemonNeverReturned = errors.New("the daemon did not come back after restarting")
+
 // daemonUpdatedMsg is the result of asking the daemon to update itself.
 type daemonUpdatedMsg struct {
 	resp *api.AdminUpdateResponse
@@ -1177,16 +1215,43 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case daemonUpdateVerifyMsg:
+		m.updating = ""
+		switch {
+		case msg.err != nil:
+			m.updateError = "daemon update: " + msg.err.Error() +
+				" — check it with `dejima wsl status`, or `wsl -d <distro> -u root -- systemctl status dejimad`"
+		case msg.want != "" && msg.version == msg.want:
+			// It worked. The error we saw was the restart, which is what an
+			// update is.
+			m.daemonUpdate = false
+			return m, m.showUpdateApplied("daemon updated to " + msg.version)
+		default:
+			// Back, but not on the new version: a genuine failure, and now it
+			// can say so precisely instead of reporting a transport error.
+			m.updateError = "daemon restarted but is still on " + msg.version +
+				" — the update did not take"
+		}
+		return m, nil
+
 	case daemonUpdatedMsg:
 		m.updating = "" // the in-progress banner gives way to the result
 		switch {
 		case msg.err != nil:
-			// The install now runs synchronously, so an error here is a real
-			// failure (git pull / make install / missing sudoers) — surface it
-			// stickily (updateError), since the transient lastError would be
-			// wiped by the next 2s poll before it could be read.
-			m.updateError = "daemon update failed: " + msg.err.Error()
-			m.updateApplied, m.restartPending = "", ""
+			// AN ERROR HERE IS NOT NECESSARILY A FAILURE, and treating it as one
+			// reported "daemon update failed" for updates that had just
+			// succeeded. The daemon installs the new binary and then RESTARTS
+			// itself; on the WSL transport every connection is a wsl.exe + socat
+			// subprocess, so the restart tears the tunnel down and the in-flight
+			// response dies with it. The operator saw "dejimad unavailable" while
+			// `dejimad --version` reported the new version.
+			//
+			// So verify by OUTCOME rather than by response: wait for the daemon
+			// to come back and ask what version it is. That is the question
+			// anyone actually has, and unlike the response it survives the
+			// restart the update deliberately caused.
+			m.updating = "daemon restarting — checking the new version…"
+			return m, m.verifyDaemonUpdateCmd(m.latestRelease)
 		case msg.resp != nil && msg.resp.Applying:
 			// The daemon restarts itself and reconnects — no user action needed,
 			// so this is a green "done" that fades on its own.

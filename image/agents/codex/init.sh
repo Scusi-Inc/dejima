@@ -13,6 +13,37 @@ HOST_CODEX="/opt/host/codex"
 HOME_CODEX="$HOME/.codex"
 mkdir -p "$HOME_CODEX" "$HOME_CODEX/hooks"
 
+# --- the binary actually being there ---------------------------------------
+#
+# codex ships its executable as an OPTIONAL per-platform npm dependency
+# (@openai/codex-linux-arm64 and friends), and `npm install -g` SUCCEEDS WHEN AN
+# OPTIONAL DEPENDENCY FAILS — that is npm's designed behaviour. So an image can
+# build green with a codex that dies on first use:
+#
+#   Error: Missing optional dependency @openai/codex-linux-arm64.
+#   Reinstall Codex: npm install -g @openai/codex@latest
+#
+# An operator hit exactly that: island up, agent "installed", binary absent, and
+# nothing they could do at agent-creation time would have fixed it.
+#
+# The Dockerfile now verifies both CLIs at build time, but that only protects
+# IMAGES BUILT AFTER IT. This repairs the ones already out there, at the moment
+# the agent starts, which is the last point before a person meets the failure.
+#
+# Not fatal if it cannot be fixed: a codex that starts and complains is more
+# useful than an island that refuses to come up, and the operator gets the exact
+# command rather than an npm traceback.
+if ! codex --version >/dev/null 2>&1; then
+    echo "dejima: codex's platform binary is missing — reinstalling …" >&2
+    if npm install -g @openai/codex@latest >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then
+        echo "dejima: codex reinstalled ($(codex --version 2>/dev/null))" >&2
+    else
+        echo "dejima: could not repair codex automatically." >&2
+        echo "dejima: run this in the island, then restart the agent:" >&2
+        echo "dejima:     npm install -g @openai/codex@latest" >&2
+    fi
+fi
+
 # --- credentials -----------------------------------------------------------
 if [[ -d "$HOST_CODEX" ]]; then
     for f in auth.json credentials.json config.toml; do

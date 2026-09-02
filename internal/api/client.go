@@ -183,7 +183,23 @@ func (c *Client) doVia(ctx context.Context, hc *http.Client, method, path string
 	if err != nil {
 		return fmt.Errorf("daemon unreachable: %w (is dejimad running?)", err)
 	}
-	defer resp.Body.Close()
+	// DRAIN BEFORE CLOSING. Go's transport only returns a connection to the pool
+	// when the body has been read to EOF; closing an unread body discards the
+	// connection instead. On the WSL transport a discarded connection is a killed
+	// wsl.exe + socat PAIR, and the next request forks another — so an undrained
+	// body silently downgrades keep-alive to a subprocess per request.
+	//
+	// The no-output path was the leak: nothing reads the body because nothing
+	// wants it. A test counting dials showed ten such requests opening ten
+	// connections. The operator hit WSAENOBUFS (Wsl/Service/0x80072747) three
+	// times in one evening on a fresh distro, twice wedging the WSL service.
+	//
+	// Bounded, because draining is a courtesy to the pool and not an obligation:
+	// past this size, dropping the connection is cheaper than reading the rest.
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 400 {
 		var er ErrorResponse
