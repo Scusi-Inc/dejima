@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/aoos/dejima/internal/wsl"
 )
@@ -86,18 +87,49 @@ func dejimadUnitFor(bridgeGateway string) string {
 // host-gateway to by default, and host-gateway is what host.docker.internal
 // resolves to inside a container.
 func distroBridgeGateway(ctx context.Context, distro string) string {
-	out, err := wsl.Run(ctx, distro,
-		`ip -4 -o addr show docker0 2>/dev/null | awk '{print $4}' | cut -d/ -f1`)
-	if err != nil {
-		return ""
+	// ASK DOCKER FIRST, then fall back to the interface.
+	//
+	// The first version only ran `ip … docker0`, and on a FRESH distro that
+	// returned nothing: docker0 does not exist until dockerd has actually
+	// started, and setup probes moments after installing it. The overrides were
+	// then correctly omitted rather than guessed — and the operator's first
+	// clone on a clean machine failed with
+	//
+	//	Failed to connect to host.docker.internal port 7280
+	//
+	// I had verified the detection on a host where Docker had been running for
+	// hours, which is the end state, not the state setup runs in. Same mistake
+	// as everything else this week: the path nobody walks from nothing.
+	//
+	// `docker network inspect bridge` asks the daemon we just started, so it is
+	// authoritative and it also answers on images with no iproute2. It is tried
+	// with a short retry, because dockerd coming up is exactly the race that was
+	// lost here.
+	probes := []string{
+		`docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null`,
+		`ip -4 -o addr show docker0 2>/dev/null | awk '{print $4}' | cut -d/ -f1`,
 	}
-	addr := strings.TrimSpace(out)
-	// Must be a plain IPv4 literal; anything else is a parse surprise, and a
-	// wrong bind is worse than none.
-	if net.ParseIP(addr) == nil || strings.Contains(addr, ":") {
-		return ""
+	for attempt := 0; attempt < 5; attempt++ {
+		for _, probe := range probes {
+			out, err := wsl.Run(ctx, distro, probe)
+			if err != nil {
+				continue
+			}
+			addr := strings.TrimSpace(out)
+			// A plain IPv4 literal or nothing. A wrong bind is worse than none.
+			if addr != "" && net.ParseIP(addr) != nil && !strings.Contains(addr, ":") {
+				return addr
+			}
+		}
+		if attempt < 4 {
+			select {
+			case <-ctx.Done():
+				return ""
+			case <-time.After(2 * time.Second):
+			}
+		}
 	}
-	return addr
+	return ""
 }
 
 const dejimadUnit = `[Unit]
@@ -152,8 +184,13 @@ func ensureWSLDaemonSupervision(ctx context.Context, distro string) (string, err
 	// evaluated by the wrong shell — which happened to the operator on this very
 	// file, with PowerShell swallowing a `>>` and writing to a Windows path.
 	enc := b64(dejimadUnitFor(distroBridgeGateway(ctx, distro)))
+	// RESTART, not just enable --now. `enable --now` starts a stopped unit and
+	// leaves a running one alone, so rewriting the file for an already-running
+	// daemon would change the config on disk and nothing else — the daemon would
+	// keep its old listeners and the operator would see no change from a setup
+	// that reported success.
 	script := "echo " + enc + " | base64 -d > /etc/systemd/system/dejimad.service && " +
-		"systemctl daemon-reload && systemctl enable --now dejimad"
+		"systemctl daemon-reload && systemctl enable dejimad && systemctl restart dejimad"
 	if _, err := wsl.Run(ctx, distro, script); err != nil {
 		return "", fmt.Errorf("install the dejimad systemd unit in %s: %w", distro, err)
 	}

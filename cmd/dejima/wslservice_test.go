@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/aoos/dejima/internal/srcscan"
 )
 
 // Every assertion here is a failure that happened on a real machine first, in
@@ -112,4 +115,69 @@ func TestUnitOmitsOverridesWhenNoGatewayFound(t *testing.T) {
 	if !strings.Contains(got, "Environment=HOME=/root") {
 		t.Errorf("dropped HOME while omitting the overrides:\n%s", got)
 	}
+}
+
+// Rewriting the unit must RESTART the daemon. `systemctl enable --now` starts a
+// STOPPED unit and leaves a RUNNING one alone — so on a machine where setup had
+// already run, rewriting the file would change the config on disk and nothing
+// else. The daemon would keep its old listeners while setup reported success,
+// which is the exact "reports success, isn't true" shape this whole WSL
+// investigation was about.
+func TestUnitRewriteRestartsTheDaemon(t *testing.T) {
+	// The install script is built inline in ensureWSLDaemonSupervision; assert on
+	// the command sequence it must contain. This is a source-level check because
+	// the property is "the restart step exists", and its absence has no runtime
+	// signature on a machine with no systemd.
+	body := codeOf(t)
+	if !strings.Contains(body, "systemctl restart dejimad") {
+		t.Error("the unit is written without restarting the daemon; a rewritten unit " +
+			"would never take effect on an already-running daemon")
+	}
+	if !strings.Contains(body, "systemctl daemon-reload") {
+		t.Error("systemd is never told to re-read the unit file")
+	}
+}
+
+// Detection must ask DOCKER, not only the OS interface. On a fresh distro
+// docker0 does not exist until dockerd has started, and setup probes moments
+// after installing it — so an interface-only probe returns nothing exactly when
+// it matters, and the operator's first clone on a clean machine fails with
+// "Failed to connect to host.docker.internal port 7280".
+func TestGatewayDetectionAsksDockerNotJustTheInterface(t *testing.T) {
+	body := codeOf(t)
+	if !strings.Contains(body, "docker network inspect bridge") {
+		t.Error("detection never asks Docker, so it cannot answer before docker0 exists " +
+			"or on an image without iproute2")
+	}
+	// And it must still try the interface, for engines where the docker CLI is
+	// unavailable to this user.
+	if !strings.Contains(body, "ip -4 -o addr show docker0") {
+		t.Error("dropped the interface probe; it is the fallback when the docker CLI is not usable")
+	}
+	// A retry, because dockerd coming up is the race that was lost.
+	if !strings.Contains(body, "attempt < 5") {
+		t.Error("no retry — detection races dockerd's startup and loses on a fresh distro")
+	}
+}
+
+// codeOf returns wslservice.go with its COMMENTS STRIPPED, so the guards below
+// cannot be satisfied by the prose that explains the code.
+//
+// This is not hypothetical here: a mutation deleting the `docker network
+// inspect bridge` probe PASSED, because the doc comment above it names the same
+// command. That is the fourth-plus instance of a comment satisfying a
+// source-level guard in this repo, which is why internal/srcscan exists.
+func codeOf(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile("wslservice.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok := srcscan.StripGoComments(string(src))
+	if !ok {
+		// A stripper that cannot parse must not hand back the original and let
+		// the guard match prose again.
+		t.Fatal("could not strip comments; these guards cannot run safely on raw source")
+	}
+	return out
 }
