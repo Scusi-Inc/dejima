@@ -650,7 +650,11 @@ exactly when a new wording appears, and whoever writes the new wording is by
 construction not editing the list. Pin what the sentences *say*, so a rewording
 fails until a human looks. Not a golden over the page either — these are
 marketing pages, mostly prose, and a golden fails on every legitimate edit, which
-is how a guard gets switched off rather than fixed.
+is how a guard gets switched off rather than fixed. d3 reports that outcome
+first-hand from a description guard they wrote and then deleted: 29 false
+positives against correctly-quoted lines, on the grounds that a guard crying
+wolf 29 times gets turned off, which is worse than the working gate it
+duplicated.
 
 **Pin the count, not the presence.** Two of the eight pinned sentences appear
 *twice* — once in FAQPage JSON-LD, once in the visible answer. Presence alone
