@@ -98,6 +98,8 @@ jobs:
           sudo apt-get install -y shellcheck
           shellcheck -x install.sh \
             install-client.sh \
+            image/agents/claude-code/hooks/notify.sh \
+            image/agents/codex/hooks/notify.sh \
             scripts/lib/clientinstall_test.sh \
             scripts/lib/codexheal_test.sh \
             scripts/setup.sh \
