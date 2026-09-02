@@ -30,7 +30,7 @@
 {"@type":"HowToStep","name":"Install the Dejima client","text":"Install the CLI with npm i -g dejima, or curl -fsSL https://dejima.tech/install-client.sh | bash (which also captures the server's address)."},
 {"@type":"HowToStep","name":"Join","text":"Run dejima join <invite> to save the connection, then run dejima to open the dashboard."}]},
 {"@type":"FAQPage","mainEntity":[
-{"@type":"Question","name":"What is Tailscale and why do I need it?","acceptedAnswer":{"@type":"Answer","text":"Tailscale is a private network that links your machines directly. A Dejima server's address (like 100.84.12.7) only exists inside that network, so the computer you're connecting needs Tailscale and access to that one server. There is no public port to expose."}},
+{"@type":"Question","name":"What is Tailscale and why do I need it?","acceptedAnswer":{"@type":"Answer","text":"Tailscale is a private network that links your machines directly. A Dejima server's address (like 100.101.102.103) only exists inside that network, so the computer you're connecting needs Tailscale and access to that one server. There is no public port to expose."}},
 {"@type":"Question","name":"Does my teammate see my other projects or machines?","acceptedAnswer":{"@type":"Answer","text":"No, if you share only the server node. Sharing one machine in Tailscale gives them that machine and nothing else. Mint their Dejima invite with --owner so they get their own private fleet on the server, separate from yours."}},
 {"@type":"Question","name":"Can I connect my own laptop to a remote server the same way?","acceptedAnswer":{"@type":"Answer","text":"Yes. It is the same flow whether the second computer is a teammate's or your own. Get on Tailscale with the server, install the Dejima client, and run dejima join, or point the client at the server with dejima profile add."}}
 ]}
@@ -65,7 +65,7 @@
   </div>
 
   <h2>The idea in one line</h2>
-  <p>A Dejima server's address, something like <code>100.84.12.7</code>, only exists inside <strong>Tailscale</strong>, a private network that links your machines directly. So the computer you're connecting needs two things: Tailscale (with access to that one server) and the Dejima client. There's no public port to open. Once the computer can reach the server, <code>dejima join</code> does the rest.</p>
+  <p>A Dejima server's address, something like <code>100.101.102.103</code>, only exists inside <strong>Tailscale</strong>, a private network that links your machines directly. So the computer you're connecting needs two things: Tailscale (with access to that one server) and the Dejima client. There's no public port to open. Once the computer can reach the server, <code>dejima join</code> does the rest.</p>
 
   <h2 id="operator">Adding someone (on the server side)</h2>
   <p>Do this as the operator, the person who runs the server. You'll send the teammate two things: a way onto the network, and a Dejima invite.</p>
@@ -150,7 +150,7 @@
   <div class="faq">
     <div class="faq-item">
       <h3>What is Tailscale and why do I need it?</h3>
-      <p>Tailscale is a private network that links your machines directly. A Dejima server's address (like <code>100.84.12.7</code>) only exists inside that network, so the computer you're connecting needs Tailscale and access to that one server. There's no public port to expose.</p>
+      <p>Tailscale is a private network that links your machines directly. A Dejima server's address (like <code>100.101.102.103</code>) only exists inside that network, so the computer you're connecting needs Tailscale and access to that one server. There's no public port to expose.</p>
     </div>
     <div class="faq-item">
       <h3>Does my teammate see my other projects or machines?</h3>

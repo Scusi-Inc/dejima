@@ -118,7 +118,7 @@ func newTokenInviteCmd() *cobra.Command {
 					host = h
 					fmt.Fprintf(os.Stderr, "note: --host not given; using the daemon's address %s\n", host)
 				} else {
-					return fmt.Errorf("--host is required (the daemon host:port the teammate will dial, e.g. a MagicDNS name minion.tailXXXX.ts.net:%s or ip:port)", defaultDaemonTCPPort)
+					return fmt.Errorf("--host is required (the daemon host:port the teammate will dial, e.g. a MagicDNS name mac-mini.tailXXXX.ts.net:%s or ip:port)", defaultDaemonTCPPort)
 				}
 			}
 			if isRawTailscaleIP(host) {

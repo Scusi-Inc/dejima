@@ -504,7 +504,7 @@ func (m tuiModel) renderTeamForm() string {
 		hostVal += "▎" // cursor
 	}
 	if hostVal == "" {
-		hostVal = styleMuted.Render("(e.g. minion.ts.net:7274 — for the one-paste invite)")
+		hostVal = styleMuted.Render("(e.g. mac-mini.ts.net:7274 — for the one-paste invite)")
 	} else {
 		hostVal = styleAccent.Render(hostVal)
 	}

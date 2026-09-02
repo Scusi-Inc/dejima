@@ -103,7 +103,7 @@ func TestRemoveProfile(t *testing.T) {
 
 func TestActiveHost(t *testing.T) {
 	profiles := []Profile{
-		{Name: "minion", Host: "100.77.85.107:7273"},
+		{Name: "minion", Host: "100.101.102.103:7273"},
 		{Name: "work", Host: "work.tailnet:7273"},
 	}
 	cases := []struct {
@@ -115,7 +115,7 @@ func TestActiveHost(t *testing.T) {
 		{
 			name:     "resolves active profile to its host",
 			cfg:      Config{Profiles: profiles, ActiveProfile: "minion"},
-			wantHost: "100.77.85.107:7273", wantOK: true,
+			wantHost: "100.101.102.103:7273", wantOK: true,
 		},
 		{
 			name:     "unset active profile is local",
