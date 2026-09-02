@@ -650,11 +650,15 @@ exactly when a new wording appears, and whoever writes the new wording is by
 construction not editing the list. Pin what the sentences *say*, so a rewording
 fails until a human looks. Not a golden over the page either — these are
 marketing pages, mostly prose, and a golden fails on every legitimate edit, which
-is how a guard gets switched off rather than fixed. d3 reports that outcome
-first-hand from a description guard they wrote and then deleted: 29 false
-positives against correctly-quoted lines, on the grounds that a guard crying
-wolf 29 times gets turned off, which is worse than the working gate it
-duplicated.
+is how a guard gets switched off rather than fixed. That is measured rather
+than assumed. A description guard written against `openapi.yaml` flagged 29
+lines; 27 were correctly quoted and 2 were the real errors it existed to
+catch — a 93% false-positive rate. It was deleted rather than shipped,
+because a guard that cries wolf 27 times gets turned off, which is worse
+than the working gate it duplicated. (d3's guard, d3's reasoning.
+Reproducible: run `\{[^}]*\bdescription:\s*([^"'][^}]*)\}` over
+`openapi.yaml` at `cead348~1`, flagging captures containing a comma; the 2
+genuine hits are the lines `cead348` fixes.)
 
 **Pin the count, not the presence.** Two of the eight pinned sentences appear
 *twice* — once in FAQPage JSON-LD, once in the visible answer. Presence alone
