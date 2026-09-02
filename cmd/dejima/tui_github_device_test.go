@@ -218,3 +218,52 @@ func TestTheCodeExpiryIsVisible(t *testing.T) {
 		t.Error("an expired code still advertises a countdown")
 	}
 }
+
+// THE INVARIANT THE WHOLE FEATURE EXISTS FOR, asserted against the state it is
+// most likely to be broken in: authorization_pending is what GitHub returns for
+// most of a sign-in's life, so a mistake there is the one an operator meets.
+//
+// Added because a mutation that reported "connected" on the pending branch
+// survived the first pass. Every other test drove a terminal state; none of them
+// fed the ordinary one, so the code path the operator spends the flow in was the
+// path with no assertion on it.
+func TestPendingIsNeverReportedAsSuccess(t *testing.T) {
+	m := startedFlow(t)
+	mm, cmd := m.applyDevicePolled(devicePolledMsg{sessionID: "sess-1", resp: api.GitHubDevicePollResponse{
+		State: "authorization_pending",
+	}})
+
+	if mm.github.connect == nil {
+		t.Fatal("a pending poll ended the sign-in — the operator is still mid-approval")
+	}
+	if mm.github.connect.state != deviceFlowWaiting {
+		t.Errorf("a pending poll moved the flow out of waiting, to state %v", mm.github.connect.state)
+	}
+	if cmd == nil {
+		t.Error("a pending poll scheduled no follow-up, so the flow silently stops")
+	}
+	for _, forbidden := range []string{"connected", "ready", "signed in"} {
+		if strings.Contains(strings.ToLower(mm.github.notice), forbidden) {
+			t.Errorf("a pending poll claimed %q: %q", forbidden, mm.github.notice)
+		}
+	}
+	if body := strings.ToLower(plain(mm.renderGithubView())); strings.Contains(body, "connected") {
+		t.Errorf("the pane reports a connection while still waiting for one:\n%s", body)
+	}
+}
+
+// An unrecognised state — one a newer daemon knows and this build does not —
+// must fall to waiting rather than to success. The reassuring reading of an
+// unknown answer is the one that must never be the default.
+func TestAnUnknownPollStateKeepsWaitingRatherThanClaimingSuccess(t *testing.T) {
+	m := startedFlow(t)
+	mm, cmd := m.applyDevicePolled(devicePolledMsg{sessionID: "sess-1", resp: api.GitHubDevicePollResponse{
+		State: "some_state_from_a_newer_daemon",
+	}})
+	if mm.github.connect == nil || cmd == nil {
+		t.Fatal("an unknown state ended the flow instead of continuing to wait")
+	}
+	if strings.Contains(strings.ToLower(mm.github.notice), "connected") {
+		t.Errorf("an unknown state was read as success: %q", mm.github.notice)
+	}
+}
