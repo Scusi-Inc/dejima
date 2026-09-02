@@ -99,6 +99,51 @@ else
 $out"
 fi
 
+# --- the sandbox ------------------------------------------------------------
+#
+# Codex's own sandbox is bubblewrap-based and CANNOT RUN IN A CONTAINER:
+#
+#   bwrap: No permissions to create a new namespace, likely because the kernel
+#   does not allow non-privileged user namespaces.
+#
+# It then asks the operator to approve every command individually. An agent that
+# stops at `dejima msg poll` for permission is not usable, and the operator hit
+# that. Installing bubblewrap does not help — the binary was never the problem.
+run_init_config() {
+    local pre="$1" bin home
+    bin="$(mktemp -d)"; home="$(mktemp -d)"
+    printf '#!/bin/sh\necho codex-cli 1.0.0\n' > "$bin/codex"
+    printf '#!/bin/sh\nexit 0\n' > "$bin/npm"
+    chmod +x "$bin/codex" "$bin/npm"
+    mkdir -p "$home/.codex"
+    [ -n "$pre" ] && printf '%s\n' "$pre" > "$home/.codex/config.toml"
+    HOME="$home" PATH="$bin:/usr/bin:/bin" bash "$ROOT/image/agents/codex/init.sh" >/dev/null 2>&1 || true
+    cat "$home/.codex/config.toml" 2>/dev/null
+}
+
+cfg="$(run_init_config "")"
+if grep -q 'sandbox_mode' <<<"$cfg"; then
+    ok "writes a sandbox setting so codex does not nest a sandbox it cannot run"
+else
+    bad "no sandbox setting; codex will bwrap-fail and prompt on every command:
+$cfg"
+fi
+if grep -q 'island is the sandbox' <<<"$cfg"; then
+    ok "says WHY in the file the operator will read"
+else
+    bad "disables a sandbox without explaining it — that reads as a weakened boundary:
+$cfg"
+fi
+
+# An operator-supplied config is their decision and must survive untouched.
+cfg="$(run_init_config 'sandbox_mode = "read-only"')"
+if grep -q 'read-only' <<<"$cfg"; then
+    ok "leaves an existing config alone"
+else
+    bad "overwrote the operator's own codex config:
+$cfg"
+fi
+
 echo
 if [[ "$FAIL" -eq 0 ]]; then
     printf '\033[1mPASS — %d checks.\033[0m\n' "$PASS"

@@ -53,6 +53,47 @@ if [[ -d "$HOST_CODEX" ]]; then
     done
 fi
 
+# --- sandbox ---------------------------------------------------------------
+#
+# THE ISLAND IS THE SANDBOX. Codex ships its own, built on bubblewrap, and
+# bubblewrap cannot work in here:
+#
+#   bwrap: No permissions to create a new namespace, likely because the kernel
+#   does not allow non-privileged user namespaces.
+#
+# A container does not grant unprivileged user namespaces, so bwrap fails on
+# every command. Codex then falls back to asking the operator to approve each
+# one individually — an agent that stops at `dejima msg poll` to ask permission
+# is not usable, and the operator hit exactly that.
+#
+# Installing bubblewrap does not fix it: the binary was never the problem, the
+# namespace privilege is, and granting THAT to the container would weaken the
+# boundary Dejima exists to provide in order to run a second, redundant one
+# inside it.
+#
+# So tell codex it is already contained. This is not a relaxation of Dejima's
+# containment — the container, its own network namespace, the egress proxy and
+# the Port broker are all unchanged. It is declining to nest a sandbox inside a
+# sandbox when the inner one cannot run.
+#
+# Only when the operator has not supplied their own config: a config.toml copied
+# from the host is their decision and is left alone.
+if [[ ! -f "$HOME_CODEX/config.toml" ]]; then
+    cat > "$HOME_CODEX/config.toml" <<'CODEX_CONFIG'
+# Written by Dejima on first agent start.
+#
+# The island is the sandbox: this agent runs in a container with its own
+# filesystem, its own network namespace, brokered host access (Port) and an
+# egress proxy. Codex's own bubblewrap sandbox cannot run in here — a container
+# does not grant unprivileged user namespaces — so it is disabled rather than
+# left to fail on every command and prompt for approval each time.
+#
+# Delete or edit this file to use your own settings; Dejima will not rewrite it.
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+CODEX_CONFIG
+fi
+
 # --- AGENTS.md template ----------------------------------------------------
 TEMPLATE="/opt/dejima/agents/codex/AGENTS.md"
 TARGET="/workspace/AGENTS.md"
