@@ -63,9 +63,18 @@ func runTUI(ctx context.Context, demo bool) error {
 	// quits the TUI into the raw bridge and a detach exits to the shell, but the
 	// summon chord (Ctrl-\) ends a session with errSummonBand, which brings us
 	// back here with the host-terminal band open instead of exiting.
+	// The gateway forwards live HERE, not on the model, and outside the loop.
+	// runTUI re-enters the dashboard with a freshly constructed model after every
+	// attach session — a registry on tuiModel would be discarded each time, so
+	// attaching to any agent would silently kill an open gateway UI. Deferred so
+	// the context-cancelled path tears them down too.
+	tunnels := newTunnelManager()
+	defer tunnels.CloseAll()
+
 	summonReturn := false
 	for {
 		m := initialTUIModel(c)
+		m.tunnels = tunnels
 		m.demo = demo
 		if summonReturn {
 			m.bandExpanded, m.bandFocused = true, true
@@ -222,9 +231,12 @@ type tuiModel struct {
 	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
 	github       *githubView       // non-nil while the self-serve GitHub identity pane is open (settings → GitHub)
 	secretsPane  *secretsView      // non-nil while the per-island Secrets pane is open
-	importPane   *importView       // non-nil while the per-island Import files pane is open
-	restartPane  *restartView      // non-nil while the "which agents to restart" checklist is open
-	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
+	// tunnels is owned by runTUI and shared across dashboard re-entries; see
+	// tunnelManager. Nil in tests that do not exercise gateway UIs.
+	tunnels     *tunnelManager
+	importPane  *importView    // non-nil while the per-island Import files pane is open
+	restartPane *restartView   // non-nil while the "which agents to restart" checklist is open
+	aggregate   *aggregateView // non-nil while the host-utilization panel is open (opened with `%`)
 	// observed is the observed-agent collection: agents Dejima can SEE and cannot
 	// STOP, running outside every island. nil means we have not (or could not)
 	// load it, which renders NOTHING — deliberately distinct from a loaded
@@ -1096,6 +1108,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.restartPending = "a newer dejima is installed on disk — restart dejima to apply it"
 		return m, nil
 
+	case gatewayOpenedMsg:
+		return m.onGatewayOpened(msg), nil
 	case importScopesMsg:
 		return m.onImportScopes(msg), nil
 	case importDoneMsg:
@@ -3403,16 +3417,68 @@ func (m tuiModel) openAgentGatewayUI(name, agentID string) (tea.Model, tea.Cmd) 
 		m.lastError = sshFacadeSetupStepsTUI()
 		return m, nil
 	}
-	if !canOpenNewWindow() {
-		m.lastNotice = "run `dejima agent open " + name + " " + agentID + "` in a terminal to reach its UI"
+	// HELD IN-PROCESS, not in a spawned window. The window used to own the ssh
+	// forward, so closing it killed the tunnel under an already-open browser tab
+	// with nothing anywhere saying why. Now the lifetime is one sentence: the UI
+	// works for as long as the dashboard is open.
+	if m.tunnels == nil {
+		// No registry (a test model, or a path that never got one). Fall back to
+		// the old window rather than silently doing nothing.
+		if !canOpenNewWindow() {
+			m.lastNotice = "run `dejima agent open " + name + " " + agentID + "` in a terminal to reach its UI"
+			return m, nil
+		}
+		if err := m.openAgentGatewayWindow(name, agentID); err != nil {
+			m.lastError = "open gateway UI: " + err.Error()
+		}
 		return m, nil
 	}
-	if err := m.openAgentGatewayWindow(name, agentID); err != nil {
-		m.lastError = "open gateway UI: " + err.Error()
-	} else {
-		m.lastNotice = "forwarding " + name + "'s gateway UI — opening your browser"
+
+	// Already forwarding this agent: re-open the tab rather than starting a
+	// second ssh onto a second port, which would strand the first tab.
+	if fwd := m.tunnels.Get(name, agentID); fwd != nil {
+		go func() { _ = openURL(fwd.URL) }()
+		m.lastNotice = "reopening " + name + "'s gateway UI — the forward is already up"
+		return m, nil
 	}
-	return m, nil
+
+	m.lastNotice = "connecting to " + name + "'s gateway…"
+	return m, m.openGatewayCmd(name, agentID)
+}
+
+// gatewayOpenedMsg reports the result of establishing a forward.
+type gatewayOpenedMsg struct {
+	island, agentID string
+	url             string
+	err             error
+}
+
+// openGatewayCmd establishes the forward OFF the Update loop.
+//
+// Establishing one is slow — an ssh handshake, then a wait for the gateway to
+// actually serve, which on a first launch means waiting out the framework's own
+// install. Doing that inline would freeze the dashboard for minutes.
+func (m tuiModel) openGatewayCmd(island, agentID string) tea.Cmd {
+	c, tunnels := m.client, m.tunnels
+	return func() tea.Msg {
+		fwd, err := tunnels.openGatewayForAgent(context.Background(), c, island, agentID, nil)
+		if err != nil {
+			return gatewayOpenedMsg{island: island, agentID: agentID, err: err}
+		}
+		return gatewayOpenedMsg{island: island, agentID: agentID, url: fwd.URL}
+	}
+}
+
+func (m tuiModel) onGatewayOpened(msg gatewayOpenedMsg) tuiModel {
+	if msg.err != nil {
+		m.lastError = "gateway UI for " + msg.island + ": " + msg.err.Error()
+		return m
+	}
+	go func() { _ = openURL(msg.url) }()
+	// Say what keeps it alive. The old notice was silent about that, which is how
+	// a window nobody knew was load-bearing got closed.
+	m.lastNotice = msg.island + "'s gateway UI is open — the forward stays up while this dashboard does"
+	return m
 }
 
 // openIslandAgents opens one window per attachable agent on the island (Enter on
