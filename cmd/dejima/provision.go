@@ -307,15 +307,7 @@ func (pc *provCtx) confirmUnattended(prompt string, defInteractive, defUnattende
 	if pc.yes {
 		return defUnattended
 	}
-	suffix := "[y/N]"
-	if defInteractive {
-		suffix = "[Y/n]"
-	}
-	ans := strings.TrimSpace(readSingleKey(prompt + " " + suffix + ": "))
-	if ans == "" {
-		return defInteractive
-	}
-	return strings.EqualFold(ans, "y")
+	return confirmDefault(prompt, defInteractive)
 }
 
 type provPhase struct {

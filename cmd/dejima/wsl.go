@@ -769,12 +769,16 @@ func saveWSLProfile(distro string) error {
 	return clientcfg.Save(cfg)
 }
 
-// confirmWSL asks a y/N question, defaulting to no. A non-TTY answers no, so a
-// piped invocation can't silently install things — use --yes for that.
+// confirmWSL asks one of `dejima wsl setup`'s questions. The default is YES.
+//
+// Both callers ask about creating Dejima-owned things inside a Dejima-owned
+// distro, on the happy path of a command the operator ran deliberately, and
+// `--yes` already exists for unattended runs. A no-default was protecting them
+// from the outcome they had just asked for — and install-client.ps1 asks its
+// own "run `dejima wsl setup` now?" and "install Tailscale?" with Enter=yes, so
+// one sitting taught two opposite meanings for the same keystroke.
 func confirmWSL(question string) bool {
-	fmt.Printf("%s [y/N] ", question)
-	answer := strings.ToLower(strings.TrimSpace(readSingleKey("")))
-	return answer == "y" || answer == "yes"
+	return confirmDefault(question, true)
 }
 
 // runWSLExe invokes wsl.exe with management arguments (not a distro command),
