@@ -20,13 +20,19 @@ func TestWindowsSpawnKeepsTheWindowOpen(t *testing.T) {
 		t.Errorf("nothing keeps the window open; the output vanishes with the process:\n%s", inner)
 	}
 	// `&` and not `&&` — a FAILING command is the case most worth reading, and
-	// `&&` would skip the pause exactly then.
-	if i := strings.Index(inner, "pause"); i > 0 {
-		before := inner[:i]
-		if strings.HasSuffix(strings.TrimSpace(before), "&&") {
-			t.Error("the pause is chained with && so it is skipped when the command fails — " +
-				"which is the case that most needs reading")
-		}
+	// `&&` would skip everything after it exactly then.
+	//
+	// The check is on what follows THE COMMAND, not on what precedes "pause".
+	// The first version tested the latter and a mutation chaining with && sailed
+	// through it: the separator it changed was three tokens earlier.
+	cmdEnd := strings.Index(inner, "agent open")
+	if cmdEnd < 0 {
+		t.Fatalf("cannot locate the command in the line; this check has no subject:\n%s", inner)
+	}
+	tail := inner[cmdEnd:]
+	if strings.Contains(tail, "&&") {
+		t.Errorf("the command is chained with && so a FAILURE skips the pause — which is the "+
+			"case that most needs reading:\n%s", inner)
 	}
 	// The command itself must still be there and still be first.
 	if !strings.Contains(inner, "agent open") {
