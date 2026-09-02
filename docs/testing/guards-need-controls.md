@@ -445,6 +445,54 @@ Two smaller lessons that travel with it:
 → instances from d1 (three in one afternoon) and d2 (inside the tooling built to
 prevent it).
 
+### 8. The guard that restates the call — needs to derive its expectation from the output
+
+A confirm prompt printed `Create it now? [y/N]` and returned false on empty
+input. The bracket was *accurate*, and the behaviour was wrong: both call sites
+are inside `dejima wsl setup`, so pressing Enter aborted the command you had just
+run. The obvious test is
+
+```go
+if confirmDefault(q, true) != true { t.Error(...) }
+```
+
+which passes just as happily with the bracket printed backwards. It asserts the
+function returns what it was told to return — the call restated, with the one
+thing under test left out.
+
+**The control.** Derive the expectation from the text that was actually
+*printed*: read the prompt, find the bracket, and require the empty-input answer
+to match it. Then require the prompt to *have* a bracket at all — a guard that
+cannot locate its subject must fail rather than pass, which is shape 2 arriving
+inside shape 8.
+
+**The near-miss, and it is the reason this entry exists.** The proposed fix was
+"flip the default to `[Y/n]`" — non-destructive prompts, `--yes` already exists,
+obviously safe. It was not. `readSingleKey` returns `""` for *both* "the user
+pressed Enter" and "there is nobody there", so the displayed default and the EOF
+behaviour were the same branch. The old doc comment said a non-TTY answers no and
+a piped invocation cannot silently install things — true, and true **only**
+because the default was no. Flipping it would have converted EOF from *declined*
+to *consented*, and a scripted or serviced `dejima wsl setup` would have created a
+distro and installed Docker with nobody agreeing to either.
+
+> **A prompt's default and its EOF behaviour are coupled through the empty
+> string, and the coupling is invisible until someone changes the default.**
+
+The fix separates them — report whether an answer was *read*, so EOF answers no
+regardless of what the bracket shows. Anyone flipping one of the other ~20
+hand-rolled prompts in this tree inherits the same trap.
+
+Two findings from the same audit, worth keeping because they are the good
+version: `provCtx.confirmUnattended` had already derived suffix and
+empty-answer-return from one boolean — the correct shape, hand-duplicated
+elsewhere and diverging — and `adoptConfirm` derives its default by looking for
+`[Y/n]` *in* the prompt string, which is this control's trick used as the
+implementation.
+
+*(Found by the operator pressing Enter. Fixed and audited by d3, who also caught
+that the flip I proposed would have silently converted EOF to consent.)*
+
 ## Instruments get the same treatment
 
 A measurement you are about to publish is a guard pointed at reality, and it
