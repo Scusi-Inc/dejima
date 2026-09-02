@@ -76,6 +76,52 @@ the package", while a renamed constructor leaves the files readable and the
 matches at zero. A guard can have one non-emptiness assert and still fail open
 through the other.
 
+**The special case that keeps recurring: the guard matches the comment.** A
+source-scanning guard looks for a token; the comment *explaining* that token
+contains it. Delete the real thing, leave the prose, and the guard passes — on
+the sentence about the code rather than the code.
+
+This happened four times in one week: three times on `DEJIMA_ROLE`, then once on
+a checksum step, the last written by someone who had read the write-up of the
+first three *that same afternoon*. That is the useful part. It is not evidence
+about any of the four authors; it is evidence about what a write-up can do.
+**Documenting a failure mode does not prevent it**, and the instinct it provokes
+— write it down harder — is the wrong one.
+
+So the remedy here is mechanical rather than editorial. `internal/srcscan`
+strips comments once, exactly, and any guard that scans source uses it instead of
+remembering:
+
+```go
+src, ok := srcscan.StripGoComments(string(b))   // or StripLineComments(script, "#")
+if !ok {
+    t.Fatal("could not parse the file — scanning it raw would risk a half-stripped miss")
+}
+```
+
+Note which way it errs, because the two mistakes are not symmetric. Strip too
+little and a guard matches a comment: noisy, and instantly visible to whoever is
+staring at the failure. Strip too much and the guard stops seeing real code — it
+passes, silently, for the same reason the code is broken, which is this exact bug
+rebuilt one layer down. `StripLineComments` therefore removes whole-line comments
+only and leaves trailing ones, and the stripper carries the control that a
+function returning `""` would fail.
+
+**And when the mechanism is swept across the existing guards, the sweep needs
+its own control.** Converting thirty-five guards to a shared stripper is
+thirty-five opportunities to turn one of them into a guard that now matches
+nothing — and every one of those will still pass, because a guard matching
+nothing is exactly what a green run looks like. "They all still pass" is
+therefore not evidence that the migration worked; it is the same sentence you
+would get if it had failed. Mutation-check a sample as part of the sweep, not all
+thirty-five, but enough that the green has a second source. This is the
+mechanism's own control argument applied one level up, to the migration rather
+than to the tool.
+
+*(The recurrence count and the "documenting it did not prevent it" reading are
+d1's; the fourth instance was reported by d3 against their own guard, along with
+the point about the sweep.)*
+
 ### 3. The guard nothing can violate — needs a lethal mutation
 
 If no realistic change makes the guard fail, it isn't a guard. Mutation testing
@@ -357,6 +403,48 @@ ever reworded — so the exclusion cannot outlive the reason for it.
 → instances from d5 (the sweep, the exclusion pattern), d2 (the funnel argument),
 d4 (the extractor), and three of d1's own in one afternoon.
 
+## The mutation that never applied, and printed as a pass
+
+Every shape above is found by mutating the code and watching the guard fail. So
+the mutation is itself an instrument, and it has one failure mode that is worse
+than all the others: **a mutation that does not apply is indistinguishable from
+a guard that catches it.** Both print `ok`.
+
+This is not hypothetical and it is not rare. In a single day:
+
+- d1 ran three mutations against a source file holding icons as `\uXXXX`
+  escapes, while the patch strings carried the rendered glyph. Nothing matched.
+  All three printed `ok`, and the honest reading of that terminal output was
+  "the guard caught every one" — the exact opposite of the truth.
+- d2 hit it in the tooling they had built *after* their own invalid-control
+  incident, specifically to prevent this: a mutation's precondition rejected the
+  patch because `gofmt` had reformatted the line being matched, so the test ran
+  against an unmutated tree and reported `ok`.
+
+Both were caught only because an assertion demanded the substitution actually
+land. Without that assertion, both would have been recorded as verified.
+
+**The control: assert the mutation applied at exactly one site, and fail the run
+if it did not.** Count matches before patching; refuse on zero and refuse on
+more than one. Zero means the patch missed; more than one means you changed
+something you were not reasoning about, and the guard may be failing for the
+wrong reason — which reads as success just as convincingly.
+
+Two smaller lessons that travel with it:
+
+- **Never pipe the gate into anything.** d2's `&&` chain committed while `*
+  gofmt: 1` was printed directly above it, because the pipeline reported
+  `tail`'s exit status. The command ran, it reported the problem correctly, and
+  the thing being read for pass/fail was not the thing that knew. Run it
+  unpiped and check the exit code.
+- **A guard you cannot see fail has not been tested**, and that includes the
+  ones you wrote to test other guards. Mutation tooling is not exempt from the
+  discipline it enforces; d2's instance is the proof, since it happened inside
+  the fix for the same problem.
+
+→ instances from d1 (three in one afternoon) and d2 (inside the tooling built to
+prevent it).
+
 ## Instruments get the same treatment
 
 A measurement you are about to publish is a guard pointed at reality, and it
@@ -444,13 +532,22 @@ unmutated base is usually the cheapest way to guarantee the first half.
 
 ## The instrument was fine; the reference was not
 
-Every shape above is a check that could not see. These two saw perfectly and
-answered a question nobody had asked. Nothing in the output betrays it, because
-the output is *correct* — the assumption lives in the step from output to
-conclusion, which happens in the operator's head where no control can reach it.
+Every shape above is a check that could not see. These saw perfectly and answered
+a question nobody had asked. Nothing in the output betrays it, because the output
+is *correct* — the assumption lives in the step from output to conclusion, which
+happens in the operator's head where no control can reach it.
 
 The remedy is therefore not a better instrument. It is naming the reference out
 loud, before reading the result.
+
+The entries below split into two kinds, and the difference decides what the
+remedy can be. In the first three the reference **existed** and was misread: a
+moved branch tip, a count standing in for an identity, a schema that shifted
+under a hash. Naming it out loud is enough, because there is something to name.
+In the last one there was **no reference at all** — two artifacts asserting the
+same fact with nothing pointing either way — and no amount of care within either
+one could have reached it. That is why its control is the odd one out: it does
+not read a reference more carefully, it manufactures one that never existed.
 
 ### A diff compares against a reference, and the reference moves
 
@@ -552,9 +649,16 @@ internally consistent and correct.
 exactly when a new wording appears, and whoever writes the new wording is by
 construction not editing the list. Pin what the sentences *say*, so a rewording
 fails until a human looks. Not a golden over the page either — these are
-marketing pages, mostly prose, and a golden fails on every legitimate edit and
-gets switched off within a week. A description guard in this repo produced 29
-false positives and was deleted rather than shipped.
+marketing pages, mostly prose, and a golden fails on every legitimate edit, which
+is how a guard gets switched off rather than fixed. That is measured rather
+than assumed. A description guard written against `openapi.yaml` flagged 29
+lines; 27 were correctly quoted and 2 were the real errors it existed to
+catch — a 93% false-positive rate. It was deleted rather than shipped,
+because a guard that cries wolf 27 times gets turned off, which is worse
+than the working gate it duplicated. (d3's guard, d3's reasoning.
+Reproducible: run `\{[^}]*\bdescription:\s*([^"'][^}]*)\}` over
+`openapi.yaml` at `cead348~1`, flagging captures containing a comma; the 2
+genuine hits are the lines `cead348` fixes.)
 
 **Pin the count, not the presence.** Two of the eight pinned sentences appear
 *twice* — once in FAQPage JSON-LD, once in the visible answer. Presence alone
@@ -583,11 +687,41 @@ about it.**
 
 *(From d5.)*
 
+### A field added to a hashed struct rewrites history unless it omits when empty
+
+**What happened.** The audit ledger hash-chains each entry by marshalling it, so
+the serialised bytes *are* the reference. Adding a `Provenance` field to that
+struct — brokered / witnessed / self-reported, so a self-reported row can be told
+from a brokered one — changes the marshalled form of every row. Without
+`omitempty`, the new field serialises on historical entries too, every chain
+value shifts, and `dejima audit --verify` fails on a ledger nobody has touched.
+
+**The tell.** Verification fails on a file you did not edit, immediately after a
+schema change. If the only thing between the last green verify and this red one
+is a struct field, suspect the serialisation, not the data.
+
+**The control.** A test asserting an unstamped entry does not serialise the
+field at all. That is the whole guarantee: the zero value must be *absent*, not
+empty-but-present, or the bytes differ.
+
+**The near-miss.** `omitempty` reads as a style choice on almost every other
+struct in the tree, which is exactly why it is easy to drop in review. Here it is
+load-bearing. And note the direction, which is the same as the moved-reference
+cases above and the reason this sits with them: the failure does not read as "we
+changed a struct". It reads as **tampering** — the single most alarming and least
+informative thing an audit tool can say — and it points the reader at the ledger
+file rather than at the commit that actually caused it.
+
+> **If a struct is hashed, its schema is part of the reference. Any field that
+> can be empty must be absent when it is, or you have rewritten history.**
+
+*(From d3.)*
+
 ## A verification has a timestamp; a gate does not
 
-The two above are references that were wrong at the moment they were read. This
-one is a reference that was right, and then moved: a check that saw correctly,
-and then the thing it saw changed.
+Those above are references that were wrong at the moment they were read, or
+absent entirely. This one is a reference that was right, and then moved: a check
+that saw correctly, and then the thing it saw changed.
 
 **What happened.** Before adding a field to an API type, I checked whether
 `openapi.yaml` needed an entry. Two pieces of evidence, both verified rather
@@ -630,6 +764,26 @@ missing field, a returned error — already tell you.
 
 The question to ask: *if this check quietly stopped working, would anything look
 different?* If the honest answer is no, write the control.
+
+**And some failure modes here have no control at all.** Two turned up on one day,
+on the same fix. d5 read 298aa48 — which stopped treating `wsl.exe`'s exit code
+as an answer, because the stub replies either way — and then wrote "skip this if
+`wsl --status` already reports a version" onto the website: presence as verdict,
+the exact defect that commit corrects. d1 spent an afternoon fixing a classifier
+that mistook socat's own error text for socat's absence, then hours later told
+the operator socat was missing on the strength of that classifier, and went and
+fixed an unrelated sudo assumption because the message pointed there.
+
+Neither has an assert, a mutation, or anything a reviewer can run. **Reading a
+correction is not the same as absorbing it, and no check catches the difference**
+— in both cases the correction was not merely available, it had just been read,
+and in one it had just been written by the person who then inverted it.
+
+Record those in the commit message and move on. Do not invent a guard for them:
+an entry in this file with an empty **Control** would weaken the format more than
+the observation strengthens it. But a file listing only solvable problems quietly
+implies the unsolvable ones do not exist, which is how someone loses an afternoon
+trying to mechanise this one.
 
 ## Where the pattern already lives
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Pin the sentences on the website that make a CONTAINMENT claim.
+"""Pin the sentences on the website that carry a SECURITY claim.
+
+Containment claims mostly, plus the audit claim, which has the same property:
+someone acts on it, so being wrong costs them something real.
 
 WHY THIS EXISTS. Dejima's containment boundary is the ISLAND, which is per
 PROJECT. An island holds several agents; they share it, each on its own git
@@ -113,6 +116,26 @@ CLAIMS = [
         "count": 1,
         "why": "Same page, body copy. Same history as the pair above.",
     },
+    {
+        "file": "index.html",
+        "text": ("Every privileged crossing is written to a tamper-evident, hash-chained ledger "
+                 "you can read, export, and verify"),
+        "count": 1,
+        "kind": "audit",
+        "why": (
+            "TRUE ONLY WHILE EVERY LEDGER WRITER IS VOUCHED FOR. Verified 2026-09-01: all "
+            "45 non-test ledgerAppend call sites use ProvenanceBrokered (43) or "
+            "ProvenanceWitnessed (2), both of which ledger.Provenance.Vouched() accepts. "
+            "ProvenanceSelfReported exists and today has no writer — only readers. When one "
+            "lands (a headless agent's own account of itself is the expected first), the "
+            "hash chain still proves nobody EDITED a row and stops implying a row was TRUE "
+            "when written, and this sentence needs qualifying. The TUI's audit banner had "
+            "exactly this gap and was qualified in #373; the site is the same claim on "
+            "another surface. This pin cannot detect that change on its own — it watches the "
+            "page, not the Go — so it is written here to be read by whoever edits the "
+            "sentence."
+        ),
+    },
 ]
 
 
@@ -128,11 +151,13 @@ def main() -> int:
             return 1
 
     failed = False
+    failures = []
     for c in CLAIMS:
         path = ROOT / c["file"]
         if not path.exists():
-            print(f"FAIL: {c['file']} does not exist, but a containment claim is pinned in it.")
+            print(f"FAIL: {c['file']} does not exist, but a {c.get('kind', 'containment')} claim is pinned in it.")
             failed = True
+            failures.append(c)
             continue
         found = io.open(path, encoding="utf-8").read().count(c["text"])
         if found == c["count"]:
@@ -140,9 +165,10 @@ def main() -> int:
             continue
 
         failed = True
+        failures.append(c)
         print()
         if found == 0:
-            print(f"FAIL: {c['file']} no longer contains a pinned containment claim.")
+            print(f"FAIL: {c['file']} no longer contains a pinned {c.get('kind', 'containment')} claim.")
             print("      Reworded or deleted. Either is fine ON PURPOSE, and neither is fine by accident.")
         elif found < c["count"]:
             print(f"FAIL: {c['file']} has {found} of {c['count']} copies of a pinned claim.")
@@ -159,12 +185,13 @@ def main() -> int:
         print("      wording just to go green.")
 
     if failed:
-        print()
-        print("The boundary is the ISLAND, which is per PROJECT. An island holds several agents;")
-        print("they share it, each on its own git worktree. Any sentence implying a wall between")
-        print("agents in one island is false.")
+        if any(c.get("kind", "containment") == "containment" for c in failures):
+            print()
+            print("The boundary is the ISLAND, which is per PROJECT. An island holds several agents;")
+            print("they share it, each on its own git worktree. Any sentence implying a wall between")
+            print("agents in one island is false.")
         return 1
-    print(f"\n  all {len(CLAIMS)} containment claims intact")
+    print(f"\n  all {len(CLAIMS)} pinned site claims intact")
     return 0
 
 

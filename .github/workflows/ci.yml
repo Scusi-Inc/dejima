@@ -98,7 +98,10 @@ jobs:
           sudo apt-get install -y shellcheck
           shellcheck -x install.sh \
             install-client.sh \
+            image/agents/claude-code/hooks/notify.sh \
+            image/agents/codex/hooks/notify.sh \
             scripts/lib/clientinstall_test.sh \
+            scripts/lib/codexheal_test.sh \
             scripts/setup.sh \
             scripts/lib/tty.sh \
             scripts/lib/transcript.sh \
@@ -191,3 +194,11 @@ jobs:
       # of the fresh-install path.
       - name: installer picks a self-updatable location
         run: ./scripts/lib/clientinstall_test.sh
+
+      # codex ships its executable as an OPTIONAL per-platform npm dependency,
+      # and `npm install -g` succeeds when an optional dependency fails. An
+      # image can therefore build green with an agent that dies on first use,
+      # which is what an operator hit. The agent repairs itself at start; this
+      # exercises both branches with stubs, since the failure needs no registry.
+      - name: codex agent repairs a missing platform binary
+        run: ./scripts/lib/codexheal_test.sh

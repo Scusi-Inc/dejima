@@ -8,7 +8,7 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-09-01 against v0.8.88 (940a67c). Anything
+Written 2026-08-17, last revised 2026-09-02 against v0.8.96 (ac78a80). Anything
 below may have drifted since. Development is moving fast right now: v0.8.83
 through v0.8.88 all shipped on that date alone, so where this file names a
 version, trust the version rather than the date.
@@ -218,11 +218,30 @@ Unproven rather than broken. Real code, no evidence of an end-to-end run:
   OPERATOR, on their machine, and reported here; nobody writing this file ran
   it.
 
-  What is still NOT established is the half that matters more: a `dejima init`
-  producing a RUNNING ISLAND on that host. `setup` exiting 0 is not the
-  acceptance test and never was. Until that is walked, treat Windows hosting as
-  INSTALLABLE BUT UNEXERCISED — the daemon comes up, and nothing has yet asked
-  it to do the job it exists for. The
+  ON 2026-09-02, ON v0.8.96, THE ACCEPTANCE TEST PASSED. A Windows machine
+  wiped to nothing — WSL uninstalled, its optional features disabled, the client
+  removed — reached a RUNNING ISLAND WITH A PRIVATE REPO CLONED, with no manual
+  steps. That is the claim this entry has carried as unproven since the Windows
+  path existed. Observed by the operator on their own machine; nobody writing
+  this file ran it.
+
+  Getting there took ten more defects, and three of them were not WSL bugs at
+  all. Docker Desktop and colima run containers inside a VM that quietly maps
+  uids and forwards host.docker.internal to the host's loopback. WSL installs a
+  NATIVE engine, so both assumptions broke at once: islands could not read their
+  own credentials (root-owned 0600 files, container running as uid 1000) and
+  could not reach the daemon's listeners (bound to a loopback no container can
+  route to). Those are latent on ANY native engine, including plain Linux hosts,
+  and were invisible because every machine we had used had a VM.
+  docs/wsl-windows-postmortem.md has the full account.
+
+  WHAT THIS DOES NOT MEAN. One machine, once. It has not been repeated, no
+  automated test walks it, and the next person's machine will differ. And there
+  is a known blocker that is not an install problem: under sustained dashboard
+  use the WSL VM runs out of socket resources (Wsl/Service/0x80072747) and can
+  wedge the WSL service itself, needing `wsl --shutdown`. Two contributing
+  causes are fixed and neither is confirmed against the fault. So: the install
+  works and a long session is not yet something to rely on. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
   way. Windows as a CLIENT driving a server elsewhere is well-trodden and fine.
   Windows uninstall leaves three things behind: the binary in
@@ -255,6 +274,17 @@ The first hour is the real risk, not any missing feature:
   the stop will read it as a failed install. This channel also has no automated
   coverage at all, which still makes it the least-proven of the install paths
   despite Linux being the obvious server.
+  There is a sharper reason than "no coverage", found on 2026-09-02 while
+  debugging Windows. Docker Desktop and colima run containers inside a VM that
+  maps uids and forwards host.docker.internal to the host's loopback. A NATIVE
+  engine does neither, and two defects followed from assuming it did: islands
+  could not read their own gh credential (0600 in a 0700 dir), and could not
+  reach the daemon's listeners bound to 127.0.0.1. Both are fixed. Both were
+  invisible for the life of the project because every machine used for
+  development had a VM, and both would have hit a plain Linux host with docker
+  from get.docker.com exactly as they hit WSL. So the gap on this path was not
+  merely untested surface; it was an assumption baked in by the hardware the
+  developers happened to own.
 - Skipping or failing Tailscale during install is safe and costs REMOTE access
   only. The daemon comes up on a local socket and can be reached from the same
   machine; Tailscale can be added later. Worth saying, because a failed Tailscale

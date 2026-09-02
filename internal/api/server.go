@@ -3453,6 +3453,10 @@ func islandGHConfigDir(p *project.Project) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(githubid.ConfigYAML()), 0o600); err != nil {
 		return "", fmt.Errorf("write island gh config.yml: %w", err)
 	}
+	// The container runs as uid 1000 and cannot read a root-owned 0600 file in a
+	// 0700 directory. Without this the island has its credential mounted and
+	// unreadable, and every private clone fails as an auth error.
+	makeIslandReadableTree(dir)
 	return dir, nil
 }
 
@@ -3481,6 +3485,7 @@ func islandGitConfig(p *project.Project) (string, error) {
 	if err := os.WriteFile(path, []byte(githubid.GitConfig(id)), 0o600); err != nil {
 		return "", fmt.Errorf("write island gitconfig: %w", err)
 	}
+	makeIslandReadable(path)
 	return path, nil
 }
 
@@ -3538,6 +3543,7 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "providers.json"), b, 0o600); err != nil {
 		return "", fmt.Errorf("write island llm manifest: %w", err)
 	}
+	makeIslandReadableTree(dir)
 	return dir, nil
 }
 

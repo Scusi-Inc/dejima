@@ -48,13 +48,13 @@ func TestPaneWindows(t *testing.T) {
 // otherwise dials :80 and is refused (the connection bug operators hit).
 func TestNormalizeHost(t *testing.T) {
 	cases := map[string]string{
-		"100.77.85.107":      "100.77.85.107:7273",
-		"100.77.85.107:7273": "100.77.85.107:7273",
-		"minion":             "minion:7273",
-		"minion:7273":        "minion:7273",
-		"  100.77.85.107  ":  "100.77.85.107:7273",
-		"minion:9999":        "minion:9999", // a non-default port is preserved
-		"":                   "",
+		"100.101.102.103":      "100.101.102.103:7273",
+		"100.101.102.103:7273": "100.101.102.103:7273",
+		"minion":               "minion:7273",
+		"minion:7273":          "minion:7273",
+		"  100.101.102.103  ":  "100.101.102.103:7273",
+		"minion:9999":          "minion:9999", // a non-default port is preserved
+		"":                     "",
 		// A WSL distro is a name, not an address. Appending :7273 to it would
 		// produce a target the wsl:// dialer can't resolve.
 		"wsl://dejima":  "wsl://dejima",
@@ -219,7 +219,7 @@ func TestUpdateNoticeFade(t *testing.T) {
 func TestResolveTargetPrecedence(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // redirect ~/.dejima for clientcfg
 	if err := clientcfg.Save(clientcfg.Config{
-		Profiles:      []clientcfg.Profile{{Name: "minion", Host: "100.77.85.107:7273"}},
+		Profiles:      []clientcfg.Profile{{Name: "minion", Host: "100.101.102.103:7273"}},
 		ActiveProfile: "minion",
 	}); err != nil {
 		t.Fatal(err)
@@ -236,8 +236,8 @@ func TestResolveTargetPrecedence(t *testing.T) {
 	t.Run("saved active profile when env unset", func(t *testing.T) {
 		t.Setenv("DEJIMA_HOST", "")
 		host, label, source := resolveTarget()
-		if host != "100.77.85.107:7273" || label != "minion" || source != "profile" {
-			t.Fatalf("want (100.77.85.107:7273, minion, profile), got (%q, %q, %q)", host, label, source)
+		if host != "100.101.102.103:7273" || label != "minion" || source != "profile" {
+			t.Fatalf("want (100.101.102.103:7273, minion, profile), got (%q, %q, %q)", host, label, source)
 		}
 	})
 }

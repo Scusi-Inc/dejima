@@ -82,6 +82,7 @@ func newMsgSendCmd() *cobra.Command {
 func newMsgPollCmd() *cobra.Command {
 	var island, agent string
 	var since int64
+	var limit int
 	cmd := &cobra.Command{
 		Use:   "poll",
 		Short: "Read messages addressed to you (and broadcasts) since a cursor.",
@@ -123,9 +124,31 @@ func newMsgPollCmd() *cobra.Command {
 				return agentDisplay(label(id), id)
 			}
 
+			// A FIRST POLL MUST NOT DUMP THE WHOLE ISLAND'S HISTORY.
+			//
+			// --since defaults to 0, which means "everything". For an agent that
+			// has never polled — a newly created one, or any agent after a
+			// restart — that is the entire mailbox. A codex agent joining this
+			// island got 1418 lines on its first poll and said so plainly: it
+			// could not establish which messages were current or addressed to
+			// this session, so it declined to act on any of them. That is the
+			// correct response to an unreadable answer, and the answer is what
+			// was wrong.
+			//
+			// So an UNBOUNDED poll shows the most recent window and says what it
+			// held back, with the cursor to walk further. An explicit --since is
+			// never truncated: the caller asked for a specific range and knows
+			// what they are asking for.
+			shown := resp.Messages
+			omitted := 0
+			if since == 0 && limit > 0 && len(shown) > limit {
+				omitted = len(shown) - limit
+				shown = shown[len(shown)-limit:]
+			}
+
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 			fmt.Fprintln(tw, "SEQ\tFROM\tTO\tTOPIC\tPAYLOAD")
-			for _, m := range resp.Messages {
+			for _, m := range shown {
 				to := "(all)"
 				if m.To != "" {
 					to = display(m.To)
@@ -145,6 +168,12 @@ func newMsgPollCmd() *cobra.Command {
 				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", m.Seq, from, to, m.Topic, m.Payload)
 			}
 			_ = tw.Flush()
+			if omitted > 0 {
+				fmt.Printf("\n%d older message(s) not shown — this is your first poll, so only the "+
+					"most recent %d are listed.\n", omitted, limit)
+				fmt.Printf("See them with:  dejima msg poll --since %d   (or --limit 0 for all)\n",
+					shown[0].Seq-int64(omitted)-1)
+			}
 			fmt.Printf("cursor: %d  (poll again with --since %d)\n", resp.Latest, resp.Latest)
 			return nil
 		},
@@ -152,6 +181,7 @@ func newMsgPollCmd() *cobra.Command {
 	cmd.Flags().StringVar(&island, "island", "", "island name (default: $DEJIMA_PROJECT_NAME inside an island)")
 	cmd.Flags().StringVar(&agent, "agent", "", "your agent id (default: $DEJIMA_AGENT_ID); filters messages addressed to you")
 	cmd.Flags().Int64Var(&since, "since", 0, "only messages with seq greater than this cursor")
+	cmd.Flags().IntVar(&limit, "limit", 20, "on a first poll (no --since), show at most this many of the most recent messages; 0 for all")
 	return cmd
 }
 

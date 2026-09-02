@@ -50,6 +50,22 @@ type Fake struct {
 	// fake that always succeeds, and "some files crossed and some did not" is a
 	// state with its own required behaviour.
 	CopyErrOn string
+	// execCalls records every Exec, so a test can assert the SHAPE of what the
+	// server ran rather than only its effect. Needed for injection: "the nudge
+	// reached the agent" and "the nudge was typed but never submitted" produce
+	// the same absence of error, and only the argument list distinguishes them.
+	execCalls [][]string
+}
+
+// ExecCalls returns a copy of every Exec the server has made, in order.
+func (f *Fake) ExecCalls() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]string, len(f.execCalls))
+	for i, c := range f.execCalls {
+		out[i] = append([]string(nil), c...)
+	}
+	return out
 }
 
 // CopyCount reports how many times CopyToContainer has been called.
@@ -152,6 +168,9 @@ func (f *Fake) ContainerReapsOrphans(context.Context, string) (bool, error) {
 }
 
 func (f *Fake) Exec(_ context.Context, _ string, cmd []string) (string, string, int, error) {
+	f.mu.Lock()
+	f.execCalls = append(f.execCalls, append([]string(nil), cmd...))
+	f.mu.Unlock()
 	// A couple of probes the server runs during create/list — answer them so the
 	// happy path doesn't stall. Default: success with no output.
 	switch {

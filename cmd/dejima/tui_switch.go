@@ -279,7 +279,7 @@ func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		host := normalizeHost(s.host)
 		if host == "" {
-			s.err = "host is required (e.g. 100.77.85.107:7273)"
+			s.err = "host is required (e.g. 100.101.102.103:7273)"
 			return m, nil
 		}
 		cfg, _ := clientcfg.Load()
@@ -389,12 +389,12 @@ func (s *switcherModel) view() string {
 
 	switch s.step {
 	case swAddLabel:
-		b.WriteString(styleMuted.Render("Name this connection (e.g. minion, work-vps)."))
+		b.WriteString(styleMuted.Render("Name this connection (e.g. mac-mini, work-vps)."))
 		b.WriteString("\n\nname: " + styleAccent.Render(s.label+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] next   [esc] back"))
 	case swAddHost:
 		b.WriteString(styleMuted.Render("Daemon address as ") + styleAccent.Render("host:port") + styleMuted.Render(" — the port is required (default ") + styleAccent.Render("7273") + styleMuted.Render(")."))
-		b.WriteString("\n" + styleMuted.Render("  e.g.  ") + styleAccent.Render("100.77.85.107:7273") + styleMuted.Render("  (a Tailscale IP)    or    ") + styleAccent.Render("minion:7273"))
+		b.WriteString("\n" + styleMuted.Render("  e.g.  ") + styleAccent.Render("100.101.102.103:7273") + styleMuted.Render("  (a Tailscale IP)    or    ") + styleAccent.Render("mac-mini:7273"))
 		b.WriteString("\n\nhost: " + styleAccent.Render(s.host+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("How to find it: on the machine running dejimad, run ") + styleAccent.Render("tailscale ip") + styleMuted.Render(" → use that address with ") + styleAccent.Render(":7273") + styleMuted.Render("."))
 		b.WriteString("\n" + styleMuted.Render("(a bare host with no :port gets :7273 added automatically.)"))
