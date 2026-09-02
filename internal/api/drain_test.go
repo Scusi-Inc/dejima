@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -92,5 +93,74 @@ func TestConnectionsAreReusedWhenNoOutputIsExpected(t *testing.T) {
 	}
 	if n := atomic.LoadInt64(&dials); n > 1 {
 		t.Errorf("10 no-output requests opened %d connections; an undrained body is not reusable", n)
+	}
+}
+
+// A CONCURRENT BURST WIDER THAN THE POOL dials connections it will immediately
+// throw away. Go pools MaxIdleConnsPerHost; anything above that in one burst is
+// dialled fresh and closed on return, because the pool is already full.
+//
+// On WSL each of those is a wsl.exe + socat subprocess. The dashboard polls
+// several endpoints on one tick, so a burst wider than the pool churns a
+// subprocess per excess request EVERY TICK — no matter how perfectly the bodies
+// are drained. Draining fixes reuse; it does not fix a burst.
+//
+// Raising the pool is the wrong lever: each idle connection HOLDS a subprocess,
+// and the exhaustion being chased (WSAENOBUFS from wslservice.exe) is about
+// handles and kernel pool rather than ephemeral ports.
+func TestConcurrentBurstDoesNotExceedThePool(t *testing.T) {
+	var dials, inFlight, maxInFlight int64
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt64(&inFlight, 1)
+		for {
+			m := atomic.LoadInt64(&maxInFlight)
+			if n <= m || atomic.CompareAndSwapInt64(&maxInFlight, m, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond) // hold the connection so bursts overlap
+		atomic.AddInt64(&inFlight, -1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":"yes"}` + "\n"))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		base: srv.URL,
+		httpc: &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				atomic.AddInt64(&dials, 1)
+				return (&net.Dialer{}).DialContext(ctx, network, addr)
+			},
+			MaxIdleConns: wslMaxConns, MaxIdleConnsPerHost: wslMaxConns,
+			IdleConnTimeout: 60 * time.Second,
+		}},
+		dialSem: make(chan struct{}, wslMaxConns),
+	}
+
+	// Three ticks of eight concurrent requests — wider than the pool, which is
+	// the shape the dashboard actually produces.
+	for tick := 0; tick < 3; tick++ {
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var out map[string]string
+				_ = c.do(context.Background(), http.MethodGet, "/v1/thing", nil, &out)
+			}()
+		}
+		wg.Wait()
+	}
+
+	if n := atomic.LoadInt64(&maxInFlight); n > wslMaxConns {
+		t.Errorf("%d requests were in flight at once against a pool of %d; the excess are "+
+			"dialled and discarded — on WSL that is a subprocess per excess request per tick",
+			n, wslMaxConns)
+	}
+	if n := atomic.LoadInt64(&dials); n > wslMaxConns {
+		t.Errorf("24 requests over 3 bursts opened %d connections; at most %d should ever "+
+			"be dialled", n, wslMaxConns)
 	}
 }

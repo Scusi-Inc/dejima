@@ -40,6 +40,38 @@ type Client struct {
 	// the brain to the host-internal dejimad listener. Empty for the unix
 	// socket and tailnet paths, which are trusted by other means.
 	token string
+	// dialSem caps CONCURRENT requests on transports where a dial is expensive.
+	//
+	// On WSL every connection is a wsl.exe + socat subprocess. Go's transport
+	// pools MaxIdleConnsPerHost of them; anything ABOVE that in a concurrent
+	// burst is dialled fresh and then CLOSED IMMEDIATELY on return, because the
+	// pool is already full. The dashboard polls several endpoints on one tick,
+	// so a burst wider than the pool churns a subprocess per excess request,
+	// every tick, no matter how perfectly the bodies are drained.
+	//
+	// Raising the pool is the wrong lever: each idle connection HOLDS a live
+	// subprocess, and the exhaustion we are chasing (WSAENOBUFS from
+	// wslservice.exe) is about handles and kernel pool, not ephemeral ports. So
+	// cap the CONCURRENCY at the pool size instead — then the pool always has a
+	// connection to give, and the excess dials never happen.
+	//
+	// nil on transports where a dial is cheap (unix socket, TCP): serialising
+	// there would cost latency to solve a problem they do not have.
+	dialSem chan struct{}
+}
+
+// acquire bounds concurrency on transports with expensive dials. Returns a
+// release func that is always safe to call.
+func (c *Client) acquire(ctx context.Context) (func(), error) {
+	if c.dialSem == nil {
+		return func() {}, nil
+	}
+	select {
+	case c.dialSem <- struct{}{}:
+		return func() { <-c.dialSem }, nil
+	case <-ctx.Done():
+		return func() {}, ctx.Err()
+	}
 }
 
 // NewUnixClient returns a Client that talks to dejimad over its Unix socket.
@@ -85,15 +117,24 @@ func NewWSLClient(distro string) (*Client, error) {
 				},
 				// Each pooled conn holds a live wsl.exe + socat pair, so don't let
 				// idle ones accumulate across a long TUI session.
-				MaxIdleConns:        4,
-				MaxIdleConnsPerHost: 4,
+				MaxIdleConns:        wslMaxConns,
+				MaxIdleConnsPerHost: wslMaxConns,
 				IdleConnTimeout:     60 * time.Second,
 			},
 		},
 		// Ignored by the dialer, but http.Client requires a host in the URL.
 		base: "http://dejimad",
+		// Same bound as the pool: a burst wider than the pool dials subprocesses
+		// it will immediately discard. See Client.dialSem.
+		dialSem: make(chan struct{}, wslMaxConns),
 	}, nil
 }
+
+// wslMaxConns bounds both the idle pool and in-flight requests on the WSL
+// transport. They must be the same number: the pool decides how many
+// connections survive, and the concurrency cap decides how many are ever asked
+// for. If the cap were higher, the excess would be dialled and thrown away.
+const wslMaxConns = 4
 
 // NewTCPClient returns a Client that talks to a remote dejimad over TCP.
 // The host argument may be a bare "host:port" or a full URL.
@@ -179,6 +220,12 @@ func (c *Client) doVia(ctx context.Context, hc *http.Client, method, path string
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	release, err := c.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	resp, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("daemon unreachable: %w (is dejimad running?)", err)
