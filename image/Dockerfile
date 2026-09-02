@@ -29,6 +29,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         vim \
     && rm -rf /var/lib/apt/lists/*
 
+# bubblewrap: codex's sandbox. Without it codex warns on every start —
+#
+#   ⚠ Codex could not find bubblewrap on PATH. … Codex will use the bundled
+#     bubblewrap in the meantime
+#
+# — and falls back to a bundled copy. The fallback works, so this is not a
+# failure; it is a warning an operator sees on first contact with a bundled
+# agent, about a dependency the IMAGE is supposed to provide. Installing it from
+# the distro is also the version the OS patches, which the bundled one is not.
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+
 # GitHub CLI (gh) for credential helper + `gh pr create`-style affordances.
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
