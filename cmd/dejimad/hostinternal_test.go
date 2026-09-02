@@ -168,9 +168,13 @@ func TestHostInternalBind_LeavesMalformedAlone(t *testing.T) {
 // that only ever inspected the default.
 func TestRelocationHappensBeforeTheWildcardGuard(t *testing.T) {
 	src := readSource(t, "main.go")
+	// Matched on the ARGUMENT, not the full call text: master changed this
+	// function's signature while this branch was open, and a guard pinned to the
+	// old spelling would have gone quiet rather than red — passing while checking
+	// nothing, which is the failure this whole file is about.
 	for _, c := range []struct{ addr, guardArg string }{
-		{"tokenAddr", "assertHostInternalBind(log, tokenAddr)"},
-		{"egressAddr", "assertHostInternalBind(log, egressAddr)"},
+		{"tokenAddr", "assertHostInternalBind(log, \"token listener\""},
+		{"egressAddr", "assertHostInternalBind(log, \"egress proxy\""},
 	} {
 		reloc := strings.Index(src, c.addr+" = hostInternalBind(")
 		guard := strings.Index(src, c.guardArg)
@@ -191,18 +195,15 @@ func TestRelocationHappensBeforeTheWildcardGuard(t *testing.T) {
 	}
 }
 
-// The wildcard refusal is untouched by this change and must stay that way: it is
-// the reason a bridge-gateway bind is acceptable at all. Binding one specific
-// host-internal address is not the same as binding everything.
-func TestWildcardBindStillRefused(t *testing.T) {
-	for _, addr := range []string{"0.0.0.0:7280", ":7280", "[::]:7280"} {
-		if err := assertHostInternalBind(quietLog(), addr); err == nil {
-			t.Errorf("wildcard %q was accepted", addr)
-		}
-	}
-	// And a bridge gateway is still ALLOWED — the guard's own comment says so,
-	// and the fix depends on it.
-	if err := assertHostInternalBind(quietLog(), "172.17.0.1:7280"); err != nil {
-		t.Errorf("a bridge gateway was refused (%v); the fix relies on this being allowed", err)
+// The half of the guard THIS FIX DEPENDS ON, and which master's
+// TestWildcardBindStillRefused does not cover: a bridge gateway must remain
+// ACCEPTABLE. The guard's own comment says so, and if that ever tightened to
+// loopback-only the relocation would start failing the very check that permits
+// it. Wildcard refusal itself is covered in bind_name_test.go; not duplicated
+// here.
+func TestBridgeGatewayBindStillAllowed(t *testing.T) {
+	if err := assertHostInternalBind(quietLog(), "egress proxy", "--egress-proxy", "172.17.0.1:7280"); err != nil {
+		t.Errorf("a bridge gateway was refused (%v); the relocation this file tests "+
+			"binds exactly that kind of address, so it would be rejected at startup", err)
 	}
 }
