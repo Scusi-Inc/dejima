@@ -337,6 +337,41 @@ func windowsRunCommand(exe, verb, name, agentID string, extra []string) string {
 	return run
 }
 
+// windowsInnerCommand builds the cmd.exe command line the spawned window runs.
+//
+// Split out so the SHAPE of it is testable: there is no cmd.exe on the machines
+// that run these tests, and the property that matters — that the window survives
+// the command exiting — is a property of this string.
+func windowsInnerCommand(exe, verb, name, agentID string, extra []string, host, title string) string {
+	run := windowsRunCommand(exe, verb, name, agentID, extra)
+	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
+	// title matches the tab name. Strip cmd.exe-special chars from the title
+	// before interpolating it (it's a user label, unlike name/agentID/host,
+	// which are refused outright above).
+	safeTitle := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`"&|<>^%!`, r) {
+			return -1
+		}
+		return r
+	}, title)
+	// KEEP THE WINDOW OPEN AFTER THE COMMAND EXITS.
+	//
+	// `cmd /c` closes the window the instant its command returns, so anything
+	// that finishes — successfully or not — vanishes before it can be read. The
+	// operator saw this twice: `github connect` "pulled up a terminal briefly
+	// then snapped back", and the gateway UI window did the same. Both were
+	// reported by the TUI as opened, which they were; what they were not was
+	// READABLE.
+	//
+	// The unix branches already do this (`printf …; read _`). `&` rather than
+	// `&&` so it runs on failure too — failure is precisely the case worth
+	// reading. Long-lived commands (attaching to an agent or a host terminal)
+	// reach the pause only when the operator detaches, matching unix.
+	return fmt.Sprintf(
+		`set "DEJIMA_HOST=%s"&& set "DEJIMA_TAB_TITLE=%s"&& %s& echo.& echo [this window stays open so you can read the output - press any key to close]& pause >nul`,
+		host, safeTitle, run)
+}
+
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the
@@ -351,17 +386,23 @@ func openWindowsTerminal(exe, verb, name, agentID, title string, extra []string,
 			return fmt.Errorf("can't open a window for %q — run `dejima %s %s` manually", s, verb, name)
 		}
 	}
-	run := windowsRunCommand(exe, verb, name, agentID, extra)
-	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
-	// title matches the tab name. Strip cmd.exe-special chars from the title
-	// before interpolating it (it's a user label, unlike name/agentID/host above).
-	safeTitle := strings.Map(func(r rune) rune {
-		if strings.ContainsRune(`"&|<>^%!`, r) {
-			return -1
-		}
-		return r
-	}, title)
-	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& set "DEJIMA_TAB_TITLE=%s"&& %s`, host, safeTitle, run)
+	// KEEP THE WINDOW OPEN AFTER THE COMMAND EXITS.
+	//
+	// `cmd /c` closes the window the instant its command returns, so anything
+	// that finishes — successfully or not — vanishes before it can be read. The
+	// operator saw this twice: `github connect` "pulled up a terminal briefly
+	// then snapped back", and the gateway UI window did the same. Both were
+	// reported by the TUI as opened, which they were; what they were not was
+	// READABLE.
+	//
+	// The unix branches already do this (`printf …; read _`). This is the
+	// Windows equivalent, and `&` rather than `&&` so it runs on failure too —
+	// failure is precisely the case worth reading.
+	//
+	// Long-lived commands (attaching to an agent or a host terminal) reach the
+	// pause only when the operator detaches, which is the same behaviour their
+	// unix counterparts already have.
+	inner := windowsInnerCommand(exe, verb, name, agentID, extra, host, title)
 	if wt, err := exec.LookPath("wt.exe"); err == nil {
 		// -w 0 targets the CURRENT Windows Terminal window (a new tab in it).
 		// -w -1 / "new" would force a separate window every time — which is the
