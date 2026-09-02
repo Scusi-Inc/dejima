@@ -63,8 +63,27 @@ func TestOpeningTheBrowserReportsTheAskNotTheOutcome(t *testing.T) {
 	if strings.Contains(body, "opened your browser") || strings.Contains(body, "opened the page") {
 		t.Errorf("the pane asserts a browser appeared, which no exit code tells it:\n%s", body)
 	}
-	if !strings.Contains(body, "asked your system") && !strings.Contains(body, "couldn't launch") {
-		t.Errorf("after [o] the pane should say what it asked for, or that it failed:\n%s", body)
+	// BOTH BRANCHES, DRIVEN DIRECTLY. In this container openURL fails, so the
+	// rendering above only ever exercises the couldn't-launch path — and a
+	// mutation that rewrote the SUCCESS line to "opened your browser" survived
+	// this test until the success branch was driven on purpose. A branch the test
+	// cannot reach is a branch the test does not cover, however much of the
+	// function it appears to touch.
+	f := mm.github.connect
+	f.browserErr = ""
+	okBody := plain(mm.renderGithubView())
+	if strings.Contains(strings.ToLower(okBody), "opened your browser") ||
+		strings.Contains(strings.ToLower(okBody), "opened the page") {
+		t.Errorf("the success branch asserts a browser appeared, which no exit code tells it:\n%s", okBody)
+	}
+	if !strings.Contains(okBody, "asked your system") {
+		t.Errorf("the success branch should say what it asked for:\n%s", okBody)
+	}
+
+	f.browserErr = "exec: \"xdg-open\": executable file not found"
+	failBody := plain(mm.renderGithubView())
+	if !strings.Contains(failBody, "couldn't launch") {
+		t.Errorf("the failure branch should say the opener did not run:\n%s", failBody)
 	}
 	// The URL stays on screen either way — it is the path that works when the
 	// opener silently does nothing, which is the case we cannot detect.
