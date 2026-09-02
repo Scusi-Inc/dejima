@@ -307,10 +307,23 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .substeps > li.pause > p:first-child { color: var(--muted); font-weight: 400; }
 .substeps > li.pause > p:first-child::before { content: "\21BB"; background: none;
   color: var(--muted); font-size: 0.95rem; font-weight: 400; }
-.substeps .disclose { margin: 0.45rem 0 0; }
-.substeps .disclose > summary { padding: 0.55rem 2.2rem 0.55rem 0.9rem; font-size: 0.85rem; }
-.substeps .disclose-body { padding: 0.1rem 0.9rem 0.8rem; font-size: 0.9rem; }
-.substeps .disclose-body p { margin: 0.55rem 0 0; }
+/* Inside an install step a disclosure is a CAVEAT, not a control. Boxed, it
+   competes with the command for attention and there are three of them per
+   panel — so the panel reads as a stack of widgets rather than as three
+   commands. No border, no fill, no full-width hit area: a quiet line with a
+   marker, sized down, so the command stays the loudest thing in its step. */
+.os-panel .disclose { border: 0; background: none; border-radius: 0; margin: 0.3rem 0 0; }
+.os-panel .disclose > summary { padding: 0.1rem 0 0.1rem 0.95rem; font-size: 0.82rem;
+  color: var(--muted); display: inline-block; }
+.os-panel .disclose > summary:hover { color: var(--hover); }
+.os-panel .disclose > summary::after { content: none; }
+.os-panel .disclose > summary::before { content: "+"; position: absolute; left: 0;
+  color: var(--muted); font-size: 0.95rem; line-height: 1.35; }
+.os-panel .disclose[open] > summary { border-bottom: 0; }
+.os-panel .disclose[open] > summary::before { content: "\2212"; }
+.os-panel .disclose-body { padding: 0.15rem 0 0.4rem 0.95rem; font-size: 0.88rem; }
+.os-panel .disclose-body p { margin: 0.5rem 0 0; }
+.os-panel .disclose-body > *:first-child { margin-top: 0.3rem; }
 
 .disclose { border: 1px solid var(--border); border-radius: 8px; margin: 0.6rem 0;
   background: var(--code-bg); }
