@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -73,7 +74,14 @@ func bindableNonLoopback(t *testing.T) netip.Addr {
 		got, _ := netip.AddrFromSlice(ipn.IP.To4())
 		return got
 	}
-	t.Skip("no bindable non-loopback address here; the relocation control cannot run")
+	// FAIL rather than skip. A skip prints ok, and every "returns unchanged"
+	// assertion in this file is vacuous without a working relocation path — so a
+	// silent skip would restore exactly the state that let three mutations
+	// survive, while the run still looked green. d1 hit the same shape tonight
+	// with a guard that skipped on a missing marker.
+	t.Fatal("no bindable non-loopback address on this machine — the relocation " +
+		"control cannot run, so every fallback assertion in this file would be " +
+		"passing without a subject")
 	return netip.Addr{}
 }
 
@@ -142,6 +150,26 @@ func TestHostInternalBind_OnlyRelocatesLoopback(t *testing.T) {
 // untouched. This runs at daemon startup and must never be the reason it does
 // not come up.
 func TestHostInternalBind_FallsBackWhenNoEngine(t *testing.T) {
+	// FORCED, not inherited. This originally relied on the island having no
+	// Docker — and passed here for that reason and FAILED on GitHub's runner,
+	// which has docker0 at 172.17.0.1: there the engine answers, the gateway
+	// binds, and relocation correctly fires. The test was reporting the machine.
+	//
+	// Exactly the defect that let three of this file's mutations survive, in the
+	// opposite environment: they survived where Docker was ABSENT, this failed
+	// where Docker was PRESENT. Neither run was wrong about the code.
+	// The stub returns a PERFECTLY USABLE address ALONGSIDE the error, and that is
+	// the point. Returning a zero Addr would let the mutation "ignore the error"
+	// still pass — the zero address fails the probe instead, so the test would be
+	// proving the probe rather than the error check. Confirmed by mutation: it
+	// survived until this address became bindable.
+	prev := bridgeGateway
+	usable := bindableNonLoopback(t)
+	bridgeGateway = func(context.Context) (netip.Addr, error) {
+		return usable, errors.New("no engine")
+	}
+	t.Cleanup(func() { bridgeGateway = prev })
+
 	const addr = "127.0.0.1:7280"
 	got := hostInternalBind(context.Background(), quietLog(), addr, false)
 	if got != addr {
