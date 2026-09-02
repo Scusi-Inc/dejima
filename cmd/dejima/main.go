@@ -1821,8 +1821,18 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) (clo
 func cloneFailureHint(name, reason string) string {
 	switch reason {
 	case "auth":
+		// `dejima github connect` and NOT the token-push path. Both work; they
+		// have different prerequisites, and this message is read by someone who
+		// has just discovered they have no identity at all.
+		//
+		// connect is a guided device flow: it prints a code, the operator
+		// approves it in a browser, and the daemon captures the token. auth push
+		// requires an ALREADY-CONFIGURED `gh` on the client to push from — so
+		// pointing a new operator at it names the path with more prerequisites,
+		// exactly when they have fewest. An operator hit this after
+		// `github connect` had already succeeded elsewhere.
 		return fmt.Sprintf("clone failed (auth) — this island can't authenticate to the git remote. "+
-			"Push a GitHub token (`dejima auth push --github`), then `dejima upgrade %s` to re-clone.", name)
+			"Connect a GitHub identity (`dejima github connect`), then `dejima upgrade %s` to re-clone.", name)
 	case "not-found":
 		return fmt.Sprintf("clone failed (not-found) — the repo couldn't be reached or found. "+
 			"Check the URL and that the island's identity can see it (private repos need a token with access), then `dejima upgrade %s`.", name)
