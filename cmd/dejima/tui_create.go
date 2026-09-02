@@ -150,7 +150,12 @@ type islandCreatedMsg struct {
 	// instead of landing on the multi-agent `connect` picker.
 	agentID    string
 	agentLabel string
-	err        error
+	// agentType decides what "open it" means. A gateway agent (openclaw, letta)
+	// is headless — attaching drops you at its logs, when the thing that makes it
+	// useful is its web console. Carried here rather than looked up later so the
+	// decision does not wait on a list refresh.
+	agentType string
+	err       error
 }
 type ghIdentitiesMsg struct {
 	identities []githubid.Meta
@@ -317,6 +322,7 @@ func (c *creatorModel) createCmd() tea.Cmd {
 		if len(info.Agents) > 0 { // element 0 is the primary agent
 			msg.agentID = info.Agents[0].ID
 			msg.agentLabel = info.Agents[0].Label
+			msg.agentType = info.Agents[0].Type
 		}
 		return msg
 	}

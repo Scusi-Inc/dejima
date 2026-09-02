@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -182,3 +184,66 @@ func TestTunnelManager_SurvivesADashboardReEntry(t *testing.T) {
 			"as the closed window this change removes")
 	}
 }
+
+// Creating a gateway agent must END BY OPENING ITS UI. It is headless — attaching
+// drops the operator at its logs, when the console is the thing that makes it
+// useful, and leaves them to discover `agent open` on their own. Which is what
+// happened.
+func TestCreatedGatewayAgentOpensItsUI(t *testing.T) {
+	m := tuiModel{
+		tunnels:      newTunnelManager(),
+		gatewayPorts: map[string]int{"openclaw": 18789},
+		creator:      &creatorModel{},
+	}
+	next, cmd := m.Update(islandCreatedMsg{
+		name: "brain", agentID: "a1", agentType: "openclaw",
+	})
+	got := next.(tuiModel)
+
+	if cmd == nil {
+		t.Fatal("creating a gateway agent issued no command — nothing opens its UI")
+	}
+	if got.connectTo != "" {
+		t.Errorf("it attached to %q instead of opening the UI; a headless agent's "+
+			"logs are not what makes it useful", got.connectTo)
+	}
+	if !strings.Contains(got.lastNotice, "gateway") {
+		t.Errorf("notice = %q, want it to say what is being waited for", got.lastNotice)
+	}
+}
+
+// A NON-gateway agent must still attach. The branch above must not swallow the
+// ordinary case.
+func TestCreatedNormalAgentStillAttaches(t *testing.T) {
+	m := tuiModel{
+		tunnels:      newTunnelManager(),
+		gatewayPorts: map[string]int{"openclaw": 18789},
+		creator:      &creatorModel{},
+	}
+	next, _ := m.Update(islandCreatedMsg{name: "work", agentID: "a1", agentType: "claude-code"})
+	got := next.(tuiModel)
+
+	if got.connectTo != "work" {
+		t.Errorf("connectTo = %q, want the island — an interactive agent should still "+
+			"be attached to", got.connectTo)
+	}
+}
+
+// A gateway that does not come up must not read as a FAILED CREATE. The island
+// exists; only its console is not serving yet, and a first launch installs the
+// framework inside the container. The operator has already been burned by a
+// half-success reading as a failure once, with the clone.
+func TestGatewayOpenFailureSaysTheIslandIsFine(t *testing.T) {
+	m := tuiModel{}
+	got := m.onGatewayOpened(gatewayOpenedMsg{
+		island: "brain", err: errGatewayTestFailure,
+	})
+	if !strings.Contains(got.lastError, "brain is running") {
+		t.Errorf("error = %q, want it to say the island itself is up", got.lastError)
+	}
+	if !strings.Contains(got.lastError, "minutes") {
+		t.Errorf("error = %q, want it to explain the first-launch wait", got.lastError)
+	}
+}
+
+var errGatewayTestFailure = errors.New("nothing is serving the gateway yet")

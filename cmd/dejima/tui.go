@@ -1684,6 +1684,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.creator = nil
+			// A GATEWAY AGENT IS USELESS UNTIL ITS UI IS REACHABLE, so creating one
+			// ends by opening it. Attaching would drop the operator at a headless
+			// agent's logs and leave them to discover `agent open` on their own —
+			// which is what happened.
+			//
+			// It goes through the same in-process forward as everything else, so the
+			// tunnel outlives this moment and the browser tab keeps working.
+			if port, isGW := m.gatewayPorts[msg.agentType]; isGW && port != 0 && m.tunnels != nil {
+				m.lastNotice = "created " + msg.name + " — waiting for its gateway to start…"
+				return m, tea.Batch(m.openGatewayCmd(msg.name, msg.agentID),
+					m.fetchListCmd(), m.fetchOverviewCmd())
+			}
 			// Open the new island in a new tab so the dashboard stays up; fall back
 			// to attaching in this terminal when there's no new-window backend.
 			// Attach straight into the PRIMARY agent (by id) rather than the bare
@@ -3471,7 +3483,14 @@ func (m tuiModel) openGatewayCmd(island, agentID string) tea.Cmd {
 
 func (m tuiModel) onGatewayOpened(msg gatewayOpenedMsg) tuiModel {
 	if msg.err != nil {
-		m.lastError = "gateway UI for " + msg.island + ": " + msg.err.Error()
+		// SAY THE ISLAND IS FINE. This runs straight after a create, and a first
+		// launch installs the framework inside the container — which can outlast
+		// the wait. "Couldn't open the UI" alone reads as "the create failed",
+		// which is the shape the operator has already been burned by once with a
+		// clone. The island exists; only the console is not up yet.
+		m.lastError = msg.island + " is running — its gateway UI isn't reachable yet: " +
+			msg.err.Error() + " (a first launch installs the framework inside the " +
+			"island, which can take minutes; press ⏎ on the agent to try again)"
 		return m
 	}
 	go func() { _ = openURL(msg.url) }()
@@ -3577,6 +3596,19 @@ func (m tuiModel) attachableAgentIDs(name string) []string {
 // openAgentLogs opens a headless agent's logs in a new window, or points the
 // user at the CLI when no new-window backend is available.
 func (m tuiModel) openAgentLogs(name, agentID string) (tea.Model, tea.Cmd) {
+	// A GATEWAY AGENT'S OWN LOGS LIE ABOUT THEIR ADDRESS, and there is nothing we
+	// can do about that inside the container: OpenClaw prints "localhost:61500"
+	// because that is true where it is sitting, and it has no idea it is in an
+	// island. The operator reasonably typed it into a browser on the host and got
+	// nothing.
+	//
+	// So say it BESIDE the logs rather than trying to rewrite them. Rewriting an
+	// agent's output stream to fix an address risks mangling legitimate lines, and
+	// the note is what the operator needs anyway.
+	if _, isGW := m.agentGatewayPort(name, agentID); isGW {
+		m.lastNotice = "note: any localhost:PORT this agent prints is inside the island — " +
+			"press ⏎ on it to open the UI from this machine"
+	}
 	if canOpenNewWindow() {
 		if err := m.openAgentLogsWindow(name, agentID, ""); err != nil {
 			m.lastError = err.Error()
