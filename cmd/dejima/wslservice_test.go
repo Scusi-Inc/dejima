@@ -181,3 +181,53 @@ func codeOf(t *testing.T) string {
 	}
 	return out
 }
+
+// Supervision must be installed BEFORE the "daemon is already running" early
+// return, or it never runs on the machine that most needs it: one already set
+// up once.
+//
+// The operator re-ran `dejima wsl setup` three times against a healthy daemon
+// and got a clean report every time — socat present, Docker present, dejimad
+// running, image built, connection verified — while the unit was never touched
+// and the listener overrides never arrived. Nothing on screen suggested a step
+// had been skipped, because from setup's point of view none had been.
+//
+// Installing supervision is about the NEXT restart. Whether the daemon happens
+// to be up right now has nothing to do with whether its unit is correct.
+func TestSupervisionIsInstalledBeforeTheAlreadyRunningReturn(t *testing.T) {
+	src, err := os.ReadFile("wsl.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, ok := srcscan.StripGoComments(string(src))
+	if !ok {
+		t.Fatal("could not strip comments; this guard cannot run safely on raw source")
+	}
+	start := strings.Index(code, "func startDaemonInWSL")
+	if start < 0 {
+		// A guard that cannot find what it checks must fail, not pass.
+		t.Fatal("startDaemonInWSL not found — this guard can no longer see what it checks")
+	}
+	body := code[start:]
+	if end := strings.Index(body, "\nfunc "); end > 0 {
+		body = body[:end]
+	}
+
+	sup := strings.Index(body, "ensureWSLDaemonSupervision")
+	// A CODE marker, not a comment one. The first version searched for the
+	// phrase "already up", which exists only in the comment on that return —
+	// and since this guard strips comments first, it found nothing and SKIPPED.
+	// A skip reports ok. The mutation putting the bug back passed against it.
+	early := strings.Index(body, "pgrep -x dejimad")
+	if sup < 0 {
+		t.Fatal("startDaemonInWSL never installs supervision")
+	}
+	if early < 0 {
+		t.Fatal("the already-running probe is gone; this guard can no longer see what it checks")
+	}
+	if sup > early {
+		t.Error("supervision is installed AFTER the already-running early return, so a host " +
+			"whose daemon is up never gets its unit corrected — setup reports a clean run " +
+			"and changes nothing")
+	}
+}

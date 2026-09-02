@@ -637,6 +637,29 @@ func startDaemonInWSL(ctx context.Context, distro string) error {
 	sock := home + "/.dejima/dejimad.sock"
 	logf := home + "/.dejima/dejimad.log"
 
+	// SUPERVISION FIRST, BEFORE the already-running check.
+	//
+	// This block used to sit below that early return, which meant it never ran
+	// on the machine that most needs it: one where the daemon is ALREADY UP.
+	// Setup would print a clean run — socat present, Docker present, dejimad
+	// running, image built, connection verified — and silently not touch the
+	// unit, so a corrected unit never reached a host that had already been set
+	// up once. The operator re-ran setup three times against a daemon that was
+	// running fine and got no listener overrides, with nothing on screen
+	// suggesting a step had been skipped.
+	//
+	// Installing supervision is about the NEXT restart, not this one. Whether
+	// the daemon happens to be up right now has nothing to do with whether its
+	// unit is correct.
+	if !unitIsCurrent(ctx, distro) {
+		if note, err := ensureWSLDaemonSupervision(ctx, distro); err != nil {
+			fmt.Printf("  ! couldn't make the daemon survive a distro restart: %v\n", err)
+			fmt.Println("    it will still start now, but won't come back by itself")
+		} else if note != "" {
+			fmt.Println("  ✓ " + note)
+		}
+	}
+
 	if _, err := wsl.Run(ctx, distro, "test -S "+sock+" && pgrep -x dejimad >/dev/null 2>&1"); err == nil {
 		return nil // already up
 	}
@@ -671,15 +694,6 @@ func startDaemonInWSL(ctx context.Context, distro string) error {
 	// the Windows window closed, because WSL tears the distro down with its last
 	// interop session. The boot command means the next thing to touch the distro
 	// starts the daemon, including the client's own dial.
-	if !unitIsCurrent(ctx, distro) {
-		if note, err := ensureWSLDaemonSupervision(ctx, distro); err != nil {
-			fmt.Printf("  ! couldn't make the daemon survive a distro restart: %v\n", err)
-			fmt.Println("    it will still start now, but won't come back by itself")
-		} else if note != "" {
-			fmt.Println("  ✓ " + note)
-		}
-	}
-
 	start := "mkdir -p " + home + "/.dejima && " +
 		"if command -v setsid >/dev/null 2>&1; then " +
 		"setsid nohup dejimad --foreground </dev/null >>" + logf + " 2>&1 & " +
