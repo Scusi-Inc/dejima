@@ -31,14 +31,24 @@ func TestGithubPaneRefreshesTheSelectedIdentityByName(t *testing.T) {
 	}, cursor: 1}
 	m := tuiModel{github: v}
 
-	// canOpenNewWindow() is false under test, so the notice carries the exact
-	// command — which is the string a person would copy. It must be right.
+	// The sign-in now runs IN the pane rather than in a spawned window, so the
+	// thing to check is the flow it starts rather than the command it printed.
+	// The incident is unchanged: a connect that does not name the highlighted
+	// identity silently creates a second one for the same login.
 	out, _ := m.githubKey(key("c"))
-	notice := out.(tuiModel).github.notice
-	if !strings.Contains(notice, "connect aoos --default") {
-		t.Errorf("pressing [c] on the selected identity offered %q — it must name the\n"+
-			"identity being refreshed and take the default, or it silently creates a\n"+
-			"SECOND identity for the same login that nothing uses", notice)
+	f := out.(tuiModel).github.connect
+	if f == nil {
+		t.Fatal("pressing [c] started no sign-in at all")
+	}
+	if f.name != "aoos" {
+		t.Errorf("pressing [c] on the selected identity would store under %q — it must "+
+			"name the identity being refreshed, or it silently creates a SECOND "+
+			"identity for the same login that nothing uses", f.name)
+	}
+	if !f.makeDefault {
+		t.Error("the refresh does not take the default, which is the other half of the " +
+			"same incident: eight islands went on failing because the refreshed identity " +
+			"was not the one anything resolved to")
 	}
 }
 
@@ -51,11 +61,14 @@ func TestGithubPaneRefreshesTheSelectedIdentityByName(t *testing.T) {
 func TestGithubPaneFirstIdentityTakesTheDefault(t *testing.T) {
 	m := tuiModel{github: &githubView{}}
 	out, _ := m.githubKey(key("c"))
-	notice := out.(tuiModel).github.notice
-	if !strings.Contains(notice, "--default") {
-		t.Errorf("connecting the FIRST identity offered %q — without --default the daemon "+
-			"holds a credential and has no default, so nothing that omits a name "+
-			"resolves anything", notice)
+	f := out.(tuiModel).github.connect
+	if f == nil {
+		t.Fatal("pressing [c] on an empty pane started no sign-in at all")
+	}
+	if !f.makeDefault {
+		t.Error("connecting the FIRST identity does not take the default — the daemon " +
+			"then holds a credential with no default, so anything that omits a name " +
+			"resolves nothing and every island clone fails")
 	}
 }
 

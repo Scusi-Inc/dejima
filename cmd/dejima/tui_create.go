@@ -396,12 +396,17 @@ func (m tuiModel) creatorGitHubGateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// --default: this gate only fires when NO identity resolves, so the one
 		// being created is the one everything should follow. Leaving it implicit
 		// is how a daemon ends up with identities and no default.
-		if err := m.openGithubConnectWindow(" --default"); err != nil {
-			c.err = "couldn't open a window — run `dejima github connect` in a terminal, then press Enter"
-		} else {
-			c.err = "opened `dejima github connect` — approve it on GitHub, then press Enter to retry"
-		}
-		return m, nil
+		// HANDS OFF TO THE GITHUB PANE, which runs the device flow in-process
+		// (tui_github_device.go). This used to spawn a terminal window and then
+		// say "opened … approve it on GitHub" — a claim it could not check. On
+		// Windows the window died instantly and the sentence stayed on screen,
+		// so the pane's most confident line was its least reliable one.
+		//
+		// The creator closes because the create it was mid-way through has
+		// already been refused; there is no in-progress state worth preserving,
+		// and pretending otherwise is how a wizard resumes into a stale answer.
+		m.creator = nil
+		return m.openGithubViewConnecting("")
 	case "enter", "r": // not "R": ESC O R is F3
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
@@ -735,17 +740,11 @@ func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// being created is the one everything should follow. Leaving it
 			// implicit is how a daemon ends up holding identities and no default,
 			// which is its own week of confusion.
-			if !canOpenNewWindow() {
-				c.ghHint = "Run this in another terminal, then press [r]:\n\n    " + ghConnectCmd
-				return m, nil
-			}
-			if err := m.openGithubConnectWindow(ghConnectArgs); err != nil {
-				c.ghHint = "Couldn't open a window. Run this in another terminal, then [r]:\n\n    " + ghConnectCmd
-				return m, nil
-			}
-			c.ghHint = "Opened the guided sign-in in a new window.\n\n" +
-				"Approve it on GitHub, then press [r] to reload."
-			return m, nil
+			// In the pane, not in a window — see the gate above for why. The
+			// operator comes back to the creator afterwards; connecting an
+			// identity is the prerequisite, not a step of this wizard.
+			m.creator = nil
+			return m.openGithubViewConnecting("")
 		case "r": // not "R": ESC O R is F3
 			// Re-ask the daemon rather than assuming the connect worked. If it did
 			// not, the operator lands back on this same screen with the same key,
@@ -1553,15 +1552,3 @@ func (c *creatorModel) viewFromDir(b *strings.Builder) {
 	}
 	b.WriteString("\n" + styleMuted.Render("[⏎] continue   [tab] git init on/off   [esc] back"))
 }
-
-// ghConnectArgs / ghConnectCmd are ONE decision written once.
-//
-// The window path and the type-it-yourself path must not disagree about the
-// command — a fallback that omits --default hands the operator a daemon holding
-// an identity that nothing resolves to, which is a week of confusion we have
-// already had. Deriving the printed command from the args makes the two
-// incapable of drifting, and lets one assertion cover both.
-const (
-	ghConnectArgs = " --default"
-	ghConnectCmd  = "dejima github connect" + ghConnectArgs
-)

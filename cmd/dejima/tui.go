@@ -1027,6 +1027,22 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case deviceStartedMsg:
+		mm, cmd := m.applyDeviceStarted(msg)
+		return mm, cmd
+
+	case devicePolledMsg:
+		mm, cmd := m.applyDevicePolled(msg)
+		return mm, cmd
+
+	case devicePollTickMsg:
+		// Only the flow this tick was scheduled for may act on it: a tick from a
+		// cancelled sign-in must not drive the one that replaced it.
+		if m.github != nil && m.github.connect != nil && m.github.connect.sessionID == msg.sessionID {
+			return m, m.pollDeviceFlowCmd(m.github.connect)
+		}
+		return m, nil
+
 	case observedMsg:
 		if msg.gen != m.gen {
 			return m, nil // stale: issued against a target we've switched away from

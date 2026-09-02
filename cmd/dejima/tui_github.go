@@ -13,10 +13,11 @@ import (
 
 // githubView is the self-serve "GitHub" settings pane: it lists the caller's
 // GitHub identities, badges islands whose named identity no longer resolves
-// (clone/push will fail until reconnected), and drives the guided device-flow
-// sign-in. The sign-in itself runs in its own window via the tested `dejima
-// github connect` CLI (browser + polling belong outside the dashboard); the pane
-// reloads on demand once the operator finishes there.
+// (clone/push will fail until reconnected), and runs the guided device-flow
+// sign-in IN THE PANE (tui_github_device.go). It used to spawn `dejima github
+// connect` in a new window — which handed the operator to a surface this pane
+// could not observe, and on Windows died instantly while the pane reported that
+// it had opened.
 type githubView struct {
 	loading    bool
 	identities []api.GitHubIdentityView
@@ -24,6 +25,10 @@ type githubView struct {
 	cursor     int
 	err        string
 	notice     string
+	// connect is a device-flow sign-in running INSIDE this pane. Non-nil while
+	// one is in progress; it owns the keys and the body while it is. See
+	// tui_github_device.go.
+	connect *deviceFlow
 }
 
 type githubIdentitiesMsg struct {
@@ -47,10 +52,20 @@ func (m tuiModel) loadGithubIdentitiesCmd() tea.Cmd {
 	}
 }
 
-// githubKey drives the GitHub pane. [c]/⏎ spawns the guided sign-in in a new
-// window; [r] reloads; [esc]/[q] closes.
+// githubKey drives the GitHub pane. [c]/⏎ starts the guided sign-in here; [r]
+// reloads; [esc]/[q] closes.
 func (m tuiModel) githubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.github
+	// A sign-in in progress owns the keys: list navigation is meaningless here,
+	// and [c] restarting a flow the operator is halfway through would invalidate
+	// a code they may already have typed into a browser.
+	if v.connect != nil {
+		// ...except a failed flow, where [c] is the retry the pane offers.
+		if v.connect.state != deviceFlowFailed || (msg.String() != "c" && msg.String() != "enter") {
+			mm, cmd, _ := m.deviceFlowKey(msg)
+			return mm, cmd
+		}
+	}
 	switch msg.String() {
 	case "esc", "ctrl+[", "q":
 		m.github = nil
@@ -77,34 +92,21 @@ func (m tuiModel) githubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// `aoos` token had expired pressed [c] here, got a second identity for the
 		// same login that no island used, refreshed it, and watched eight islands
 		// keep failing. The pane created the confusion it was being used to clear.
-		args := " --default"
+		name := ""
 		if id, ok := v.selected(); ok {
-			args = " " + id.Name + " --default"
+			name = id.Name
 		}
-		if !canOpenNewWindow() {
-			v.notice = "run `dejima github connect" + args + "` in a terminal, then [r] to reload"
-			return m, nil
-		}
-		if err := m.openGithubConnectWindow(args); err != nil {
-			v.notice = "couldn't open a window — run `dejima github connect" + args + "` in a terminal, then [r]"
-		} else {
-			v.notice = "opened `dejima github connect" + strings.TrimRight(args, " ") + "` — approve it on GitHub, then [r] to reload"
-		}
-		return m, nil
+		v.notice, v.err = "", ""
+		v.connect = &deviceFlow{name: name, makeDefault: true, state: deviceFlowStarting}
+		return m, m.startDeviceFlowCmd()
 	case "n":
 		// A genuinely NEW identity (a second GitHub account), as opposed to
 		// refreshing one you have. Separated because they were the same key, and
-		// the one people actually wanted was the refresh.
-		if !canOpenNewWindow() {
-			v.notice = "run `dejima github connect <new-name>` in a terminal, then [r] to reload"
-			return m, nil
-		}
-		if err := m.openGithubConnectWindow(""); err != nil {
-			v.notice = "couldn't open a window — run `dejima github connect <name>` in a terminal, then [r]"
-		} else {
-			v.notice = "opened `dejima github connect` for a NEW identity — then [r] to reload"
-		}
-		return m, nil
+		// the one people actually wanted was the refresh. An empty name lets the
+		// daemon name it rather than overwriting the highlighted one.
+		v.notice, v.err = "", ""
+		v.connect = &deviceFlow{state: deviceFlowStarting}
+		return m, m.startDeviceFlowCmd()
 	}
 	return m, nil
 }
@@ -136,6 +138,9 @@ func (m tuiModel) renderGithubView() string {
 	b.WriteString(styleTitle.Render("GitHub"))
 	b.WriteString("\n\n")
 
+	if v.connect != nil {
+		return b.String() + v.renderDeviceFlow(m.now())
+	}
 	if v.loading {
 		b.WriteString(styleMuted.Render("  loading identities…"))
 		return b.String()
