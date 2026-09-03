@@ -315,6 +315,16 @@ from GET /v1/audit, plus an audit pane in the dashboard. teams.html is accurate
 on these.)
 
 The first hour is the real risk, not any missing feature:
+- AN ISLAND CREATED BEFORE A FEATURE SHIPPED MAY SILENTLY LACK IT, and the
+  symptom is that the feature does nothing rather than that it errors. Bind
+  mounts are assembled when the container is CREATED, so a feature delivered by
+  a new mount reaches only islands made after it. `dejima upgrade <island>` (or
+  [s] on the island in the dashboard) recreates the container against the current
+  image and preserves both volumes, which re-assembles the mounts. This has
+  already bitten twice, on island secrets and on local-model config, and it will
+  keep biting because a missing mount and a working-but-unused feature look
+  identical from inside. If someone reports that something new "did nothing",
+  ask how old the island is before believing the feature is broken.
 - Fresh installs on a clean Mac are known to be failing in the field, and the
   automated clean-machine test host was torn down, so that path is currently
   unverified rather than passing. If someone is deciding today, tell them to
