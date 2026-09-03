@@ -168,16 +168,14 @@ func (s *Server) handlePortIntakeRecursive(
 	for _, f := range files {
 		total += f.size
 	}
-	if len(files) > req.maxFiles {
-		writeError(w, http.StatusBadRequest, fmt.Errorf(
-			"refusing to import %d files from %q: the limit is %d (raise it with max_files, or import a subdirectory)",
-			len(files), relRoot, req.maxFiles))
-		return
-	}
-	if total > req.maxBytes {
-		writeError(w, http.StatusBadRequest, fmt.Errorf(
-			"refusing to import %s from %q: the limit is %s (raise it with max_bytes, or import a subdirectory)",
-			humanBytesInt64(total), relRoot, humanBytesInt64(req.maxBytes)))
+	//
+	// BOTH dimensions are reported whichever one tripped. They used to be two
+	// separate refusals naming one number each, so raising max_files on a big
+	// tree just bought you the max_bytes refusal on the next attempt — two round
+	// trips over a tree the walk had already measured completely. The caller is
+	// deciding whether to allow this import; give them the whole size of it.
+	if over := capRefusal(relRoot, len(files), total, req); over != "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%s", over))
 		return
 	}
 
@@ -252,6 +250,23 @@ func (s *Server) intakeOneFile(
 		return 0, "", err
 	}
 	return size, sum, nil
+}
+
+// capRefusal returns the refusal text for an over-cap import, or "" to allow it.
+//
+// It names what the import ACTUALLY is on both axes and what both caps are, so
+// one refusal is enough to decide with. The remedy names the request fields and
+// the CLI flags together: the daemon cannot know which surface is asking, and a
+// reader who only has one of the two names has to go looking for the other.
+func capRefusal(relRoot string, count int, total int64, lim intakeLimits) string {
+	if count <= lim.maxFiles && total <= lim.maxBytes {
+		return ""
+	}
+	return fmt.Sprintf(
+		"refusing to import %q: %d files, %s — the caps are %d files and %s. "+
+			"Raise them for this import (max_files/max_bytes, or --max-files/--max-bytes), "+
+			"or import a subdirectory.",
+		relRoot, count, humanBytesInt64(total), lim.maxFiles, humanBytesInt64(lim.maxBytes))
 }
 
 // intakeLimits holds the resolved caps for one request.
