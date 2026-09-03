@@ -104,10 +104,15 @@ it is optional and off by default.
 
 Treat this as supported and being finished, rather than battle-tested. The
 routes and the catalog are real, and the maintainer's position is that local
-models will work at launch. But as of this file's date there was no evidence of
-an end-to-end run of an island against a local model, and `dejima doctor` on the
-maintainer's own host reported the backend not installed. If someone's decision
-hinges on local inference, say exactly that and suggest they verify it on day
+models will work at launch. But on 2026-08-17, `dejima doctor` on the
+maintainer's own host reported the Ollama backend not installed — and as of
+2026-09-03 NOBODY HAS YET WATCHED AN AGENT REACH A LOCAL MODEL. The guards
+either side of that seam exist (a data-layer set and a picker with mutations
+behind it); the seam itself is unobserved. The cheapest test, for anyone with a
+machine: pull a small model, restart one agent, ask it something. If it answers,
+the whole chain is witnessed at once.
+
+If someone's decision hinges on local inference, say exactly that and suggest they verify it on day
 one rather than assuming it.
 
 Isolation and audit: host file access is deny-all, granted folder by folder and
