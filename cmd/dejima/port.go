@@ -7,6 +7,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/aoos/dejima/internal/api"
+
 	"github.com/spf13/cobra"
 )
 
@@ -123,6 +125,8 @@ func newPortRevokeCmd() *cobra.Command {
 
 func newPortIntakeCmd() *cobra.Command {
 	var recursive bool
+	var maxFiles int
+	var maxBytesStr string
 	cmd := &cobra.Command{
 		Use:   "intake <island> <scope>:<path> [container-dest]",
 		Short: "Broker a host file or folder (within a scope) into an island, read-only.",
@@ -131,7 +135,11 @@ func newPortIntakeCmd() *cobra.Command {
 			"in the Ledger, one entry per file; if it can't be logged, the file does not " +
 			"cross.\n\n  dejima port intake myrepo vault:daily/2026-06-11.md\n" +
 			"  dejima port intake myrepo vault:daily -r\n\n" +
-			"Symlinks are never followed, and any skipped entries are reported.",
+			"Symlinks are never followed, and any skipped entries are reported.\n\n" +
+			"A recursive import is capped (the daemon's defaults are 2000 files / 512 MiB) so " +
+			"that pointing it at a home directory fails in a second instead of copying for ten " +
+			"minutes. Raise the caps for one import with --max-files / --max-bytes; the refusal " +
+			"tells you the tree's actual size on both axes, so one attempt is enough to decide.",
 		Args: cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			island := args[0]
@@ -143,11 +151,25 @@ func newPortIntakeCmd() *cobra.Command {
 			if len(args) == 3 {
 				dest = args[2]
 			}
+			caps := api.PortIntakeCaps{MaxFiles: maxFiles}
+			if maxBytesStr != "" {
+				n, err := parseSize(maxBytesStr)
+				if err != nil {
+					return fmt.Errorf("--max-bytes: %w", err)
+				}
+				caps.MaxBytes = n
+			}
+			// The caps only exist on the recursive path, so accepting them
+			// silently for a single file would be a flag that reports nothing and
+			// does nothing — the shape this whole change is removing.
+			if !recursive && (caps.MaxFiles > 0 || caps.MaxBytes > 0) {
+				return fmt.Errorf("--max-files/--max-bytes apply to a recursive import; add -r")
+			}
 			c, err := client()
 			if err != nil {
 				return err
 			}
-			res, err := c.PortIntakeRecursive(cmd.Context(), island, scope, rel, dest, recursive)
+			res, err := c.PortIntakeRecursive(cmd.Context(), island, scope, rel, dest, recursive, caps)
 			if err != nil {
 				return err
 			}
@@ -174,6 +196,10 @@ func newPortIntakeCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().IntVar(&maxFiles, "max-files", 0,
+		"raise the file-count cap for this import (0 = the daemon's default)")
+	cmd.Flags().StringVar(&maxBytesStr, "max-bytes", "",
+		"raise the total-size cap for this import, e.g. 2G (empty = the daemon's default)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false,
 		"import a directory: one brokered, ledgered crossing per file (symlinks skipped)")
 	return cmd

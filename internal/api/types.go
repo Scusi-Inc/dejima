@@ -977,7 +977,7 @@ type CapabilityExecuteResponse struct {
 type PortIntakeRequest struct {
 	Scope  string `json:"scope"`          // scope name to read from
 	SrcRel string `json:"src_rel"`        // path relative to the scope's host root
-	Dest   string `json:"dest,omitempty"` // container path; default /intake/<scope>/<src_rel>
+	Dest   string `json:"dest,omitempty"` // container path; default /home/dejima/intake/<scope>/<src_rel>
 	// Recursive imports a DIRECTORY, one brokered crossing per file. Opt-in
 	// because the blast radius differs by orders of magnitude: the same command
 	// that copies one file copies a tree, and "I meant that directory" and "I

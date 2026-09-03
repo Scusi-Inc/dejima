@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ const (
 	importTypePath                    // type a path relative to that scope
 	importRunning                     // request in flight
 	importDone                        // results, including partial ones
+	importCaps                        // raise the caps after a refusal, then retry
 )
 
 type importView struct {
@@ -38,6 +40,15 @@ type importView struct {
 
 	path      string
 	recursive bool
+
+	// Cap overrides for the NEXT attempt. Zero means "the daemon's default",
+	// which is also what the API treats zero as — the numbers live on the daemon
+	// because it is the side that can see the tree, and a copy here would be one
+	// more thing to drift.
+	maxFiles    string
+	maxBytes    string
+	capField    int // 0 = files, 1 = bytes
+	capParseErr string
 
 	result *api.PortIntakeResponse
 }
@@ -79,14 +90,51 @@ func (m tuiModel) loadImportScopesCmd(island string) tea.Cmd {
 // import is one brokered crossing per file and a large tree legitimately takes a
 // while — a short timeout would abort halfway and leave exactly the partial
 // state this surface then has to explain.
-func (m tuiModel) runImportCmd(island, scope, path string, recursive bool) tea.Cmd {
+func (m tuiModel) runImportCmd(island, scope, path string, recursive bool, caps api.PortIntakeCaps) tea.Cmd {
 	c := m.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		res, err := c.PortIntakeRecursive(ctx, island, scope, path, "", recursive)
+		res, err := c.PortIntakeRecursive(ctx, island, scope, path, "", recursive, caps)
 		return importDoneMsg{res: res, err: err}
 	}
+}
+
+// caps resolves the typed cap fields. An unparseable size is reported and the
+// import does NOT run: sending 0 instead would re-request the default caps and
+// come back with the identical refusal, which reads as "the override does not
+// work" rather than "you typed the size wrong".
+func (v *importView) caps() (api.PortIntakeCaps, error) {
+	var out api.PortIntakeCaps
+	if f := strings.TrimSpace(v.maxFiles); f != "" {
+		n, err := strconv.Atoi(f)
+		if err != nil || n < 0 {
+			return out, fmt.Errorf("max files: %q is not a whole number", f)
+		}
+		out.MaxFiles = n
+	}
+	if b := strings.TrimSpace(v.maxBytes); b != "" {
+		n, err := parseSize(b)
+		if err != nil {
+			return out, fmt.Errorf("max size: %w", err)
+		}
+		out.MaxBytes = n
+	}
+	return out, nil
+}
+
+// startImport is the single place an import is launched from, so the path that
+// retries with raised caps cannot drift from the path that runs the first time.
+func (m tuiModel) startImport(v *importView) (tea.Model, tea.Cmd) {
+	c, err := v.caps()
+	if err != nil {
+		v.capParseErr = err.Error()
+		v.step = importCaps
+		return m, nil
+	}
+	v.capParseErr, v.err = "", ""
+	v.step = importRunning
+	return m, m.runImportCmd(v.island, v.scopes[v.cursor].Name, v.path, v.recursive, c)
 }
 
 func (m tuiModel) importKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -126,8 +174,7 @@ func (m tuiModel) importKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				v.err = "type a path relative to the scope (\".\" for the whole scope)"
 				return m, nil
 			}
-			v.step, v.err = importRunning, ""
-			return m, m.runImportCmd(v.island, v.scopes[v.cursor].Name, v.path, v.recursive)
+			return m.startImport(v)
 		case "backspace":
 			if v.path != "" {
 				v.path = v.path[:len(v.path)-1]
@@ -142,12 +189,45 @@ func (m tuiModel) importKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case importRunning:
 		return m, nil // input ignored while the request is in flight
 
+	case importCaps:
+		// Arrow/tab navigation only. Digits and the size suffixes are the whole
+		// alphabet of both fields, so a j/k cursor would eat "1G" and a q would
+		// close the pane mid-number.
+		switch msg.String() {
+		case "esc", "ctrl+[":
+			v.step, v.capParseErr = importTypePath, ""
+		case "tab", "up", "down":
+			v.capField = 1 - v.capField
+		case "enter":
+			return m.startImport(v)
+		case "backspace":
+			if v.capField == 0 && v.maxFiles != "" {
+				v.maxFiles = v.maxFiles[:len(v.maxFiles)-1]
+			} else if v.capField == 1 && v.maxBytes != "" {
+				v.maxBytes = v.maxBytes[:len(v.maxBytes)-1]
+			}
+		default:
+			if t := pastableInput(msg); t != "" {
+				if v.capField == 0 {
+					v.maxFiles += t
+				} else {
+					v.maxBytes += t
+				}
+			}
+		}
+		return m, nil
+
 	default: // importDone
 		switch msg.String() {
 		case "esc", "ctrl+[", "q", "enter":
 			m.importPane = nil
 		case "r":
 			v.step, v.result, v.err = importPickScope, nil, ""
+		case "c":
+			// Reachable from a refusal so the operator never has to leave the TUI
+			// for the CLI to raise a cap. The refusal above states the tree's real
+			// size on both axes; these fields are where that number goes.
+			v.step, v.capParseErr = importCaps, ""
 		}
 		return m, nil
 	}
@@ -228,7 +308,24 @@ func (m tuiModel) renderImport() string {
 		if v.err != "" {
 			b.WriteString("\n" + styleErrored.Render(v.err) + "\n")
 		}
+		if strings.TrimSpace(v.maxFiles) != "" || strings.TrimSpace(v.maxBytes) != "" {
+			b.WriteString(styleMuted.Render(fmt.Sprintf("caps raised for this import: %s files, %s",
+				capOrDefault(v.maxFiles), capOrDefault(v.maxBytes))) + "\n")
+		}
 		b.WriteString("\n" + styleMuted.Render("[⏎] import   [tab] one file / a folder   [esc] back"))
+
+	case importCaps:
+		b.WriteString(styleMuted.Render(
+			"A recursive import is capped so that pointing it at a home directory\n"+
+				"fails at once instead of copying for ten minutes. Raise the caps for\n"+
+				"THIS import — the refusal above states the tree's real size.") + "\n\n")
+		b.WriteString(capField("max files", v.maxFiles, v.capField == 0) + "\n")
+		b.WriteString(capField("max size ", v.maxBytes, v.capField == 1) + "\n")
+		b.WriteString("\n" + styleMuted.Render("blank = the daemon's default (2000 files / 512 MiB)") + "\n")
+		if v.capParseErr != "" {
+			b.WriteString("\n" + styleErrored.Render(v.capParseErr) + "\n")
+		}
+		b.WriteString("\n" + styleMuted.Render("[⏎] import   [tab] switch field   [esc] back"))
 
 	case importRunning:
 		b.WriteString(styleAccent.Render("⏳ importing — each file is ledgered before it crosses…"))
@@ -236,7 +333,7 @@ func (m tuiModel) renderImport() string {
 	case importDone:
 		if v.err != "" {
 			b.WriteString(styleErrored.Render(v.err) + "\n")
-			b.WriteString("\n" + styleMuted.Render("[r] try again   [esc] close"))
+			b.WriteString("\n" + styleMuted.Render("[c] raise the caps   [r] try again   [esc] close"))
 			return b.String()
 		}
 		res := v.result
@@ -264,4 +361,26 @@ func (m tuiModel) renderImport() string {
 		b.WriteString("\n" + styleMuted.Render("[r] import more   [esc] close"))
 	}
 	return b.String()
+}
+
+// capOrDefault renders a cap field for display, saying "default" rather than
+// showing an empty string — a blank next to the word "caps" reads as "no cap".
+func capOrDefault(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(v)
+}
+
+// capField renders one editable cap field with the cursor on the active one.
+func capField(label, val string, active bool) string {
+	cur := ""
+	if active {
+		cur = "_"
+	}
+	line := "  " + label + "  " + val + cur
+	if active {
+		return styleAccent.Render(line)
+	}
+	return styleMuted.Render(line)
 }
