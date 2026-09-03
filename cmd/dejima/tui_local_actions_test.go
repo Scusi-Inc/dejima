@@ -13,7 +13,10 @@ import (
 // another terminal; the rows are that command, so what they offer has to track
 // the status they were derived from.
 func TestLocalActionsFollowStatus(t *testing.T) {
-	top := localmodel.Model{Alias: "qwen-coder", Ref: "qwen2.5-coder:14b", Params: "14B"}
+	// DELIBERATELY NOT A CATALOG ALIAS. This fixture used to be "qwen-coder",
+	// which IS in the catalog — so the out-of-catalog branch it exercises below
+	// never ran, and the assertion passed on a path it was not aimed at.
+	top := localmodel.Model{Alias: "some-future-model", Ref: "vendor/future:q4", Params: "14B"}
 
 	// Nothing on the host: install is the only thing that can come next — a
 	// "pull" row here would hand the operator a step that cannot work yet.
@@ -25,33 +28,58 @@ func TestLocalActionsFollowStatus(t *testing.T) {
 		t.Errorf("install row should run `dejima local install`, got %q", got)
 	}
 
-	// Installed, recommended model not pulled: pulling it is the next step and
-	// leads the list; registration stays available underneath.
+	// Installed and nothing pulled: EVERY catalog model is offered, not just the
+	// recommended one. The recommendation is right for the host it was computed
+	// for and no help to someone who wants the small model for autocomplete, or
+	// whose box sits between two entries — they used to have to go read `dejima
+	// local ls` to learn the handles.
 	acts = localActions(&localmodel.Status{
 		Backend: "ollama", Installed: true, Running: true,
 		Recommend: localmodel.Recommendation{Top: &top},
 	})
-	if len(acts) != 2 {
-		t.Fatalf("installed + nothing pulled should offer pull and register, got %+v", acts)
-	}
-	if !strings.Contains(acts[0].label, "qwen-coder") || !strings.Contains(acts[0].label, "14B") {
-		t.Errorf("pull row should name the model and its size, got %q", acts[0].label)
-	}
-	if got := strings.Join(acts[0].args, " "); got != "local pull qwen-coder" {
-		t.Errorf("pull row should run `dejima local pull qwen-coder`, got %q", got)
-	}
-
-	// Already pulled — by ref, which is how the backend reports it — so the pull
-	// row is gone. Offering it again would re-download several GB for nothing.
-	acts = localActions(&localmodel.Status{
-		Backend: "ollama", Installed: true, Running: true,
-		Models:    []localmodel.InstalledModel{{Ref: "qwen2.5-coder:14b"}},
-		Recommend: localmodel.Recommendation{Top: &top},
-	})
+	pulls := 0
 	for _, a := range acts {
 		if strings.HasPrefix(a.verb, "pull") {
-			t.Errorf("a pulled model should not be offered for pull again, got %+v", acts)
+			pulls++
 		}
+	}
+	if pulls != len(localmodel.Catalog)+1 { // +1: `top` here is deliberately not a catalog entry
+		t.Errorf("installed + nothing pulled should offer every catalog model, got %d pull rows", pulls)
+	}
+	if last := acts[len(acts)-1]; last.verb != "register" {
+		t.Errorf("registration should stay available underneath the pulls, got %+v", last)
+	}
+	// A recommendation the catalog does not hold still gets a row, and leads.
+	// Today RecommendFor only ever returns a catalog entry, so this cannot fire
+	// in production — but losing the recommended action while every other row
+	// still rendered is precisely the failure nobody would notice.
+	if !strings.Contains(acts[0].label, "some-future-model") || !strings.Contains(acts[0].label, "14B") {
+		t.Errorf("an out-of-catalog recommendation should lead and name its size, got %q", acts[0].label)
+	}
+	if got := strings.Join(acts[0].args, " "); got != "local pull some-future-model" {
+		t.Errorf("pull row should run `dejima local pull some-future-model`, got %q", got)
+	}
+
+	// Already pulled — by REF, which is how the backend reports it, not by the
+	// alias we know it as — so THAT model's row is gone while the rest remain.
+	// Offering it again would re-download several GB for nothing; removing every
+	// row would take the choice away from someone who wants a second model.
+	already := localmodel.Catalog[0]
+	acts = localActions(&localmodel.Status{
+		Backend: "ollama", Installed: true, Running: true,
+		Models: []localmodel.InstalledModel{{Ref: already.Ref}},
+	})
+	stillOffered := false
+	for _, a := range acts {
+		if a.verb == "pull "+already.Alias {
+			t.Errorf("%s is already pulled and was offered again: %+v", already.Alias, a)
+		}
+		if strings.HasPrefix(a.verb, "pull") {
+			stillOffered = true
+		}
+	}
+	if !stillOffered {
+		t.Error("one pulled model removed every pull row — the rest of the catalog stays choosable")
 	}
 
 	// No status yet (the page fetches async) means no rows — the cursor has

@@ -602,6 +602,16 @@ git -C <dejima checkout> worktree prune
 These shipped to `master` with unit/security review but can't be exercised from the
 build island (no live Docker/macOS host here). Run them on Minion and feed findings back.
 
+- [ ] **An agent actually reaching a local model — the unobserved seam** *(added 2026-09-03)*.
+  Three pieces of work now meet here and NOBODY HAS WATCHED THE JOIN: #396's four
+  guards (a provider registered after create reaches the island), #395's picker with
+  its five mutations, and the managed-local-models install path. Each side is green;
+  the seam between them has never been run. That is the exact arrangement that has
+  fooled us repeatedly — two passing suites either side of something unobserved.
+  **The cheapest whole-chain test, on a machine with a live daemon:** pull the 3B,
+  restart one agent, ask it a question. If it answers, all three are observed at
+  once. If it does not, the answer says which side. Report the failure verbatim —
+  "no key" and "no mount" have different causes and a summary drops the difference.
 - [ ] **TUI verify pass v0.6.1 → v0.6.9 (consolidated)** → [`operator-tests/v0.6.9-verify.md`](operator-tests/v0.6.9-verify.md).
   One eyeball pass covering agents-by-name, usage signals + near-cap flags, the
   name-collision notice, wake-on-message, tab titles, visual-identity/keys, and

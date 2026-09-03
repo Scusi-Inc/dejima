@@ -636,14 +636,13 @@ func localActions(ls *localmodel.Status) []localAction {
 			args:  []string{"local", "install"},
 		}}
 	}
-	var acts []localAction
-	if top := ls.Recommend.Top; top != nil && !localModelPulled(ls, *top) {
-		acts = append(acts, localAction{
-			label: fmt.Sprintf("Pull %s (%s) — recommended for this host", top.Alias, top.Params),
-			verb:  "pull " + top.Alias,
-			args:  []string{"local", "pull", top.Alias},
-		})
-	}
+	// EVERY catalog model that is not already pulled, not just the recommended
+	// one. The recommendation is right for the host it was computed for and is
+	// no help to an operator who wants the small model for autocomplete, or
+	// whose box sits between two entries — and they had to go read `dejima local
+	// ls` to learn the handles. The recommended row is still marked as such and
+	// still sorts where the catalog puts it. See tui_localmodels.go.
+	acts := localModelActions(ls)
 	// Installing an already-installed backend is just provider registration —
 	// the path back for a host where someone installed the backend by hand, or
 	// where `dejima local off` deregistered it. See handleLocalInstall.
@@ -5976,6 +5975,13 @@ func (m tuiModel) renderSettings() string {
 				// to point an agent at.
 				b.WriteString("\n" + styleMuted.Render(fmt.Sprintf(
 					"recommended for this host: %s (%s) — pulled", top.Alias, top.Params)) + "\n")
+			}
+			// What has to be restarted, answered where the question is asked. It is
+			// narrower than it looks — the agent, not the island and not the daemon —
+			// and every wider guess costs the operator something real. See
+			// localModelsAppliedNote.
+			if note := localModelsAppliedNote(ls); note != "" {
+				b.WriteString("\n" + styleMuted.Render(note) + "\n")
 			}
 		}
 		if st.localNotice != "" {
