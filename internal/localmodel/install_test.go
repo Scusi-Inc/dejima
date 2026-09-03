@@ -9,21 +9,104 @@ import (
 	"testing"
 )
 
-// The macOS installer copies an .app and then sudos to link the CLI. These
-// methods run in the daemon, which has no controlling terminal, so that sudo
-// always dies on "a terminal is required to read the password" — and the
-// operator sees a 100% download followed by "ERROR: exit status 1", which reads
-// as a network flake. Refuse up front and say what to run instead.
-func TestInstallOnDarwinRefusesInsteadOfFailingAtSudo(t *testing.T) {
+// stubBrew controls whether a usable Homebrew appears to exist, and as whom.
+//
+// Every branch is driven explicitly. Reading the real host would mean the
+// brew-present path never runs anywhere the suite runs (no Mac, no brew on CI),
+// so the branch that now does the work would be exercised by nothing — the
+// shape that let the macOS refusal stand unchallenged in the first place.
+func stubBrew(t *testing.T, path string, present bool, uid int) {
+	t.Helper()
+	pf, gf := findBrew, geteuid
+	t.Cleanup(func() { findBrew, geteuid = pf, gf })
+	findBrew = func() (string, bool) { return path, present }
+	geteuid = func() int { return uid }
+}
+
+// macOS with Homebrew: the daemon installs it ITSELF. No sudo, no terminal.
+//
+// The refusal this replaces was correct about the OFFICIAL installer — it copies
+// an .app and then sudos to link the CLI, which dies on "a terminal is required
+// to read the password" — and was applied to the whole platform. Homebrew needs
+// no sudo; it REFUSES to run under it and installs into a user-owned prefix. So
+// the message was telling operators to run, by hand, the command the daemon
+// could have run for them.
+func TestInstallOnDarwinUsesHomebrewWhenItCan(t *testing.T) {
+	// /bin/true stands in for brew so the real code path runs end to end against
+	// an inert binary, rather than spawning a shell that gropes for a Homebrew
+	// this machine does not have.
+	stubBrew(t, "/bin/true", true, 501)
+	rc, err := NewOllama().installOn(context.Background(), "darwin")
+	if err != nil {
+		t.Fatalf("a Mac with Homebrew and a non-root daemon must install, not refuse: %v", err)
+	}
+	t.Cleanup(func() { _ = rc.Close() })
+}
+
+// What the install actually RUNS, asserted separately from whether it refused.
+//
+// There is no Mac in CI, so "did not refuse" is the most an end-to-end test can
+// say — and it says the same thing about a script that installs nothing. The
+// script is built by a pure function precisely so this can be checked.
+func TestTheDarwinInstallScriptInstallsAndStarts(t *testing.T) {
+	script := darwinBrewScript("/opt/homebrew/bin/brew")
+	for _, want := range []string{
+		"install ollama",        // the install itself
+		"services start ollama", // and it must end up RUNNING, not merely present
+		// The fallback, for a daemon with no launchd user domain to bootstrap
+		// into. Matched on the pieces rather than on "ollama serve": the path is
+		// a quoted command substitution, so the literal reads `/bin/ollama" serve`
+		// and a naive substring would pass only by accident of formatting.
+		"nohup",
+		`/bin/ollama" serve`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the install script does not %q:\n%s", want, script)
+		}
+	}
+	// The brew path is interpolated, so it must be quoted: a launchd daemon's
+	// prefix is /opt/homebrew, but nothing stops a host from having one with a
+	// space in it, and an unquoted path would silently split.
+	if !strings.Contains(script, `"/opt/homebrew/bin/brew"`) {
+		t.Errorf("the brew path is not quoted, so a path with a space splits:\n%s", script)
+	}
+	// No sudo. That is the entire premise: Homebrew refuses to run under it, and
+	// the daemon has no terminal to type a password at.
+	if strings.Contains(script, "sudo") {
+		t.Errorf("the install uses sudo, which is the thing that cannot work from a "+
+			"daemon with no controlling terminal:\n%s", script)
+	}
+}
+
+// No Homebrew: the refusal stands, and still says the way out.
+func TestInstallOnDarwinWithoutBrewStillRefusesActionably(t *testing.T) {
+	stubBrew(t, "", false, 501)
 	_, err := NewOllama().installOn(context.Background(), "darwin")
 	if !errors.Is(err, ErrInstallNeedsTerminal) {
-		t.Fatalf("macOS install must refuse with the actionable error, got %v", err)
+		t.Fatalf("with no brew there is nothing to drive; expected the actionable refusal, got %v", err)
 	}
 	// An error that only says "no" leaves them exactly as stuck.
 	for _, want := range []string{"brew install ollama", "dejima local install", "ollama.com/download"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the way out is not stated — missing %q in:\n%s", want, err)
 		}
+	}
+	// And it must say WHERE. An operator reading this on Windows, connected to a
+	// remote Mac daemon, has to run it on the daemon host — "this Mac" is not the
+	// machine they are typing on.
+	if !strings.Contains(err.Error(), "DAEMON HOST") {
+		t.Errorf("the refusal does not say which machine to run it on:\n%s", err)
+	}
+}
+
+// A daemon running as root must NOT attempt brew: Homebrew exits immediately
+// with "Don't run this as root!", which would replace a clear message with a
+// confusing one.
+func TestInstallOnDarwinAsRootDoesNotAttemptBrew(t *testing.T) {
+	stubBrew(t, "/opt/homebrew/bin/brew", true, 0)
+	_, err := NewOllama().installOn(context.Background(), "darwin")
+	if !errors.Is(err, ErrInstallNeedsTerminal) {
+		t.Fatalf("a root daemon must refuse rather than run a brew that will reject it, got %v", err)
 	}
 }
 

@@ -171,9 +171,22 @@ func (o *Ollama) Remove(ctx context.Context, ref string) error {
 // read the password" — every time, unfixably from here. It was reported from a
 // Mac mini as a bare "ERROR: exit status 1" after a completed 100% download,
 // which reads as a network flake rather than the one thing it is.
+//
+// "UNFIXABLY FROM HERE" WAS TRUE OF THE OFFICIAL SCRIPT AND WAS READ AS TRUE OF
+// macOS. Homebrew needs no sudo — it refuses to run under it, and installs into
+// a prefix the invoking user owns — so a daemon running as that user can drive
+// `brew install ollama` with no terminal and no password. The message had been
+// telling operators to run, by hand, a command the daemon could have run itself.
+//
+// This error now means the narrower thing it always should have: this host has
+// no usable Homebrew for the daemon to use. Which is real — no brew installed,
+// or a daemon running as root, where brew refuses.
 var ErrInstallNeedsTerminal = errors.New(
-	"can't install Ollama from the daemon on macOS: its installer needs sudo, and the daemon has no terminal to enter a password at.\n" +
-		"Install it yourself on this Mac, then re-run `dejima local install` (it will detect it and just register the provider):\n" +
+	"can't install Ollama from the daemon on this Mac: the official installer needs sudo, " +
+		"and no Homebrew is usable from here (either it isn't installed, or this daemon runs as root, " +
+		"which Homebrew refuses).\n" +
+		"Install it on the DAEMON HOST — not the machine you are typing on — then re-run " +
+		"`dejima local install` (it will detect it and just register the provider):\n" +
 		"  brew install ollama && brew services start ollama\n" +
 		"or download the app from https://ollama.com/download and open it once")
 
@@ -187,12 +200,77 @@ func (o *Ollama) Install(ctx context.Context) (io.ReadCloser, error) {
 // assertable from a Linux test runner — which is the only place it ever runs.
 func (o *Ollama) installOn(ctx context.Context, goos string) (io.ReadCloser, error) {
 	if goos == "darwin" {
-		return nil, ErrInstallNeedsTerminal
+		return o.installDarwin(ctx)
 	}
 	// The official one-liner is idempotent and handles platform detection.
 	return streamCommand(exec.CommandContext(ctx, "sh", "-c",
 		"curl -fsSL https://ollama.com/install.sh | sh"))
 }
+
+// installDarwin installs Ollama through Homebrew, which needs no sudo and no
+// terminal, and falls back to the hand-install instructions when brew is not
+// usable from here.
+//
+// The refusal this replaces was correct about the OFFICIAL installer and was
+// applied to the whole platform. brew is the one the message itself recommended,
+// and it is drivable: Homebrew installs into a user-owned prefix and REFUSES to
+// run under sudo, so there is no password to type.
+//
+// Two states keep the old path, and both are real rather than defensive:
+// no brew on this host, and a daemon running as root (`brew` exits immediately
+// with "Don't run this as root!", so attempting it would replace a clear message
+// with a confusing one).
+func (o *Ollama) installDarwin(ctx context.Context) (io.ReadCloser, error) {
+	brew, ok := findBrew()
+	if !ok || geteuid() == 0 {
+		return nil, ErrInstallNeedsTerminal
+	}
+	return streamCommand(exec.CommandContext(ctx, "sh", "-c", darwinBrewScript(brew)))
+}
+
+// darwinBrewScript is the install, as a pure function so its content is
+// assertable without running brew — there is no Mac in CI, and a test that only
+// checks "did not refuse" would pass on a script that installs nothing.
+//
+// `brew services start` is the supported way to run it and survives a reboot. It
+// can fail where the daemon has no launchd user domain to bootstrap into, and an
+// install that succeeds while leaving nothing listening is the exact shape this
+// package keeps hitting — so it falls back to starting the server directly. The
+// `|| {` block rather than `&&`: a services failure must not fail the install.
+func darwinBrewScript(brew string) string {
+	return fmt.Sprintf(`set -e
+%[1]q install ollama
+%[1]q services start ollama || {
+  echo "brew services could not start ollama here; starting the server directly"
+  nohup "$(%[1]q --prefix)/bin/ollama" serve >/dev/null 2>&1 &
+  sleep 2
+}
+echo "ollama installed via Homebrew"`, brew)
+}
+
+// brewCandidates are the two Homebrew prefixes plus whatever is on PATH. A
+// daemon started by launchd has a minimal PATH that usually does NOT include
+// /opt/homebrew/bin, so looking only at PATH would report "no brew" on a Mac
+// that plainly has it — which is the same false-negative the refusal above was.
+var brewCandidates = []string{"/opt/homebrew/bin/brew", "/usr/local/bin/brew"}
+
+// findBrew resolves an executable brew, or reports that there is none.
+var findBrew = func() (string, bool) {
+	for _, p := range brewCandidates {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return p, true
+		}
+	}
+	if p, err := exec.LookPath("brew"); err == nil {
+		return p, true
+	}
+	return "", false
+}
+
+// geteuid is indirected so the root branch is reachable from a test that is not
+// running as root — the branch would otherwise only ever execute on a machine
+// nobody runs the suite on.
+var geteuid = os.Geteuid
 
 // parseOllamaList turns `ollama list` tabular output into InstalledModels.
 // Format: "NAME  ID  SIZE  MODIFIED" header then rows; NAME is field 0, and
