@@ -133,6 +133,57 @@ That is also why it recurs across surfaces that have nothing to do with each
 other. It is not a property of Go, or GitHub, or git; it is a property of asking
 a system for a status and receiving a value with no timestamp attached.
 
+## Related shapes — fresh readings that answer the wrong question
+
+Two cases arrived while this was being written that are **not** members, and
+saying why sharpens the family rather than widening it. In both, the reading is
+current, the instrument is fine, and nothing has expired. What has gone wrong is
+that success stopped discriminating.
+
+### A remedy that manufactures the precondition the bug needs to hide
+
+To unblock a Windows operator whose client could not reach its WSL daemon, the
+proposed workaround was:
+
+```
+ln -sf /root/.dejima/dejimad.sock /.dejima/dejimad.sock
+```
+
+It puts the real socket where the broken dial looks, so it works. It also creates
+a real socket at **exactly the path an unfixed client computes** — so with it in
+place a fixed client and an unfixed client both connect. The operator would have
+installed the new build, watched it work, and confirmed nothing; we would have
+recorded a field verification against a fixture that makes the bug invisible.
+
+The operator refused it: *"I am looking to test dejima solutions, not just get it
+working… feels like cutting the corner."* Instinct, not method — which is the
+same thing this file keeps finding.
+
+**Not a stale reading:** it never had a moment of being true. The subject was
+altered so that a pass no longer distinguishes fixed from unfixed. That is closer
+to [`guards-need-controls.md`](guards-need-controls.md) — a check that cannot
+fail — except the thing removing the failure mode is a *remedy*, applied
+deliberately, by the person doing the verifying, on the one run that mattered.
+
+### A predicate that is a proxy for the question
+
+`dejima wsl status` printed four green checks and "ready" for a daemon that had
+been dead for thirty hours, because the socket check was `[ -S ]`: **existence,
+not liveness.** A precise, current, correct answer to a question nobody meant to
+ask.
+
+**Also not stale**, and the discriminator for this one is different again: ask
+whether the predicate can distinguish the two states you care about. A socket
+file survives the process that created it, so `[ -S ]` cannot tell running from
+dead — and neither can any amount of re-running it.
+
+### If this grows
+
+Two instances is an observation. If a third arrives, this wants its own file
+rather than an annex to a family it is not part of — the discriminators are
+genuinely different (*can this predicate distinguish?* rather than *is this
+reading current?*), and forcing them together would blunt both.
+
 ## What this does not cover
 
 Not every stale claim is this shape. A claim that was **never** true is an
@@ -142,4 +193,12 @@ only for the case where the instrument worked, the reading was right, and the
 sentence built on it stopped being true without anyone touching it.
 
 *(Assembled by d2 at d1's request. The instances are d1's, d3's, d4's, d5's and
-mine; the shape only became visible because none of them was mine to own.)*
+mine; the shape only became visible because most of them were not mine to own.)*
+
+*One note on how this was possible, because it is the practice worth copying
+rather than the doc. Four of these are mine, from a single afternoon. What made
+them usable was not making the mistakes — it was that each one had been written
+down AT THE TIME, in a message or a commit, before anyone understood what it
+was. A postmortem written after you understand the shape cannot recover the
+detail that identifies it; the receipt written while you were still wrong can.
+d3's phrasing, and it is the better half of the point I originally made.)*
