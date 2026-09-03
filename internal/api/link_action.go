@@ -75,7 +75,7 @@ func (s *Server) exposeAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{Type: "link.expose", Island: name, Scope: action, Decision: "allowed"})
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{Type: "link.expose", Island: name, Scope: action, Decision: "allowed"})
 	writeJSON(w, http.StatusOK, LinkExposedResponse{Island: name, Actions: p.LinkActions})
 }
 
@@ -98,7 +98,7 @@ func (s *Server) unexposeAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{Type: "link.unexpose", Island: name, Scope: action})
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{Type: "link.unexpose", Island: name, Scope: action})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -191,7 +191,7 @@ func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
 			"action": action, "tier": string(pending.Tier),
 		},
 	})
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "link.action", Island: from, Scope: topic, Detail: "→ " + to + "/" + toAgent + " [" + action + "] pending", Decision: "pending",
 	})
 	writeJSON(w, http.StatusAccepted, LinkActionResponse{Status: "pending", Pending: pending.ID})
@@ -240,20 +240,20 @@ func (s *Server) agentLabel(island, agentID string) string {
 // approvedBy is non-empty it also writes the approval record (who, when).
 func (s *Server) executeLinkAction(ar link.ActionRequest, approvedBy string) {
 	if approvedBy != "" {
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "link.approve", Island: ar.From, Scope: ar.Topic,
 			Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "]", Actor: approvedBy, Decision: "allowed",
 		})
 	}
 	s.mailbox.DeliverAction(ar.To, ar.From, ar.FromAgent, ar.FromLabel, ar.ToAgent, ar.Topic, ar.Action, ar.Params)
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "link.action", Island: ar.From, Scope: ar.Topic,
 		Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "]", Decision: "allowed",
 	})
 }
 
 func (s *Server) ledgerLinkDeny(ar link.ActionRequest, reason string) {
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "link.deny", Island: ar.From, Scope: ar.Topic,
 		Detail: "→ " + ar.To + "/" + ar.ToAgent + " [" + ar.Action + "] " + reason, Decision: "denied",
 	})
@@ -370,7 +370,7 @@ func (s *Server) denyAction(w http.ResponseWriter, r *http.Request) {
 	if reason := strings.TrimSpace(req.Reason); reason != "" {
 		detail += ": " + reason
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "link.deny", Island: ar.From, Scope: ar.Topic, Detail: detail, Actor: denier, Decision: "denied",
 	})
 	w.WriteHeader(http.StatusNoContent)

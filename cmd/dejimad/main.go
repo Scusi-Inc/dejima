@@ -250,9 +250,14 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	if tokenAddr == "" {
 		tokenAddr = defaultTokenAddr
 	}
+	// Before assertHostInternalBind, not after: the guard must see the address we
+	// will actually listen on. A relocation that happened afterwards would be
+	// unguarded, which is how a wildcard eventually slips past a check that only
+	// ever inspected the default.
+	tokenAddr = hostInternalBind(context.Background(), log, tokenAddr, tokenExplicit)
 	var tokenSrv *http.Server
 	var tokenLn net.Listener
-	if err := assertHostInternalBind(log, tokenAddr); err != nil {
+	if err := assertHostInternalBind(log, "token listener", "--token-tcp", tokenAddr); err != nil {
 		return err
 	}
 	dial := autonomyDial
@@ -286,6 +291,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	var egressSrv *http.Server
 	var egressLn net.Listener
 	if egressAddr != "" {
+		egressAddr = hostInternalBind(context.Background(), log, egressAddr, egressExplicit)
 		// A bind problem is fatal only when the operator explicitly asked for the
 		// proxy; the default-on proxy degrades gracefully (warn + run without it)
 		// so a busy port or a non-host-internal default can never block startup.
@@ -299,7 +305,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 			log.Warn("island egress proxy off — `dejima egress allow/deny` unavailable until resolved (set --egress-proxy to a free host-internal addr, or --no-egress-proxy to silence)", "addr", egressAddr, "err", err)
 			return nil
 		}
-		if err := assertHostInternalBind(log, egressAddr); err != nil {
+		if err := assertHostInternalBind(log, "egress proxy", "--egress-proxy", egressAddr); err != nil {
 			if ferr := fatal(err); ferr != nil {
 				return ferr
 			}
@@ -500,29 +506,40 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	}
 }
 
-// assertHostInternalBind refuses to bind the token listener to a wildcard/LAN
-// address. The token is the authorization; the bind is the blast-radius limiter.
-// A 0.0.0.0/:: bind would expose the autonomy API to the whole LAN, where only
-// the bearer token stands between an attacker and the host. Loopback is ideal
-// (reachable from containers via host.docker.internal on Docker Desktop); a
+// assertHostInternalBind refuses to bind a host-internal listener to a
+// wildcard/LAN address. The token is the authorization; the bind is the
+// blast-radius limiter. A 0.0.0.0/:: bind would expose the API to the whole LAN,
+// where only the bearer token stands between an attacker and the host. Loopback
+// is ideal on a VM engine (Docker Desktop / colima special-case
+// host.docker.internal to reach the host's loopback through the VM); a
 // non-loopback host-internal address (e.g. a docker bridge gateway) is allowed
 // but warned, since the operator must ensure it isn't LAN-routable.
-func assertHostInternalBind(log *slog.Logger, addr string) error {
+//
+// `what` and `flag` name the CALLER. This function serves two listeners — the
+// token-TCP autonomy path and the egress proxy — and every message in it used to
+// say "token listener" and "--token-tcp" regardless. A real operator log showed
+//
+//	WARN "token listener bound to a non-loopback address" addr=172.17.0.1:7280
+//
+// where 7280 is the EGRESS PROXY. Harmless there, but the same wrong name is in
+// the wildcard ERROR, which would have sent someone to fix a flag they had not
+// set while the one they did set stayed broken.
+func assertHostInternalBind(log *slog.Logger, what, flag, addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("parse --token-tcp %q: %w", addr, err)
+		return fmt.Errorf("parse %s %q: %w", flag, addr, err)
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" {
-		return fmt.Errorf("--token-tcp %q binds a wildcard address; the autonomy listener must bind a host-internal address (e.g. 127.0.0.1:<port>), never all interfaces", addr)
+		return fmt.Errorf("%s %q binds a wildcard address; the %s must bind a host-internal address (e.g. 127.0.0.1:<port>), never all interfaces", flag, addr, what)
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
 		// A hostname rather than a literal IP — can't statically verify it; warn.
-		log.Warn("token listener bind is not a literal IP; ensure it resolves to a host-internal address only", "addr", addr)
+		log.Warn("bind is not a literal IP; ensure it resolves to a host-internal address only", "listener", what, "flag", flag, "addr", addr)
 		return nil
 	}
 	if !ip.IsLoopback() {
-		log.Warn("token listener bound to a non-loopback address; ensure it is not routable from the LAN", "addr", addr)
+		log.Warn("bound to a non-loopback address; ensure it is not routable from the LAN", "listener", what, "flag", flag, "addr", addr)
 	}
 	return nil
 }

@@ -242,42 +242,6 @@ func (m tuiModel) openHostTermWindow(id, label string) error {
 	}
 }
 
-// openGithubConnectWindow launches the guided `dejima github connect` device-flow
-// sign-in in a new window/tab (it opens a browser + polls, so it belongs in its
-// own window, not the dashboard). It talks to the daemon, so it inherits the
-// TUI's DEJIMA_HOST. Returns an error the caller turns into a "run it in a
-// terminal" hint when a new window isn't possible.
-func (m tuiModel) openGithubConnectWindow(args string) error {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "dejima"
-	}
-	title := "github-connect"
-	// args is "" for a brand-new identity, or "<name> --default" to REFRESH one
-	// that already exists. Passing nothing was how this pane manufactured the
-	// incident it is meant to resolve: `github connect` with no name stores under
-	// the fixed name "github" and does NOT become the default, so an operator
-	// pressing [c] to fix an expired credential silently gained a SECOND identity
-	// for the same login that no island used — while the pane showed both with a
-	// ✓ and no way to tell them apart.
-	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s github connect%s",
-		shquote(m.activeHost), shquote(title), shquote(exe), args)
-	switch {
-	case os.Getenv("TMUX") != "":
-		// Return to the existing one rather than stacking another.
-		if tmuxFocusWindow(title) {
-			return nil
-		}
-		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
-	case goruntime.GOOS == "darwin":
-		return openMacTerminal(inner)
-	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, strings.TrimSpace("github connect"+args), "", "", title, nil, m.activeHost)
-	default:
-		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima github connect` in another terminal")
-	}
-}
-
 // openWSLSetupWindow launches `dejima wsl setup` in a separate window/tab — the
 // guided "make this Windows box a real Dejima host" flow, offered from the
 // connection switcher when picking `local` fails on Windows.
@@ -337,6 +301,41 @@ func windowsRunCommand(exe, verb, name, agentID string, extra []string) string {
 	return run
 }
 
+// windowsInnerCommand builds the cmd.exe command line the spawned window runs.
+//
+// Split out so the SHAPE of it is testable: there is no cmd.exe on the machines
+// that run these tests, and the property that matters — that the window survives
+// the command exiting — is a property of this string.
+func windowsInnerCommand(exe, verb, name, agentID string, extra []string, host, title string) string {
+	run := windowsRunCommand(exe, verb, name, agentID, extra)
+	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
+	// title matches the tab name. Strip cmd.exe-special chars from the title
+	// before interpolating it (it's a user label, unlike name/agentID/host,
+	// which are refused outright above).
+	safeTitle := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`"&|<>^%!`, r) {
+			return -1
+		}
+		return r
+	}, title)
+	// KEEP THE WINDOW OPEN AFTER THE COMMAND EXITS.
+	//
+	// `cmd /c` closes the window the instant its command returns, so anything
+	// that finishes — successfully or not — vanishes before it can be read. The
+	// operator saw this twice: `github connect` "pulled up a terminal briefly
+	// then snapped back", and the gateway UI window did the same. Both were
+	// reported by the TUI as opened, which they were; what they were not was
+	// READABLE.
+	//
+	// The unix branches already do this (`printf …; read _`). `&` rather than
+	// `&&` so it runs on failure too — failure is precisely the case worth
+	// reading. Long-lived commands (attaching to an agent or a host terminal)
+	// reach the pause only when the operator detaches, matching unix.
+	return fmt.Sprintf(
+		`set "DEJIMA_HOST=%s"&& set "DEJIMA_TAB_TITLE=%s"&& %s& echo.& echo [this window stays open so you can read the output - press any key to close]& pause >nul`,
+		host, safeTitle, run)
+}
+
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
 // (when wt.exe is around) or a new classic console window. DEJIMA_HOST is
 // pinned via a cmd wrapper because wt/start don't reliably inherit the
@@ -351,17 +350,23 @@ func openWindowsTerminal(exe, verb, name, agentID, title string, extra []string,
 			return fmt.Errorf("can't open a window for %q — run `dejima %s %s` manually", s, verb, name)
 		}
 	}
-	run := windowsRunCommand(exe, verb, name, agentID, extra)
-	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
-	// title matches the tab name. Strip cmd.exe-special chars from the title
-	// before interpolating it (it's a user label, unlike name/agentID/host above).
-	safeTitle := strings.Map(func(r rune) rune {
-		if strings.ContainsRune(`"&|<>^%!`, r) {
-			return -1
-		}
-		return r
-	}, title)
-	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& set "DEJIMA_TAB_TITLE=%s"&& %s`, host, safeTitle, run)
+	// KEEP THE WINDOW OPEN AFTER THE COMMAND EXITS.
+	//
+	// `cmd /c` closes the window the instant its command returns, so anything
+	// that finishes — successfully or not — vanishes before it can be read. The
+	// operator saw this twice: `github connect` "pulled up a terminal briefly
+	// then snapped back", and the gateway UI window did the same. Both were
+	// reported by the TUI as opened, which they were; what they were not was
+	// READABLE.
+	//
+	// The unix branches already do this (`printf …; read _`). This is the
+	// Windows equivalent, and `&` rather than `&&` so it runs on failure too —
+	// failure is precisely the case worth reading.
+	//
+	// Long-lived commands (attaching to an agent or a host terminal) reach the
+	// pause only when the operator detaches, which is the same behaviour their
+	// unix counterparts already have.
+	inner := windowsInnerCommand(exe, verb, name, agentID, extra, host, title)
 	if wt, err := exec.LookPath("wt.exe"); err == nil {
 		// -w 0 targets the CURRENT Windows Terminal window (a new tab in it).
 		// -w -1 / "new" would force a separate window every time — which is the
@@ -458,4 +463,32 @@ func appleStr(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	return `"` + s + `"`
+}
+
+// openAuthPushWindow runs `dejima auth push` in its own window.
+//
+// Its own window because it may prompt, and because on a machine where the
+// Claude login lives in a keychain the OS asks for permission — which cannot
+// happen inside the dashboard's alternate screen.
+func (m tuiModel) openAuthPushWindow() error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "auth-push"
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s auth push",
+		shquote(m.activeHost), shquote(title), shquote(exe))
+	switch {
+	case os.Getenv("TMUX") != "":
+		if tmuxFocusWindow(title) {
+			return nil
+		}
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "auth push", "", "", title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima auth push` in another terminal")
+	}
 }

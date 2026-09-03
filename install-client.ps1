@@ -95,12 +95,35 @@ try {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 
+# --- Where will the islands run? -----------------------------------------
+# Asked FIRST, because it decides whether the next two sections happen at all.
+#
+# Without it this script assumed a remote server: it installed Tailscale, asked
+# for a tailnet address, and closed by saying the server stack is Unix-only and
+# to go install it on a Mac mini. A Windows operator whose islands run in WSL2 on
+# the SAME machine was walked through networking they did not need, asked for an
+# address that does not exist, told to leave it blank, and then pointed at
+# another computer. `dejima wsl setup` was never mentioned.
+#
+# One question removes all of that for the local case.
+$localHost = $false
+if ([Environment]::UserInteractive -and -not $env:DEJIMA_HOST) {
+  Write-Host ""
+  Write-Bold "Where will your islands run?"
+  Write-Info "  [1] On this machine, inside WSL2  (Dejima builds a local Linux host)"
+  Write-Info "  [2] On another machine  (a Mac mini or Linux box already running Dejima)"
+  Write-Info "      -- choose [2] if you are following a 'connect to your server' guide"
+  $where = Read-Host "Choose [1/2] (default 1)"
+  if (-not $where -or $where -match '^1') { $localHost = $true }
+}
+
 # --- Tailscale ------------------------------------------------------------
 # The network the client uses to reach the daemon. Sign-in is GUI-driven on
 # Windows, so we install the package and point the user at the tray icon.
 Write-Host ""
-Write-Bold "Tailscale"
 $haveTS = $false
+if (-not $localHost) {
+Write-Bold "Tailscale"
 if (Get-Command tailscale -ErrorAction SilentlyContinue) {
   Write-Info "tailscale CLI found"
   $haveTS = $true
@@ -132,16 +155,18 @@ if ($haveTS) {
   Write-Info "Sign in to Tailscale via the system-tray icon (right-click -> Log in)."
   Write-Info "Use the SAME tailnet as your Dejima server."
 }
+}  # end: remote-server branch (Tailscale is not needed for a WSL host)
 
 # --- DEJIMA_HOST ----------------------------------------------------------
 # Prompt for the server's tailnet IP/hostname; probe :7273; persist as a
 # User-scope environment variable so future PowerShell sessions inherit it.
+$candidate = $null
+if (-not $localHost) {
 Write-Host ""
 Write-Bold "Server address"
 Write-Info "On the SERVER (mac mini / linux box), run 'tailscale ip -4' to find its address."
-Write-Info "Example: 100.84.12.7"
+Write-Info "Example: 100.101.102.103"
 
-$candidate = $null
 if ([Environment]::UserInteractive) {
   $serverHost = Read-Host "Enter your server's tailnet IP or hostname (blank to skip)"
   if ($serverHost) {
@@ -164,9 +189,90 @@ if ([Environment]::UserInteractive) {
   }
 }
 
+}  # end: remote-server branch
+
+# --- Build the local host now? -------------------------------------------
+# The point of asking local-vs-server up front was to COLLAPSE two commands into
+# one. Printing `dejima wsl setup` in Next Steps and calling that done left the
+# operator with the same two commands and one fewer prompt, which is not what was
+# promised.
+#
+# Invoked by FULL PATH, not through PATH. The installer just added $prefix to the
+# User PATH, and this PowerShell session does not have it — which is the entire
+# reason "close and reopen PowerShell" was a step. Calling the exe directly
+# removes that step for the local path.
+#
+# Asked rather than assumed: this is minutes of work (it creates a distro,
+# installs Docker, and builds an image), so starting it unannounced would be a
+# surprise, not a convenience. Declining is a first-class answer and prints what
+# to run later.
+$builtHost = $false
+if ($localHost -and [Environment]::UserInteractive) {
+  Write-Host ""
+  Write-Bold "Build the local host now?"
+  Write-Info "This installs Docker and the Dejima daemon inside a WSL2 distro."
+  Write-Info "First run takes a while -- it creates the distro and builds an image."
+  $go = Read-Host "Run 'dejima wsl setup' now? [Y/n]"
+  if (-not $go -or $go -match '^[Yy]') {
+    $exe = Join-Path $prefix 'dejima.exe'
+    if (Test-Path $exe) {
+      Write-Host ""
+      & $exe wsl setup
+      if ($LASTEXITCODE -eq 0) {
+        $builtHost = $true
+      } else {
+        Write-Host ""
+        Write-Host "  [!] 'dejima wsl setup' exited $LASTEXITCODE." -ForegroundColor Yellow
+        Write-Info "It is idempotent -- fix what it reported and run it again:"
+        Write-Info "    dejima wsl setup"
+      }
+    } else {
+      Write-Info "couldn't find $exe -- run 'dejima wsl setup' after reopening PowerShell"
+    }
+  }
+}
+
 Write-Host ""
 Write-Bold "Next steps"
-if ($candidate) {
+if ($builtHost) {
+  Write-Host @"
+
+  Your local host is up. Close + reopen PowerShell so 'dejima' is on PATH, then:
+
+       dejima                       # opens the dashboard
+       dejima init --name test      # create your first island
+
+  ---
+  Meant to connect to a Dejima server on ANOTHER machine instead? Re-run this
+  installer and answer [2].
+"@
+} elseif ($localHost) {
+  Write-Host @"
+
+  Close + reopen PowerShell so the new PATH is picked up. Then build the
+  local host -- this installs Docker and the Dejima daemon inside a WSL2
+  distro on this machine:
+
+       dejima wsl setup
+
+  First run takes a while (it creates the distro and builds an image).
+  After it finishes:
+
+       dejima              # opens the dashboard
+
+  If WSL is not installed yet, an ADMINISTRATOR PowerShell:
+
+       wsl --install --no-distribution
+       (older wsl.exe: wsl --install, reboot, then wsl --update)
+
+  then reboot and run 'dejima wsl setup'.
+
+  ---
+  Meant to connect to a Dejima server on ANOTHER machine? This branch skipped
+  the Tailscale and server-address setup you need for that. Re-run this
+  installer and answer [2].
+"@
+} elseif ($candidate) {
   Write-Host @"
 
   Close + reopen PowerShell so the new PATH and DEJIMA_HOST are picked up.

@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoos/dejima/internal/clientcfg"
+	"github.com/aoos/dejima/internal/selfupdate"
+	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/wsl"
 )
 
@@ -330,6 +332,19 @@ func runWSLSetup(parent context.Context, distro string, yes bool) error {
 	}
 	fmt.Println("  ✓ dejimad running")
 
+	// The island image, which used to arrive free with the source build's
+	// `make setup`. Without it a distro has a daemon and no image, and the
+	// operator's first `dejima init` fails AFTER a setup that said it worked.
+	//
+	// After the daemon starts, because `dejima image build` talks to it. Slow on
+	// a first run and near-instant afterwards, so it is announced rather than
+	// silent — a multi-minute quiet stretch is the thing people Ctrl-C.
+	fmt.Println("  • building the island image (first run is slow) …")
+	if err := buildIslandImage(ctx, distro); err != nil {
+		return fmt.Errorf("build island image: %w", err)
+	}
+	fmt.Println("  ✓ island image")
+
 	if err := saveWSLProfile(distro); err != nil {
 		return fmt.Errorf("save connection profile: %w", err)
 	}
@@ -378,34 +393,92 @@ func createDistro(ctx context.Context, distro string) error {
 	return nil
 }
 
-func installSocat(ctx context.Context, distro string) error {
-	_, err := wsl.Run(ctx, distro, `
+// wslStepErr attaches what the distro actually said to a failed step.
+//
+// d4's finding, and the problem is worth stating exactly: wsl.Run returns the
+// combined output AND an error, and every install step here discarded the
+// output. So a failure inside the distro surfaced as "install Docker engine:
+// exit status 1" — the one fact the operator already knew — while the apt error,
+// the DNS failure, the disk-full message that actually explains it went into a
+// variable nobody read. EVERY FAILURE ON THIS PATH WAS INVISIBLE, on the path
+// with the worst network and the least ability to reproduce.
+//
+// Tailed rather than whole: an image build log is thousands of lines, and
+// dumping all of it into a terminal buries the last twenty that matter.
+func wslStepErr(out string, err error) error {
+	if err == nil {
+		return nil
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n--- last output from inside the distro ---\n%s",
+		err, lastLines(out, 20))
+}
+
+// lastLines returns the final n lines of s.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
+// socatInstallScript installs socat, the tunnel the Windows client uses to reach
+// the daemon's unix socket. Without it the client cannot talk to the daemon at
+// all, which presents as "daemon unreachable" and looks like the daemon is down.
+//
+// EVERY PACKAGE COMMAND IS TRIED DIRECTLY BEFORE SUDO. The previous version led
+// with `sudo -n`, which assumes sudo is installed. A WSL distro commonly runs as
+// ROOT — this one does; its HOME is /root — and a minimal root image need not
+// ship sudo at all. There, `sudo -n apt-get` fails with "command not found"
+// under `set -e` for a machine that never needed sudo in the first place.
+//
+// The same try-then-elevate shape is already used by the daemon install below,
+// which is why that step kept working on the distro where this one did not.
+const socatInstallScript = `
 		set -e
 		if command -v apt-get >/dev/null 2>&1; then
-			sudo -n apt-get update -qq && sudo -n apt-get install -y -qq socat
+			(apt-get update -qq && apt-get install -y -qq socat) ||
+				(sudo -n apt-get update -qq && sudo -n apt-get install -y -qq socat)
 		elif command -v dnf >/dev/null 2>&1; then
-			sudo -n dnf install -y -q socat
+			dnf install -y -q socat || sudo -n dnf install -y -q socat
 		elif command -v apk >/dev/null 2>&1; then
-			sudo -n apk add --quiet socat
+			apk add --quiet socat || sudo -n apk add --quiet socat
 		else
 			echo "no supported package manager (need apt/dnf/apk)" >&2; exit 1
-		fi`)
-	return err
+		fi`
+
+func installSocat(ctx context.Context, distro string) error {
+	out, err := wsl.Run(ctx, distro, socatInstallScript)
+	return wslStepErr(out, err)
 }
 
 // installDocker runs Docker's official convenience script inside the distro and
 // puts the user in the docker group. WSL2 has no systemd by default on older
 // images, so we also make sure the daemon can be started by hand.
 func installDocker(ctx context.Context, distro string, yes bool) error {
+	// The login name is resolved in Go and substituted in. A `$(id -un)` here
+	// would have expanded to nothing through this channel and `|| true` would
+	// have swallowed the resulting usermod error — leaving the user quietly out
+	// of the docker group. Silent-and-swallowed is the failure mode that lasts
+	// longest; nothing would have looked wrong until something needed the group.
+	who, werr := wsl.Run(ctx, distro, "id -un")
+	who = strings.TrimSpace(who)
+	if werr != nil || who == "" {
+		who = "root" // the WSL default; better than an empty usermod target
+	}
 	if !yes && !confirmWSL("Install the Docker engine inside "+distro+" (get.docker.com)?") {
 		return fmt.Errorf("cancelled — install Docker in the distro yourself, then re-run")
 	}
-	_, err := wsl.Run(ctx, distro, `
+	out, err := wsl.Run(ctx, distro, strings.ReplaceAll(`
 		set -e
 		if ! command -v docker >/dev/null 2>&1; then
 			curl -fsSL https://get.docker.com | sudo -n sh
 		fi
-		sudo -n usermod -aG docker "$(id -un)" || true
+		sudo -n usermod -aG docker "USER_PLACEHOLDER" || true
 		# systemd is off in older WSL images; start dockerd directly if so.
 		if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
 			sudo -n systemctl enable --now docker
@@ -413,21 +486,129 @@ func installDocker(ctx context.Context, distro string, yes bool) error {
 			sudo -n service docker start || (sudo -n dockerd >/tmp/dockerd.log 2>&1 &)
 			sleep 5
 		fi
-		docker info >/dev/null 2>&1`)
+		docker info >/dev/null 2>&1`, "USER_PLACEHOLDER", who))
 	if err != nil {
-		return fmt.Errorf("%w\n(check inside the distro:  wsl -d %s -- docker info)", err, distro)
+		// The distro's own output first — a docker install fails for reasons only
+		// it can state (no DNS, disk full, an apt lock) — then the command to look
+		// deeper. The hint alone told the operator to go find what we already had.
+		return fmt.Errorf("%w\n(check inside the distro:  wsl -d %s -- docker info)",
+			wslStepErr(out, err), distro)
 	}
 	return nil
 }
 
-// installDejimad installs the daemon from the official install script, which
-// also builds the island image.
+// installDejimad installs the daemon from a RELEASE TARBALL, not from source.
+//
+// It used to run `curl … install.sh | bash`, which is a source build — and
+// install.sh installs Go on macOS and FAILS on Linux:
+//
+//	✗ Go is required. Install from https://go.dev/dl/ …
+//
+// A freshly created Ubuntu distro has no Go, so this step could never succeed on
+// a first run. `dejima wsl setup` had never worked end to end; the one person who
+// got a daemon up did it by hand.
+//
+// The release path is also the right one for the network this runs on. A source
+// build clones a repo and downloads a module graph — hundreds of round-trips —
+// and WSL's NAT is where that fails: in one session it produced a go.dev 404, a
+// connection reset mid-install, and an empty GitHub API response. This makes ONE
+// request.
+//
+// VERSION IS PINNED TO THIS CLIENT, not resolved to "latest". I argued the other
+// way when this was someone else's task and was weighing the wrong thing:
+// resolving latest costs an extra API call on precisely the flaky link this
+// change exists to stop depending on, and it can hand a client a daemon from the
+// far side of a release boundary. Pinning needs no lookup and makes the pair
+// coherent by construction. A dev build has no matching release, so it falls
+// back to latest — which is the only case where the extra call is unavoidable.
 func installDejimad(ctx context.Context, distro string) error {
-	_, err := wsl.Run(ctx, distro, `
+	ver := version.Version
+	if ver == "" || ver == "dev" || !strings.HasPrefix(ver, "v") {
+		var err error
+		if ver, err = latestReleaseTag(ctx); err != nil {
+			return err
+		}
+	}
+
+	// ARCHITECTURE IS RESOLVED IN GO, from a one-word command, and the URL is
+	// built here too.
+	//
+	// The first version did all of it in the shell — `arch=$(uname -m)`, a case
+	// statement, and ${} interpolation into a URL. It failed on the operator's
+	// machine with "unsupported architecture:" and NOTHING after the colon, so
+	// the substitution came back empty or the case never matched. Which layer
+	// mangled it (Windows argument quoting, wsl.exe's own re-parsing, a stray
+	// CR) was not worth determining, because the fix for all of them is the
+	// same: stop asking a fragile channel to carry logic it does not need to.
+	//
+	// `uname -m` is now the whole script. TrimSpace handles the CR that a
+	// Windows-side round trip can leave on it — which is itself a candidate for
+	// the original failure, since "x86_64\r" matches no case arm.
+	rawArch, err := wsl.Run(ctx, distro, "uname -m")
+	if err != nil {
+		return fmt.Errorf("read architecture from %s: %w", distro, err)
+	}
+	arch := strings.TrimSpace(rawArch)
+	var goarch string
+	switch arch {
+	case "x86_64", "amd64":
+		goarch = "amd64"
+	case "aarch64", "arm64":
+		goarch = "arm64"
+	case "":
+		// Name what came back rather than reporting an empty architecture as
+		// unsupported, which is what the first version did and which said
+		// nothing about the cause.
+		return fmt.Errorf("could not read the architecture of distro %q — `uname -m` returned nothing "+
+			"(raw: %q). Try `wsl -d %s -- uname -m` by hand", distro, rawArch, distro)
+	default:
+		return fmt.Errorf("unsupported architecture %q in distro %q — Dejima publishes linux amd64 and arm64", arch, distro)
+	}
+
+	url := fmt.Sprintf("https://github.com/Scusi-Inc/dejima/releases/download/%s/dejima_%s_linux_%s.tar.gz", ver, ver, goarch)
+	// The echo gets the BARE url so the operator sees a clickable address rather
+	// than one wrapped in quotes; curl gets the quoted one.
+	sumsURL := fmt.Sprintf("https://github.com/Scusi-Inc/dejima/releases/download/%s/SHA256SUMS", ver)
+	asset := fmt.Sprintf("dejima_%s_linux_%s.tar.gz", ver, goarch)
+	script := fmt.Sprintf(dejimadInstallScript,
+		url, shellSingleQuote(url), asset,
+		shellSingleQuote(sumsURL), shellSingleQuote(asset), asset, asset)
+	if out, err := wsl.Run(ctx, distro, script); err != nil {
+		return wslStepErr(out, err)
+	}
+	return nil
+}
+
+// latestReleaseTag resolves the newest published release. Only reached by a dev
+// build, which has no matching release to pin to.
+func latestReleaseTag(ctx context.Context) (string, error) {
+	info, err := selfupdate.LatestReleaseInfo(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve the latest release: %w", err)
+	}
+	if info.Tag == "" {
+		return "", fmt.Errorf("the latest release has no version tag")
+	}
+	return info.Tag, nil
+}
+
+// buildIslandImage builds the island image inside the distro.
+//
+// This step used to come free: install.sh handed off to `make setup`, which runs
+// `make image`. Dropping the source build drops that with it, and a distro with a
+// daemon and no image fails on the operator's first `dejima init` — AFTER a
+// setup that reported success, which is the worst place for it to surface.
+//
+// It needs no checkout: the daemon embeds the build context (islandimage
+// .Materialize), so a release-installed dejimad can build its own image.
+func buildIslandImage(ctx context.Context, distro string) error {
+	out, err := wsl.Run(ctx, distro, `
 		set -e
-		curl -fsSL https://dejima.tech/install.sh | SKIP_SERVICE=1 bash
-		command -v dejimad >/dev/null 2>&1`)
-	return err
+		if docker image inspect dejima/island >/dev/null 2>&1; then
+			echo already-built; exit 0
+		fi
+		dejima image build`)
+	return wslStepErr(out, err)
 }
 
 // startDaemonInWSL brings dejimad up in the background inside the distro and
@@ -436,27 +617,131 @@ func installDejimad(ctx context.Context, distro string) error {
 // start is the arrangement that actually survives there. `dejima wsl setup` is
 // cheap to re-run after a `wsl --shutdown`.
 func startDaemonInWSL(ctx context.Context, distro string) error {
-	out, err := wsl.Run(ctx, distro, `
-		set -e
-		if [ -S "$HOME/.dejima/dejimad.sock" ] && pgrep -x dejimad >/dev/null 2>&1; then
-			echo already-running; exit 0
-		fi
-		# Clear a stale socket from an unclean shutdown; dejimad refuses to bind over one.
-		[ -S "$HOME/.dejima/dejimad.sock" ] && ! pgrep -x dejimad >/dev/null 2>&1 && rm -f "$HOME/.dejima/dejimad.sock"
-		mkdir -p "$HOME/.dejima"
-		nohup dejimad --foreground >>"$HOME/.dejima/dejimad.log" 2>&1 &
-		for i in $(seq 1 60); do
-			[ -S "$HOME/.dejima/dejimad.sock" ] && echo started && exit 0
-			sleep 1
-		done
-		echo "dejimad did not create its socket within 60s; last log lines:" >&2
-		tail -n 20 "$HOME/.dejima/dejimad.log" >&2
-		exit 1`)
+	// This function used to build every path from $HOME and count with $i. On a
+	// real machine that produced
+	//
+	//	sh: 18: [: Illegal number:
+	//
+	// because $i arrived EMPTY — the same channel that had just eaten $work one
+	// function over. I removed the variables from the install script and left
+	// them here, so the operator's first run failed at the step after the one I
+	// had finally fixed.
+	//
+	// So: no shell variables anywhere. Paths are read once and interpolated in
+	// Go; the retry loop lives in Go, where a counter and a comparison are things
+	// that can be tested.
+	home, err := distroHome(ctx, distro)
 	if err != nil {
+		return err
+	}
+	sock := home + "/.dejima/dejimad.sock"
+	logf := home + "/.dejima/dejimad.log"
+
+	// SUPERVISION FIRST, BEFORE the already-running check.
+	//
+	// This block used to sit below that early return, which meant it never ran
+	// on the machine that most needs it: one where the daemon is ALREADY UP.
+	// Setup would print a clean run — socat present, Docker present, dejimad
+	// running, image built, connection verified — and silently not touch the
+	// unit, so a corrected unit never reached a host that had already been set
+	// up once. The operator re-ran setup three times against a daemon that was
+	// running fine and got no listener overrides, with nothing on screen
+	// suggesting a step had been skipped.
+	//
+	// Installing supervision is about the NEXT restart, not this one. Whether
+	// the daemon happens to be up right now has nothing to do with whether its
+	// unit is correct.
+	if !unitIsCurrent(ctx, distro) {
+		if note, err := ensureWSLDaemonSupervision(ctx, distro); err != nil {
+			fmt.Printf("  ! couldn't make the daemon survive a distro restart: %v\n", err)
+			fmt.Println("    it will still start now, but won't come back by itself")
+		} else if note != "" {
+			fmt.Println("  ✓ " + note)
+		}
+	}
+
+	if _, err := wsl.Run(ctx, distro, "test -S "+sock+" && pgrep -x dejimad >/dev/null 2>&1"); err == nil {
+		return nil // already up
+	}
+	// Clear a stale socket from an unclean shutdown; dejimad refuses to bind over
+	// one. Only when no daemon is actually running.
+	_, _ = wsl.Run(ctx, distro, "pgrep -x dejimad >/dev/null 2>&1 || rm -f "+sock)
+
+	// setsid AND </dev/null, not just nohup. Both matter, and neither is
+	// cosmetic:
+	//
+	//   setsid      puts dejimad in its OWN session. `wsl.exe -- sh -c '… &'`
+	//               returns as soon as sh exits, and WSL tears down that
+	//               session's processes with it. nohup only ignores SIGHUP; it
+	//               does not leave the session, so it does not survive this.
+	//
+	//   </dev/null  detaches stdin from the wsl.exe pipe. A backgrounded child
+	//               still holding that pipe dies when the Windows side closes
+	//               it, and it dies BEFORE it can log anything — which is
+	//               exactly the symptom: `dejima wsl start` timing out after
+	//               60s with NOT ONE new line in dejimad.log, while the same
+	//               binary run in the foreground comes up perfectly.
+	//
+	// The foreground run is the control that proved it: same binary, same
+	// distro, same user, works every time. The difference is only how it is
+	// detached.
+	// setsid comes from util-linux and is present on every distro we target, but
+	// a missing setsid must not become the same silent failure this fixes: an
+	// unresolved command would write "setsid: not found" and start nothing.
+	// Install the boot command first. Backgrounding inside the distro cannot
+	// survive on its own — `nohup … &` and `setsid nohup … </dev/null &` were
+	// both tried on a real machine and both left no socket and no process once
+	// the Windows window closed, because WSL tears the distro down with its last
+	// interop session. The boot command means the next thing to touch the distro
+	// starts the daemon, including the client's own dial.
+	start := "mkdir -p " + home + "/.dejima && " +
+		"if command -v setsid >/dev/null 2>&1; then " +
+		"setsid nohup dejimad --foreground </dev/null >>" + logf + " 2>&1 & " +
+		"else " +
+		"nohup dejimad --foreground </dev/null >>" + logf + " 2>&1 & " +
+		"fi"
+	if _, err := wsl.Run(ctx, distro, start); err != nil {
 		return fmt.Errorf("start dejimad in %s: %w", distro, err)
 	}
-	_ = out
-	return nil
+
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if _, err := wsl.Run(ctx, distro, "test -S "+sock); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	// Hand back the daemon's own last words. "It never started" and "it started
+	// and died" need different fixes and look identical from a timeout.
+	tail, _ := wsl.Run(ctx, distro, "tail -n 20 "+logf)
+	if strings.TrimSpace(tail) == "" {
+		tail = "(the log is empty — dejimad may not have started at all)"
+	}
+	return fmt.Errorf("dejimad in %s did not create its socket within 60s. Last log lines:\n%s",
+		distro, strings.TrimSpace(tail))
+}
+
+// distroHome reads the distro's home directory.
+//
+// `printenv HOME`, not `echo $HOME`: this channel eats `$`, which is why no
+// script in this file contains one.
+func distroHome(ctx context.Context, distro string) (string, error) {
+	out, err := wsl.Run(ctx, distro, "printenv HOME")
+	if err != nil {
+		return "", fmt.Errorf("read HOME from %s: %w", distro, err)
+	}
+	home := strings.TrimSpace(out)
+	if home == "" || !strings.HasPrefix(home, "/") {
+		return "", fmt.Errorf("distro %q reported an unusable HOME (%q)", distro, out)
+	}
+	return home, nil
 }
 
 // saveWSLProfile persists the distro as a connection profile and makes it
@@ -484,16 +769,82 @@ func saveWSLProfile(distro string) error {
 	return clientcfg.Save(cfg)
 }
 
-// confirmWSL asks a y/N question, defaulting to no. A non-TTY answers no, so a
-// piped invocation can't silently install things — use --yes for that.
+// confirmWSL asks one of `dejima wsl setup`'s questions. The default is YES.
+//
+// Both callers ask about creating Dejima-owned things inside a Dejima-owned
+// distro, on the happy path of a command the operator ran deliberately, and
+// `--yes` already exists for unattended runs. A no-default was protecting them
+// from the outcome they had just asked for — and install-client.ps1 asks its
+// own "run `dejima wsl setup` now?" and "install Tailscale?" with Enter=yes, so
+// one sitting taught two opposite meanings for the same keystroke.
 func confirmWSL(question string) bool {
-	fmt.Printf("%s [y/N] ", question)
-	answer := strings.ToLower(strings.TrimSpace(readSingleKey("")))
-	return answer == "y" || answer == "yes"
+	return confirmDefault(question, true)
 }
 
 // runWSLExe invokes wsl.exe with management arguments (not a distro command),
 // returning its combined output for error classification.
 func runWSLExe(ctx context.Context, args ...string) (string, error) {
 	return wsl.RunExe(ctx, args...)
+}
+
+// dejimadInstallScript downloads the release tarball and installs both binaries.
+// One raw literal so the dash guard checks all of it; $want_ver is supplied by
+// the caller as a shell assignment prepended to this text.
+// dejimadInstallScript has NO SHELL VARIABLES AT ALL. Only %s, for the URL.
+//
+// It had two — $work and $HOME — and on the operator's machine produced
+//
+//	mkdir: cannot create directory '': No such file or directory
+//
+// while running correctly under dash locally, and with $HOME confirmed set to
+// /root inside that very distro. So something between Go's exec and the distro's
+// sh expands `$` in the script text: `$work` becomes empty, the quotes survive,
+// and mkdir receives ”. d4 had already found that wsl.exe mangles embedded
+// double quotes; this is the same channel chewing something else.
+//
+// I am not going to keep characterising that channel. Every round of this has
+// cost the operator a reinstall, and each fix so far has been a smaller guess
+// than the last. Removing the class of thing that gets mangled ends it: no
+// variables, no substitution, no expansion — a literal path and a literal URL,
+// both decided in Go where they can be tested.
+//
+// /var/tmp, not $HOME and not /tmp: it exists on every distro, survives the idle
+// shutdown that empties tmpfs, and needs no expansion to name.
+const dejimadInstallScript = `
+		set -e
+		rm -rf /var/tmp/dejima-install
+		mkdir -p /var/tmp/dejima-install
+		echo "downloading %s"
+		curl -fsSL %s -o /var/tmp/dejima-install/%s
+		# Verify before installing, and note the SHAPE: no shell variables
+		# anywhere. This channel eats the dollar sign, which is why architecture is
+		# resolved
+		# in Go above — the same constraint applies here, so the asset name is
+		# interpolated and sha256sum -c does the comparison itself.
+		#
+		# It matters because the reason this stopped building from source is a link
+		# that drops connections mid-transfer. The same link truncates a tarball,
+		# and an unverified one installs a corrupt daemon that fails later and
+		# elsewhere. A MISSING SHA256SUMS is tolerated (an older release may not
+		# publish one); a MISMATCH is fatal.
+		cd /var/tmp/dejima-install
+		if curl -fsSL %s -o SHA256SUMS 2>/dev/null && grep %s SHA256SUMS > want.sha; then
+			sha256sum -c want.sha
+		else
+			echo "warning: no published checksum for %s; skipping verification" >&2
+		fi
+		tar -xzf /var/tmp/dejima-install/%s -C /var/tmp/dejima-install
+		# sudo -n, never bare sudo. This runs as a non-interactive child of the
+		# setup command: a password prompt here has no terminal to appear on, and
+		# the setup would hang with no output explaining why. Failing loudly beats
+		# stalling silently.
+		install -m 0755 /var/tmp/dejima-install/dejima /var/tmp/dejima-install/dejimad /usr/local/bin/ 2>/dev/null || sudo -n install -m 0755 /var/tmp/dejima-install/dejima /var/tmp/dejima-install/dejimad /usr/local/bin/
+		rm -rf /var/tmp/dejima-install
+		command -v dejimad >/dev/null 2>&1`
+
+// shellSingleQuote quotes a value for POSIX sh. The version comes from our own
+// build, not from user input, but a quoting bug here would corrupt a URL rather
+// than fail loudly.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

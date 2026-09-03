@@ -47,6 +47,23 @@ after the **Release testing & verification** checklist passes on a live host (Mi
 
 The things only you can do (on Minion / as owner), in priority order:
 
+> **The 1.0 tag will refuse to build until `fit.txt` is re-verified.**
+> `scripts/fit-freshness-check.py` runs in `release.yml` before anything is
+> built. Under 1.0 it allows ten releases of drift; at 1.0+ it demands the
+> `last revised … against vX.Y.Z` line match the tag exactly.
+>
+> This is deliberate and it is not a formality. `fit.txt` is public, is linked
+> from `llms.txt`, and is what a model reads when someone asks whether Dejima
+> suits them. In one week it was wrong in both directions — it claimed the
+> Windows path worked after that path regressed, and it nearly shipped "has
+> never worked end to end" the day after it started working. Both lines were
+> true when written. That is the failure mode: a verdict rots while the file
+> goes on looking maintained, and no other check in the pipeline reads prose.
+>
+> So at launch, re-walk what it claims rather than re-reading it. Confirm the
+> unproven list is still the real unproven list, then restamp the line.
+
+
 1. **Inter-island live-verify (catch-up — it's already shipping).** Follow
    [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md): deny-all →
    grant → cross-island message → action approve/deny → fail-closed → **wake-on-message (does
@@ -229,6 +246,31 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **A from-nothing Windows acceptance script** *(pre-1.0, not gating)* — walks
+  the whole path unattended: `wsl --unregister`, install the client,
+  `dejima wsl setup`, `wsl --terminate` and back, `dejima init` producing a
+  RUNNING ISLAND that clones, then a Windows reboot. Capturing on every failure:
+  `dejima logs`, `systemctl status dejimad`, `journalctl -u dejimad`, the daemon
+  log tail.
+
+  **Deliberately second to setup-proving-its-own-durability**, which d3 owns.
+  That check runs on EVERY machine on EVERY install and reports to the person
+  who can act on it — a user's first install *is* the from-nothing walk. This
+  script needs a real Windows box, is destructive by design (unregistering the
+  distro is the point — re-running setup on a healthy distro passes today, on a
+  machine that was broken for hours), and therefore runs occasionally, on one
+  box, when the operator chooses.
+
+  **It would also have found nothing during the 2026-09 Windows work.** Fifteen
+  defects, and the ones that mattered were in the daemon, the client and the
+  image rather than in the WSL script — see `docs/wsl-windows-postmortem.md`.
+  Its value is as a REGRESSION guard on a path that now works and that we will
+  keep touching, not as a discovery tool.
+
+  What it covers that setup cannot: a Windows reboot, and starting from an
+  unregistered distro. Those are the least likely regressions, which is why this
+  is roadmapped rather than queued.
+
 - **A situational island primer** *(the static half is fixed and guarded; see
   `image/island-primer.md`)* — agents get told what is possible IN GENERAL, and
   cannot tell "not granted yet" from "does not work". The static primer said an
@@ -248,8 +290,9 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   discoverability and duplicates the CLI, so it is an addition to revisit later,
   not a replacement.
 
-- **Adopting agents Dejima didn't launch** *(design written, Phase 1 approved to
-  build — see [`agent-adoption.md`](agent-adoption.md))* — changes the pitch from
+- **Adopting agents Dejima didn't launch** *(design written; **DISCOVERY
+  DEFERRED TO POST-1.0**, 2026-09-01 — see
+  [`agent-adoption.md`](agent-adoption.md))* — changes the pitch from
   "run your agents in containers" (a migration, which asks for a decision before
   giving anything back) to "whatever you're already running, Dejima can see it,
   ledger it, and gradually pull it into containment" (an adoption ramp). Someone
@@ -268,6 +311,69 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   started; it depends on a preflight diff of what the agent will lose and on the
   dirty-worktree guard, since a graduation that clones fresh destroys uncommitted
   work exactly the way `agent rm` did.
+
+  **DEFERRED POST-1.0 (operator, 2026-09-01): DISCOVERY.** The piece that finds
+  agents Dejima did not launch — transcript directories and running processes,
+  explicit and operator-initiated. Everything else in Phase 1 is either shipped
+  or in flight; discovery is what would make it *do* something, and it is the
+  part that should wait.
+
+  Why it waits, and the reasoning matters more than the decision because it will
+  be re-argued:
+
+  - **Nobody who uses Dejima today has agents to discover.** Its value is for
+    someone already running Claude Code loose who installs Dejima and wants their
+    existing work reflected rather than starting over. That is an ACQUISITION
+    argument, and acquisition is not where 1.0 is.
+  - **It is the only feature that needs host access with no grant.** Every other
+    host-file path goes through Port — scoped, brokered, ledgered. A discovery
+    scan is a filesystem walk outside that machinery, in a product whose claim is
+    that host access is audited. Defensible (read-only, operator-initiated) and
+    still the first exception, which is expensive to explain.
+  - **It is permanent maintenance on other vendors' internals.** Transcript
+    layouts and process signatures belong to Anthropic, OpenAI and Block, change
+    without notice, and differ per framework.
+
+  The spec argues Phase 1 is worth shipping alone because *observing is easy and
+  gating is hard*. That is true about COST and does not establish VALUE, which is
+  where it fails today.
+
+  **What is already banked, and is not wasted** — this is what makes deferring
+  cheap rather than a write-off. All of it is the expensive-to-retrofit half:
+
+  - the containment level as a non-optional field whose zero value cannot
+    reassure (retrofitting a level onto a shipped model, after surfaces read it,
+    is precisely how the bugs we spent two weeks removing were made);
+  - the naming, which caught two collisions before they shipped — `observed` vs
+    the existing `adopt` verb, and `witnessed` vs `observed` a second time in the
+    ledger, reached independently three days apart by the identical route;
+  - ledger provenance with `omitempty`, which found a real bug: a field
+    serialising on every row rewrites the hash of every historical row, so
+    `dejima audit --verify` fails on a ledger nobody touched — a failure that
+    reads as TAMPERING.
+
+  **STATUS OF WHAT DID SHIP: DESIGNED AND UNPROVEN, NOT DONE.** d3's flag, and it
+  belongs here because "shipped" will otherwise be read as "working". The
+  containment field, the `GET /v1/agents/observed` collection and the provenance
+  levels are all landed, all correct as far as unit tests and mutation checks can
+  establish, and ALL UNEXERCISED BY REAL DATA — no observed agent has ever
+  existed. That is not a criticism of the deferral; the model landing first is
+  exactly what the spec asked for. It means the first real observed agent is the
+  thing that tests this half, and until then it should be described as designed.
+
+  A consequence for the surfaces: `registered:false` distinguishes "none are
+  registered" from "Dejima has no way to learn about one", and with discovery
+  deferred indefinitely the second is the permanent state. A section rendering
+  "no observed agents" would be claiming Dejima looked. It must either not render
+  while `registered` is false, or say that Dejima cannot yet see agents outside
+  islands.
+
+  **The condition for picking it up again is not a date.** Discovery is the
+  prerequisite for Phase 2 (graduation), and graduation is the half with an
+  obvious story: *you are already running agents unprotected, here is the
+  one-click way to fix that*. If graduation becomes the bet, build discovery
+  first and this deferral ends. If it stays a maybe, discovery is scaffolding for
+  a building nobody has decided to put up.
 
 - **Dejima running locally on Windows** *(research done, see
   [`windows-native-daemon.md`](windows-native-daemon.md))* — today `local` in the

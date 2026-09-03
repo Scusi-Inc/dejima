@@ -13,7 +13,7 @@ func TestManagedKnownHostsArgs(t *testing.T) {
 	t.Setenv("USERPROFILE", home) // Windows home
 
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAExampleKeyData comment"
-	args, err := managedKnownHostsArgs("100.77.85.107", "2222", key)
+	args, err := managedKnownHostsArgs("100.101.102.103", "2222", key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,14 +31,14 @@ func TestManagedKnownHostsArgs(t *testing.T) {
 		t.Fatalf("known_hosts not written: %v", err)
 	}
 	got := strings.TrimSpace(string(b))
-	if got != "[100.77.85.107]:2222 "+key {
+	if got != "[100.101.102.103]:2222 "+key {
 		t.Errorf("known_hosts line = %q, want the bracketed host:port + key", got)
 	}
 
 	// A rotated key must REPLACE the file, not append — the whole point of
 	// self-healing. Rewrite with a new key and confirm the old one is gone.
 	newKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAARotatedKeyData comment"
-	if _, err := managedKnownHostsArgs("100.77.85.107", "2222", newKey); err != nil {
+	if _, err := managedKnownHostsArgs("100.101.102.103", "2222", newKey); err != nil {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(path)

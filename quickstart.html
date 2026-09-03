@@ -71,7 +71,7 @@
     <p class="scenario-sub">Your daily computer. The server and the client end up on the same box, with nothing separate to connect. Works on Windows too, by way of WSL2.</p>
 
     <div class="step">
-      <p class="step-label"><span class="step-n">1</span>Install it</p>
+      <p class="step-label step-label-plain">Install it</p>
       <div class="os-tabs" role="tablist" aria-label="Your computer's OS">
         <button type="button" class="os-tab is-active" data-os="unix" role="tab" aria-selected="true">
           <svg class="os-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.42 2.2-1.12 2.98-.75.84-1.98 1.49-3.02 1.4-.13-1.1.44-2.28 1.1-3.02.74-.83 2.03-1.46 3.04-1.36zM20.9 17.09c-.55 1.27-.82 1.84-1.53 2.97-.99 1.57-2.39 3.53-4.12 3.54-1.54.01-1.94-1-4.03-.99-2.09.01-2.53 1.01-4.07.99-1.73-.02-3.05-1.78-4.04-3.35C-1.34 15.6-1.6 9.66 1.68 6.83c1.05-.9 2.4-1.42 3.6-1.42 1.53 0 2.5.99 3.77.99 1.23 0 1.98-.99 3.77-.99 1.07 0 2.2.58 3.01 1.58-2.65 1.45-2.22 5.23.06 6.6z"/></svg>macOS / Linux</button>
@@ -79,71 +79,90 @@
           <svg class="os-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.1l7.5-1.03v7.24H3V5.1zm0 13.8l7.5 1.03v-7.15H3v6.12zM11.4 3.94L21 2.6v8.7h-9.6V3.94zm0 16.12L21 21.4v-8.62h-9.6v7.28z"/></svg>Windows</button>
       </div>
       <div class="os-panel is-active" data-os="unix">
+        <ol class="substeps">
+          <li>
+            <p>Install Dejima.</p>
         <div class="cmd">
           <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
-          <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+          <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         </div>
         <p class="small">Sets up Tailscale, the island image, and the background daemon (and Docker, on macOS).
           Idempotent, so it's safe to re-run.</p>
-        <p class="small">First time on a Mac? It asks before installing anything, and Docker Desktop's first launch
-          has a licence screen you need to accept before it can finish. See
-          <a href="#macos-first-run">what the macOS installer asks you</a>.</p>
+        <details class="disclose">
+          <summary>First time on a Mac?</summary>
+          <div class="disclose-body">
+            <p>It asks before installing anything, and Docker Desktop's first launch has a licence screen you have to
+              accept before it can finish. <a href="#macos-first-run">What the installer asks you</a>, including the
+              pause that looks like a hang.</p>
+          </div>
+        </details>
+          </li>
+        </ol>
       </div>
       <div class="os-panel" data-os="win">
-        <p class="small"><strong>First, make sure Windows has WSL2 itself.</strong> Dejima creates its own distro, but it
-          can't install the Windows feature that distros run on: that one needs an administrator and a reboot.
-          <code>wsl --status</code> tells the two apart. If it reports a version, you have WSL already and can skip to the
-          client install below, even if it lists no distro, because setup makes its own. If it answers <em>The Windows
-          Subsystem for Linux is not installed</em>, do this first, in an <strong>administrator</strong> PowerShell
-          (right-click <em>Terminal</em> &rarr; <em>Run as administrator</em>):</p>
-        <div class="cmd">
-          <pre><code>wsl --install --no-distribution</code></pre>
-          <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
-        </div>
-        <p class="small">Then reboot. <code>--no-distribution</code> stops Windows also installing a stock Ubuntu you'd never
-          use, since setup builds its own <code>dejima</code> distro. Older builds of <code>wsl.exe</code> don't know that flag:
-          run plain <code>wsl --install</code>, reboot, then <code>wsl --update</code>.</p>
-        <p class="small">Now open <strong>PowerShell</strong> (<kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em>),
-          <strong>not</strong> Command Prompt, and install the Windows client:</p>
-        <div class="cmd">
-          <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
-          <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
-        </div>
-        <p class="small">Partway through it asks for a server's tailnet address. <strong>Leave it blank</strong> and press
-          Enter, because here you are the server. An address typed there is saved as a persistent <code>DEJIMA_HOST</code>,
-          and that outranks the local profile <code>dejima wsl setup</code> writes two steps later. The setup would look like
-          it worked and then point your client somewhere else.</p>
-        <p class="small"><strong>Close PowerShell and open a new one.</strong> The installer adds <code>dejima</code> to your
-          PATH, and a window that was already open keeps the PATH it started with. Skip this and the next command is
-          <code>The term 'dejima' is not recognized</code>.</p>
-        <p class="small">Then build the host itself, inside WSL2:</p>
-        <div class="cmd">
-          <pre><code>dejima wsl setup</code></pre>
-          <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
-        </div>
-        <p class="small">Creates the <code>dejima</code> WSL2 distro, installs Docker and the daemon inside it, builds the
-          island image, and points your client at it. It's idempotent, so a failed run is safe to repeat. The dashboard's
-          setup screen offers this as a keystroke too, if you'd rather not type it.</p>
-        <p class="small"><strong>Let setup create and own the distro.</strong> Don't open the new distro first and give it a
-          user and a sudo password: setup provisions it unattended as root, and those steps fail on a permissions error that
-          doesn't point back to the cause.</p>
-        <p class="small"><strong>A quiet stretch is normal.</strong> It downloads an Ubuntu image, installs the Docker
-          engine, and builds the island image, printing little while it works. Don't interrupt it because it went silent.
-          The command gives itself 45 minutes before it gives up on its own.</p>
-        <p class="small">Already keep a WSL distro for other work? <code>dejima wsl setup --distro &lt;name&gt;</code> uses
-          that one instead of creating <code>dejima</code>. It has to be WSL&nbsp;2, not WSL&nbsp;1: WSL 1 has no real
-          kernel and can't run Docker.</p>
-        <p class="platform-note"><strong>This path is new.</strong> Hosting on Windows landed recently and has had far
-          less mileage than the macOS and Linux installs. If it breaks, an <a href="https://github.com/Scusi-Inc/dejima/issues" target="_blank" rel="noopener">issue</a>
-          is genuinely useful. Driving a server from Windows as a client is the well-trodden route, and it's the section below.</p>
+        <ol class="substeps">
+          <li>
+            <p>Enable Linux on Windows.
+              <span class="sub-note">Safe to run even if you already have WSL.</span></p>
+            <div data-wsl-install-hint>
+              <div class="cmd">
+                <pre><span class="cmd-pre">RUN AS ADMIN</span><code>wsl --install --no-distribution</code></pre>
+                <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+              <details class="disclose">
+                <summary>If that flag is rejected</summary>
+                <div class="disclose-body">
+                  <p>Older <code>wsl.exe</code> builds don't know it. Run plain <code>wsl --install</code>, reboot, then
+                    <code>wsl --update</code>.</p>
+                </div>
+              </details>
+            </div>
+          </li>
+          <li>
+            <p>Reboot.</p>
+          </li>
+          <li>
+            <p>Install Dejima, and let it build the Linux host.
+              <span class="sub-note">A normal PowerShell, not Command Prompt. Two questions, both answered by Enter.</span></p>
+            <div class="cmd">
+              <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
+              <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+            </div>
+            <details class="disclose">
+              <summary>The two questions</summary>
+              <div class="disclose-body">
+                <p><em>Where will your islands run?</em> Answer <strong>[1] on this machine</strong>, the default. That
+                  skips the Tailscale setup and the server-address prompt, neither of which applies when the host is
+                  this same box.</p>
+                <p><em>Run 'dejima wsl setup' now?</em> Answer <strong>Y</strong>, the default. That's the step that
+                  builds the Linux host, and the installer runs it for you.</p>
+              </div>
+            </details>
+            <details class="disclose">
+              <summary>What it builds, and what not to do first</summary>
+              <div class="disclose-body">
+                <p><code>dejima wsl setup</code> creates the <code>dejima</code> distro, installs Docker and the daemon
+                  inside it, builds the island image, and points your client at it. It goes quiet while it downloads and
+                  builds, so don't interrupt it; it gives itself 45 minutes.</p>
+                <p>Let it create the distro. If you open the new distro first and give it a user and a sudo password,
+                  setup's unattended steps fail on a permissions error that doesn't point back to the cause.</p>
+                <p>Declining the offer is fine. It's idempotent, so run it yourself whenever you like — but close and
+                  reopen PowerShell first, because the installer has just put <code>dejima</code> on your PATH and this
+                  window still has the old one.</p>
+                <p>Already keep a WSL distro for other work? <code>dejima wsl setup --distro &lt;name&gt;</code> uses that
+                  one. It has to be WSL&nbsp;2: WSL 1 has no real kernel and can't run Docker.</p>
+              </div>
+            </details>
+          </li>
+        </ol>
       </div>
     </div>
 
     <div class="step">
-      <p class="step-label"><span class="step-n">2</span>Run it</p>
+      <p class="step-label"><span class="step-n" id="run-step-n">2</span>Run it</p>
       <div class="cmd">
         <pre><code>dejima</code></pre>
-        <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+        <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
       </div>
       <p class="small">The dashboard opens and walks you to your first sandboxed agent. That's the whole setup.</p>
     </div>
@@ -165,18 +184,27 @@
           <p class="step-label"><span class="step-n">1</span>Install</p>
           <div class="cmd">
             <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
+          <div class="callout callout-tight">
+            <p><strong>Write down the address it prints.</strong> Near the end it says
+              <code>Your DEJIMA_HOST is: 100.101.102.103:7273</code>. That is what every other computer
+              needs to reach this server, and it is the one thing from this run you have to carry
+              elsewhere.</p>
+            <p class="small">Scrolled past it? Run <code>tailscale ip -4</code> on this machine and add
+              <code>:7273</code>.</p>
+          </div>
+          <p class="small">On a fresh Mac this stops to ask you a couple of questions and waits on Docker Desktop's
+            licence screen. <a href="#macos-first-run">Here's what to expect</a>, including the pause that looks like a hang.</p>
         </div>
         <div class="step">
           <p class="step-label"><span class="step-n">2</span>Provision the host</p>
           <div class="cmd">
             <pre><code>dejima onboard --provision-host</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
-          <p class="small">macOS: turns a fresh Mac mini into a server in one command (never-sleep power, Tailscale, Docker, the daemon). On Linux the installer already registered the service, so just run <code>dejima</code> to confirm it's up. Either way, note the <code>DEJIMA_HOST</code> it prints (e.g. <code>100.84.12.7:7273</code>).</p>
-          <p class="small">On a fresh Mac, step 1 stops to ask you a couple of questions and waits on Docker Desktop's
-            licence screen. <a href="#macos-first-run">Here's what to expect</a>, including the pause that looks like a hang.</p>
+          <p class="small"><strong>macOS:</strong> turns a fresh Mac mini into a server in one command &mdash; never-sleep power, Tailscale, Docker, the daemon.</p>
+          <p class="small"><strong>Linux:</strong> step 1 already registered the service, so you can skip this. Run <code>dejima</code> to confirm it's up.</p>
         </div>
       </div>
 
@@ -195,20 +223,23 @@
           <div class="os-panel is-active" data-os="unix">
             <div class="cmd">
               <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
-              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             </div>
+            <p class="small">On a fresh Mac this installs to <code>~/.local/bin</code> and adds it to your PATH, so
+              <strong>open a new terminal</strong> before the next step. To stay in this one:
+              <code>export PATH="$HOME/.local/bin:$PATH"</code>.</p>
           </div>
           <div class="os-panel" data-os="win">
-            <p class="small">Open <strong>PowerShell</strong> (Press <kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em> / <em>Windows PowerShell</em>) &mdash; <strong>not</strong> Command Prompt.</p>
+            <p class="small">Open <strong>PowerShell</strong> (Press <kbd>Win</kbd>+<kbd>X</kbd> &rarr; <em>Terminal</em> / <em>Windows PowerShell</em>) &mdash; <strong>not</strong> Command Prompt. It asks where your islands run: answer <strong>[2] on another machine</strong>, since your server is the box above.</p>
             <div class="cmd">
               <pre><code>irm https://dejima.tech/install-client.ps1 | iex</code></pre>
-              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             </div>
             <p class="small">If you see <code>'irm' is not recognized as an internal or external command</code>, you're in Command Prompt
               (<code>cmd.exe</code>) &mdash; <code>irm</code> and <code>iex</code> are PowerShell commands. Reopen in PowerShell, or paste this, which works from Command Prompt too:</p>
             <div class="cmd">
               <pre><code>powershell -NoProfile -Command "irm https://dejima.tech/install-client.ps1 | iex"</code></pre>
-              <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+              <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             </div>
           </div>
           <details class="disclose">
@@ -216,11 +247,11 @@
             <div class="disclose-body">
               <div class="cmd">
                 <pre><code>brew install Scusi-Inc/dejima/dejima</code></pre>
-                <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+                <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
               </div>
               <div class="cmd">
                 <pre><code>npm i -g dejima</code></pre>
-                <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+                <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
               </div>
               <p class="small">Homebrew (macOS) or npm (any platform, handy on Windows or if you already use Node). These install just the CLI, so you point it at your server in step&nbsp;2.</p>
             </div>
@@ -230,9 +261,22 @@
           <p class="step-label"><span class="step-n">2</span>Connect</p>
           <div class="cmd">
             <pre><code>dejima</code></pre>
-            <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+            <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
-          <p class="small">If you used the guided installer above, it captured your server's address, so this just connects. Installed via brew or npm? Point it at your server once with <code>dejima profile add mini &lt;host&gt;:7273 &amp;&amp; dejima profile switch mini</code>. Joining a teammate's server instead? They send you an invite (they run <code>dejima token invite --role operator</code>) and you run <code>dejima join &lt;invite&gt;</code>. See <a href="connect/">connect to a server</a> for the full flow, including turning on Tailscale MagicDNS so the invite carries a stable name.</p>
+          <p class="small">If you used the guided installer above, it captured your server's address, so this just connects.</p>
+          <details class="disclose">
+            <summary>Installed with brew or npm instead?</summary>
+            <div class="disclose-body">
+              <p>Those install only the CLI, so point it at your server once, using the address from
+                <strong>On the server</strong> step&nbsp;1:</p>
+              <div class="cmd">
+                <pre><code>dejima profile add mini 100.101.102.103:7273
+dejima profile switch mini</code></pre>
+                <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+            </div>
+          </details>
+          <p class="small">Joining a teammate's server instead? They send you an invite and you run <code>dejima join &lt;invite&gt;</code>. See <a href="connect/">connect to a server</a> for that flow, including Tailscale MagicDNS so the invite carries a stable name.</p>
         </div>
       </div>
     </div>
@@ -241,7 +285,7 @@
 </div>
 
 <h2 id="before">Good to know</h2>
-<p>The two commands above assume a couple of things. On most machines the installer handles them for you; here's what they are, in case you need to set them up by hand.</p>
+<p>The commands above assume a couple of things. On most machines the installer handles them for you; here's what they are, in case you need to set them up by hand.</p>
 
 <details class="disclose">
   <summary>Dejima needs Tailscale</summary>
@@ -316,6 +360,10 @@ sudo usermod -aG docker $USER       # log out and back in for the group to take 
 <section class="walkthrough">
   <h2 id="help">Stuck? Have an AI help</h2>
   <p>Installation question or an error you can't place? Paste this into your own AI, fill in your specifics, and it'll help using Dejima's own docs.</p>
+  <p class="small"><strong>If the macOS or Linux installer failed</strong>, it wrote a transcript to
+    <code>~/dejima-install-&lt;timestamp&gt;.log</code> and printed that path. Attach it to a
+    <a href="https://github.com/Scusi-Inc/dejima/issues" target="_blank" rel="noopener">GitHub issue</a> — it says what
+    happened and in what order, which a description of the failure can't. The Windows installer doesn't write one.</p>
   <div class="fitcheck">
     <div class="fit-actions">
       <button type="button" class="copy-btn" data-copy>Copy prompt</button>
@@ -331,7 +379,9 @@ First, FETCH and read these so your answers match the official docs:
 - Per-platform setup guides: https://dejima.tech/guides/
 
 My setup: [one machine, or a server plus a laptop] on [macOS / Linux / Windows].
-My question or the error I'm seeing: [describe it].</textarea>
+My question or the error I'm seeing: [describe it].
+
+If I'm on macOS or Linux and the installer failed, it wrote a transcript to ~/dejima-install-<timestamp>.log and printed the path. Ask me for the relevant part of it rather than guessing at the cause — and tell me which part you need, since it records my hostname and paths.</textarea>
   </div>
 </section>
 
@@ -393,7 +443,15 @@ dejima service uninstall             # stop + deregister the daemon
 sudo rm /usr/local/bin/dejima /usr/local/bin/dejimad
 rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
 </code></pre>
-<p class="small">On a client device, uninstalling is just deleting the <code>dejima</code> binary and removing <code>DEJIMA_HOST</code> from your shell profile. Docker and Tailscale are left in place — Dejima uses them but didn't install-own them; remove them separately if nothing else needs them.</p>
+<p class="small">On a Mac or Linux client device, uninstalling is just deleting the <code>dejima</code> binary and removing <code>DEJIMA_HOST</code> from your shell profile. Docker and Tailscale are left in place — Dejima uses them but didn't install-own them; remove them separately if nothing else needs them.</p>
+<p class="small"><strong>On Windows, three things outlive the uninstall.</strong> <code>dejima uninstall --client</code> removes the saved connection and nothing more, so after it you still have a working <code>dejima</code> on your PATH. That's deliberate rather than broken: a running <code>.exe</code> is locked and can't delete itself, and an uninstaller silently rewriting your PATH is worse than one that tells you. Remove them yourself, in PowerShell:</p>
+<pre><code>Remove-Item -Recurse "$env:LOCALAPPDATA\dejima"   # dejima.exe and any .old-* copies
+[Environment]::SetEnvironmentVariable('DEJIMA_HOST', $null, 'User')
+$p = [Environment]::GetEnvironmentVariable('Path','User') -split ';' |
+       Where-Object { $_ -ne "$env:LOCALAPPDATA\dejima" }
+[Environment]::SetEnvironmentVariable('Path', ($p -join ';'), 'User')
+</code></pre>
+<p class="small">Close any other windows running <code>dejima</code> first, or the first line can't delete the binary. If you installed with <code>DEJIMA_PREFIX</code> set, substitute that path in all three. <strong>Don't skip the <code>DEJIMA_HOST</code> line</strong>: that variable outranks every saved profile, so a leftover one stays in force even though <code>--client</code> reported removing the saved connection. Reinstall later and the client keeps dialling the old server, with nothing on screen explaining why.</p>
 
 <footer class="footer">
   <span class="footer-brand">Dejima</span>
@@ -409,15 +467,19 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
 <script>
 // Copy buttons on the Get-started command boxes: copy the sibling <code>.
 (function () {
+  var CHECK = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
   document.querySelectorAll('.cmd-copy').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var code = btn.closest('.cmd').querySelector('code');
       if (!code) return;
       var text = code.textContent;
       function done() {
-        var was = btn.textContent;
-        btn.textContent = 'Copied';
-        setTimeout(function () { btn.textContent = was; }, 1400);
+        var was = btn.innerHTML;
+        btn.innerHTML = CHECK;
+        btn.classList.add('is-copied');
+        setTimeout(function () {
+          btn.innerHTML = was; btn.classList.remove('is-copied');
+        }, 1400);
       }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done, done);
@@ -447,12 +509,26 @@ rm -rf ~/.dejima ~/.dejima-src       # state + config, source checkout
     document.querySelectorAll('.os-panel').forEach(function (pnl) {
       pnl.classList.toggle('is-active', pnl.getAttribute('data-os') === os);
     });
+    renumberRunStep();
+  }
+  // "Run it" is the step after the install steps, and Windows has more of them
+  // (enable WSL, reboot, install) than macOS/Linux (install). Counting the live
+  // list rather than hardcoding 2-or-4 means adding a step cannot leave the last
+  // one lying about where it sits.
+  function renumberRunStep() {
+    var badge = document.getElementById('run-step-n');
+    if (!badge) return;
+    var local = document.getElementById('run-local');
+    if (!local) return;
+    var panel = local.querySelector('.os-panel.is-active');
+    var n = panel ? panel.querySelectorAll('ol.substeps > li').length : 1;
+    badge.textContent = String(n + 1);
   }
   tabs.forEach(function (t) {
     t.addEventListener('click', function () { select(t.getAttribute('data-os')); });
   });
   var ua = (navigator.userAgent || '') + ' ' + (navigator.platform || '');
-  if (/Win/i.test(ua)) select('win');
+  if (/Win/i.test(ua)) select('win'); else renumberRunStep();
 })();
 </script>
 <script>

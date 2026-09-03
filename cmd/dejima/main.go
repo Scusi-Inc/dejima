@@ -49,8 +49,26 @@ func main() {
 		// Cobra already printed the error. If it's a can't-reach-the-daemon
 		// failure on a machine pointed at a host, offer a one-shot troubleshooter.
 		maybeOfferConnectionHelp(err)
+		pauseAfterRun()
 		os.Exit(1)
 	}
+	pauseAfterRun()
+}
+
+// pauseAfterRun holds the terminal until Enter when DEJIMA_PAUSE_AFTER is set.
+// The TUI sets it for the commands it hands the terminal to (tea.ExecProcess,
+// e.g. the Local models page running `dejima local install`): the dashboard
+// repaints the whole screen the instant the child exits, so without this the
+// installer's summary — or the error explaining why it stopped — is wiped
+// before it can be read. It lives here, after Execute, because cobra prints a
+// RunE error only once RunE has returned. A no-op for anyone running the CLI
+// by hand, and for a non-interactive stdin (EOF returns straight away).
+func pauseAfterRun() {
+	if os.Getenv("DEJIMA_PAUSE_AFTER") == "" {
+		return
+	}
+	fmt.Fprint(os.Stderr, "\npress Enter to return to the dashboard… ")
+	stdinReader.ReadString('\n')
 }
 
 // maybeOfferConnectionHelp surfaces help when a command can't reach the daemon.
@@ -158,6 +176,21 @@ func runConnectionTroubleshooter(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "  Target: %s  (from -p/--host)\n", host)
 	default:
 		fmt.Fprintf(os.Stderr, "  Target: %s  (DEJIMA_HOST)\n", host)
+	}
+
+	// A wsl:// target is a LOCAL socket tunnel through wsl.exe. None of the
+	// network checks below apply to it, and running them produces a confident
+	// wrong diagnosis: an operator whose distro was simply missing socat was told
+	// "Tailscale is up" (true and irrelevant) and then to run
+	// `dejima service install --tcp :7273` ON THE HOST — which for a WSL host is
+	// neither necessary nor correct, and sends them to configure a TCP listener
+	// for a transport that does not use one.
+	//
+	// Reported from a real first install. The daemon's own error already named
+	// the actual cause; the troubleshooter talked over it.
+	if wsl.Distro(host) != "" || strings.HasPrefix(host, wsl.Scheme) {
+		troubleshootWSL(ctx, host)
+		return
 	}
 
 	// 1. Is Tailscale present and up here? The host accepts only tailnet peers.
@@ -1806,8 +1839,18 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) (clo
 func cloneFailureHint(name, reason string) string {
 	switch reason {
 	case "auth":
+		// `dejima github connect` and NOT the token-push path. Both work; they
+		// have different prerequisites, and this message is read by someone who
+		// has just discovered they have no identity at all.
+		//
+		// connect is a guided device flow: it prints a code, the operator
+		// approves it in a browser, and the daemon captures the token. auth push
+		// requires an ALREADY-CONFIGURED `gh` on the client to push from — so
+		// pointing a new operator at it names the path with more prerequisites,
+		// exactly when they have fewest. An operator hit this after
+		// `github connect` had already succeeded elsewhere.
 		return fmt.Sprintf("clone failed (auth) — this island can't authenticate to the git remote. "+
-			"Push a GitHub token (`dejima auth push --github`), then `dejima upgrade %s` to re-clone.", name)
+			"Connect a GitHub identity (`dejima github connect`), then `dejima upgrade %s` to re-clone.", name)
 	case "not-found":
 		return fmt.Sprintf("clone failed (not-found) — the repo couldn't be reached or found. "+
 			"Check the URL and that the island's identity can see it (private repos need a token with access), then `dejima upgrade %s`.", name)
@@ -2522,8 +2565,16 @@ func newLsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Observed agents are enumerated here too, in their own section below the
+			// table — "the same treatment wherever islands are enumerated". Loaded
+			// before the no-islands early return on purpose: that message is a claim
+			// about the whole fleet, and printing it alone while an ungated agent is
+			// running would be a completed-search claim with a counter-example on the
+			// same machine.
+			observed := fetchObserved(cmd.Context(), c)
 			if len(items) == 0 {
 				fmt.Println("no islands yet — `dejima init --repo <url>` to create one")
+				printObservedSection(os.Stdout, observed)
 				return nil
 			}
 			// The daemon's version is the reference for the per-island skew note.
@@ -2579,7 +2630,11 @@ func newLsCmd() *cobra.Command {
 						writeRow(i)
 					}
 				}
-				return tw.Flush()
+				if err := tw.Flush(); err != nil {
+					return err
+				}
+				printObservedSection(os.Stdout, observed)
+				return nil
 			}
 
 			header := "NAME\tAGENT\tREPO\tSTATE\tCONTAINER"
@@ -2590,7 +2645,11 @@ func newLsCmd() *cobra.Command {
 			for _, i := range items {
 				writeRow(i)
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			printObservedSection(os.Stdout, observed)
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&showAgents, "agents", "a", false, "expand each island's agents")
@@ -3364,4 +3423,46 @@ func shortenRepo(repo string) string {
 		return repo
 	}
 	return "..." + repo[len(repo)-47:]
+}
+
+// troubleshootWSL diagnoses a wsl:// target, where the daemon is a local process
+// inside a distro and the transport is wsl.exe + socat rather than the network.
+//
+// The generic path's advice is not merely unhelpful here, it is misleading: it
+// reports on Tailscale (irrelevant) and recommends exposing TCP (wrong). The
+// failures that actually happen are all local and all nameable.
+func troubleshootWSL(ctx context.Context, host string) {
+	distro := wsl.Distro(host)
+	fmt.Fprintf(os.Stderr, "  This is a LOCAL WSL host (distro %q). Tailscale and TCP are not involved.\n\n", distro)
+
+	rep, err := wsl.Probe(ctx, distro)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ couldn't inspect the distro: %v\n", err)
+		fmt.Fprintln(os.Stderr, "      dejima wsl setup   (idempotent — safe to re-run)")
+		return
+	}
+	switch {
+	case !rep.Exists:
+		fmt.Fprintf(os.Stderr, "  ✗ distro %q does not exist. Create it:\n", distro)
+		fmt.Fprintln(os.Stderr, "      dejima wsl setup")
+	case !rep.HasSocat:
+		// The exact state the operator hit. socat is the tunnel; without it the
+		// client cannot reach a daemon that may be running perfectly well.
+		fmt.Fprintln(os.Stderr, "  ✗ socat is missing in the distro — that IS the tunnel, so nothing can")
+		fmt.Fprintln(os.Stderr, "    reach the daemon even if it is running. Re-run setup:")
+		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
+		fmt.Fprintln(os.Stderr, "    It is idempotent and will install what is missing.")
+	case !rep.HasDejima:
+		fmt.Fprintln(os.Stderr, "  ✗ dejimad is not installed in the distro:")
+		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
+	case !rep.HasDocker:
+		fmt.Fprintln(os.Stderr, "  ✗ Docker is not usable in the distro (islands cannot start without it):")
+		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
+	default:
+		fmt.Fprintln(os.Stderr, "  ✓ the distro has socat, dejimad and Docker — the daemon is likely just")
+		fmt.Fprintln(os.Stderr, "    not running. Start it:")
+		fmt.Fprintln(os.Stderr, "        dejima wsl start")
+		fmt.Fprintf(os.Stderr, "    If that fails, its log is inside the distro:\n")
+		fmt.Fprintf(os.Stderr, "        wsl -d %s -- tail -40 ~/.dejima/dejimad.log\n", distro)
+	}
 }

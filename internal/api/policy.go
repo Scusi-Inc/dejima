@@ -95,7 +95,7 @@ func (s *Server) addPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "policy.add", Island: from, Scope: action,
 		Detail: fmt.Sprintf("→ %s auto-approve [%s] max=%d ttl=%s", to, action, req.MaxCount, req.TTL),
 		Actor:  by, Decision: "allowed",
@@ -129,7 +129,7 @@ func (s *Server) removePolicy(w http.ResponseWriter, r *http.Request) {
 	if id, ok := IdentityFromContext(r.Context()); ok && id.Subject != "" {
 		by = id.Subject
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "policy.remove", Island: from, Scope: action, Detail: "→ " + to + " [" + action + "]", Actor: by,
 	})
 	w.WriteHeader(http.StatusNoContent)

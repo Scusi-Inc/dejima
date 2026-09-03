@@ -272,10 +272,19 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 /* command box with an inline copy button */
 .cmd { position: relative; margin: 0.3rem 0 0; min-width: 0; }
 .cmd pre { margin: 0; padding-right: 4.6rem; }
-.cmd-copy { position: absolute; top: 0.45rem; right: 0.45rem; background: var(--accent);
-  color: var(--bg); border: 0; border-radius: 6px; padding: 0.28rem 0.7rem;
-  font-weight: 600; cursor: pointer; font-size: 0.78rem; transition: opacity 0.12s; }
+.cmd-copy { position: absolute; top: 0.4rem; right: 0.4rem; background: var(--accent);
+  color: var(--bg); border: 0; border-radius: 6px; padding: 0.34rem;
+  cursor: pointer; line-height: 0; transition: opacity 0.12s; }
 .cmd-copy:hover { opacity: 0.85; }
+.cmd-copy .ico { width: 0.95rem; height: 0.95rem; display: block;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; }
+/* A label on the command line that is NOT part of the command. It lives outside
+   the <code>, and the copy handler reads querySelector('code').textContent — so
+   it cannot be copied by the button, and user-select stops a drag catching it
+   either. Muted, because it says how to run the line rather than what to run. */
+.cmd-pre { color: var(--muted); user-select: none; -webkit-user-select: none;
+  margin-right: 0.7rem; font-size: 0.85em; letter-spacing: 0.04em; }
 /* host + client side by side inside scenario 2 */
 /* Stacked full-width: "First" (server) over "Then" (your computer), so long
    install commands get the whole column and don't need a horizontal scrollbar. */
@@ -288,6 +297,43 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .hc .hc-sub { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.6rem; }
 
 /* Collapsible "Before you start" disclosures ------------------------- */
+/* Install substeps: ONE LINE, then the command. Everything else goes in a
+   <details> below it. Nine paragraphs for three commands is how an install page
+   stops being read at all — the caveats are each true and each one pushes the
+   thing you came for further down the screen. */
+.substeps { list-style: none; counter-reset: sub; margin: 0.5rem 0 0; padding: 0; }
+.substeps > li { counter-increment: sub; margin: 0 0 1rem; min-width: 0; }
+.substeps > li > p:first-child { margin: 0; color: var(--hover); font-weight: 600;
+  font-size: 0.95rem; display: flex; align-items: baseline; gap: 0.5rem; }
+.substeps > li > p:first-child::before { content: counter(sub); flex: 0 0 1.35rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 1.35rem; border-radius: 999px; background: var(--border);
+  color: var(--fg); font-size: 0.78rem; font-weight: 700; align-self: center; }
+.sub-note { color: var(--muted); font-weight: 400; font-size: 0.85rem; }
+/* The outer "Install it" label carries no number: on Windows the install is
+   three steps and on macOS one, so the numbers live on the ACTIONS and the
+   label just groups them. Two 1s and two 2s on screen at once read as broken
+   numbering, not as a hierarchy — which is the only reading available to
+   someone who has not seen the other tab. */
+.step-label-plain { padding-left: 0.05rem; }
+/* Inside an install step a disclosure is a CAVEAT, not a control. Boxed, it
+   competes with the command for attention and there are three of them per
+   panel — so the panel reads as a stack of widgets rather than as three
+   commands. No border, no fill, no full-width hit area: a quiet line with a
+   marker, sized down, so the command stays the loudest thing in its step. */
+.os-panel .disclose { border: 0; background: none; border-radius: 0; margin: 0.3rem 0 0; }
+.os-panel .disclose > summary { padding: 0.1rem 0 0.1rem 0.95rem; font-size: 0.82rem;
+  color: var(--muted); display: inline-block; }
+.os-panel .disclose > summary:hover { color: var(--hover); }
+.os-panel .disclose > summary::after { content: none; }
+.os-panel .disclose > summary::before { content: "+"; position: absolute; left: 0;
+  color: var(--muted); font-size: 0.95rem; line-height: 1.35; }
+.os-panel .disclose[open] > summary { border-bottom: 0; }
+.os-panel .disclose[open] > summary::before { content: "\2212"; }
+.os-panel .disclose-body { padding: 0.15rem 0 0.4rem 0.95rem; font-size: 0.88rem; }
+.os-panel .disclose-body p { margin: 0.5rem 0 0; }
+.os-panel .disclose-body > *:first-child { margin-top: 0.3rem; }
+
 .disclose { border: 1px solid var(--border); border-radius: 8px; margin: 0.6rem 0;
   background: var(--code-bg); }
 .disclose > summary { cursor: pointer; padding: 0.8rem 2.4rem 0.8rem 1.1rem;
@@ -317,6 +363,11 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .callout { border: 1px solid var(--border); border-left: 3px solid var(--accent);
   background: var(--code-bg); border-radius: 4px; padding: 0.9rem 1.1rem; margin: 1.6rem 0; }
 .callout p { margin: 0.3rem 0; }
+/* Inside a step column a callout is a note about the command just above it, not
+   a section break, so it sits close and stays narrow. */
+.callout-tight { margin: 0.7rem 0 0; padding: 0.7rem 0.9rem; }
+.callout-tight p { font-size: 0.9rem; }
+.callout-tight p.small { color: var(--muted); margin-top: 0.45rem; }
 .walkthrough { margin: 2.6rem 0; }
 .walkthrough > p { color: var(--muted); font-size: 0.95rem; margin: 0.3rem 0 0.9rem; }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"runtime"
 	"strings"
@@ -51,12 +52,48 @@ func diagnoseRemoteDaemon(host string) daemonDiagnosis {
 		Cause: "can't reach " + shown + " right now — your islands and agents are safe on the server; " +
 			"this is just the connection between here and there.",
 		Steps: compactSteps([]string{
+			nonDefaultPortHint(host),
 			"it's often a brief blip (the server can restart after an update) — this retries automatically, so give it ~15s.",
 			"check you're on the tailnet:  tailscale status   (the server should be listed) · tailscale ping " + pingTarget(host),
 			"refresh this client if it won't recover:  " + reinstall,
 			"still stuck? the server may be down — ask the operator, or check the host.",
 		}),
 	}
+}
+
+// nonDefaultPortHint fires when the configured port is not the daemon's, which
+// in practice means a typo.
+//
+// An operator spent a stretch of an evening on a host that "wasn't answering"
+// because their saved profile read :7373 rather than :7273 — a transposition,
+// invisible in a line they had read a dozen times, and indistinguishable from a
+// down server in every message we showed them. Their other machine worked, which
+// made it look like the SERVER was refusing this one.
+//
+// The check is deliberately narrow: it fires only on a port that is not the
+// default, and it does not claim the port is wrong — a deliberate non-default
+// port is legitimate. It just puts the two numbers next to each other, which is
+// all it takes to see a transposition.
+//
+// Empty when the port IS the default, and compactSteps drops empty entries, so
+// the common case is unchanged.
+func nonDefaultPortHint(host string) string {
+	_, port, err := net.SplitHostPort(hostPortOf(host))
+	if err != nil || port == "" || port == defaultDaemonTCPPort {
+		return ""
+	}
+	return "this profile uses port " + port + " — the daemon's default is " +
+		defaultDaemonTCPPort + ". If you did not choose " + port + " deliberately, that is the likeliest cause."
+}
+
+// hostPortOf normalises a host for SplitHostPort: a bare host with no port has
+// none to compare, and a URL form needs its scheme removed first.
+func hostPortOf(host string) string {
+	h := strings.TrimSpace(host)
+	if i := strings.Index(h, "://"); i >= 0 {
+		h = h[i+3:]
+	}
+	return strings.TrimSuffix(h, "/")
 }
 
 // pingTarget renders the bare host (no :port) for a `tailscale ping` hint,

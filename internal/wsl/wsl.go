@@ -48,7 +48,30 @@ const DefaultDistro = "dejima"
 // distro. It stays a `sh -c` expression (rather than a literal path) because the
 // WSL user's home isn't knowable from the Windows side — the distro may have
 // been created with any username.
-const socketExpr = `exec socat STDIO UNIX-CONNECT:"$HOME/.dejima/dejimad.sock"`
+// It WAITS BRIEFLY FOR THE SOCKET before connecting, because a dial is what
+// BOOTS the distro. WSL shuts an idle distro down; the next `wsl.exe -d …`
+// starts it, systemd then starts dejimad, and the socket appears a second or
+// two later. Connecting immediately loses that race, and the operator sees
+//
+//	Can't reach your Dejima host — your active profile "wsl" points at
+//	wsl://dejima, which isn't answering right now
+//
+// moments after a setup that verified the connection. Nothing is wrong; the
+// distro was asleep and the first knock woke it.
+//
+// A FIXED SEQUENCE OF SLEEPS RATHER THAN A LOOP WITH A COUNTER, deliberately.
+// This text crosses the WSL channel, and a counter in a script here is exactly
+// what produced `sh: 18: [: Illegal number:` on a real machine — the variable
+// arrived empty with its quotes intact. There is one variable, $HOME, which is
+// unavoidable (the distro's username is not knowable from Windows) and is
+// already proven on this path.
+//
+// Warm socket: no delay at all, since the first test succeeds. Cold: about five
+// seconds, spent once, instead of an error.
+const socketExpr = `S="$HOME/.dejima/dejimad.sock"
+[ -S "$S" ] || sleep 2
+[ -S "$S" ] || sleep 3
+exec socat STDIO UNIX-CONNECT:"$S"`
 
 // execCommand indirects exec.Command so tests can substitute a fake `wsl.exe`.
 var execCommand = exec.Command
@@ -101,10 +124,18 @@ func Supported() bool { return runtime.GOOS == "windows" }
 // then ignore costs a download, a reboot-time prompt, and the belief that the
 // thing they set up is the thing we run.
 //
-// The flag needs a reasonably recent wsl.exe. Where it is rejected, plain
-// `wsl --install` still works and simply installs more than is needed, so the
-// hint names both rather than dead-ending on an unrecognised flag.
-const InstallHint = "wsl --install --no-distribution   (older wsl.exe: wsl --install)"
+// The flag needs a reasonably recent wsl.exe. Where it is rejected, the fallback
+// is the plain form, a reboot, and then `wsl --update` to get a wsl.exe new
+// enough for everything after — d4 walked that path on a real box, which is why
+// the update step is here rather than inferred.
+//
+// The update step lives in THIS constant rather than only on the website
+// because d5 asserts the page's command block is a substring of this string,
+// read out of this file at check time. A step that exists only on the page is
+// invisible to that check and can drift silently — which is the whole failure
+// this constant was created to end.
+const InstallHint = "wsl --install --no-distribution\n" +
+	"      (older wsl.exe: wsl --install, reboot, then wsl --update)"
 
 // ErrUnsupported is returned when a `wsl://` target is used off Windows.
 var ErrUnsupported = errors.New("wsl:// targets work only on Windows (WSL interop); use a host:port address here")
@@ -124,6 +155,7 @@ func Dial(ctx context.Context, distro string) (net.Conn, error) {
 		distro = DefaultDistro
 	}
 	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", socketExpr)
+	isolateConsole(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("wsl stdin: %w", err)
@@ -254,12 +286,49 @@ func (c *procConn) setReadErr(err error) {
 // "unexpected EOF".
 func (c *procConn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
+
+	// wsl.exe writes SOME failures to STDOUT, not stderr — and this stream IS
+	// stdout, because that is the tunnel. So its error text arrives where the
+	// HTTP response should be, and net/http parses it:
+	//
+	//	malformed HTTP status code "\x00o\x00p\x00e\x00r\x00a\x00t\x00i\x00o\x00n"
+	//	Unsolicited response received on idle HTTP channel starting with
+	//	  "A\x00n\x00 \x00o\x00p\x00e\x00r\x00a\x00t\x00i\x00o\x00n\x00 …"
+	//
+	// which is Windows UTF-16 for "An operation on a socket could not be
+	// performed because the system lacked sufficient buffer space or because a
+	// queue was full. Error code: Wsl/Service/0x80072747". The operator saw
+	// pages of that spliced through their dashboard, and `dejima logs` failed
+	// with the mangled status line rather than with the actual fault.
+	//
+	// The discriminator is reliable: a dejimad response begins "HTTP/1.1", whose
+	// second byte is 'T'. UTF-16LE text has a NUL as its second byte. Nothing
+	// this daemon sends can look like that.
+	if n >= 2 && b[1] == 0x00 && b[0] != 0x00 {
+		msg := strings.Join(strings.Fields(decodeWSLText(b[:n])), " ")
+		return 0, fmt.Errorf("wsl distro %q: %s", c.distro, wslServiceHint(msg))
+	}
+
 	if err != nil && n == 0 {
 		if msg := c.failure(); msg != "" {
 			return n, fmt.Errorf("wsl distro %q: %s", c.distro, msg)
 		}
 	}
 	return n, err
+}
+
+// wslServiceHint adds the remedy for WSL service faults that have one. The raw
+// Windows text names the condition and nothing an operator can act on.
+func wslServiceHint(msg string) string {
+	// 0x80072747 is WSAENOBUFS: the WSL VM has run out of socket resources.
+	// Every dashboard poll opens a fresh wsl.exe + socat pair, so a long
+	// session churns through them; `wsl --shutdown` clears the VM state and the
+	// daemon comes back with the distro.
+	if strings.Contains(msg, "0x80072747") || strings.Contains(msg, "lacked sufficient buffer space") {
+		return msg + " — WSL has run out of socket resources. Run `wsl --shutdown` in " +
+			"PowerShell, then reopen; the daemon restarts with the distro."
+	}
+	return msg
 }
 
 // failure renders the subprocess's stderr as a diagnosis, "" when it said
@@ -272,7 +341,43 @@ func (c *procConn) failure() string {
 	}
 	// Collapse to one line; wsl.exe likes to wrap.
 	raw = strings.Join(strings.Fields(raw), " ")
-	if strings.Contains(raw, "socat") && (strings.Contains(raw, "not found") || strings.Contains(raw, "No such file")) {
+	return classifyStderr(raw)
+}
+
+// classifyStderr turns the subprocess's stderr into a diagnosis.
+//
+// Split out from failure() so it can be tested against real stderr text without
+// standing up a subprocess — the previous rule was wrong for an input nothing
+// exercised, and the only reason it survived was that the test fed it the one
+// string it got right.
+//
+// THE RULE THAT WAS WRONG: `contains "socat" && (contains "not found" ||
+// contains "No such file")`. When the DAEMON'S SOCKET is missing, socat runs
+// perfectly and reports:
+//
+//	socat[123] E connect(5, AF=1 "/root/.dejima/dejimad.sock", 45): No such file or directory
+//
+// which contains both "socat" and "No such file". So a running socat that could
+// not find the daemon was reported as socat not being installed. An operator
+// then installed socat — already present, newest version — and got the same
+// message, with the actual cause (dejimad not running) never named. The correct
+// diagnosis was the very next branch, unreachable because this one matched first.
+//
+// The word "socat" appearing in socat's own output is evidence that socat EXISTS.
+func classifyStderr(raw string) string {
+	// socat prefixes its own diagnostics with "socat[<pid>]". Anything carrying
+	// that is socat RUNNING and failing, which settles the question of whether
+	// it is installed.
+	ranSocat := strings.Contains(raw, "socat[")
+
+	// Only a SHELL saying it could not find the binary means it is absent.
+	// Match the phrasings shells actually produce, not the mere co-occurrence
+	// of a program name and a file error.
+	notFound := strings.Contains(raw, "socat: not found") ||
+		strings.Contains(raw, "socat: command not found") ||
+		strings.Contains(raw, "executable file not found")
+
+	if !ranSocat && notFound {
 		return "socat isn't installed in the distro — run `dejima wsl setup` (or `sudo apt install socat` inside it)"
 	}
 	if strings.Contains(strings.ToLower(raw), "no such file or directory") {
@@ -416,6 +521,7 @@ func Available() bool {
 // wrong. Mutating this function back to `return true` must fail something.
 func featurePresent() bool {
 	cmd := execCommand("wsl.exe", "--status")
+	isolateConsole(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
@@ -448,6 +554,7 @@ func List(ctx context.Context) ([]Distribution, error) {
 		return nil, ErrUnsupported
 	}
 	cmd := execCommand("wsl.exe", "-l", "-v")
+	isolateConsole(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
@@ -570,7 +677,8 @@ func Probe(ctx context.Context, distro string) (Report, error) {
 
 // run executes a shell script inside the distro and returns its stdout.
 func run(ctx context.Context, distro, script string) (string, error) {
-	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", script)
+	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", homePreamble+script)
+	isolateConsole(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
@@ -604,6 +712,29 @@ func Run(ctx context.Context, distro, script string) (string, error) {
 	return run(ctx, distro, script)
 }
 
+// homePreamble guarantees $HOME is set for every in-distro script.
+//
+// `wsl.exe -d <distro> -- sh -c …` does NOT pass HOME, and /bin/sh on Ubuntu is
+// dash, which — unlike bash — does not synthesise it from the passwd entry. So
+// $HOME was the EMPTY STRING in every script here, and the failure surfaced as
+//
+//	mkdir: cannot create directory '': No such file or directory
+//
+// which names neither HOME nor the shell. It went unnoticed because the scripts
+// that use $HOME had never successfully run: the one path that did work went
+// through `curl … | bash`, and bash fills HOME in, so the same distro looked
+// fine from one command and broken from another.
+//
+// This matters beyond a work directory: dejimad derives its socket and config
+// from HOME, so a daemon started with it empty would write to /.dejima and the
+// client would look somewhere else entirely — a much quieter failure than this
+// one.
+//
+// getent first (correct for any user), /root last (correct for the WSL default,
+// and better than nothing). `:` with := assigns only when unset or empty.
+const homePreamble = `: "${HOME:=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)}"; : "${HOME:=/root}"; export HOME
+`
+
 // RunExe invokes wsl.exe with *management* arguments (--install, --set-version,
 // …) rather than a command inside a distro. It returns the combined output even
 // on failure so callers can classify the error (e.g. an old wsl.exe that lacks
@@ -613,6 +744,7 @@ func RunExe(ctx context.Context, args ...string) (string, error) {
 		return "", ErrUnsupported
 	}
 	cmd := execCommand("wsl.exe", args...)
+	isolateConsole(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut

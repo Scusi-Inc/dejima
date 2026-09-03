@@ -132,7 +132,7 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "ctrl+[", "q":
 		m.secretsPane = nil
 		return m, nil
 	case "up", "k":
@@ -186,7 +186,7 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) secretsAddKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.secretsPane
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		v.adding = false
 		v.nameInput, v.valInput = "", ""
 		return m, nil

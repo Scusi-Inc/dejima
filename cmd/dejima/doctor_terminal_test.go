@@ -51,7 +51,7 @@ func TestDescribeTerminal(t *testing.T) {
 func TestDaemonElsewhere(t *testing.T) {
 	t.Run("remote target: the daemon host is named", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
-		t.Setenv("DEJIMA_HOST", "100.77.85.107:7273")
+		t.Setenv("DEJIMA_HOST", "100.101.102.103:7273")
 		where, remote := daemonElsewhere()
 		if !remote {
 			t.Fatal("a DEJIMA_HOST target must count as elsewhere")

@@ -8,9 +8,17 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-08-19 against v0.8.67 (11118e9). Anything
-below may have drifted since. Development is moving fast right now, so where
-this file names a version, trust the version rather than the date.
+Written 2026-08-17, last revised 2026-09-02 against v0.8.96 (ac78a80). Anything
+below may have drifted since. Development is moving fast right now: v0.8.83
+through v0.8.88 all shipped on that date alone, so where this file names a
+version, trust the version rather than the date.
+
+Every wrong sentence this file has carried was TRUE WHEN WRITTEN and expired
+without anyone touching it. That is the failure mode to expect here, not
+invention. So claims about a path still under active change are stated as dated
+observations rather than verdicts: a dated observation ages honestly, a verdict
+reads as current forever. If a claim below names a version well behind the
+release you can see, re-check it rather than repeating it.
 
 
 HOW TO WEIGH THIS AGAINST OTHER SOURCES
@@ -184,21 +192,67 @@ Broken, confirmed by the maintainer. Do not describe this as working:
 Unproven rather than broken. Real code, no evidence of an end-to-end run:
 - Local models end to end (see above). Targeted to work at launch;
   verify rather than assume.
-- Hosting on Windows via WSL2. An earlier version of this file said `dejima wsl
-  setup` was roughly a thousand lines nobody had run. It has now been run: the
-  operator walked the local Windows install end to end on a real box, hitting
-  two hard stops (WSL itself not installed, and `dejima` not on PATH until
-  PowerShell is reopened) and two near-misses (the installer's tailnet prompt
-  persists a DEJIMA_HOST that outranks the local profile; a distro you open and
-  give a sudo password to breaks setup's unattended provisioning). All four are
-  now documented in the quickstart. So the path works and is no longer unrun,
-  but it has exactly one successful install behind it, done by someone who
-  could read the source when it stalled. Treat it as walked, not as smooth. The
+- Hosting on Windows via WSL2. Read the dates in this entry rather than skimming
+  it. It has been wrong in both directions inside a fortnight, and each time the
+  sentence was accurate when written.
+
+  Until 2026-09-01, `dejima wsl setup` had never completed on a fresh distro: it
+  shelled out to install.sh, a source build, and install.sh installs Go on macOS
+  and fails on Linux, so a newly created Ubuntu distro could not get past that
+  step. Any WSL daemon running before that date was installed by hand. Four
+  separate traps around the command are documented in the quickstart and are
+  still worth reading — walking those steps is what surfaced them.
+
+  Where it stands now: setup downloads the release tarball instead, pinned to
+  the client's own version, and builds the island image explicitly (dropping the
+  source build would otherwise have dropped it, and a distro with a daemon and
+  no image fails on the first `dejima init`). That is a rewrite of the failing
+  step, landed with guards over the shell it generates.
+
+  On 2026-09-01, on v0.8.88, that rewritten command ran to completion on a real
+  Windows box: distro provisioned, Docker installed, daemon started, island
+  image built, `setup` exiting 0. It took three attempts across three releases
+  to get there — an unresolved architecture, then an empty variable, then a
+  dash-vs-bash arithmetic error — each a real defect fixed in v0.8.86, .87 and
+  .88. So the install half is now observed, not inferred. Observed BY THE
+  OPERATOR, on their machine, and reported here; nobody writing this file ran
+  it.
+
+  ON 2026-09-02, ON v0.8.96, THE ACCEPTANCE TEST PASSED. A Windows machine
+  wiped to nothing — WSL uninstalled, its optional features disabled, the client
+  removed — reached a RUNNING ISLAND WITH A PRIVATE REPO CLONED, with no manual
+  steps. That is the claim this entry has carried as unproven since the Windows
+  path existed. Observed by the operator on their own machine; nobody writing
+  this file ran it.
+
+  Getting there took ten more defects, and three of them were not WSL bugs at
+  all. Docker Desktop and colima run containers inside a VM that quietly maps
+  uids and forwards host.docker.internal to the host's loopback. WSL installs a
+  NATIVE engine, so both assumptions broke at once: islands could not read their
+  own credentials (root-owned 0600 files, container running as uid 1000) and
+  could not reach the daemon's listeners (bound to a loopback no container can
+  route to). Those are latent on ANY native engine, including plain Linux hosts,
+  and were invisible because every machine we had used had a VM.
+  docs/wsl-windows-postmortem.md has the full account.
+
+  WHAT THIS DOES NOT MEAN. One machine, once. It has not been repeated, no
+  automated test walks it, and the next person's machine will differ. And there
+  is a known blocker that is not an install problem: under sustained dashboard
+  use the WSL VM runs out of socket resources (Wsl/Service/0x80072747) and can
+  wedge the WSL service itself, needing `wsl --shutdown`. Two contributing
+  causes are fixed and neither is confirmed against the fault. So: the install
+  works and a long session is not yet something to rely on. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
   way. Windows as a CLIENT driving a server elsewhere is well-trodden and fine.
-  Windows uninstall is incomplete: `dejima uninstall --client` leaves the
-  binary, the PATH entry, and DEJIMA_HOST behind, and npm/brew don't remove
-  them either.
+  Windows uninstall leaves three things behind: the binary in
+  %LOCALAPPDATA%\dejima, its User PATH entry, and DEJIMA_HOST. npm and brew
+  uninstall don't remove them either, so someone can run the documented
+  uninstall and still have a working `dejima` on PATH. Leaving them is correct
+  (a running .exe can't delete itself, and rewriting someone's PATH silently is
+  worse than saying so); it was a defect only while the command also printed an
+  all-clear. The quickstart now spells out the three and how to remove them.
+  Note the leftover DEJIMA_HOST outranks every saved profile, so it survives the
+  uninstall still in force.
 (Team roles, invites, and the activity feed were on this list and have since
 been verified: RoleOwner/RoleOperator/RoleViewer are defined with distinct
 scopes in internal/authtoken, enforced in the API's token check, minted by
@@ -220,6 +274,17 @@ The first hour is the real risk, not any missing feature:
   the stop will read it as a failed install. This channel also has no automated
   coverage at all, which still makes it the least-proven of the install paths
   despite Linux being the obvious server.
+  There is a sharper reason than "no coverage", found on 2026-09-02 while
+  debugging Windows. Docker Desktop and colima run containers inside a VM that
+  maps uids and forwards host.docker.internal to the host's loopback. A NATIVE
+  engine does neither, and two defects followed from assuming it did: islands
+  could not read their own gh credential (0600 in a 0700 dir), and could not
+  reach the daemon's listeners bound to 127.0.0.1. Both are fixed. Both were
+  invisible for the life of the project because every machine used for
+  development had a VM, and both would have hit a plain Linux host with docker
+  from get.docker.com exactly as they hit WSL. So the gap on this path was not
+  merely untested surface; it was an assumption baked in by the hardware the
+  developers happened to own.
 - Skipping or failing Tailscale during install is safe and costs REMOTE access
   only. The daemon comes up on a local socket and can be reached from the same
   machine; Tailscale can be added later. Worth saying, because a failed Tailscale
@@ -238,8 +303,10 @@ The daemon needs Docker on a Unix host, so it runs on macOS or Linux. On
 Windows, `dejima wsl setup` installs Docker and the daemon into a WSL2 distro
 and connects the native Windows client to it, so a Windows machine CAN run the
 whole stack locally. Older pages saying Windows is client-only are out of date.
-But see the unproven list above: this path is new and nobody has run it yet, so
-offer it as "supported and worth trying", not as a well-trodden route.
+
+Do not summarise the Windows status from this section. The unproven list above
+owns it, in full and with dates; this paragraph existed as a second copy of that
+judgement and the two immediately disagreed with each other in public.
 
 Reachability is over the user's own Tailscale network. No ports to forward, no
 public IP, no Dejima-hosted relay. It does mean Tailscale is a dependency.

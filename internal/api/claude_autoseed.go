@@ -155,7 +155,7 @@ func (s *Server) maybeAutoSeedClaudeFrom(ctx context.Context, p *project.Project
 	// event so the operator always knows their login was captured and from where.
 	s.log.Info("claude auto-seed: captured the operator's login; future islands inherit it",
 		"source_island", p.Name)
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type:   string(events.TypeCredentialsAutoSeeded),
 		Island: p.Name,
 		Actor:  "daemon",

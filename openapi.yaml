@@ -20,7 +20,7 @@ info:
     `SessionEnvelope` schema for the wire protocol.
 servers:
   - url: http://{host}
-    description: Daemon over the tailnet (DEJIMA_HOST, e.g. 100.84.12.7:7273)
+    description: Daemon over the tailnet (DEJIMA_HOST, e.g. 100.101.102.103:7273)
     variables:
       host:
         default: 127.0.0.1:7273
@@ -185,7 +185,7 @@ paths:
         old process keeps running changes the version on disk and not the one in
         memory. Agents bundled in the island image (claude-code) return 409
         naming `dejima upgrade` instead, because their version is the image's.
-      operationId: updateAgent
+      operationId: updateAgentFramework
       requestBody:
         required: false
         content:
@@ -1978,6 +1978,39 @@ paths:
       responses:
         "101": { description: Switching Protocols (WebSocket) }
         "403": { $ref: "#/components/responses/HostTerminalsDisabled" }
+  /v1/agents/observed:
+    get:
+      tags: [agents]
+      summary: Agents Dejima observes but does not gate
+      operationId: listObservedAgents
+      description: >
+        Agents Dejima can SEE and cannot STOP: running outside any island,
+        reading whatever their user reads, holding whatever credentials their
+        user holds. Dejima records what they report about themselves; nothing
+        gates them.
+
+        A SEPARATE COLLECTION, not a flag on the island list. An observed agent
+        has no island, so it cannot appear in `IslandInfo.agents` — and that is
+        the point rather than a limitation. Every island-keyed surface is
+        unreachable from an observed agent by construction. The grants pane is
+        the case that matters: it takes an island name and renders "fully
+        contained" when nothing is granted, which an observed agent satisfies by
+        construction, having no grants because nothing gates it. With no island
+        to key on, that pane has no way to be asked about one.
+
+        Each returned agent carries `containment: observed`, stamped by the
+        server from the collection it came from — never read off a stored record.
+
+        RETURNS AN EMPTY LIST WITH `registered: false` TODAY. There is no
+        registration path yet, and the flag exists so a client can tell "none are
+        registered" from "registration does not exist". Rendering an empty
+        section for the second claims Dejima looked and found nothing.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObservedAgentsResponse" }
   /v1/agent-types:
     get:
       tags: [daemon]
@@ -2858,10 +2891,85 @@ components:
           description: >
             false for a tenant island, where this grant does not apply at all —
             tenants use a per-island GitHub identity, never the host's login.
+    ObservedAgentsResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          description: >
+            Observed agents, each stamped `containment: observed` by the server.
+            Never contained — this collection is the source of that fact, the way
+            an island's agent list is the source of the contained one.
+          items: { $ref: "#/components/schemas/ObservedAgent" }
+        registered:
+          type: boolean
+          description: >
+            Whether any mechanism for registering an observed agent exists yet.
+            FALSE today. Stated rather than inferred from an empty list, because
+            "none registered" and "registration is not built" are different
+            answers and only one of them means Dejima looked.
+    ObservedAgent:
+      type: object
+      description: >
+        An agent Dejima can SEE and cannot STOP. Deliberately NOT an `AgentInfo`:
+        that type carries `tmux`, `branch`, `worktree` and `attachable`, which
+        for an observed agent are meaningless or misleading. `attachable` is the
+        sharp one — attaching is something Dejima can do to an agent it LAUNCHED
+        and cannot do to one it merely watched. A field that does not exist
+        cannot be read by a hopeful renderer.
+
+        `alive`, `last_active` and `working` are what the agent reports about
+        ITSELF. Dejima does not verify any of it; that is the whole difference
+        between observing and gating.
+      properties:
+        id: { type: string }
+        label: { type: string }
+        containment:
+          type: string
+          enum: [observed]
+          description: >
+            Always `observed`, and always present on the wire (not omitted when
+            empty). Read containment off THIS FIELD rather than inferring it from
+            which endpoint the entry arrived on — inferring re-hides the
+            guarantee one layer above where the field fixed it. An unstamped
+            record shows as "" rather than vanishing, so a missing stamp is
+            visible while being debugged.
+        alive: { type: boolean, description: "self-reported; Dejima does not verify it" }
+        last_active: { type: string, format: date-time }
+        working: { type: string, description: "self-reported current task, if the agent supplies one" }
+        source: { type: string, description: "how discovery found this agent — so an operator can answer why Dejima knows about it" }
     AgentInfo:
       type: object
       properties:
         id: { type: string }
+        containment:
+          type: string
+          enum: [contained, observed]
+          description: >
+            Whether Dejima GATES this agent or merely watches it. `contained`
+            means the agent runs inside an island: brokered by Port, its host
+            crossings ledgered.
+
+            ABSENT IS NOT A LEVEL, and a client must treat it as NOT CONTAINED.
+            The two states are indistinguishable from outside — an agent nothing
+            gates has no Port scopes, no MCP grants, no links and no capabilities,
+            which is byte-identical to an agent for which everything is denied. So
+            a missing value means "nobody said", never "it is fine". The safe
+            default is the least reassuring answer.
+
+            The server stamps this at the boundary from where the agent actually
+            lives, not from a stored record, so it cannot drift from the
+            collection that already implies it.
+
+            `observed` means Dejima can SEE this agent and cannot STOP it: it runs
+            outside any island, reads whatever its user can read, and holds
+            whatever credentials its user holds. Dejima records what it reports
+            about itself; nothing gates it.
+
+            Named `observed` rather than `adopted` deliberately — `dejima adopt`
+            already means the opposite (migrating a local project INTO an island),
+            and one word for both ends of the containment axis would put a
+            false-containment claim in the vocabulary every surface is built from.
         type: { type: string }
         label: { type: string }
         tmux: { type: string }
@@ -3327,13 +3435,13 @@ components:
     UpdateAgentRequest:
       type: object
       properties:
-        resume: { type: boolean, description: continue the previous conversation on relaunch, where the framework supports it }
+        resume: { type: boolean, description: "continue the previous conversation on relaunch, where the framework supports it" }
     UpdateAgentResponse:
       type: object
       properties:
         agent: { type: string }
         command: { type: string, description: the upgrade command that ran inside the island }
-        output: { type: string, description: tail of the command output, marked when truncated }
+        output: { type: string, description: "tail of the command output, marked when truncated" }
         restarted:
           type: boolean
           description: >-
@@ -3593,6 +3701,36 @@ components:
       type: object
       properties:
         seq: { type: integer }
+        provenance:
+          type: string
+          enum: [brokered, witnessed, self-reported]
+          description: >
+            HOW Dejima knows this row is true. Three genuinely different claims,
+            and presenting them identically is how a strong one gets inherited by
+            a weak one.
+
+            `brokered` — the daemon ALLOWED the action; it went through the
+            broker. `witnessed` — the daemon SAW a contained action happen
+            without gating it. `self-reported` — the subject's own account of
+            itself, tailed from something the agent wrote. Dejima did not see it
+            and cannot verify it.
+
+            A CLIENT MUST RENDER self-reported ROWS DISTINCTLY. An observed
+            agent, or anything that has compromised it, can write whatever it
+            likes, and omission is trivial — it simply does not write the line.
+            "Here is an audit trail" and "here is an audit trail, some rows of
+            which are the subject's own account of itself" are different
+            products, and if the rows look alike the integrity claim of the whole
+            ledger degrades to that of its weakest one.
+
+            ABSENT MEANS UNKNOWN, NOT BROKERED. It appears on rows written before
+            this field existed — brokered in fact, since self-reporting did not
+            exist then — but a client must not infer that, because the reasoning
+            stops holding the moment a new writer forgets to stamp.
+
+            Named `witnessed` rather than `observed` deliberately: `observed` is
+            already the containment level of an UNGATED AGENT, and one word for
+            both would be a second collision on the axis this product is about.
         time: { type: string, format: date-time }
         type: { type: string, description: "port.grant | port.revoke | trade.read | trade.write | capability.* | mcp.* | api.request | <lifecycle event>" }
         island: { type: string }

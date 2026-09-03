@@ -118,7 +118,7 @@ func (m tuiModel) restartKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "ctrl+[", "q":
 		m.restartPane = nil
 		return m, nil
 	case "up", "k":

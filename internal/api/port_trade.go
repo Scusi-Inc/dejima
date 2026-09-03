@@ -94,7 +94,7 @@ func (s *Server) handlePortIntake(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fail closed: record the crossing before any byte enters the island.
-	if err := s.ledgerAppend(ledger.Entry{
+	if err := s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "trade.read", Island: name, Scope: scope.Name, Path: rel,
 		Mode: scope.Mode, Bytes: size, SHA256: sum, Decision: "allowed",
 	}); err != nil {
@@ -167,7 +167,7 @@ func (s *Server) handlePortExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if err := s.ledgerAppend(ledger.Entry{
+	if err := s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "trade.export", Island: name, Path: src, Bytes: size,
 		SHA256: sum, Decision: "allowed", Detail: dest,
 	}); err != nil {
@@ -228,7 +228,7 @@ func (s *Server) handlePortWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fail closed: record the write before any byte lands in the user's scope.
-	if err := s.ledgerAppend(ledger.Entry{
+	if err := s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "trade.write", Island: name, Scope: scope.Name, Path: rel,
 		Mode: scope.Mode, Bytes: size, SHA256: sum, Decision: "allowed",
 	}); err != nil {

@@ -780,6 +780,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("PUT /v1/credentials/providers/{provider}", s.handlePutProviderCred)
 	mux.HandleFunc("DELETE /v1/credentials/providers/{provider}", s.handleDeleteProviderCred)
 	mux.HandleFunc("GET /v1/agent-types", s.handleAgentTypes)
+	mux.HandleFunc("GET /v1/agents/observed", s.handleObservedAgents)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}/config", s.configureAgent)
 	mux.HandleFunc("GET /v1/events/subscriptions", s.listSubscriptions)
 	mux.HandleFunc("POST /v1/events/subscribe", s.subscribeWebhook)
@@ -1271,12 +1272,18 @@ func islandPeerRoster(infos []AgentInfo) []AgentInfo {
 	out := make([]AgentInfo, len(infos))
 	for i, ai := range infos {
 		out[i] = AgentInfo{
-			ID:       ai.ID,
-			Label:    ai.Label,
-			Type:     ai.Type,
-			State:    ai.State,
-			Branch:   ai.Branch,
-			Worktree: ai.Worktree,
+			// Carried, not re-asserted: the roster is a projection of an island's
+			// own agent list, so the level was already decided at that boundary.
+			// Dropping it would make every peer read as unset, which callers must
+			// treat as not-contained — safe, but wrong, and the wrong kind of wrong
+			// for a list whose whole purpose is "who else is in here with me".
+			Containment: ai.Containment,
+			ID:          ai.ID,
+			Label:       ai.Label,
+			Type:        ai.Type,
+			State:       ai.State,
+			Branch:      ai.Branch,
+			Worktree:    ai.Worktree,
 		}
 	}
 	return out
@@ -1399,7 +1406,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 	isSpawn := TokenIslandFromContext(r.Context()) != ""
 	if isSpawn {
 		if err := s.authorizeSpawn(p, spec); err != nil {
-			s.ledgerAppend(ledger.Entry{
+			s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 				Type: "spawn.deny", Island: name, Scope: spec.Type,
 				Detail: err.Error(), Actor: "agent:" + spec.SpawnedBy, Decision: "denied",
 			})
@@ -1418,7 +1425,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		// Reserve a lifetime-budget slot (max_total) atomically — still under the
 		// projectLock — and ledger the spawn with its lineage.
 		_, _ = spawn.Update(func(st *spawn.Store) error { st.Consume(name); return nil })
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "spawn.create", Island: name, Scope: spec.Type,
 			Detail: "sub-agent " + id + " spawned by " + spec.SpawnedBy, Actor: "agent:" + spec.SpawnedBy, Decision: "allowed",
 		})
@@ -1532,7 +1539,7 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 	if isTokenReap {
 		// Ledger the agent-initiated teardown (a privileged crossing), matching the
 		// auto-reaper's spawn.reap shape so audit sees both paths uniformly.
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "spawn.reap", Island: name,
 			Detail:   "self-reaped sub-agent " + id + " (spawned by " + agentCopy.SpawnedBy + ")",
 			Decision: "allowed",
@@ -3350,16 +3357,21 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 	for i := range p.Agents {
 		a := &p.Agents[i]
 		ai := AgentInfo{
-			ID:         a.ID,
-			Type:       a.Type,
-			Label:      a.Label,
-			Tmux:       a.Tmux,
-			Branch:     a.Branch,
-			Worktree:   a.Worktree,
-			Attachable: handlers.Attachable(a.Type),
-			CreatedAt:  a.CreatedAt,
-			Ephemeral:  a.Ephemeral,
-			SpawnedBy:  a.SpawnedBy,
+			// Stamped HERE, not read from the record. This function's whole
+			// premise is that it is enumerating one island's agents, so being in
+			// an island is a fact it knows and the stored agent does not. A record
+			// that carried its own level could drift from where it actually lives.
+			Containment: ContainmentContained,
+			ID:          a.ID,
+			Type:        a.Type,
+			Label:       a.Label,
+			Tmux:        a.Tmux,
+			Branch:      a.Branch,
+			Worktree:    a.Worktree,
+			Attachable:  handlers.Attachable(a.Type),
+			CreatedAt:   a.CreatedAt,
+			Ephemeral:   a.Ephemeral,
+			SpawnedBy:   a.SpawnedBy,
 		}
 		// Resolve the spawner's name from the same roster so lineage renders as a
 		// name, not a bare id.
@@ -3441,6 +3453,10 @@ func islandGHConfigDir(p *project.Project) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(githubid.ConfigYAML()), 0o600); err != nil {
 		return "", fmt.Errorf("write island gh config.yml: %w", err)
 	}
+	// The container runs as uid 1000 and cannot read a root-owned 0600 file in a
+	// 0700 directory. Without this the island has its credential mounted and
+	// unreadable, and every private clone fails as an auth error.
+	makeIslandReadableTree(dir)
 	return dir, nil
 }
 
@@ -3469,6 +3485,7 @@ func islandGitConfig(p *project.Project) (string, error) {
 	if err := os.WriteFile(path, []byte(githubid.GitConfig(id)), 0o600); err != nil {
 		return "", fmt.Errorf("write island gitconfig: %w", err)
 	}
+	makeIslandReadable(path)
 	return path, nil
 }
 
@@ -3526,6 +3543,7 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "providers.json"), b, 0o600); err != nil {
 		return "", fmt.Errorf("write island llm manifest: %w", err)
 	}
+	makeIslandReadableTree(dir)
 	return dir, nil
 }
 

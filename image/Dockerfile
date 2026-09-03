@@ -29,6 +29,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         vim \
     && rm -rf /var/lib/apt/lists/*
 
+# bubblewrap: codex's sandbox. Without it codex warns on every start —
+#
+#   ⚠ Codex could not find bubblewrap on PATH. … Codex will use the bundled
+#     bubblewrap in the meantime
+#
+# — and falls back to a bundled copy. The fallback works, so this is not a
+# failure; it is a warning an operator sees on first contact with a bundled
+# agent, about a dependency the IMAGE is supposed to provide. Installing it from
+# the distro is also the version the OS patches, which the bundled one is not.
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+
 # GitHub CLI (gh) for credential helper + `gh pr create`-style affordances.
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -168,7 +180,25 @@ ENV HOME=/home/dejima \
 # corruption its Ink renderer otherwise produces over tmux + Windows Terminal
 # (pairs with the `sync` terminal-feature in image/tmux.conf). ^ still tracks
 # latest patches; it only guarantees a floor with the fix.
-RUN npm install -g @anthropic-ai/claude-code@^2.1.200 @openai/codex
+#
+# VERIFY THE AGENTS RUN, do not just install them. `npm install -g` SUCCEEDS
+# EVEN WHEN A PLATFORM BINARY FAILS TO INSTALL: codex ships its executable as an
+# OPTIONAL dependency per platform (@openai/codex-linux-arm64 and friends), and
+# npm treats a failed optional dependency as non-fatal by design. The image then
+# builds green with an agent that dies on first run:
+#
+#   Error: Missing optional dependency @openai/codex-linux-arm64.
+#   Reinstall Codex: npm install -g @openai/codex@latest
+#
+# An operator hit that after creating a codex agent — the island came up, the
+# agent was "installed", and the binary was not there. Creating the agent cannot
+# fix it, because the agent uses this image rather than installing anything.
+#
+# So assert the end state: if either CLI cannot report its own version, the build
+# fails here rather than shipping an island that looks complete.
+RUN npm install -g @anthropic-ai/claude-code@^2.1.200 @openai/codex \
+ && claude --version \
+ && codex --version
 
 # Containers stay alive via dejima-start.sh, which manages tmux + agent process.
 ENTRYPOINT ["/usr/local/bin/dejima-start.sh"]

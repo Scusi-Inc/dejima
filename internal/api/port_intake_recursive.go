@@ -235,7 +235,7 @@ func (s *Server) intakeOneFile(
 		return 0, "", err
 	}
 	// Fail closed: the crossing is recorded before any byte enters the island.
-	if err := s.ledgerAppend(ledger.Entry{
+	if err := s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "trade.read", Island: p.Name, Scope: scope.Name, Path: rel,
 		Mode: scope.Mode, Bytes: size, SHA256: sum, Decision: "allowed", Detail: detail,
 	}); err != nil {

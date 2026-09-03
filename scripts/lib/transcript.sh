@@ -44,11 +44,30 @@ start_transcript() {
         printf '\n'
     } >>"$DEJIMA_INSTALL_LOG"
 
-    # tee, not a plain redirect: the operator must still SEE the install. This
-    # makes stdout a pipe, which is exactly the condition that used to be read as
-    # "nobody is here" — lib/tty.sh answers that on /dev/tty instead, so prompts
-    # and the sudo pre-authorization still find the human.
-    exec > >(tee -a "$DEJIMA_INSTALL_LOG") 2>&1
+    # The operator must still SEE the install, so this tees rather than
+    # redirecting silently. It makes stdout a pipe — the condition #341 misread
+    # as "nobody is here" — which is safe only because lib/tty.sh answers that
+    # question on /dev/tty.
+    # A FIFO plus an explicit wait, NOT `exec > >(tee …)`.
+    #
+    # Process substitution gives no PID to wait for, so on a fast exit the shell
+    # is gone before tee drains and the log keeps only this header — which is
+    # precisely the run whose log matters most. It looked fine in testing because
+    # the test exited normally after a couple of echoes; a script that fails two
+    # lines in, or is torn down by a harness, loses everything.
+    #
+    # With a FIFO the writer is ours: hold its PID, close stdout on the way out,
+    # and wait for it. tee then sees EOF and flushes before we exit.
+    FIFO="$(mktemp -u)"
+    if ! mkfifo "$FIFO" 2>/dev/null; then
+        unset DEJIMA_INSTALL_LOG
+        return 0
+    fi
+    tee -a "$DEJIMA_INSTALL_LOG" <"$FIFO" &
+    DEJIMA_LOG_TEE=$!
+    exec >"$FIFO" 2>&1
+    rm -f "$FIFO"   # unlinked; both ends stay open until they are closed
+    trap 'exec 1>&- 2>&-; wait "$DEJIMA_LOG_TEE" 2>/dev/null' EXIT
 }
 
 # transcript_note prints where the log is. Called on the failure paths, where it

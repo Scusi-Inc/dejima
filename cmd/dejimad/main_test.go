@@ -23,7 +23,7 @@ func TestAssertHostInternalBind(t *testing.T) {
 		{"", true},                           // empty — parse error
 	}
 	for _, c := range cases {
-		err := assertHostInternalBind(log, c.addr)
+		err := assertHostInternalBind(log, "token listener", "--token-tcp", c.addr)
 		if (err != nil) != c.wantErr {
 			t.Errorf("assertHostInternalBind(%q) err=%v, wantErr=%v", c.addr, err, c.wantErr)
 		}

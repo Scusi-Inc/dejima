@@ -160,6 +160,15 @@ opt-in steps. Tailscale + container isolation is the model.
   one-shot troubleshooter. Or run `dejima doctor`. The usual causes: not on the
   same tailnet, or the host's daemon isn't exposing TCP (`dejima service install
   --tcp :7273` on the host).
+- **Installer stuck "waiting for the Docker daemon" with nothing on screen?**
+  Docker Desktop was installed but never came up: `open -a Docker` reports
+  success whether or not the app actually starts. Click **Docker** in
+  /Applications (or Launchpad) at this Mac's display, accept the licence and the
+  privileged-helper prompt, and the wait finishes on its own. The installer now
+  says which of the two states it's in after 15 seconds, and retries the launch
+  by path once — but the click is still the fix when the launch doesn't take.
+  Nothing can be accepted over SSH, and nothing appears at all if no one is
+  logged in at the display.
 - **Islands getting OOM-killed?** The Docker VM is too small — see phase 3.
 - **Daemon didn't come back after reboot?** Confirm either auto-login is on, or the
   daemon was installed with `--system` (a LaunchDaemon that loads before login).

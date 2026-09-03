@@ -10,6 +10,15 @@
 *.test
 *.out
 
+# Crash dumps. A core file is a copy of process memory — environment included,
+# which in this island means secrets — and `git add -A` will stage one without
+# anyone deciding to. That is not hypothetical: a faulting toolchain wrote one
+# into a worktree and it reached a commit before it was caught. Ignoring them
+# costs nothing and does not depend on the next person reading their file list.
+core
+core.*
+*.core
+
 # Go workspace
 go.work
 go.work.sum
@@ -34,3 +43,10 @@ go.work.sum
 # Claude Code writes settings atomically via a temp sibling; a concurrent
 # `git add -A` catches it mid-write and commits a file that never existed.
 .claude/settings.local.json.tmp.*
+
+# Core dumps. A crashing toolchain writes these into the working tree, and they
+# contain PROCESS MEMORY — including GH_TOKEN and any other secret in the
+# environment. One was swept into a commit by `git add -A` and only stopped by
+# GitHub push protection.
+core
+core.*

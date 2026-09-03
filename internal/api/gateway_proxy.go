@@ -187,7 +187,7 @@ func (s *Server) ledgerGatewayOpen(island, agentID string, r *http.Request) {
 	if !isUpgradeRequest(r) {
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type:     "gateway.session",
 		Island:   island,
 		Detail:   "console session opened for agent " + agentID,
