@@ -10,6 +10,12 @@ shape at a time, and when you don't need one. It exists because "prove the check
 can see a failure" is easy to agree with and easy to skip, and three places in
 the tree now do it concretely enough to copy.
 
+Its sibling is [**A reading that was true when you took it looks exactly like one
+that is true now**](readings-go-stale.md). This file asks whether a check has a
+subject; that one asks whether a reading is still *current* — the case where the
+instrument worked, the answer was right, and the sentence built on it stopped
+being true without anyone touching it.
+
 ## The rule
 
 > When a test's only failure mode is *not noticing*, add a second test whose only

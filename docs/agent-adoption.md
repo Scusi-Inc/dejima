@@ -1,8 +1,25 @@
 # Adopting agents Dejima didn't launch — design
 
-**Status:** design, unbuilt. Phase 1 (adopt-and-observe) is approved to build;
-Phase 2 (graduation) is specified here so Phase 1 does not foreclose it, and
-deliberately not started.
+**Status:** Phase 1 is **built and shipped in v0.9.0**. Phase 2 (graduation) is
+specified here so Phase 1 does not foreclose it, and deliberately not started.
+
+**Both of these are true, and reading only the first will mislead you:**
+
+- Adoption Phase 1 shipped — the containment level is a field on the record with
+  a zero value that cannot reassure, observed agents have their own collection
+  and their own region in the TUI and in `dejima ls`, the ledger distinguishes
+  brokered from witnessed from self-reported, and no surface can obtain a
+  positive containment claim except through `containmentClaim()`.
+- **The observed-agents region is empty on every machine, and will stay empty**
+  until registration ships, because discovery is deferred post-1.0 and nothing
+  else produces an observed agent.
+
+Said together on purpose. An operator who reads only the first goes looking for a
+feature, finds a blank region, and concludes it is broken — which is the same
+failure the phase itself was built to prevent, one surface over. What shipped is
+the *structure*: the distinction is in the data and on the screen before anything
+can populate it, which is the ordering the design argued for and the reason
+Phase 1 was worth shipping alone.
 
 ## The claim this changes
 
