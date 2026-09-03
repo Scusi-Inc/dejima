@@ -37,3 +37,30 @@ api DELETE /v1/local/models/{name}
 # test (TestRestartChecklist), the CLI test (TestAgentRestartCommand), and the
 # restartAgentSession/handler logic.
 api POST /v1/islands/{name}/agents/{id}/restart
+
+# Commands that cannot be INVOKED in a test, revealed when the gate stopped
+# accepting a mention as evidence (issue #335). Each one does something to the
+# machine running it, so a test that exercised it would be the side effect, not
+# the assertion. Their non-invocable halves are covered where they can be:
+#
+#   local install / pull  — runs Ollama's installer, or downloads a multi-GB
+#                           model, onto the host running the suite. The command
+#                           tree is asserted by TestLocalCommandTree and the
+#                           read-only verbs are invoked in
+#                           TestLocalCommandsAgainstDaemon; the backend logic is
+#                           internal/localmodel's own tests.
+#   voice install         — installs whisper.cpp + a recorder through Homebrew or
+#                           the distro package manager. The decision logic is
+#                           internal/voicein's TestPlanInstall (+ the checksum
+#                           pin); `voice status` and `voice device` are invoked
+#                           in cli_invocation_test.go.
+#   github connect        — an OAuth device flow: it calls GitHub and waits for a
+#                           human to approve in a browser. Beneath it,
+#                           internal/api's TestGitHubDeviceFlow{,Disabled} cover
+#                           the exchange, TestDeviceFlowUnconfiguredDetection the
+#                           unconfigured case, and TestNewGithubConnectCmdShape
+#                           the command itself.
+cli local install
+cli local pull
+cli voice install
+cli github connect
