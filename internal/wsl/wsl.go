@@ -63,8 +63,9 @@ const DefaultDistro = "dejima"
 // This text crosses the WSL channel, and a counter in a script here is exactly
 // what produced `sh: 18: [: Illegal number:` on a real machine — the variable
 // arrived empty with its quotes intact. There is one variable, $HOME, which is
-// unavoidable (the distro's username is not knowable from Windows) and is
-// already proven on this path.
+// unavoidable: the distro's username is not knowable from Windows. It is NOT
+// self-resolving — see dialExpr below, which is what Dial runs. This constant on
+// its own reads an empty $HOME and looks for the daemon at /.dejima.
 //
 // Warm socket: no delay at all, since the first test succeeds. Cold: about five
 // seconds, spent once, instead of an error.
@@ -72,6 +73,30 @@ const socketExpr = `S="$HOME/.dejima/dejimad.sock"
 [ -S "$S" ] || sleep 2
 [ -S "$S" ] || sleep 3
 exec socat STDIO UNIX-CONNECT:"$S"`
+
+// dialExpr is what Dial actually runs. socketExpr resolves $HOME; homePreamble
+// is what MAKES $HOME resolvable.
+//
+// Dial ran socketExpr bare. `wsl.exe -d <distro> -- sh -c …` does not pass HOME
+// and dash does not synthesise it, so $HOME was the empty string and the client
+// looked for the daemon at /.dejima/dejimad.sock — a path nothing ever creates.
+// It then waited its full five seconds for a socket that could not appear and
+// reported the host as not answering.
+//
+// SILENTLY, AND WITH EVERY OTHER SIGNAL SAYING FINE: Probe goes through run(),
+// which DOES prepend homePreamble, so `dejima wsl status` resolved $HOME
+// correctly, found the real socket, and printed "socket: OK up" and "ready".
+// The operator's own log showed dejimad listening on /root/.dejima/dejimad.sock
+// the whole time. Status and dial disagreed because they resolved the same
+// variable by different means, and only one of them had been fixed.
+//
+// homePreamble's comment predicted this exact failure — "dejimad derives its
+// socket and config from HOME, so a daemon started with it empty would write to
+// /.dejima and the client would look somewhere else entirely" — and socketExpr's
+// comment asserted the opposite, that $HOME "is already proven on this path."
+// The proof was for run(). Composing the two here means there is one way to
+// resolve HOME in this package rather than two that can drift.
+var dialExpr = homePreamble + socketExpr
 
 // execCommand indirects exec.Command so tests can substitute a fake `wsl.exe`.
 var execCommand = exec.Command
@@ -154,7 +179,7 @@ func Dial(ctx context.Context, distro string) (net.Conn, error) {
 	if strings.TrimSpace(distro) == "" {
 		distro = DefaultDistro
 	}
-	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", socketExpr)
+	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", dialExpr)
 	isolateConsole(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -617,13 +642,59 @@ type Report struct {
 	HasSocat  bool
 	HasDocker bool // docker CLI present AND the engine answers
 	HasDejima bool // dejimad binary installed
-	SocketUp  bool // ~/.dejima/dejimad.sock exists
+	SocketUp  bool // ~/.dejima/dejimad.sock EXISTS as a socket file
+	// Listening reports that something ACCEPTS on that socket.
+	//
+	// Separate from SocketUp because the file outliving the process is the
+	// normal case, not an edge one: a unix socket is not unlinked when its
+	// process is killed, and WSL terminating an idle distro is not a clean
+	// shutdown. So a daemon that died leaves a socket file behind, `[ -S ]`
+	// passes on it forever, and the distro reports ready while every dial gets
+	// connection-refused.
+	//
+	// An operator hit exactly that. Their status read
+	//
+	//	socket:  OK    up (~/.dejima/dejimad.sock)
+	//	ready — connect with:  dejima profile switch wsl
+	//
+	// with dejimad's own log showing no start for thirty hours. Four checks
+	// agreed and the one that mattered was never made.
+	Listening bool
 }
 
 // Ready reports whether this distro can serve as a working local host.
+//
+// Listening as well as SocketUp. "Ready" is a claim about connecting, and a stat
+// is not a connection — but keeping both keeps each field load-bearing, so a
+// probe that stops reporting either one cannot quietly still say ready.
 func (r Report) Ready() bool {
-	return r.Exists && r.Version == 2 && r.HasSocat && r.HasDocker && r.HasDejima && r.SocketUp
+	return r.Exists && r.Version == 2 && r.HasSocat && r.HasDocker && r.HasDejima && r.SocketUp && r.Listening
 }
+
+// probeScript reports one token per satisfied condition, in a single
+// round-trip.
+//
+// `listening` is a real CONNECT, not another stat. `[ -S ]` answers "is there a
+// socket file", which is a different question from "is anything accepting on
+// it" — and the two diverge exactly when a daemon dies without unlinking, which
+// is what happens every time WSL terminates an idle distro. socat is already a
+// hard requirement here (it is the tunnel), so using it costs no new dependency,
+// and `-u /dev/null` sends nothing: it connects, sees EOF, and exits non-zero
+// only if the connect itself was refused.
+//
+// Guarded on the file existing so a missing socket reports as missing rather
+// than as a connect failure — same state, but "never started" and "died" are
+// different facts and the remedy text distinguishes them.
+//
+// `exit 0` at the end: a probe must report what it found, not fail.
+const probeScript = `
+		command -v socat   >/dev/null 2>&1 && echo socat
+		command -v dejimad >/dev/null 2>&1 && echo dejimad
+		docker info        >/dev/null 2>&1 && echo docker
+		S="$HOME/.dejima/dejimad.sock"
+		[ -S "$S" ] && echo socket
+		[ -S "$S" ] && socat -u /dev/null UNIX-CONNECT:"$S" >/dev/null 2>&1 && echo listening
+		exit 0`
 
 // Probe inspects a distro without changing anything. Each check is a single
 // `sh -c` inside the distro; a distro that isn't running will be started by WSL
@@ -650,13 +721,7 @@ func Probe(ctx context.Context, distro string) (Report, error) {
 		return r, nil
 	}
 	// One round-trip: echo a token per satisfied condition.
-	const script = `
-		command -v socat   >/dev/null 2>&1 && echo socat
-		command -v dejimad >/dev/null 2>&1 && echo dejimad
-		docker info        >/dev/null 2>&1 && echo docker
-		[ -S "$HOME/.dejima/dejimad.sock" ] && echo socket
-		exit 0`
-	out, err := run(ctx, distro, script)
+	out, err := run(ctx, distro, probeScript)
 	if err != nil {
 		return r, err
 	}
@@ -670,6 +735,8 @@ func Probe(ctx context.Context, distro string) (Report, error) {
 			r.HasDocker = true
 		case "socket":
 			r.SocketUp = true
+		case "listening":
+			r.Listening = true
 		}
 	}
 	return r, nil

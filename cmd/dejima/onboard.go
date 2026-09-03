@@ -138,7 +138,12 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 			fmt.Println("  Your configured Dejima host isn't answering right now.")
 		}
 		fmt.Println()
-		if ans := readSingleKey("Troubleshoot the connection now? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
+		// confirmDefault, not a hand-rolled pair. This was the last prompt in the
+		// tree that derived its DISPLAYED default ("[Y/n]") and its RETURNED
+		// default (empty input means yes) as two separate artifacts — the shape
+		// that let confirmWSL show one default and act on the other. Same
+		// behaviour, one source.
+		if confirmDefault("Troubleshoot the connection now?", true) {
 			runConnectionTroubleshooter(ctx)
 		}
 		fmt.Println("Opening the dashboard. Re-run `dejima onboard` anytime.")
@@ -841,7 +846,7 @@ func printServerInstall(ctx context.Context, e *envProbe, alsoClient bool) error
 		fmt.Println("Looks like Dejima is already installed and running here.")
 		fmt.Println("If you want to reconfigure, see `dejima service uninstall` and re-run setup.")
 		fmt.Println()
-		if ans := readSingleKey("Set up remote access (Tailscale SSH + reach Dejima from other devices)? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
+		if confirmDefault("Set up remote access (Tailscale SSH + reach Dejima from other devices)?", true) {
 			return setupRemoteAccess(ctx, e)
 		}
 		return nil
@@ -893,7 +898,7 @@ func printServerInstall(ctx context.Context, e *envProbe, alsoClient bool) error
 	}
 
 	if offerToRunMakeSetup(e) {
-		if doRun := readSingleKey("Run `make setup` now? [y/N]: "); strings.EqualFold(doRun, "y") {
+		if confirmDefault("Run `make setup` now?", false) {
 			if err := execInteractive("make", "setup"); err != nil {
 				return err
 			}
@@ -903,7 +908,7 @@ func printServerInstall(ctx context.Context, e *envProbe, alsoClient bool) error
 	}
 
 	fmt.Println()
-	if ans := readSingleKey("Set up remote access (Tailscale SSH + reach Dejima from other devices) now? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
+	if confirmDefault("Set up remote access (Tailscale SSH + reach Dejima from other devices) now?", true) {
 		return setupRemoteAccess(ctx, e)
 	}
 	fmt.Println("Skipped. Run `dejima onboard` → option 5 anytime to set up remote access.")
@@ -942,8 +947,8 @@ func printClientInstall(ctx context.Context, e *envProbe) error {
 
 	// Persist to the shell rc so future shells inherit it.
 	if rc := shellRCPath(); rc != "" {
-		prompt := fmt.Sprintf("Persist `export DEJIMA_HOST=%s` to %s? [Y/n]: ", host, tildeify(rc))
-		if ans := readSingleKey(prompt); ans == "" || strings.EqualFold(ans, "y") {
+		prompt := fmt.Sprintf("Persist `export DEJIMA_HOST=%s` to %s?", host, tildeify(rc))
+		if confirmDefault(prompt, true) {
 			line := fmt.Sprintf("export DEJIMA_HOST=%s", host)
 			if err := appendLineIfAbsent(rc, line); err != nil {
 				fmt.Fprintf(os.Stderr, "  couldn't write %s: %v\n", rc, err)
@@ -1103,7 +1108,7 @@ func setupRemoteAccess(ctx context.Context, e *envProbe) error {
 	if e.DejimadInstalled {
 		fmt.Println("Expose the daemon on a tailnet TCP port so remote clients can reach it:")
 		fmt.Println(indentBlock("dejima service install --tcp :7273", "    "))
-		if ans := readSingleKey("Run that now (reinstalls the service with TCP enabled)? [y/N]: "); strings.EqualFold(ans, "y") {
+		if confirmDefault("Run that now (reinstalls the service with TCP enabled)?", false) {
 			if self, err := os.Executable(); err == nil {
 				if err := execInteractive(self, "service", "install", "--tcp", ":7273"); err != nil {
 					fmt.Printf("  ✗ %v — run it yourself when ready.\n", err)
@@ -1132,7 +1137,7 @@ func ensureTailscale(e *envProbe) bool {
 	switch e.OS {
 	case "darwin":
 		if e.BrewPresent {
-			if ans := readSingleKey("Install it now with `brew install --cask tailscale-app`? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
+			if confirmDefault("Install it now with `brew install --cask tailscale-app`?", true) {
 				stopSudo := primeSudo("Installing Tailscale")
 				err := execInteractive("brew", "install", "--cask", "tailscale-app")
 				stopSudo()
@@ -1269,7 +1274,7 @@ func applySSHACL(ctx context.Context, apiKey, unixUser string) error {
 
 	fmt.Println("  I'll append an ssh rule to your tailnet policy. The whole policy is")
 	fmt.Println("  rewritten via the API, which normalizes formatting and strips comments.")
-	if ans := readSingleKey("  Proceed? [y/N]: "); !strings.EqualFold(ans, "y") {
+	if !confirmDefault("  Proceed?", false) {
 		return fmt.Errorf("cancelled by user")
 	}
 
