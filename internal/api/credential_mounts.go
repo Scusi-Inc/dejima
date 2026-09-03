@@ -70,6 +70,14 @@ const secretsMountPath = "/opt/host/secrets.d"
 // island can still be running a pre-secrets.d image.
 const legacySecretsMountPath = "/opt/host/secrets.env"
 
+// LLMCredentialMountPath is where an island's LLM provider keys are mounted.
+//
+// Exported for the same reason as GitHubCredentialMountPath: a surface outside
+// this package needs to pick this row out of a CredentialMountReport, and
+// comparing against its own copy of the string is a check that stops firing
+// silently the moment the path moves.
+const LLMCredentialMountPath = "/opt/host/llm"
+
 // credentialMounts enumerates every credential handed to an island as a mount.
 // One list, so adding a credential means editing here rather than remembering
 // each surface that reports on them — the same reason grantKinds exists in the
@@ -79,6 +87,18 @@ func credentialMounts() []credentialMount {
 	return []credentialMount{
 		{"GitHub credential", GitHubCredentialMountPath},
 		{"secrets", secretsMountPath},
+		// LLM provider keys. Since islandLLMConfigDir started returning the
+		// directory unconditionally, this is ALWAYS configured — so an island
+		// missing the mount is unambiguously one created before that shipped,
+		// and drift on this row means exactly "recreate this island and its
+		// provider key will arrive".
+		//
+		// That distinction was previously unanswerable from any surface, and the
+		// local-models page said so in as many words: "this page cannot tell
+		// which islands those are." It could; it was asking the config, which
+		// answers a question about intent, when the question was about the
+		// running container. That is the divergence this whole file exists for.
+		{"LLM provider keys", LLMCredentialMountPath},
 	}
 }
 

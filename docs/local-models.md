@@ -147,15 +147,28 @@ workflows rather than let tool-use-heavy skills silently underperform.
 ## Reaching an island that already exists
 
 Registering the `local` provider is a host-side write plus
-`refreshIslandLLMConfigs`. No daemon restart, and no island recreate: the
-`/opt/host/llm` bind is a **directory**, and it is mounted whether or not the
-island had a provider when it was created, so the rewrite is visible inside a
-container that is already running.
+`refreshIslandLLMConfigs`. **No daemon restart**, ever. What else it takes
+depends on when the island's container was created, and there are exactly two
+answers:
 
-What does need to happen is an **agent restart** — the launch line sources
-`$DEJIMA_PROVIDER_KEY_FILE`, so a process already running holds its start-time
-environment. `dejima agent restart <island> <agent-id>` is enough; the provider
-is resolved fresh per agent at launch.
+- **Created by a daemon carrying `8b850d1` or later** — an **agent restart** and
+  nothing more. `dejima agent restart <island> <agent-id>`. The `/opt/host/llm`
+  bind is a directory and is always present, so the rewrite is visible inside a
+  running container; the agent restarts because the launch line sources
+  `$DEJIMA_PROVIDER_KEY_FILE` and a running process holds its start-time
+  environment.
+- **Created before that** — a **container recreate**: `dejima upgrade <island>`.
+  Credential mounts are decided once, inside `createContainerForProject`, and
+  nothing can add a bind to a container that already exists. Such an island has
+  no `/opt/host/llm` in its filesystem at all, so restarting its agent re-reads
+  a path that is not there and changes nothing.
+
+You do not have to guess which one an island is. `GET /v1/islands/{name}/grants`
+returns a `credentials` report that asks the *runtime* what is mounted and diffs
+it against what the config says should be there. `/opt/host/llm` is
+unconditionally configured, so `configured: true, mounted: false` on that row
+means exactly "created before the fix, recreate to deliver the key" — the one
+case that needs the heavier remedy, named rather than inferred.
 
 Both halves used to be wrong in the direction that costs an evening. The mount
 was added only when a provider already resolved at container create — so an
@@ -164,7 +177,9 @@ reaching for a local backend) had no `/opt/host/llm` at all, and the key was
 written into a directory nothing in the container was looking at. And
 `DEJIMA_PROVIDER_KEY_FILE` was create-time state derived from the *primary*
 agent, so restarting changed nothing. Fixed in `islandLLMConfigDir` and
-`agentProviderEnv`; guarded in `internal/api/llm_reaches_running_island_test.go`.
+`agentProviderEnv` (8b850d1); guarded in
+`internal/api/llm_reaches_running_island_test.go` and
+`internal/api/llm_mount_drift_test.go`.
 
 ---
 
