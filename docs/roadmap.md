@@ -246,6 +246,31 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **A from-nothing Windows acceptance script** *(pre-1.0, not gating)* — walks
+  the whole path unattended: `wsl --unregister`, install the client,
+  `dejima wsl setup`, `wsl --terminate` and back, `dejima init` producing a
+  RUNNING ISLAND that clones, then a Windows reboot. Capturing on every failure:
+  `dejima logs`, `systemctl status dejimad`, `journalctl -u dejimad`, the daemon
+  log tail.
+
+  **Deliberately second to setup-proving-its-own-durability**, which d3 owns.
+  That check runs on EVERY machine on EVERY install and reports to the person
+  who can act on it — a user's first install *is* the from-nothing walk. This
+  script needs a real Windows box, is destructive by design (unregistering the
+  distro is the point — re-running setup on a healthy distro passes today, on a
+  machine that was broken for hours), and therefore runs occasionally, on one
+  box, when the operator chooses.
+
+  **It would also have found nothing during the 2026-09 Windows work.** Fifteen
+  defects, and the ones that mattered were in the daemon, the client and the
+  image rather than in the WSL script — see `docs/wsl-windows-postmortem.md`.
+  Its value is as a REGRESSION guard on a path that now works and that we will
+  keep touching, not as a discovery tool.
+
+  What it covers that setup cannot: a Windows reboot, and starting from an
+  unregistered distro. Those are the least likely regressions, which is why this
+  is roadmapped rather than queued.
+
 - **A situational island primer** *(the static half is fixed and guarded; see
   `image/island-primer.md`)* — agents get told what is possible IN GENERAL, and
   cannot tell "not granted yet" from "does not work". The static primer said an
