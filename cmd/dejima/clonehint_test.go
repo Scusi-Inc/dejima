@@ -21,14 +21,13 @@ func TestCloneAuthHintNamesTheGuidedPath(t *testing.T) {
 	if !strings.Contains(got, "dejima github connect") {
 		t.Errorf("auth hint does not name the guided sign-in:\n%s", got)
 	}
-	// The literal is BUILT rather than written, because the coverage ratchet
-	// treats any mention of a command as coverage of it — and this test asserts
-	// the command is ABSENT, which is the opposite of testing it. Writing it
-	// plainly marks `cli auth push` as a stale waiver and invites someone to
-	// delete a waiver for a command that still has no test. d4 named this
-	// false-positive vector; this is it firing.
-	pushForm := "auth" + " push"
-	if strings.Contains(got, pushForm) {
+	// This asserts the command is ABSENT, which is the opposite of testing it.
+	// The literal used to be BUILT — `"auth" + " push"` — because the coverage
+	// ratchet counted any mention as coverage, so writing it plainly marked
+	// `cli auth push` a stale waiver and invited someone to delete a waiver for
+	// a command with no test. The gate now requires an invocation (issue #335),
+	// so the sentence can say what it means.
+	if strings.Contains(got, "dejima auth push") {
 		t.Errorf("auth hint still sends a new operator to the path that needs a "+
 			"pre-configured gh:\n%s", got)
 	}
