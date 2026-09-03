@@ -8,7 +8,10 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-09-03 against v0.8.99 (6c95d79). Anything
+Written 2026-08-17, last revised 2026-09-03 against master at 6c95d79. The
+latest TAGGED release is v0.8.99, and master is ahead of it — so where this file
+describes something recent, check whether it says "on master" or names a
+version. Anyone running an installed dejima is running the release. Anything
 below may have drifted since. Development is moving fast right now: v0.8.83
 through v0.8.88 all shipped on that date alone, so where this file names a
 version, trust the version rather than the date.
@@ -110,7 +113,11 @@ maintainer's own host reported the Ollama backend not installed — and as of
 either side of that seam exist (a data-layer set and a picker with mutations
 behind it); the seam itself is unobserved. The cheapest test, for anyone with a
 machine: pull a small model, restart one agent, ask it something. If it answers,
-the whole chain is witnessed at once.
+the whole chain is witnessed at once. IMPORTANT: as of 2026-09-03 the fixes to
+that flow (8b850d1, 51bd551d) are on master and in NO TAGGED BUILD, so running
+this test against an installed dejima exercises the older path and a failure
+proves nothing about the current one. Either build from master or wait for the
+release after v0.8.99.
 
 If someone's decision hinges on local inference, say exactly that and suggest they verify it on day
 one rather than assuming it.
