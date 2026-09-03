@@ -34,9 +34,16 @@ the moment the world moves, with nothing in the sentence to warn the reader. It
 does not need ceremony — "as of `<sha>`", "at 20:58Z", "on the tip at merge
 time". One clause.
 
+**And make it absolute.** "At the time of writing" is not an as-of; it is a
+floating anchor that re-dates itself every time the file is revised, so it will
+read as *today* indefinitely — including after someone has done the thing it
+says is undone. It looks like a timestamp, which makes it worse than none: a
+reader who sees no date knows to check, and a reader who sees a date that moves
+does not. Pin to the date, the tag, or the SHA.
+
 ## The instances
 
-Eight, across five people and four different surfaces — git, CI, the Go
+Nine, across five people and four different surfaces — git, CI, the Go
 toolchain, and our own messages. None of them is a test.
 
 ### 1. A cached `go test` pass, of a mutant that never ran
@@ -119,6 +126,27 @@ in between.
 
 There is no discriminator for this one. It is the residue the rule cannot
 remove, and it is why the as-of clause is half the rule rather than a decoration.
+
+### 9. A caveat that outlived the problem, and withdrew a capability
+
+*"The local-model fixes are on master and in no tagged build, so running the
+cheapest test on an installed dejima would exercise the old path and prove
+nothing."* Correct when written. `v0.9.0` shipped both six hours later.
+
+The direction is what makes this one worth its own entry rather than a repeat of
+instance 8. **A stale caveat is not neutral — it withdraws a capability that
+exists.** This one told the operator *not* to run the single test that would
+witness the local-model seam, on the grounds their build lacked the fix. Their
+build had it.
+
+Stale reassurance fails open and is obviously dangerous; stale caution fails
+closed and looks responsible. Both are the same defect, and the second is the one
+that survives review, because nobody challenges an abundance of care.
+
+**Ask for:** the same discriminator as instance 8 — `git tag --contains` at the
+moment of writing, and the as-of clause. What is different is the review
+instinct: re-check the caveats you are proudest of, because they are the ones
+nobody else will.
 
 ## Why this is hard to see from inside
 
