@@ -157,12 +157,17 @@ Provider keys are **account-wide, keyed by provider** (one `anthropic` key serve
 every island whose agents target Anthropic), stored by the daemon and supplied
 with `dejima provider set <provider>`. An agent picks a provider+model
 (`dejima agent config <island>/<id> --provider … --model …`, or at create). The
-daemon then, at container build:
+daemon then:
 
 - materializes the chosen provider's key into a **read-only** mount at
   `/opt/host/llm/<provider>.env` (mode 0600) — the key is **never** a container
-  env var, so it never appears in `docker inspect` or logs;
-- injects three non-secret env vars for the primary agent:
+  env var, so it never appears in `docker inspect` or logs. The mount is
+  **always present**, even on an island with no provider yet, so a provider
+  registered later reaches the container that already exists instead of needing
+  a recreate to gain the mount;
+- injects three non-secret env vars, resolved **per agent at launch** (each
+  agent gets its own provider, not the primary's, and a provider registered
+  after the container was created is picked up by an agent restart):
 
 | Var | Value | Notes |
 |-----|-------|-------|
