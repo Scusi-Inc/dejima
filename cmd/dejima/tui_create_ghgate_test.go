@@ -32,34 +32,35 @@ func TestCreatorGitHubGateOffersAGuidedConnect(t *testing.T) {
 			"paragraph and leaves:\n%s", hint)
 	}
 
-	// And the key must actually do something.
-	out, _ := m.creatorGitHubKey(key("c"))
+	// And the key must actually do something — which is now HANDING OFF TO THE
+	// GITHUB PANE, where the device flow runs in-process.
+	//
+	// It used to spawn `dejima github connect` in a terminal window and print the
+	// command as a fallback. Both halves are gone deliberately. The window died
+	// instantly on Windows while the screen reported that it had opened, and the
+	// printed command is a CLI instruction pushed at someone using the TUI —
+	// which the operator asked us to stop doing, in those words.
+	out, cmd := m.creatorGitHubKey(key("c"))
 	m = out.(tuiModel)
-	if m.creator.ghHint == hint {
-		t.Error("pressing [c] changed nothing — the key is advertised and inert")
+	if m.creator != nil {
+		t.Error("[c] left the creator open — the create it was mid-way through has " +
+			"already been refused, and resuming a wizard into a stale answer is worse " +
+			"than starting again")
 	}
-	// canOpenNewWindow is false under test, so the fallback must name the exact
-	// command. An operator who cannot spawn a window still has to be able to act.
-	if !strings.Contains(m.creator.ghHint, "dejima github connect") {
-		t.Errorf("the no-window fallback does not name the command to run:\n%s", m.creator.ghHint)
+	if m.github == nil || m.github.connect == nil {
+		t.Fatal("[c] did not open the GitHub pane with a sign-in running — the key is " +
+			"advertised and inert")
 	}
-	// --default, because this fires only when NO identity resolves: the one being
-	// created is the one everything should follow. Omitting it is how a daemon
-	// ends up holding identities and no default.
-	// One constant feeds both the window args and the printed command, so this
-	// single assertion covers the path a test cannot drive (the real window) as
-	// well as the one it can.
-	if ghConnectCmd != "dejima github connect"+ghConnectArgs {
-		t.Errorf("the printed command and the window args have drifted: %q vs %q",
-			ghConnectCmd, ghConnectArgs)
+	if cmd == nil {
+		t.Error("[c] issued no command, so nothing ever asks the daemon for a code")
 	}
-	if !strings.Contains(ghConnectArgs, "--default") {
-		t.Errorf("the connect args omit --default (%q), so the daemon can end up "+
-			"holding an identity that nothing resolves to", ghConnectArgs)
+	if !m.github.connect.makeDefault {
+		t.Error("the connect does not take the default: this gate fires only when NO " +
+			"identity resolves, so the one being created is the one everything should follow")
 	}
-	if !strings.Contains(m.creator.ghHint, "--default") {
-		t.Errorf("the connect does not take the default, so the daemon can end up "+
-			"with an identity that nothing resolves to:\n%s", m.creator.ghHint)
+	// And it must not have gone back to pushing a shell command at anyone.
+	if body := m.renderGithubView(); strings.Contains(body, "dejima github connect") {
+		t.Errorf("the pane still prints a CLI command at a TUI user:\n%s", body)
 	}
 }
 
@@ -95,3 +96,35 @@ func TestCreatorGitHubGateDoesNotOfferConnectToTeammates(t *testing.T) {
 }
 
 var _ = api.GitHubIdentityView{}
+
+// THE POST-CREATE GATE is a different function from the identity screen above,
+// and until a mutation pointed at it survived a passing suite, nothing covered
+// it. It fires when the daemon refuses a create because a private repo has no
+// identity — which is the exact moment the operator needs to connect one, and
+// the moment they are least inclined to read a paragraph.
+func TestCreatorPostCreateGateHandsOffToTheInPaneSignIn(t *testing.T) {
+	m := tuiModel{creator: &creatorModel{step: stepGitHubGate, gateRepo: "aoos/private"}}
+
+	out, cmd := m.creatorGitHubGateKey(key("c"))
+	mm := out.(tuiModel)
+
+	if mm.creator != nil {
+		t.Error("[c] at the gate left the creator open — the create it was mid-way " +
+			"through has already been refused")
+	}
+	if mm.github == nil || mm.github.connect == nil {
+		t.Fatal("[c] at the gate did not start a sign-in in the GitHub pane")
+	}
+	if cmd == nil {
+		t.Error("[c] issued no command, so nothing asks the daemon for a code")
+	}
+	if !mm.github.connect.makeDefault {
+		t.Error("this gate fires only when NO identity resolves, so the one being " +
+			"created must become the default")
+	}
+	// It must not have gone back to reporting a window it cannot see.
+	if body := plain(mm.renderGithubView()); strings.Contains(body, "opened") &&
+		strings.Contains(body, "github connect") {
+		t.Errorf("the gate reports opening something it cannot observe:\n%s", body)
+	}
+}

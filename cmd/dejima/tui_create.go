@@ -20,19 +20,20 @@ import (
 type creatorStep int
 
 const (
-	stepRoot       creatorStep = iota // first-load: choose a directory to scan
-	stepPick                          // pick a discovered repo (or switch to manual)
-	stepManual                        // type a URL or path
-	stepGitHub                        // browse a daemon GitHub identity's repos
-	stepSource                        // diverged local repo: clone origin vs local copy
-	stepAgent                         // choose an agent (primary, then any extras)
-	stepAgentName                     // name that agent (blank = use its id)
-	stepAgentKey                      // set the provider key a key-requiring agent needs (guided)
-	stepAgents                        // roster: review seeded agents, add more, or continue
-	stepName                          // confirm/edit the island name
-	stepCreate                        // provisioning in flight
-	stepGitHubGate                    // create refused: private repo needs a GitHub identity — guided connect
-	stepFromDir                       // type the host folder to seed /workspace from
+	stepRoot            creatorStep = iota // first-load: choose a directory to scan
+	stepPick                               // pick a discovered repo (or switch to manual)
+	stepManual                             // type a URL or path
+	stepGitHub                             // browse a daemon GitHub identity's repos
+	stepSource                             // diverged local repo: clone origin vs local copy
+	stepAgent                              // choose an agent (primary, then any extras)
+	stepAgentName                          // name that agent (blank = use its id)
+	stepAgentKey                           // set the provider key a key-requiring agent needs (guided)
+	stepAgents                             // roster: review seeded agents, add more, or continue
+	stepName                               // confirm/edit the island name
+	stepCreate                             // provisioning in flight
+	stepGitHubGate                         // create refused: private repo needs a GitHub identity — guided connect
+	stepGitHubPreflight                    // pasted a GitHub URL with no identity connected — warn BEFORE building
+	stepFromDir                            // type the host folder to seed /workspace from
 )
 
 // ghBrowsePhase tracks the two steps of the daemon-backed GitHub browser.
@@ -74,13 +75,19 @@ type creatorModel struct {
 	// identity rides onto the create request so the island clones/pushes as it.
 	ghPhase      ghBrowsePhase
 	ghIdentities []githubid.Meta
-	ghIdentity   string // chosen identity name → CreateIslandRequest.GitHubIdentity
-	ghIdentCur   int
-	ghRepos      []githubid.Repo
-	ghRepoCur    int
-	ghCapped     bool // identity sees more repos than the page we fetched
-	ghLoading    bool
-	ghHint       string // shown when the daemon has no identities
+	// ghIdentitiesLoaded distinguishes "no identities" from "never asked". Only
+	// the first justifies a warning; the second must stay silent, because a
+	// false warning on the happy path is how a gate gets ignored on the unhappy
+	// one. See tui_create_preflight.go.
+	ghIdentitiesLoaded bool
+	preflightName      string // island name derived from the pasted URL, held across the preflight
+	ghIdentity         string // chosen identity name → CreateIslandRequest.GitHubIdentity
+	ghIdentCur         int
+	ghRepos            []githubid.Repo
+	ghRepoCur          int
+	ghCapped           bool // identity sees more repos than the page we fetched
+	ghLoading          bool
+	ghHint             string // shown when the daemon has no identities
 
 	// source-divergence prompt
 	pendingPath   string
@@ -374,6 +381,8 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.creatorAgentsKey(msg)
 	case stepName:
 		return m.creatorNameKey(msg)
+	case stepGitHubPreflight:
+		return m.creatorGitHubPreflightKey(msg)
 	case stepGitHubGate:
 		return m.creatorGitHubGateKey(msg)
 	case stepFromDir:
@@ -389,20 +398,30 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) creatorGitHubGateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	c := m.creator
 	switch msg.String() {
-	case "c", "C":
+	// Lowercase only. Uppercase C is the tail byte of the right-arrow sequence
+	// (ESC [ C), so on a terminal that delivers a sequence as separate
+	// keypresses, pressing Right lands here.
+	case "c":
 		// --default: this gate only fires when NO identity resolves, so the one
 		// being created is the one everything should follow. Leaving it implicit
 		// is how a daemon ends up with identities and no default.
-		if err := m.openGithubConnectWindow(" --default"); err != nil {
-			c.err = "couldn't open a window — run `dejima github connect` in a terminal, then press Enter"
-		} else {
-			c.err = "opened `dejima github connect` — approve it on GitHub, then press Enter to retry"
-		}
-		return m, nil
-	case "enter", "r", "R":
+		// HANDS OFF TO THE GITHUB PANE, which runs the device flow in-process
+		// (tui_github_device.go). This used to spawn a terminal window and then
+		// say "opened … approve it on GitHub" — a claim it could not check. On
+		// Windows the window died instantly and the sentence stayed on screen,
+		// so the pane's most confident line was its least reliable one.
+		//
+		// The creator closes because the create it was mid-way through has
+		// already been refused; there is no in-progress state worth preserving,
+		// and pretending otherwise is how a wizard resumes into a stale answer.
+		m.creator = nil
+		return m.openGithubViewConnecting("")
+	case "enter", "r": // not "R": ESC O R is F3
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
-	case "f", "F":
+	// not "F": ESC [ F is End — and this branch creates the island with NO
+	// GitHub identity, which is too consequential to be reachable from an arrow.
+	case "f":
 		c.forceNoIdentity = true
 		c.creating, c.step, c.err = true, stepCreate, ""
 		return m, c.createCmd()
@@ -617,7 +636,21 @@ func (m tuiModel) creatorManualKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		c.resolution, c.err = res, ""
-		return m.creatorEnterAgent(project.DeriveNameFromRepo(in))
+		// Ask the GitHub question HERE, on the screen where the repo was chosen,
+		// rather than after an island has been built and an image pulled. Only the
+		// pasted-URL path needs it: the browser path names the identity whose repos
+		// it listed, so the credential that found the repo is the one the island
+		// gets. See tui_create_preflight.go.
+		c.preflightName = project.DeriveNameFromRepo(in)
+		if !c.ghIdentitiesLoaded {
+			c.step, c.ghLoading = stepGitHubPreflight, true
+			return m, c.ghIdentitiesCmd()
+		}
+		if creatorPreflightGitHub(res.Repo, c.ghIdentities, c.ghIdentitiesLoaded) {
+			c.step = stepGitHubPreflight
+			return m, nil
+		}
+		return m.creatorEnterAgent(c.preflightName)
 	case "backspace":
 		if c.manualInput != "" {
 			c.manualInput = c.manualInput[:len(c.manualInput)-1]
@@ -668,9 +701,21 @@ func (m tuiModel) onGhIdentities(msg ghIdentitiesMsg) (tea.Model, tea.Cmd) {
 	c.ghLoading = false
 	if msg.err != nil {
 		c.err = msg.err.Error()
+		// A failed lookup is not an answer. The preflight stays silent rather than
+		// warning about a credential it could not see — see tui_create_preflight.go.
+		if c.step == stepGitHubPreflight {
+			return m.creatorEnterAgent(c.preflightName)
+		}
 		return m, nil
 	}
 	c.ghIdentities = msg.identities
+	c.ghIdentitiesLoaded = true
+	if c.step == stepGitHubPreflight {
+		if creatorPreflightGitHub(c.resolution.Repo, c.ghIdentities, true) {
+			return m, nil // stay here and show the warning
+		}
+		return m.creatorEnterAgent(c.preflightName)
+	}
 	switch len(c.ghIdentities) {
 	case 0:
 		// Adding a GitHub identity is owner-only (PUT /v1/credentials/github/{name}
@@ -725,29 +770,23 @@ func (m tuiModel) creatorGitHubKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if c.ghHint != "" {
 		switch msg.String() {
-		case "c", "C":
+		case "c": // not "C": ESC [ C is the right arrow
 			// --default: this fires only when NO identity resolves, so the one
 			// being created is the one everything should follow. Leaving it
 			// implicit is how a daemon ends up holding identities and no default,
 			// which is its own week of confusion.
-			if !canOpenNewWindow() {
-				c.ghHint = "Run this in another terminal, then press [r]:\n\n    " + ghConnectCmd
-				return m, nil
-			}
-			if err := m.openGithubConnectWindow(ghConnectArgs); err != nil {
-				c.ghHint = "Couldn't open a window. Run this in another terminal, then [r]:\n\n    " + ghConnectCmd
-				return m, nil
-			}
-			c.ghHint = "Opened the guided sign-in in a new window.\n\n" +
-				"Approve it on GitHub, then press [r] to reload."
-			return m, nil
-		case "r", "R":
+			// In the pane, not in a window — see the gate above for why. The
+			// operator comes back to the creator afterwards; connecting an
+			// identity is the prerequisite, not a step of this wizard.
+			m.creator = nil
+			return m.openGithubViewConnecting("")
+		case "r": // not "R": ESC O R is F3
 			// Re-ask the daemon rather than assuming the connect worked. If it did
 			// not, the operator lands back on this same screen with the same key,
 			// which is the correct place to be.
 			c.ghLoading, c.ghHint, c.err = true, "", ""
 			return m, c.ghIdentitiesCmd()
-		case "esc", "enter", "q":
+		case "esc", "ctrl+[", "enter", "q":
 			c.step, c.err, c.ghHint = stepPick, "", ""
 		}
 		return m, nil
@@ -1126,6 +1165,13 @@ func (c *creatorModel) view(width int) string {
 		}
 	case stepFromDir:
 		c.viewFromDir(&b)
+	case stepGitHubPreflight:
+		if c.ghLoading {
+			b.WriteString(styleMuted.Render("checking your GitHub identities…"))
+			return b.String()
+		}
+		b.WriteString(renderGitHubPreflight(c.resolution.Repo))
+		return b.String()
 	case stepGitHubGate:
 		b.WriteString(styleWaiting.Render("🔒 " + c.gateRepo + " needs your GitHub to clone"))
 		b.WriteString("\n\n")
@@ -1548,15 +1594,3 @@ func (c *creatorModel) viewFromDir(b *strings.Builder) {
 	}
 	b.WriteString("\n" + styleMuted.Render("[⏎] continue   [tab] git init on/off   [esc] back"))
 }
-
-// ghConnectArgs / ghConnectCmd are ONE decision written once.
-//
-// The window path and the type-it-yourself path must not disagree about the
-// command — a fallback that omits --default hands the operator a daemon holding
-// an identity that nothing resolves to, which is a week of confusion we have
-// already had. Deriving the printed command from the args makes the two
-// incapable of drifting, and lets one assertion cover both.
-const (
-	ghConnectArgs = " --default"
-	ghConnectCmd  = "dejima github connect" + ghConnectArgs
-)

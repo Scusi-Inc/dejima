@@ -115,7 +115,7 @@ func (m tuiModel) settingsProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // a save is in flight; swallow input rather than queue it
 	}
 	switch msg.String() {
-	case "esc", "ctrl+c", "left":
+	case "esc", "ctrl+[", "ctrl+c", "left":
 		if s.provInput != "" {
 			s.provInput, s.provNotice = "", "" // first esc clears a half-typed key
 			return m, nil
