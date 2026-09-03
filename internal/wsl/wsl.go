@@ -96,7 +96,85 @@ exec socat STDIO UNIX-CONNECT:"$S"`
 // comment asserted the opposite, that $HOME "is already proven on this path."
 // The proof was for run(). Composing the two here means there is one way to
 // resolve HOME in this package rather than two that can drift.
-var dialExpr = homePreamble + socketExpr
+// dialScript builds what Dial runs: ONE line, NO shell variables, NO command
+// substitution, NO quotes, and the socket path interpolated in Go.
+//
+// Every one of those is a removal, and each removal is a bug that already
+// happened on a real machine.
+//
+// An operator's client failed with
+//
+//	socat E connect(, AF=1 "<anon>", 2): Invalid argument
+//
+// AF=1 is AF_UNIX and length 2 is a sockaddr with an EMPTY path: socat was asked
+// to connect to "". Not a missing socket — ENOENT would say so — but an argument
+// that arrived blank. The daemon was up and serving the whole time; running the
+// same socat command by hand inside the distro returned an HTTP response.
+//
+// This channel eats things. The file already records two: `sh: 18: [: Illegal
+// number:` from a counter whose variable "arrived empty with its quotes intact",
+// and `mkdir: cannot create directory (empty)` from an unset HOME. startDaemonInWSL
+// drew the conclusion and wrote it down — "no shell variables anywhere. Paths
+// are read once and interpolated in Go" — and start has been reliable since.
+// The dial never got the same treatment, which is why status and start worked on
+// a machine where nothing could connect.
+//
+// So the path is resolved through Run (the proven path) and baked in as a
+// literal. Nothing is left for the channel to lose.
+func dialScript(sock string) string {
+	// The waits stay: a dial is what BOOTS a stopped distro, and the socket
+	// appears a second or two after systemd starts dejimad. Warm socket costs
+	// nothing, cold costs about five seconds once instead of an error.
+	return "[ -S " + sock + " ] || sleep 2; " +
+		"[ -S " + sock + " ] || sleep 3; " +
+		"exec socat STDIO UNIX-CONNECT:" + sock
+}
+
+// socketPathFor resolves the daemon socket inside a distro, once per distro.
+//
+// Cached because Dial runs per connection and this costs a wsl.exe round-trip.
+// A distro's HOME does not move while the client is running, and a wrong cached
+// value is self-correcting: the dial fails, the operator restarts the client.
+var (
+	socketPathMu    sync.Mutex
+	socketPathCache = map[string]string{}
+)
+
+func socketPathFor(ctx context.Context, distro string) (string, error) {
+	socketPathMu.Lock()
+	cached, ok := socketPathCache[distro]
+	socketPathMu.Unlock()
+	if ok {
+		return cached, nil
+	}
+	out, err := Run(ctx, distro, "printenv HOME")
+	if err != nil {
+		return "", fmt.Errorf("read HOME from %s: %w", distro, err)
+	}
+	home := strings.TrimSpace(out)
+	// An unusable HOME must be an ERROR here, not a path built from it. Building
+	// "/.dejima/dejimad.sock" out of an empty HOME is what produced a blank
+	// connect argument and an error naming socat instead of the cause.
+	if home == "" || !strings.HasPrefix(home, "/") {
+		return "", fmt.Errorf("distro %q reported an unusable HOME (%q), so the daemon "+
+			"socket path cannot be built", distro, out)
+	}
+	sock := home + "/.dejima/dejimad.sock"
+	// A path carrying whitespace or quotes cannot be passed unquoted, and
+	// quoting is the thing this channel loses. Refuse rather than emit a
+	// command that will be mis-split into an argument nobody can trace back
+	// here. Written as a predicate rather than a character class because the
+	// class itself would need the very escapes this function exists to distrust.
+	unsafe := func(r rune) bool { return r <= ' ' || r == '"' || r == 0x27 || r == 0x5c }
+	if strings.IndexFunc(sock, unsafe) >= 0 {
+		return "", fmt.Errorf("distro %q has a home path this transport cannot carry "+
+			"unquoted (%q)", distro, home)
+	}
+	socketPathMu.Lock()
+	socketPathCache[distro] = sock
+	socketPathMu.Unlock()
+	return sock, nil
+}
 
 // execCommand indirects exec.Command so tests can substitute a fake `wsl.exe`.
 var execCommand = exec.Command
@@ -179,7 +257,11 @@ func Dial(ctx context.Context, distro string) (net.Conn, error) {
 	if strings.TrimSpace(distro) == "" {
 		distro = DefaultDistro
 	}
-	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", dialExpr)
+	sock, err := socketPathFor(ctx, distro)
+	if err != nil {
+		return nil, err
+	}
+	cmd := execCommand("wsl.exe", "-d", distro, "--", "sh", "-c", dialScript(sock))
 	isolateConsole(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
