@@ -460,7 +460,7 @@ func newCpCmd() *cobra.Command {
 			"For a scoped, ledgered transfer — one Ledger entry per file — use " +
 			"`dejima port intake -r` instead.\n\n" +
 			"Examples:\n  dejima cp foo:/workspace/README.md ./\n" +
-			"  dejima cp ./patch.diff foo:/intake/\n" +
+			"  dejima cp ./patch.diff foo:/home/dejima/intake/\n" +
 			"  dejima cp -r ./notes foo:/home/dejima/notes",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
