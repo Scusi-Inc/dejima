@@ -15,6 +15,72 @@ area. Keep it honest: update the status as coverage changes.
 
 ---
 
+## Right now — the short list (2026-09-03)
+
+What is actually left, in order. The per-feature rows below are the detail; this
+is the six things standing between here and a release. `fit.txt`'s
+"KNOWN BROKEN OR UNPROVEN TODAY" section is the same judgement written for
+someone evaluating Dejima — keep the two agreeing, and prefer editing them in
+the same change.
+
+**Install paths — three of four proven, on one machine each.**
+
+| path | state |
+| --- | --- |
+| Mac client → Mac mini host | walked |
+| Windows client → Mac mini host | walked |
+| Windows local (WSL2 host) | walked, wiped-box acceptance test 2026-09-02 |
+| **Mac local** | **not yet** |
+
+1. **Mac local install.** The one unwalked path, and `fit.txt` still reports
+   fresh-Mac installs as failing in the field with no automated host to catch it.
+   Two fixes are in and waiting on a real run: the Docker first-launch wait
+   (#385) and — needed first — the `install.sh` LOCAL/SERVER/CLIENT fork with
+   stale-`DEJIMA_HOST` handling (d1). Without the fork there is no LOCAL signal
+   at all, so an `export DEJIMA_HOST=` left in a shell rc by an earlier client
+   install silently points the fresh local daemon at the old server — observed on
+   the operator's laptop, 2026-09-02. → §1, §0 blocker 2.
+
+2. **A local model, end to end.** `dejima local install` → `pull` → an agent in
+   an island completing a turn on it. Real code, no evidence of a single
+   end-to-end run; the site asserts it as a capability no competitor has, which
+   makes it the row a prospect tests first. The TUI's Local models page can now
+   drive install/pull directly (#384), so this needs a host with a backend on it,
+   not more code. → §0 blocker 4.
+
+3. **Codex, end to end.** #382 fixed the notify hook — `${1:-{}}`, where the
+   first brace closed the expansion — which means the hook has never fired
+   correctly in the field. Needs one real session: an island with a codex agent,
+   a task, a notification that arrives.
+
+4. **OpenClaw: settle the claim.** The operator ran it end to end on the mini
+   (`init --agent openclaw` → `agent open` → console authenticated, "Ready to
+   chat"), while `fit.txt` still lists it under "Broken, confirmed by the
+   maintainer. Do not describe this as working" — the file evaluators read says
+   the headline Home-Islands use case is dead. Re-run to see whether it repeats,
+   then write it up the way the Windows entry is written: what was observed, by
+   whom, on which machine, once. → §8.
+
+5. **WSL long sessions.** The install is proven; a long session is not. Under
+   sustained dashboard use the WSL VM exhausts socket resources
+   (`Wsl/Service/0x80072747`) and can wedge the WSL service itself. Two
+   contributing causes are fixed and neither is confirmed against the fault, so
+   this needs a long session on the Windows box, not another install.
+
+6. **The credential gaps behind the demo.** #334 (`gh` is the one credential not
+   deny-by-default: a host-owned island inherits the operator's own gh config)
+   and #340 (an island's GitHub identity cannot be changed after create). Both
+   are things a second user hits in their first week. → §10.
+
+Done since the last pass, so nobody re-opens them: the Windows wiped-box
+acceptance test (v0.8.96), secret rotation and removal on a running island
+(v0.8.67), the Docker first-launch messaging (#385), the TUI local-models page
+(#384), and the coverage gate crediting a comment as coverage (#392). The other
+half of that — a command QUOTED in a test crediting it, issue #335 — is #393,
+open at the time of writing; check its state rather than this sentence.
+
+---
+
 ## 0. Launch blockers (must be green before any release)
 
 - [x] **In-island code cannot reach the daemon control plane.** Fixed by
