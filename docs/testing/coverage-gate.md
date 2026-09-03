@@ -30,6 +30,37 @@ If a brand-new command or route lands with no test, it matches nothing and the
 gate fails CI. **That is the freshness guarantee: you cannot merge new surface
 without a test.**
 
+### Comments are not coverage
+
+The corpus is stripped of comments before it is searched — Go through
+`internal/srcscan`'s scanner, shell through whole-line `#` stripping. **A
+reference has to be in code.** A file that cannot be stripped fails the gate; it
+is never scanned raw.
+
+This is not tidiness. The gate credited any *mention*, so a comment explaining
+why operators should **not** be sent to `dejima auth push` marked that command's
+waiver STALE — and the prescribed cure for a stale waiver is to delete it, from a
+command that still had no test. **A false positive here tightens the ratchet onto
+untested surface**, which is worse than one that merely nags, because acting on
+it removes protection. The workaround the author found (don't spell the token
+sequence in prose) is not one the next author would know to make.
+
+Turning the strip on revealed ten CLI commands credited by prose alone. All ten
+had real tests; what those tests lacked was the command PATH in code — they
+walked a detached constructor (`newLocalCmd().Commands()`, comparing bare names)
+while the full path sat in the comment above. So the fix was to assert the paths
+from the root command via `rootCommandPaths` (`cmd/dejima/cmd_paths_test.go`),
+which is the stronger assertion anyway: a family that loses its `AddCommand` call
+passes the constructor form and fails this one.
+
+**Writing a reference on purpose is fine and expected** — `root.SetArgs([]string{
+"profile", "switch", "cloud"})` in a test that actually runs the verb is exactly
+what the gate is looking for. What no longer counts is a sentence about it.
+
+`TestCoverageGateIgnoresComments` is the control: prose does not count, code
+still does, a `//` inside a string literal survives (the Go scanner decides, not
+a regex), and an unparseable file errors.
+
 ## The ratchet (waivers)
 
 Not all surface was covered the day the gate landed, so the gate is a one-way

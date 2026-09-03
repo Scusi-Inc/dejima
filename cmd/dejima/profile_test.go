@@ -108,8 +108,7 @@ func TestEphemeralTargetUnsetIsTransparent(t *testing.T) {
 
 // End-to-end through the cobra tree: `dejima profile add` saves a profile and
 // `dejima profile ls` lists it with the active marker. Exercises the real CLI
-// wiring (not just the store) and is the freshness-gate's reference for both
-// subcommands.
+// wiring, not just the store.
 func TestProfileAddAndLsCommands(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	resetEphemeralFlags(t)
@@ -142,6 +141,45 @@ func TestProfileAddAndLsCommands(t *testing.T) {
 
 // `dejima profile switch` IS the persistent path — unlike -p, it writes
 // active_profile (parity with the TUI switcher).
+//
+// The store-level assertions below are the substance; this first half drives the
+// actual cobra verb, like its `add` / `ls` / `rm` siblings do. It was missing,
+// and the coverage gate did not notice because the sentence above this function
+// names the command — prose was standing in for the verb nobody invoked.
+func TestSwitchProfileCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resetEphemeralFlags(t)
+	if err := clientcfg.Save(clientcfg.Config{
+		Profiles: []clientcfg.Profile{{Name: "cloud", Host: "100.64.0.9:7273"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	root := newRootCmd()
+	root.SetOut(&out)
+	root.SetArgs([]string{"profile", "switch", "cloud"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("profile switch: %v", err)
+	}
+	if cfg, _ := clientcfg.Load(); cfg.ActiveProfile != "cloud" {
+		t.Fatalf("`profile switch cloud` did not persist active_profile, got %q", cfg.ActiveProfile)
+	}
+	if got := out.String(); !strings.Contains(got, "cloud") {
+		t.Errorf("switch should say what it switched to; got %q", got)
+	}
+
+	// An unknown name is rejected through the command, not just the store — the
+	// exit status is what a script keys off.
+	root = newRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"profile", "switch", "nope"})
+	if err := root.ExecuteContext(context.Background()); err == nil {
+		t.Error("`profile switch nope` should fail — no such profile")
+	}
+}
+
 func TestSwitchProfilePersists(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := clientcfg.Save(clientcfg.Config{
@@ -171,8 +209,8 @@ func TestSwitchProfilePersists(t *testing.T) {
 }
 
 // End-to-end through the cobra tree: `dejima profile rm` deletes a saved profile
-// (CLI parity with the TUI switcher's [d]) and is the freshness-gate's reference
-// for the subcommand.
+// (CLI parity with the TUI switcher's [d]). The freshness-gate reference is the
+// SetArgs line, not this sentence — the gate reads code now.
 func TestProfileRmCommand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	resetEphemeralFlags(t)
