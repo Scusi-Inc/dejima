@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/selfupdate"
+	"github.com/aoos/dejima/internal/service"
 )
 
 func (s *Server) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
@@ -161,24 +162,36 @@ func (s *Server) restartDaemon(meta selfupdate.InstallMeta) {
 // default, so there IS no service manager to restart into: `systemctl restart`
 // cannot work, and the daemon is started from the Windows side instead. Telling
 // someone there to run a systemctl command sends them in a circle.
-func restartFailureHint() string { return restartHintFor(runtime.GOOS, hasSystemd()) }
+func restartFailureHint() string {
+	return restartHintFor(runtime.GOOS, hasSystemd(), service.UnitInstalled())
+}
 
 // restartHintFor is the decision, separated from the host so every branch can be
 // tested on any machine. Left inline, the no-systemd branch was only exercised
 // on a host that happened to lack systemd — so a mutation breaking hasSystemd
 // passed, because the test simply skipped the case it was meant to cover.
-func restartHintFor(goos string, systemd bool) string {
+func restartHintFor(goos string, systemd, unitInstalled bool) string {
 	switch goos {
 	case "darwin":
 		return "Restart it with: sudo launchctl kickstart -k system/tech.dejima.dejimad"
 	case "linux":
-		if systemd {
-			return "Restart it with: sudo systemctl restart dejimad"
+		if systemd && unitInstalled {
+			return "Restart it with: systemctl --user restart dejimad.service"
 		}
-		// No systemd: almost certainly WSL, or a container. The daemon here is
-		// launched from outside, so the remedy lives outside too.
-		return "This host has no systemd, so there is no service to restart into — " +
-			"if this daemon runs in WSL, restart it from Windows with `dejima wsl start`"
+		// Either no systemd (a container), or systemd with NO dejimad unit —
+		// which is the normal WSL shape, since the daemon there is launched from
+		// the Windows side. Both mean the same thing for this hint: there is
+		// nothing to restart INTO, and the remedy lives outside this process.
+		//
+		// Asking `hasSystemd()` alone got this wrong on a real machine. A modern
+		// WSL distro runs systemd, so the check said yes and the operator was
+		// told to run `sudo systemctl restart dejimad` — moments after the
+		// daemon's own attempt had failed with "is the service installed?". The
+		// question was never whether systemd is running; it is whether there is a
+		// service to restart.
+		return "No dejimad service is installed here, so there is nothing to restart into. " +
+			"In WSL, restart it from Windows:  wsl -d <distro> -- pkill -x dejimad   then   " +
+			"dejima wsl start. Otherwise install the service with `dejima service install`."
 	}
 	return "Restart the daemon to pick up the new binary."
 }
