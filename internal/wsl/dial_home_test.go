@@ -31,10 +31,6 @@ import (
 // whose absence is the bug. So this one runs with HOME UNSET — the shape
 // wsl.exe actually hands the script.
 func TestDialResolvesHomeWithoutOneInTheEnvironment(t *testing.T) {
-	realHome, err := os.UserHomeDir()
-	if err != nil || realHome == "" || realHome == "/" {
-		t.Skipf("this user has no usable passwd home to resolve to (%q, %v)", realHome, err)
-	}
 	sh := "/bin/sh"
 	if _, err := os.Stat(sh); err != nil {
 		t.Skipf("no %s here", sh)
@@ -59,10 +55,34 @@ func TestDialResolvesHomeWithoutOneInTheEnvironment(t *testing.T) {
 		t.Fatalf("socat never ran, so nothing was dialled at all: %v", err)
 	}
 	got := strings.TrimPrefix(string(b), "UNIX-CONNECT:")
+
+	// THE BUG, asserted on every platform. An empty $HOME puts the socket at the
+	// filesystem root, which is where the operator's client sat waiting.
 	if got == "/.dejima/dejimad.sock" {
 		t.Fatalf("the dial resolved $HOME to the empty string and looked for the "+
 			"daemon at %s — the exact path an operator's client sat waiting on "+
 			"while `dejima wsl status` reported the socket up", got)
+	}
+
+	// WHICH home it resolves to is platform-dependent, and only the first
+	// assertion is about the defect. homePreamble reads the passwd entry with
+	// `getent`, which is glibc and absent on macOS — so a darwin runner correctly
+	// takes the /root fallback. That fallback is right for the WSL default user,
+	// and this expression only ever runs inside a Linux distro in production.
+	//
+	// So the exact path is checked where getent exists and NOT skipped where it
+	// doesn't: the assertion above still runs everywhere, because a guard that
+	// skips its whole subject on one CI platform is a guard that platform does
+	// not have.
+	if _, err := exec.LookPath("getent"); err != nil {
+		t.Logf("no getent here, so the passwd lookup falls back to /root (got %q); "+
+			"the empty-HOME assertion above still ran", got)
+		return
+	}
+	realHome, err := os.UserHomeDir()
+	if err != nil || realHome == "" || realHome == "/" {
+		t.Logf("no usable passwd home to compare against (%q, %v)", realHome, err)
+		return
 	}
 	if want := filepath.Join(realHome, ".dejima", "dejimad.sock"); got != want {
 		t.Errorf("dialled %q, want %q", got, want)
