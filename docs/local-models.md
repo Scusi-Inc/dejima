@@ -144,6 +144,30 @@ workflows rather than let tool-use-heavy skills silently underperform.
 
 ---
 
+## Reaching an island that already exists
+
+Registering the `local` provider is a host-side write plus
+`refreshIslandLLMConfigs`. No daemon restart, and no island recreate: the
+`/opt/host/llm` bind is a **directory**, and it is mounted whether or not the
+island had a provider when it was created, so the rewrite is visible inside a
+container that is already running.
+
+What does need to happen is an **agent restart** — the launch line sources
+`$DEJIMA_PROVIDER_KEY_FILE`, so a process already running holds its start-time
+environment. `dejima agent restart <island> <agent-id>` is enough; the provider
+is resolved fresh per agent at launch.
+
+Both halves used to be wrong in the direction that costs an evening. The mount
+was added only when a provider already resolved at container create — so an
+island created before its operator had any provider (the normal state of someone
+reaching for a local backend) had no `/opt/host/llm` at all, and the key was
+written into a directory nothing in the container was looking at. And
+`DEJIMA_PROVIDER_KEY_FILE` was create-time state derived from the *primary*
+agent, so restarting changed nothing. Fixed in `islandLLMConfigDir` and
+`agentProviderEnv`; guarded in `internal/api/llm_reaches_running_island_test.go`.
+
+---
+
 ## Phased delivery
 
 1. ✅ **Foundation (`internal/localmodel`)** — Ollama backend detection + a

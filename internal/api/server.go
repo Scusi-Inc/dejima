@@ -2775,8 +2775,52 @@ func shSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// agentProviderEnv is THIS agent's provider selection, resolved now, as a
+// `VAR=value ` prefix for the launch line.
+//
+// The container-wide DEJIMA_PROVIDER_KEY_FILE has exactly one writer — the
+// createContainerForProject block, from p.PrimaryAgent() — which made it wrong
+// in two ways at once. It is the PRIMARY's provider, so a goose agent sitting
+// behind a claude-code primary launched with the variable unset (claude-code
+// does not require a provider key, so the block never ran) and its own
+// `[ -f "$DEJIMA_PROVIDER_KEY_FILE" ]` guard quietly declined to source a key
+// that was materialized and mounted an inch away. And it is CREATE-TIME state,
+// so a provider registered after the container existed never appeared in it no
+// matter how many times the agent restarted.
+//
+// Resolving per agent at launch fixes both: every agent gets its OWN provider,
+// and because restartAgent routes through here (including for the primary), a
+// newly registered provider now needs an agent restart rather than a container
+// recreate — which is what the local-models flow tells operators to expect.
+//
+// Empty prefix when the handler needs no key or nothing resolves; the agent
+// still launches and health reports missing-provider-auth.
+func agentProviderEnv(a *project.AgentSpec) string {
+	h, ok := handlers.Lookup(a.Type)
+	if !ok || !h.RequiresProviderKey {
+		return ""
+	}
+	var b strings.Builder
+	if a.Model != "" {
+		b.WriteString("DEJIMA_MODEL=" + shSingleQuote(a.Model) + " ")
+	}
+	store, err := providercreds.Load()
+	if err != nil {
+		return b.String()
+	}
+	prov, ok := store.Resolve(a.Provider)
+	if !ok {
+		return b.String()
+	}
+	b.WriteString("DEJIMA_PROVIDER=" + shSingleQuote(prov.Name) + " ")
+	// The PATH only. The key bytes stay in the 0600 mounted file so they never
+	// reach a process listing, a container env, or `docker inspect`.
+	b.WriteString("DEJIMA_PROVIDER_KEY_FILE=" + shSingleQuote("/opt/host/llm/"+prov.Name+".env") + " ")
+	return b.String()
+}
+
 func agentLaunchScript(a *project.AgentSpec, resume bool) string {
-	idEnv := "DEJIMA_AGENT_ID=" + a.ID + " "
+	idEnv := "DEJIMA_AGENT_ID=" + a.ID + " " + agentProviderEnv(a)
 	if handlers.Attachable(a.Type) {
 		h, _ := handlers.Lookup(a.Type)
 		launch := h.LaunchFor(resume) // resume continues the prior conversation when supported
@@ -3494,9 +3538,11 @@ func islandGitConfig(p *project.Project) (string, error) {
 // provider referenced by the island's key-requiring agents (AgentSpec.Provider,
 // or the store default when blank), it writes a single-provider <name>.env
 // (0600) the per-agent shim sources, plus a key-less providers.json manifest.
-// Returns "" (no error) when no provider resolves — an island that needs no LLM
-// key still boots, and the missing-key state surfaces via agent health. The
-// files hold plaintext keys, so teardown removes the dir (LLMIslandConfigPath).
+// The dir is returned even when NOTHING resolves — empty, so an island that
+// needs no LLM key still boots and the missing-key state surfaces via agent
+// health, but MOUNTED, so a provider registered later reaches the container that
+// already exists. The files hold plaintext keys, so teardown removes the dir
+// (LLMIslandConfigPath).
 func islandLLMConfigDir(p *project.Project) (string, error) {
 	store, err := providercreds.Load()
 	if err != nil {
@@ -3526,7 +3572,27 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 		return "", err
 	}
 	if len(seen) == 0 {
-		return "", nil
+		// EMPTY, BUT STILL RETURNED, so the caller mounts it. Returning "" here
+		// meant credentialBindMounts skipped the bind entirely, and the mount is
+		// only ever created at container create — so an island created before its
+		// operator had ANY provider had no /opt/host/llm at all. Registering a
+		// provider afterwards then wrote the island's key into a host directory
+		// nothing inside the container was looking at, and restarting the agent
+		// re-read a path that did not exist in its filesystem. Silently: the
+		// store had the key, `dejima provider ls` showed it, health reported it
+		// resolved, and only a whole-container recreate actually delivered it.
+		//
+		// That is the exact case managed local models land in — the operator
+		// reaching for a local backend is typically the operator who has no
+		// provider configured yet.
+		//
+		// islandSecretsMount solved the identical problem the same way and says
+		// so: the directory is always present so a secret added later reaches the
+		// running container through the live mount "instead of needing a recreate
+		// to gain the mount". An empty read-only dir costs nothing; a missing one
+		// costs an evening.
+		makeIslandReadableTree(dir)
+		return dir, nil
 	}
 	manifest := make([]providercreds.Meta, 0, len(seen))
 	for _, prov := range seen {
