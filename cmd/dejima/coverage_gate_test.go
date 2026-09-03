@@ -228,6 +228,20 @@ func cliCommands() []string {
 // there, prose ABOUT a command credited it; here, a string quoting a command
 // credited it. Both fail toward "you have more coverage than you think", which
 // is the direction nobody checks.
+// whatCountsAsAReference is appended to the uncovered-surface failure, because
+// that failure is the only moment anyone needs to know the rule and the doc is
+// not where they are looking. It exists as an answer to "is this explained
+// prominently enough?" — the honest answer being that prominence in a document
+// nobody has open is not prominence.
+const whatCountsAsAReference = "\n" +
+	"What counts as a reference (a command must be INVOKED, not named):\n" +
+	"  Go test:      root.SetArgs([]string{\"agent\", \"ls\"})   — the quoted-arg form, e.g. via runCLI\n" +
+	"  shell suite:  dejima agent ls                        — the script really runs it\n" +
+	"  NOT either:   \"dejima agent ls\" inside a string, or a comment naming it.\n" +
+	"A command that cannot be invoked in a test at all (it installs software, downloads\n" +
+	"gigabytes, waits on a browser) is a waiver — say which of those it is and name what\n" +
+	"covers the logic underneath. See docs/testing/coverage-gate.md."
+
 func cliReferenced(files []corpusFile, cmd string) string {
 	toks := strings.Fields(cmd)
 	quoted := make([]string, len(toks))
@@ -417,12 +431,13 @@ func TestCoverageGate(t *testing.T) {
 
 	if len(uncovered) > 0 {
 		t.Errorf("NEW UNTESTED SURFACE (%d) — add a test, or (only if deliberate) waive it in "+
-			"cmd/dejima/testdata/coverage_waivers.txt:\n  %s",
-			len(uncovered), strings.Join(uncovered, "\n  "))
+			"cmd/dejima/testdata/coverage_waivers.txt:\n  %s\n%s",
+			len(uncovered), strings.Join(uncovered, "\n  "), whatCountsAsAReference)
 	}
 	if len(staleWaived) > 0 {
-		t.Errorf("STALE WAIVERS (%d) — these are now tested; delete their lines from the waiver "+
-			"file so the ratchet tightens:\n  %s",
+		t.Errorf("STALE WAIVERS (%d) — these are now invoked; delete their lines from the waiver "+
+			"file so the ratchet tightens. The file:line is where the invocation is — check it "+
+			"before deleting anything:\n  %s",
 			len(staleWaived), strings.Join(staleWaived, "\n  "))
 	}
 	if len(orphanWaivers) > 0 {
@@ -540,5 +555,29 @@ func TestMentionIsNotCoverage(t *testing.T) {
 	// falling back would restore both bugs in the one file nobody is watching.
 	if _, err := corpusText("broken_test.go", "package main\nfunc (\n\"unterminated\n", true); err == nil {
 		t.Error("a file that cannot be stripped must fail the gate, not be scanned raw")
+	}
+}
+
+// TestGateDoesNotCreditItself: this file enumerates every command and route, so
+// it must never be part of the corpus it searches.
+//
+// The exclusion has always been there. It became load-bearing in a new way when
+// the uncovered-surface failure started carrying whatCountsAsAReference, which
+// contains a REAL quoted-arg invocation as its example — so if the exclusion
+// were ever dropped, `cli agent ls` would be credited to the sentence
+// explaining what credit means. The second half of this test is the control:
+// it proves the example still is an invocation, so the first half is guarding
+// something rather than passing over an example that quietly stopped matching.
+func TestGateDoesNotCreditItself(t *testing.T) {
+	for _, f := range testCorpus(t, repoRoot(t)) {
+		if filepath.Base(f.rel) == "coverage_gate_test.go" {
+			t.Fatalf("the gate is searching itself (%s) — it enumerates every command, "+
+				"so every command would read as covered", f.rel)
+		}
+	}
+	self := []corpusFile{{rel: "coverage_gate_test.go", goSrc: true, text: whatCountsAsAReference}}
+	if where := cliReferenced(self, "agent ls"); where == "" {
+		t.Fatal("the failure message's example is no longer an invocation — " +
+			"the exclusion above is now guarding nothing, and this test would pass either way")
 	}
 }
