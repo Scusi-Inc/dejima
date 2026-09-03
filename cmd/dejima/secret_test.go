@@ -22,17 +22,11 @@ func secretSub(t *testing.T, name string) *cobra.Command {
 // to add or rotate, `dejima secret ls` to see what exists, and
 // `dejima secret rm` to remove.
 func TestSecretCmdTree(t *testing.T) {
-	want := map[string]bool{"set": false, "ls": false, "rm": false}
-	for _, sub := range newSecretCmd().Commands() {
-		if _, ok := want[sub.Name()]; ok {
-			want[sub.Name()] = true
-		}
-	}
-	for name, found := range want {
-		if !found {
-			t.Errorf("`dejima secret %s` not registered", name)
-		}
-	}
+	requirePaths(t, rootCommandPaths(t),
+		"dejima secret set",
+		"dejima secret ls",
+		"dejima secret rm",
+	)
 }
 
 // A value typed on a command line lands in shell history and the process list,

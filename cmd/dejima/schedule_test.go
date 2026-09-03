@@ -2,21 +2,14 @@ package main
 
 import "testing"
 
-// The `dejima schedule list` / `dejima schedule rm` commands are wired under a
-// `schedule` parent. Also satisfies the coverage gate for the two new commands.
+// The schedule verbs are wired under a `schedule` parent AND reachable from the
+// binary — the second half is the one a missing AddCommand breaks.
 func TestScheduleCommands(t *testing.T) {
-	sched := newScheduleCmd()
-	if sched.Name() != "schedule" {
-		t.Fatalf("parent Name() = %q, want schedule", sched.Name())
+	if name := newScheduleCmd().Name(); name != "schedule" {
+		t.Fatalf("parent Name() = %q, want schedule", name)
 	}
-	sub := map[string]bool{}
-	for _, c := range sched.Commands() {
-		sub[c.Name()] = true
-	}
-	if !sub["list"] {
-		t.Error("missing `schedule list` subcommand")
-	}
-	if !sub["rm"] {
-		t.Error("missing `schedule rm` subcommand")
-	}
+	requirePaths(t, rootCommandPaths(t),
+		"dejima schedule list",
+		"dejima schedule rm",
+	)
 }

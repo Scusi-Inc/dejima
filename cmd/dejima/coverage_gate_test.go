@@ -22,6 +22,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,6 +31,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aoos/dejima/internal/srcscan"
 )
 
 // repoRoot walks up from the test's working directory to the dir holding go.mod.
@@ -98,7 +101,11 @@ func testCorpus(t *testing.T, root string) string {
 		if rerr != nil {
 			return rerr
 		}
-		b.Write(data)
+		text, serr := corpusText(rel, string(data), isGoTest)
+		if serr != nil {
+			return serr
+		}
+		b.WriteString(text)
 		b.WriteByte('\n')
 		return nil
 	})
@@ -106,6 +113,36 @@ func testCorpus(t *testing.T, root string) string {
 		t.Fatalf("walk corpus: %v", err)
 	}
 	return b.String()
+}
+
+// corpusText prepares one file for the corpus by blanking its comments.
+//
+// COMMENTS ARE NOT COVERAGE, and crediting them is not merely noisy here. d1
+// hit this writing 96f6a54: a comment explaining why operators should NOT be
+// sent to `dejima auth push` matched, the gate reported that command's waiver
+// as STALE, and the ratchet's remedy for a stale waiver is to delete it — for a
+// command that still has no test. A false positive that TIGHTENS a ratchet is
+// worse than one that nags, because acting on it removes real protection.
+//
+// Prose arguing AGAINST a command credited it. That is the shape, and it is why
+// the remedy is mechanical (internal/srcscan) rather than a rule about how to
+// write comments: this file already documented the hazard.
+//
+// A file that cannot be stripped is an ERROR, never a fall-back to the raw
+// text. Falling back would restore the bug in exactly the case nobody is
+// watching, and silently.
+func corpusText(rel, src string, isGoTest bool) (string, error) {
+	if isGoTest {
+		stripped, ok := srcscan.StripGoComments(src)
+		if !ok {
+			return "", fmt.Errorf("could not strip comments from %s — "+
+				"scanning it raw would credit prose about a command as a test of it", rel)
+		}
+		return stripped, nil
+	}
+	// Shell. Whole-line comments only; see internal/srcscan for why guessing at
+	// a trailing '#' would be the more dangerous error.
+	return srcscan.StripLineComments(src, "#"), nil
 }
 
 // --- CLI surface -----------------------------------------------------------
@@ -321,5 +358,86 @@ func TestCoverageGate(t *testing.T) {
 		t.Errorf("ORPHAN WAIVERS (%d) — these match no current command/op (typo or removed "+
 			"surface); delete them:\n  %s",
 			len(orphanWaivers), strings.Join(orphanWaivers, "\n  "))
+	}
+}
+
+// TestCoverageGateIgnoresComments is the control for corpusText: a command named
+// only in PROSE must not read as covered, and a command named in code must still
+// read as covered.
+//
+// Both halves matter, and the second is the dangerous one. Stripping too little
+// credits a comment — noisy, and how d1 lost an afternoon on 96f6a54: a comment
+// explaining that operators should NOT be sent to `dejima auth push` marked that
+// command's waiver STALE, and the ratchet's cure for a stale waiver is to delete
+// it, from a command with no test. Stripping too MUCH would blind the gate to
+// real tests and report untested surface that is tested — the same class of
+// wrong answer, arriving as a confident green ratchet.
+func TestCoverageGateIgnoresComments(t *testing.T) {
+	// d1's case, reproduced: the token sequence appears once, in a comment.
+	commentOnly := "package main\n" +
+		"// Do not send operators to dejima auth push — it is not the path.\n" +
+		"func TestSomething(t *testing.T) {}\n"
+	got, err := corpusText("prose_test.go", commentOnly, true)
+	if err != nil {
+		t.Fatalf("stripping a valid Go file should not error: %v", err)
+	}
+	if cliReferenced(got, "auth push") {
+		t.Error("a command named only in a comment counts as covered — the gate is reading prose")
+	}
+	// The control on that control: the sequence really was there to be found.
+	if !cliReferenced(commentOnly, "auth push") {
+		t.Fatal("the fixture does not contain the command at all — this test proves nothing")
+	}
+
+	// A real reference in code still counts, in both forms the gate accepts.
+	inCode := "package main\n" +
+		"func TestX(t *testing.T) { root.SetArgs([]string{\"auth\", \"push\"}) }\n"
+	got, err = corpusText("real_test.go", inCode, true)
+	if err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+	if !cliReferenced(got, "auth push") {
+		t.Error("a quoted-arg sequence in code no longer counts — stripping has blinded the gate")
+	}
+
+	// The Go scanner decides what a comment is, not a regex: a comment marker
+	// inside a string literal is code and survives.
+	inString := "package main\n" +
+		"func TestY(t *testing.T) { want := \"run // dejima auth push\" ; _ = want }\n"
+	got, err = corpusText("literal_test.go", inString, true)
+	if err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+	if !cliReferenced(got, "auth push") {
+		t.Error("a command inside a string literal was stripped — the stripper is guessing, not parsing")
+	}
+
+	// Shell: whole-line comments go, real invocations stay.
+	shell := "#!/usr/bin/env bash\n# dejima auth push is deliberately not run here\ndejima island ls\n"
+	got, err = corpusText("scripts/x.sh", shell, false)
+	if err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+	if cliReferenced(got, "auth push") {
+		t.Error("a shell comment counts as covered")
+	}
+	if !cliReferenced(got, "island ls") {
+		t.Error("a real shell invocation stopped counting")
+	}
+
+	// API operations read the same corpus and inherit the same fix.
+	apiProse := "package main\n// GET /v1/islands/{name}/audit is not exercised anywhere.\n"
+	got, err = corpusText("api_prose_test.go", apiProse, true)
+	if err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+	if apiReferenced(got, apiOp{method: "GET", path: "/v1/islands/{name}/audit"}) {
+		t.Error("an API path named only in a comment counts as covered")
+	}
+
+	// Unparseable Go is an ERROR, never a silent fall back to the raw text:
+	// falling back would restore the bug in the one file nobody is watching.
+	if _, err := corpusText("broken_test.go", "package main\nfunc (\n\"unterminated\n", true); err == nil {
+		t.Error("a file that cannot be stripped must fail the gate, not be scanned raw")
 	}
 }
