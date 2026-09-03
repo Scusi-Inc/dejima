@@ -18,6 +18,14 @@ import (
 //
 // Run for real under /bin/sh against a socket that appears late, which is the
 // cold-boot shape. Asserting on the string would only restate it.
+//
+// SCOPE: this fixture SETS HOME, which production does not — wsl.exe passes no
+// HOME and dash does not synthesise one. That is deliberate here (the property
+// under test is the wait, and a temp-dir socket needs an explicit HOME to point
+// at) but it is also why this file could not catch the dial resolving $HOME to
+// the empty string for months. HOME resolution on the dial path is covered in
+// dial_home_test.go, which runs with HOME unset. Do not read a pass here as
+// evidence that the real dial finds the socket.
 func TestSocketExprWaitsForALateSocket(t *testing.T) {
 	dir := shortHome(t)
 	sock := filepath.Join(dir, ".dejima", "dejimad.sock")

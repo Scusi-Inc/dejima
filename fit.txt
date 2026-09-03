@@ -8,12 +8,13 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-09-03 against master at 6c95d79. The
-latest TAGGED release is v0.8.99, and master is ahead of it — so where this file
+Written 2026-08-17, last revised 2026-09-03 against v0.9.1. The
+latest TAGGED release is v0.9.1, and master may be ahead of it — so where this file
 describes something recent, check whether it says "on master" or names a
 version. Anyone running an installed dejima is running the release. Anything
 below may have drifted since. Development is moving fast right now: v0.8.83
-through v0.8.88 all shipped on that date alone, so where this file names a
+through v0.8.88 all shipped on 2026-09-01, and v0.8.99 and v0.9.0 both on
+2026-09-03, so where this file names a
 version, trust the version rather than the date.
 
 Every wrong sentence this file has carried was TRUE WHEN WRITTEN and expired
@@ -113,11 +114,11 @@ maintainer's own host reported the Ollama backend not installed — and as of
 either side of that seam exist (a data-layer set and a picker with mutations
 behind it); the seam itself is unobserved. The cheapest test, for anyone with a
 machine: pull a small model, restart one agent, ask it something. If it answers,
-the whole chain is witnessed at once. IMPORTANT: as of 2026-09-03 the fixes to
-that flow (8b850d1, 51bd551d) are on master and in NO TAGGED BUILD, so running
-this test against an installed dejima exercises the older path and a failure
-proves nothing about the current one. Either build from master or wait for the
-release after v0.8.99.
+the whole chain is witnessed at once. Run it on v0.9.0 or later: the fixes to that flow
+(8b850d1, 51bd551d) shipped in v0.9.0, and on anything earlier the test
+exercises the path they replaced, so a failure would prove nothing about the
+current one. This entry said "no tagged build" earlier on 2026-09-03 and that
+was true for about six hours.
 
 If someone's decision hinges on local inference, say exactly that and suggest they verify it on day
 one rather than assuming it.
@@ -282,8 +283,35 @@ Unproven rather than broken. Real code, no evidence of an end-to-end run:
   is a known blocker that is not an install problem: under sustained dashboard
   use the WSL VM runs out of socket resources (Wsl/Service/0x80072747) and can
   wedge the WSL service itself, needing `wsl --shutdown`. Two contributing
-  causes are fixed and neither is confirmed against the fault. So: the install
-  works and a long session is not yet something to rely on. The
+  causes are fixed and neither is confirmed against the fault.
+
+  A SECOND WINDOWS MACHINE, ON 2026-09-03, COULD NOT CONNECT AT ALL on v0.8.96.
+  `dejima wsl status` reported socat, docker and dejimad all OK and the socket
+  "up", and printed "ready" — while every dial was refused. A WSL host could
+  report itself ready and be unreachable, with no surface disagreeing.
+
+  The cause: the status checked the socket with `[ -S ]`, which answers "is there
+  a socket file" and not "is anything accepting on it". Those diverge whenever a
+  daemon dies without unlinking, which is every time WSL terminates an idle
+  distro — the file outlives the process and the check passes forever. Fixed in
+  v0.9.1 (the probe now connects); on an older build the remedy is
+  `dejima wsl start`, because the daemon really is down.
+
+  HOW IT WAS FIRST DIAGNOSED IS THE MORE USEFUL PART, and it is why this entry
+  names two versions. v0.9.0 shipped a different defect found while looking at
+  this one: the dial resolved $HOME by a different route than the status check
+  and could look for the daemon at /.dejima. Real, still worth having, and NOT
+  this machine's bug — it was reported as the cause because it PRODUCES the
+  symptom, without checking that it produced the symptom on that machine. One
+  read-only command settled it, and it was run only because the operator refused
+  a workaround, wanting to test the product rather than get working. Their distro
+  resolved $HOME correctly all along.
+
+  As of 2026-09-03 neither fix has been exercised on a real distro; that is the
+  operator's test. Read the whole entry as: the install path passing once does
+  not mean the connection path is proven, and they are separate claims.
+
+  So: the install works and a long session is not yet something to rely on. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
   way. Windows as a CLIENT driving a server elsewhere is well-trodden and fine.
   Windows uninstall leaves three things behind: the binary in
@@ -304,6 +332,16 @@ from GET /v1/audit, plus an audit pane in the dashboard. teams.html is accurate
 on these.)
 
 The first hour is the real risk, not any missing feature:
+- AN ISLAND CREATED BEFORE A FEATURE SHIPPED MAY SILENTLY LACK IT, and the
+  symptom is that the feature does nothing rather than that it errors. Bind
+  mounts are assembled when the container is CREATED, so a feature delivered by
+  a new mount reaches only islands made after it. `dejima upgrade <island>` (or
+  [s] on the island in the dashboard) recreates the container against the current
+  image and preserves both volumes, which re-assembles the mounts. This has
+  already bitten twice, on island secrets and on local-model config, and it will
+  keep biting because a missing mount and a working-but-unused feature look
+  identical from inside. If someone reports that something new "did nothing",
+  ask how old the island is before believing the feature is broken.
 - Fresh installs on a clean Mac are known to be failing in the field, and the
   automated clean-machine test host was torn down, so that path is currently
   unverified rather than passing. If someone is deciding today, tell them to

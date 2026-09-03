@@ -107,17 +107,41 @@ func TestLocalCommandsAgainstDaemon(t *testing.T) {
 	if !strings.Contains(out, "backend") {
 		t.Errorf("status should name the backend; got:\n%s", out)
 	}
-	// The CI host has no Ollama, so the status has to say how to get one —
-	// this is the line an operator acts on.
-	if strings.Contains(out, "not installed") && !strings.Contains(out, "dejima local install") {
-		t.Errorf("a not-installed status must name the install command; got:\n%s", out)
+	// EXHAUSTIVE OVER THE STATES, deliberately, with a default that fails.
+	//
+	// This was `if Contains("not installed") && !Contains("dejima local
+	// install")`, which asserts NOTHING once the first half stops matching —
+	// rename the status text and the check silently never runs, on a host where
+	// nobody would look. d2 hit the mirror image of this today: a guard whose
+	// two substrings were both satisfied by a sentence other than the one under
+	// test, so a deleted instruction still passed. Same family, opposite
+	// direction; both pass quietly.
+	switch {
+	case strings.Contains(out, "not installed"):
+		// The CI host has no backend, so this is the branch that normally runs.
+		// It is also the only status an operator can act on, and the action has
+		// to be named.
+		if !strings.Contains(out, "dejima local install") {
+			t.Errorf("a not-installed status must name the install command; got:\n%s", out)
+		}
+	case strings.Contains(out, "installed (not running)"), strings.Contains(out, "running"):
+		// A developer's machine with Ollama on it. Nothing further to assert —
+		// but it must be one of the states, which is what the default enforces.
+	default:
+		t.Errorf("status named no recognisable state, so nothing above was checked; got:\n%s", out)
 	}
 
 	if out, err = runCLI(t, "local", "models"); err != nil {
 		t.Fatalf("`dejima local models` should list (possibly nothing), not fail: %v", err)
 	}
-	if !strings.Contains(out, "no models pulled") && !strings.Contains(out, "pulled") {
-		t.Errorf("models should say what is pulled; got:\n%s", out)
+	// "no models pulled" CONTAINS "pulled", so the old
+	// `!Contains("no models pulled") && !Contains("pulled")` collapsed to the
+	// second clause alone: any use of the word passed. Match the two headings
+	// the command actually prints, and fail on anything else.
+	switch {
+	case strings.Contains(out, "no models pulled"), strings.Contains(out, "pulled:"):
+	default:
+		t.Errorf("models said neither `no models pulled` nor `pulled:`; got:\n%s", out)
 	}
 
 	// A model that was never pulled cannot be removed, and the error should say

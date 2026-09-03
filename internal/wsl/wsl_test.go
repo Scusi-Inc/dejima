@@ -129,7 +129,8 @@ func TestDecodeWSLText(t *testing.T) {
 }
 
 func TestReadyRequiresEveryPart(t *testing.T) {
-	full := Report{Distro: "d", Exists: true, Version: 2, HasSocat: true, HasDocker: true, HasDejima: true, SocketUp: true}
+	full := Report{Distro: "d", Exists: true, Version: 2, HasSocat: true, HasDocker: true,
+		HasDejima: true, SocketUp: true, Listening: true}
 	if !full.Ready() {
 		t.Fatal("a fully-provisioned report should be Ready")
 	}
@@ -142,6 +143,11 @@ func TestReadyRequiresEveryPart(t *testing.T) {
 		"docker":  func(r *Report) { r.HasDocker = false },
 		"dejimad": func(r *Report) { r.HasDejima = false },
 		"socket":  func(r *Report) { r.SocketUp = false },
+		// The socket FILE existing and something ACCEPTING on it are separate
+		// facts. A daemon killed by WSL terminating the distro leaves the file
+		// behind, so this is the state an operator actually reached: four checks
+		// green, "ready" printed, every dial refused.
+		"listening": func(r *Report) { r.Listening = false },
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := full

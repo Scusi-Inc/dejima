@@ -1716,14 +1716,38 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// recovery steps for a teammate/laptop pointed at a server (safe work,
 			// auto-retry, tailnet check, reinstall, ask-operator).
 			if isConnectionError(msg.err) {
-				if m.activeHost == "" {
+				switch {
+				case m.activeHost == "":
 					d := diagnoseLocalDaemon()
 					m.daemonHelp = &d
-				} else {
+				case wsl.IsHost(m.activeHost):
+					// A wsl:// target is a LOCAL tunnel through wsl.exe. Sending it
+					// down the remote path told an operator to check the tailnet and
+					// ask "the operator" about a server on their own machine, while
+					// the one command that fixes it appeared on neither list.
+					//
+					// Paint the probe-free diagnosis NOW and refine it when the probe
+					// lands: wsl.Probe shells out and can boot a stopped distro, so
+					// running it here would freeze the dashboard for seconds. What is
+					// painted first says only what is true without a probe.
+					d := diagnoseWSLDaemon(wsl.Distro(m.activeHost), nil, errWSLProbePending)
+					m.daemonHelp = &d
+					return m, probeWSLDiagnosisCmd(m.activeHost)
+				default:
 					d := diagnoseRemoteDaemon(m.activeHost)
 					m.daemonHelp = &d
 				}
 			}
+		}
+		return m, nil
+
+	case wslDiagnosisMsg:
+		// The refined answer. Dropped if the daemon came back while we were
+		// probing — replacing a cleared panel would resurrect an error the
+		// operator has already watched disappear.
+		if m.daemonHelp != nil && msg.host == m.activeHost {
+			d := msg.diagnosis
+			m.daemonHelp = &d
 		}
 		return m, nil
 
