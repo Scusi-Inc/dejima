@@ -29,20 +29,14 @@ func TestVoiceDeviceCmdShape(t *testing.T) {
 	}
 }
 
-// The voice subcommand tree must expose all three verbs — install, status, and
-// device — since the platform guidance points at each of them.
+// The voice tree must expose all three verbs — install, status, and device —
+// since the platform guidance points at each of them by name.
 func TestVoiceCmdTree(t *testing.T) {
-	want := map[string]bool{"install": false, "status": false, "device": false}
-	for _, sub := range newVoiceCmd().Commands() {
-		if _, ok := want[sub.Name()]; ok {
-			want[sub.Name()] = true
-		}
-	}
-	for name, found := range want {
-		if !found {
-			t.Errorf("voice subcommand %q not registered", name)
-		}
-	}
+	requirePaths(t, rootCommandPaths(t),
+		"dejima voice install",
+		"dejima voice status",
+		"dejima voice device",
+	)
 }
 
 // The unsupported-platform error has to say WHERE voice runs. The old text

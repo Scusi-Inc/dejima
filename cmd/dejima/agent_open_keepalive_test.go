@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -21,7 +20,7 @@ import (
 // NAT with an idle timeout, which no unit test can stage. Both are anchored to
 // the argument slice actually handed to exec, not to a comment about it.
 func TestAgentOpenSetsSSHKeepalive(t *testing.T) {
-	src := readAgentOpenSource(t)
+	src := readSource(t, "gateway_forward.go")
 
 	// Scope to the literal that builds ssh's argv. Searching the whole file
 	// would match these strings in the explanatory comment above them and pass
@@ -51,7 +50,7 @@ func TestAgentOpenSetsSSHKeepalive(t *testing.T) {
 // The common case prints nothing without this: a dropped path exits ssh 0, so
 // waitErr is nil and the command returns quietly.
 func TestAgentOpenReportsAClosedForward(t *testing.T) {
-	src := readAgentOpenSource(t)
+	src := readSource(t, "agent_open.go")
 	if !strings.Contains(src, "has closed — the console in your browser is now pointing at nothing") {
 		t.Error("nothing tells the user the tunnel closed; a dead console is " +
 			"indistinguishable from a dead gateway")
@@ -63,24 +62,20 @@ func TestAgentOpenReportsAClosedForward(t *testing.T) {
 	}
 }
 
-func readAgentOpenSource(t *testing.T) string {
-	t.Helper()
-	b, err := os.ReadFile("agent_open.go")
-	if err != nil {
-		t.Fatalf("read agent_open.go: %v", err)
-	}
-	return string(b)
-}
+// The argv builder MOVED to gateway_forward.go when the dashboard began holding
+// its own forward, so both callers construct it identically. This guard followed
+// it rather than being deleted — and it FAILED rather than passing when the
+// literal vanished, which is the only reason the move was noticed at all.
 
 // sshArgsLiteral extracts the `sshArgs := []string{…}` composite literal so
 // assertions can't be satisfied by prose elsewhere in the file.
-var sshArgsRe = regexp.MustCompile(`(?s)sshArgs := \[\]string\{(.*?)\n\t*\}`)
+var sshArgsRe = regexp.MustCompile(`(?s)args := \[\]string\{(.*?)\n\t*\}`)
 
 func sshArgsLiteral(t *testing.T, src string) string {
 	t.Helper()
 	m := sshArgsRe.FindStringSubmatch(src)
 	if m == nil {
-		t.Fatal("couldn't find the `sshArgs := []string{…}` literal — this test " +
+		t.Fatal("couldn't find the argv literal in sshForwardArgs — this test " +
 			"asserts against ssh's real argv, and silently matching nothing " +
 			"would make it pass for the wrong reason")
 	}
