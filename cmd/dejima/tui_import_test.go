@@ -141,3 +141,88 @@ func TestImport_ErrorResultRendersWithoutAResult(t *testing.T) {
 }
 
 var _ tea.Model = tuiModel{}
+
+// A refusal must offer the way out IN THE TUI. The operator's standing rule is
+// that the TUI does not send people to the CLI, and a cap that can only be
+// raised with a flag does exactly that.
+func TestImportRefusalOffersRaisingTheCaps(t *testing.T) {
+	m := importModel(api.PortScopeView{Name: "vault"})
+	m.importPane.step, m.importPane.err = importDone, "refusing to import: 4213 files"
+	view := m.renderImport()
+	if !strings.Contains(view, "[c] raise the caps") {
+		t.Fatalf("the refusal screen offers no way to raise the cap:\n%s", view)
+	}
+	m = feedImport(m, "c")
+	if m.importPane.step != importCaps {
+		t.Fatalf("step = %v, want importCaps", m.importPane.step)
+	}
+}
+
+// Digits and size suffixes are the whole alphabet of these fields. Reusing the
+// list's j/k/q handling would eat "1G" and close the pane mid-number — the bug
+// the agent-adder key step already had to solve once.
+func TestImportCapsFieldTakesDigitsNotCursorKeys(t *testing.T) {
+	m := importModel(api.PortScopeView{Name: "vault"})
+	m.importPane.step = importCaps
+	m = feedImport(m, "5", "0", "0", "0")
+	if m.importPane.maxFiles != "5000" {
+		t.Errorf("maxFiles = %q, want 5000", m.importPane.maxFiles)
+	}
+	m = feedImport(m, "tab", "2", "G")
+	if m.importPane.maxBytes != "2G" {
+		t.Errorf("maxBytes = %q, want 2G", m.importPane.maxBytes)
+	}
+	if m.importPane.step != importCaps {
+		t.Errorf("a typed character left the caps field (step = %v)", m.importPane.step)
+	}
+}
+
+// An unparseable size must NOT run the import. Sending 0 would re-request the
+// default caps and return the identical refusal, which reads as "the override
+// does not work" rather than "you typed the size wrong".
+func TestImportBadSizeDoesNotRunTheImport(t *testing.T) {
+	m := importModel(api.PortScopeView{Name: "vault"})
+	m.importPane.step, m.importPane.path = importCaps, "daily"
+	m.importPane.maxBytes = "2 gigs"
+	next, cmd := m.importKey(key("enter"))
+	m = next.(tuiModel)
+	if cmd != nil {
+		t.Fatal("an unparseable size still launched the import")
+	}
+	if m.importPane.step != importCaps {
+		t.Errorf("step = %v, want to stay on importCaps", m.importPane.step)
+	}
+	if m.importPane.capParseErr == "" {
+		t.Error("no parse error was shown")
+	}
+	if !strings.Contains(m.renderImport(), "max size") {
+		t.Error("the parse error is not rendered")
+	}
+}
+
+func TestImportCapsRoundTripToTypePath(t *testing.T) {
+	m := importModel(api.PortScopeView{Name: "vault"})
+	m.importPane.step = importCaps
+	m = feedImport(m, "esc")
+	if m.importPane.step != importTypePath {
+		t.Errorf("esc from caps went to %v, want importTypePath", m.importPane.step)
+	}
+	if m.importPane == nil {
+		t.Fatal("esc closed the whole pane instead of going back")
+	}
+}
+
+// A raised cap has to be VISIBLE on the screen that launches the import, or the
+// operator cannot tell an override apart from the default.
+func TestImportShowsRaisedCapsBeforeImporting(t *testing.T) {
+	m := importModel(api.PortScopeView{Name: "vault"})
+	m.importPane.step, m.importPane.path = importTypePath, "daily"
+	m.importPane.maxFiles = "5000"
+	view := m.renderImport()
+	if !strings.Contains(view, "5000") || !strings.Contains(view, "caps raised") {
+		t.Errorf("raised caps are invisible before the import runs:\n%s", view)
+	}
+	if !strings.Contains(view, "default") {
+		t.Errorf("the un-raised cap does not say it is the default:\n%s", view)
+	}
+}
