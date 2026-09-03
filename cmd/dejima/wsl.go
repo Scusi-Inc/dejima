@@ -366,6 +366,30 @@ func runWSLSetup(parent context.Context, distro string, yes bool) error {
 	}
 	fmt.Println("  ✓ dejimad answered")
 
+	// PROVE THE END STATE, do not narrate the steps.
+	//
+	// Every line above can be true of a host that cannot survive a restart, and
+	// that is not a hypothetical: setup reported clean three times while silently
+	// skipping the unit install, because `enable --now` leaves a running unit
+	// alone. The operator needed eleven attempts to get a durable host by hand.
+	//
+	// A user's first install IS the from-nothing walk, so this runs on every
+	// machine and every install and reports to the person who can act on it —
+	// which is worth more than an occasional acceptance script on one box.
+	rt := liveDistro{distro: distro}
+	if n := runningIslandCount(ctx, rt); n > 0 && !yes {
+		fmt.Printf("\n%d island(s) are running in %s. Proving the daemon survives a\n", n, distro)
+		fmt.Println("restart means terminating the distro, which will stop them.")
+		if !confirmWSL("Restart the distro to verify durability?") {
+			return fmt.Errorf("durability NOT verified — you declined the distro restart.\n" +
+				"The host is installed and reachable, but nothing here has shown the daemon\n" +
+				"comes back by itself. Verify later with:  dejima wsl setup --yes")
+		}
+	}
+	if err := proveDurability(ctx, rt, os.Stdout); err != nil {
+		return err
+	}
+
 	fmt.Printf("\nDone. `dejima` now talks to the daemon in %s.\n", distro)
 	fmt.Println("Next:  dejima            (the dashboard)")
 	fmt.Println("       dejima wsl status (health of the WSL host)")
