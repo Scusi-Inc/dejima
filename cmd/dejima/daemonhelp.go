@@ -377,3 +377,154 @@ func renderDaemonHelp(d daemonDiagnosis) string {
 	}
 	return b.String()
 }
+
+// errWSLProbePending marks a diagnosis built before the distro has been
+// inspected. The TUI paints one of these immediately — wsl.Probe shells out and
+// can boot a stopped distro, which is seconds the dashboard must not spend
+// frozen — and replaces it when the real probe lands.
+var errWSLProbePending = errors.New("wsl probe still running")
+
+// diagnoseWSLDaemon builds the diagnosis for a `wsl://<distro>` target.
+//
+// A wsl:// host is a LOCAL socket tunnel through wsl.exe — `wsl.exe -d <distro>
+// -- socat STDIO UNIX-CONNECT:…`. There is no TCP listener, no tailnet, and no
+// remote host. Everything diagnoseRemoteDaemon says about those is wrong here,
+// and confidently so: an operator whose distro was simply not running was told
+// to check `tailscale status`, ping a peer named after their distro, and
+// consider that "the server may be down — ask the operator". They are the
+// operator, the server is on their own machine, and the one command that would
+// have fixed it was on neither list.
+//
+// The CLI troubleshooter learned this after a real report (see troubleshootWSL,
+// which this function now backs). The TUI's offline panel never did, so the same
+// operator got the right answer from `dejima wsl status` and the wrong one from
+// the dashboard they were already looking at. Both surfaces derive from here now
+// so they cannot drift apart again.
+//
+// rep is nil when the distro has not been inspected yet — a probe shells out to
+// wsl.exe and can BOOT a stopped distro, so the TUI paints this first and
+// refines it when the probe lands. Nil is rendered as "checking", never as a
+// finding: an unasked question is not an answer, and this file already learned
+// that once in CredentialMountReport.Known.
+func diagnoseWSLDaemon(distro string, rep *wsl.Report, probeErr error) daemonDiagnosis {
+	if strings.TrimSpace(distro) == "" {
+		distro = wsl.DefaultDistro
+	}
+	d := daemonDiagnosis{
+		// NOT Remote. The fix is on this machine, which is what Remote gates:
+		// the closing line, the panel title, and the `w` → `dejima wsl setup`
+		// shortcut. Routing a WSL target through the remote path took that
+		// keystroke away from the one operator it was built for.
+		Remote:  false,
+		Closing: "these run right here — the distro is on this machine.",
+	}
+	head := "the daemon lives in the WSL distro " + quoteDistro(distro) +
+		" and isn't answering. Your islands and their work are on that distro's " +
+		"disk and are unaffected — this is the tunnel between here and there. " +
+		"Tailscale and TCP are not involved in a wsl:// connection."
+
+	switch {
+	case errors.Is(probeErr, errWSLProbePending):
+		// Painted before the probe returns. Says only what is true without one.
+		//
+		// An explicit sentinel rather than "both arguments nil": "I have not
+		// looked yet" and "I have nothing to tell you" are different states, and
+		// encoding the first as an absence is how it gets rendered as the second.
+		d.Cause = head
+		d.Steps = []string{
+			"checking the distro now — this can take a few seconds if it was asleep.",
+			"in the meantime:  dejima wsl status",
+		}
+		return d
+	case rep == nil && probeErr == nil && !wsl.Supported():
+		// A wsl:// profile on a machine that cannot have WSL. Naming it beats
+		// probing something that cannot exist.
+		//
+		// Gated on having learned NOTHING, not on the platform alone: a caller
+		// holding a real report has better information than this shortcut, and
+		// deferring to it keeps every branch below reachable off Windows. A
+		// diagnosis whose interesting half can only run on the one platform CI
+		// does not have is a diagnosis nothing checks.
+		d.Cause = "this profile points at a WSL distro (" + quoteDistro(distro) +
+			"), but WSL exists only on Windows — so this target can never connect from here."
+		d.Steps = []string{
+			"switch to a different profile:  dejima profile switch <name>   (list them: dejima profile ls)",
+			"or point at the host directly:  DEJIMA_HOST=<host:port>",
+		}
+		return d
+	case probeErr != nil:
+		d.Cause = head
+		d.Steps = []string{
+			"couldn't inspect the distro just now (" + probeErr.Error() + ").",
+			"check WSL itself is healthy:  wsl -l -v",
+			"then re-run setup, which is idempotent:  dejima wsl setup",
+		}
+		return d
+	case rep == nil:
+		d.Cause = head
+		d.Steps = []string{
+			"checking the distro now — this can take a few seconds if it was asleep.",
+			"in the meantime:  dejima wsl status",
+		}
+		return d
+	}
+
+	d.Cause = head
+	switch {
+	case !rep.Exists:
+		d.Cause = "the WSL distro " + quoteDistro(distro) + " does not exist on this machine, " +
+			"so there is nothing to connect to. Nothing is lost — it was never created."
+		d.Steps = []string{
+			"create it:  dejima wsl setup",
+			"see what distros you do have:  wsl -l -v",
+		}
+	case rep.Version == 1:
+		// WSL1 has no real kernel, so no Docker. Setup cannot repair this one.
+		d.Cause = "the distro " + quoteDistro(distro) + " is WSL version 1, which has no real " +
+			"kernel and therefore no Docker — the daemon cannot run there."
+		d.Steps = []string{
+			"convert it:  wsl --set-version " + distro + " 2   (this can take a while)",
+			"then:  dejima wsl setup",
+		}
+	case !rep.HasSocat:
+		d.Cause = "socat is missing inside " + quoteDistro(distro) + ". socat IS the tunnel, so " +
+			"nothing can reach the daemon even when it is running perfectly well."
+		d.Steps = []string{
+			"install it by re-running setup (idempotent — it installs only what is missing):  dejima wsl setup",
+		}
+	case !rep.HasDejima:
+		d.Cause = "the dejimad binary is not installed inside " + quoteDistro(distro) + "."
+		d.Steps = []string{"dejima wsl setup"}
+	case !rep.HasDocker:
+		d.Cause = "Docker is not usable inside " + quoteDistro(distro) + ". The daemon needs it to " +
+			"run islands, so it will not come up without it."
+		d.Steps = []string{
+			"dejima wsl setup",
+			"if setup reports Docker installed but not answering, the distro may need a restart:  wsl -t " + distro,
+		}
+	case !rep.SocketUp:
+		// Everything is installed; the daemon simply is not running. This is the
+		// common case after a reboot, and the one the tailnet advice buried.
+		d.Cause = "the distro " + quoteDistro(distro) + " has socat, dejimad and Docker — everything " +
+			"is installed. The daemon just isn't running, which is the usual state after a reboot."
+		d.Steps = []string{
+			"start it:  dejima wsl start",
+			"if that fails, its log is inside the distro:  wsl -d " + distro + " -- tail -40 ~/.dejima/dejimad.log",
+		}
+	default:
+		// Probe says the socket is there and yet the dial failed. Do not pretend
+		// to know which; say exactly that, because a confident wrong cause here
+		// is what this whole function exists to stop.
+		d.Cause = "the distro " + quoteDistro(distro) + " looks healthy — socat, dejimad, Docker and " +
+			"the daemon socket are all present — so the dial failed for a reason this check cannot see."
+		d.Steps = []string{
+			"try again; a distro that was asleep can lose the first knock while it boots.",
+			"read the daemon's own log:  wsl -d " + distro + " -- tail -40 ~/.dejima/dejimad.log",
+			"restart it:  dejima wsl start",
+		}
+	}
+	return d
+}
+
+// quoteDistro renders a distro name for prose.
+func quoteDistro(d string) string { return "\"" + d + "\"" }
