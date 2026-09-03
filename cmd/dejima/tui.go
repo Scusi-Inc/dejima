@@ -1440,8 +1440,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			// Back, but not on the new version: a genuine failure, and now it
 			// can say so precisely instead of reporting a transport error.
+			//
+			// The new binary IS installed at this point — prepareDaemonUpdate ran
+			// synchronously and only then did the daemon ack — so the remedy is to
+			// restart the process, not to update again. Naming that matters
+			// because "the update did not take" reads as "try again", and trying
+			// again re-installs a binary that is already there.
 			m.updateError = "daemon restarted but is still on " + msg.version +
-				" — the update did not take"
+				" — the new binary is installed, the restart did not take. " +
+				daemonRestartRemedy(m.activeHost)
 		}
 		return m, nil
 
@@ -1464,11 +1471,24 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updating = "daemon restarting — checking the new version…"
 			return m, m.verifyDaemonUpdateCmd(m.latestRelease)
 		case msg.resp != nil && msg.resp.Applying:
-			// The daemon restarts itself and reconnects — no user action needed,
-			// so this is a green "done" that fades on its own.
-			m.daemonUpdate = false
-			cmd := m.showUpdateApplied("daemon updated to " + msg.resp.Latest + " — restarting, reconnecting shortly")
-			return m, cmd
+			// APPLYING IS NOT DONE. It means the new binary is installed and a
+			// restart has been ASKED FOR — the daemon acks before restarting,
+			// because the restart kills the process serving the response.
+			//
+			// Reporting that as success made the TUI announce "daemon updated to
+			// v0.9.3 — restarting, reconnecting shortly" in green, after which the
+			// banner came back reading "update available: daemon v0.8.96→v0.9.3".
+			// The install HAD worked; the restart had not. On WSL there is often
+			// no systemd to restart into, which restartFailureHint already knows
+			// and says in the daemon log — where nobody was looking, because the
+			// screen said it had worked.
+			//
+			// The failure branch below already verifies by OUTCOME: it waits for
+			// the daemon and asks what version it is. That instrument existed and
+			// was pointed only at the case that looked like failure. The case that
+			// looks like success is the one that needs it.
+			m.updating = "daemon restarting — checking the new version…"
+			return m, m.verifyDaemonUpdateCmd(msg.resp.Latest)
 		case msg.resp != nil && msg.resp.Deferred:
 			// The restart would drop every attached terminal, so the daemon held
 			// off. Re-prompt to force (the y/n confirm sets force=true), or let the
