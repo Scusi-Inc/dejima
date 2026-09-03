@@ -8,8 +8,8 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-09-03 against v0.9.0. The
-latest TAGGED release is v0.9.0, and master may be ahead of it — so where this file
+Written 2026-08-17, last revised 2026-09-03 against v0.9.1. The
+latest TAGGED release is v0.9.1, and master may be ahead of it — so where this file
 describes something recent, check whether it says "on master" or names a
 version. Anyone running an installed dejima is running the release. Anything
 below may have drifted since. Development is moving fast right now: v0.8.83
@@ -285,15 +285,31 @@ Unproven rather than broken. Real code, no evidence of an end-to-end run:
   wedge the WSL service itself, needing `wsl --shutdown`. Two contributing
   causes are fixed and neither is confirmed against the fault.
 
-  A SECOND WINDOWS MACHINE, ON 2026-09-03, COULD NOT CONNECT AT ALL on v0.8.96,
-  and the way it failed is worth more than the fix. `dejima wsl status` reported
-  socat, docker and dejimad all OK and the socket "up", while every dial failed:
-  the dial resolved $HOME by a different route than the status check, got the
-  empty string, and looked for the daemon at /.dejima. So a WSL host could report
-  itself ready and be unreachable, with no surface disagreeing. Fixed in v0.9.0,
-  and unverified on a real distro at the time of writing — the operator's test.
-  Read that as: the install path passing once does not mean the connection path
-  is proven, and they are separate claims.
+  A SECOND WINDOWS MACHINE, ON 2026-09-03, COULD NOT CONNECT AT ALL on v0.8.96.
+  `dejima wsl status` reported socat, docker and dejimad all OK and the socket
+  "up", and printed "ready" — while every dial was refused. A WSL host could
+  report itself ready and be unreachable, with no surface disagreeing.
+
+  The cause: the status checked the socket with `[ -S ]`, which answers "is there
+  a socket file" and not "is anything accepting on it". Those diverge whenever a
+  daemon dies without unlinking, which is every time WSL terminates an idle
+  distro — the file outlives the process and the check passes forever. Fixed in
+  v0.9.1 (the probe now connects); on an older build the remedy is
+  `dejima wsl start`, because the daemon really is down.
+
+  HOW IT WAS FIRST DIAGNOSED IS THE MORE USEFUL PART, and it is why this entry
+  names two versions. v0.9.0 shipped a different defect found while looking at
+  this one: the dial resolved $HOME by a different route than the status check
+  and could look for the daemon at /.dejima. Real, still worth having, and NOT
+  this machine's bug — it was reported as the cause because it PRODUCES the
+  symptom, without checking that it produced the symptom on that machine. One
+  read-only command settled it, and it was run only because the operator refused
+  a workaround, wanting to test the product rather than get working. Their distro
+  resolved $HOME correctly all along.
+
+  As of 2026-09-03 neither fix has been exercised on a real distro; that is the
+  operator's test. Read the whole entry as: the install path passing once does
+  not mean the connection path is proven, and they are separate claims.
 
   So: the install works and a long session is not yet something to rely on. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
