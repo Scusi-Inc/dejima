@@ -156,38 +156,34 @@ func localModelActions(ls *localmodel.Status) []localAction {
 //   - THE AGENT, at minimum. The launch shim sources the .env at start, so a
 //     process that was already running holds its start-time environment.
 //
-// AND THE PART I GOT WRONG, WHICH d3 CAUGHT BY RUNNING IT RATHER THAN READING
-// IT. I first wrote "no island recreate" here, reasoning from llm_refresh.go
-// that the provider config is a directory mount and a rewrite therefore lands
-// inside a running container. That is true — of islands that HAVE the mount.
+// IT SAID MORE THAN THAT FOR ABOUT AN HOUR, AND THE HISTORY IS THE USEFUL PART.
 //
-// The /opt/host/llm bind is CONDITIONAL AT CONTAINER CREATE (server.go, binds
-// are appended only when islandLLMConfigDir returns a non-empty dir), and it
-// returns "" when no key-requiring agent resolved a provider at the time.
+// The first version said "no island recreate", reasoning from llm_refresh.go
+// that the provider config is a directory mount so a rewrite lands inside a
+// running container. True — of islands that HAD the mount. The /opt/host/llm
+// bind was conditional at container create, and islandLLMConfigDir returned ""
+// when no key-requiring agent resolved a provider, so an island created before
+// its operator had any provider — or with no agent that needed one, since
+// claude-code and codex do not — had no mount at all. Registering a provider
+// then wrote into a host directory nothing in the container was reading, and
+// restarting the agent re-read a path not in its filesystem: it changed
+// nothing, silently, to someone who had followed the instruction exactly.
 //
-// TWO WAYS TO LAND THERE, and the second is d3's correction to my first draft,
-// which named only the first. An island has no llm mount if it was created
-// before any provider existed — the operator on this page, since having none is
-// why they came — OR if it was created with no agent that NEEDED one:
-// claude-code and codex require no provider key, so an island that started
-// claude-code-only and later grew a goose agent has the same hole with
-// providers configured the whole time. For them, registerLocalProvider writes into a host
-// directory nothing in the container is looking at, and restarting the agent
-// re-reads a path that does not exist in its filesystem. It changes nothing,
-// silently, having followed the instruction exactly.
+// d3 found that by standing an island up and dumping the binds, after I claimed
+// the opposite from reading. The note then carried BOTH remedies and admitted it
+// could not tell which applied.
 //
-// So the note names BOTH remedies and does not pretend to know which applies:
-// nothing available to this page distinguishes an island that has the mount from
-// one that does not. Naming only the cheap one would be the reassuring-direction
-// failure with an evening attached, which is the whole reason to ask someone who
-// owns that half to check a claim about it.
+// FIXED IN 8b850d1 (#396): the dir is returned even when nothing resolves, so
+// the mount is always present — the shape island_secrets.go had already chosen
+// for the identical reason — and the provider key file is resolved PER AGENT at
+// launch rather than from the primary at create. Verified on master rather than
+// taken from the merge message: islandLLMConfigDir returns the dir with
+// len(seen) == 0, so the caller's `dir != ""` is always true.
 //
-// d3 is making the mount unconditional (the way island_secrets.go already does,
-// for the identical reason) and resolving the provider key file per agent at
-// launch instead of from the primary at create. When that lands, the second
-// bullet stops being true and this note gets simpler — deliberately not
-// pre-written for that world, because copy that describes an unshipped fix is
-// the same lie pointing forwards.
+// So the second bullet is DROPPED rather than softened. A hedge for a case that
+// no longer exists is its own small lie, and the kind that survives for years
+// because nobody can disprove it by trying: they do the extra step, it works,
+// and they never learn it was unnecessary.
 func localModelsAppliedNote(ls *localmodel.Status) string {
 	if ls == nil || !ls.Installed {
 		return ""
@@ -201,9 +197,6 @@ func localModelsAppliedNote(ls *localmodel.Status) string {
 	if len(ls.Models) == 0 {
 		return ""
 	}
-	return "to use it from an agent — no daemon restart is involved either way:\n" +
-		"  · restart the agent, so it re-reads its environment:  [s] on the agent → Restart\n" +
-		"  · if that changes nothing, the island has no LLM config mount to read — created before\n" +
-		"    any provider existed, or with no agent that needed one. It needs a recreate:\n" +
-		"    `dejima upgrade <island>`.  This page cannot tell which islands those are."
+	return "to use it from an agent: restart the agent so it re-reads its environment —\n" +
+		"[s] on the agent → Restart.  No island recreate and no daemon restart."
 }

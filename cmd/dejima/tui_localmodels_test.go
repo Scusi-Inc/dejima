@@ -172,42 +172,36 @@ func TestTheRestartNoteNamesTheAgentAndRulesOutTheRest(t *testing.T) {
 		t.Fatal("a pulled model should explain what to restart")
 	}
 	low := strings.ToLower(note)
-	if !strings.Contains(low, "restart") || !strings.Contains(low, "agent") {
-		t.Errorf("the note must name the agent restart, got %q", note)
+	// THE INSTRUCTION AS A PHRASE, not its words scattered anywhere in the note.
+	// This asserted Contains("restart") && Contains("agent"), and a mutation that
+	// DELETED the instruction survived it: "to use it from an agent:" supplies
+	// "agent" and "no daemon restart" supplies "restart", so both halves passed
+	// with nothing left telling the operator what to do. Two true substrings
+	// composing into a false conclusion — the same shape as everything else this
+	// week, inside the guard written against it.
+	if !strings.Contains(low, "restart the agent") {
+		t.Errorf("the note must tell the operator to restart the agent, in those words, got %q", note)
 	}
-	if !strings.Contains(low, "no daemon restart") {
-		t.Errorf("the note must rule out the daemon restart, which is the costly wrong guess, got %q", note)
+	// ...and name the affordance, so it is an instruction rather than a fact.
+	if !strings.Contains(note, "[s]") || !strings.Contains(note, "Restart") {
+		t.Errorf("the note must point at the key that does it, got %q", note)
 	}
-	// AND IT MUST NAME THE RECREATE, because the cheap remedy is not always the
-	// right one. The /opt/host/llm bind is conditional at container create, so an
-	// island that had no provider when it was made has no mount to read — and
-	// that is exactly the operator on this page, since having no provider is why
-	// they came here. A note naming only the agent restart sends them to do
-	// something that changes nothing, silently, having followed it exactly.
-	//
-	// d3 found this by running it after I claimed the opposite from reading
-	// llm_refresh.go. The claim was true of islands that HAVE the mount.
-	if !strings.Contains(low, "upgrade") {
-		t.Errorf("the note must name the recreate for an island with no llm mount, got %q", note)
+	// The two costly wrong guesses it rules out. Both are now true again as of
+	// 8b850d1 (#396), which made the /opt/host/llm mount unconditional and
+	// resolved the provider key file per agent at launch.
+	if !strings.Contains(low, "no daemon restart") || !strings.Contains(low, "no island recreate") {
+		t.Errorf("the note must rule out the daemon restart and the recreate, got %q", note)
 	}
-	// BOTH CAUSES, not just the obvious one. An island also lacks the mount when
-	// it was created with no agent that NEEDED a provider key — claude-code and
-	// codex do not — so one that started claude-code-only and later grew a goose
-	// agent has the same hole with providers configured throughout. Naming only
-	// "created before any provider existed" tells that operator the note is not
-	// about them.
-	if !strings.Contains(low, "no agent that needed one") {
-		t.Errorf("the note names only one cause of a missing mount, got %q", note)
+	// AND IT MUST NOT HEDGE ANY MORE. For about an hour this note carried a second
+	// bullet sending some operators to `dejima upgrade`, because the mount used to
+	// be conditional at container create. 8b850d1 removed that class of island
+	// entirely. A hedge kept for a case that no longer exists is its own small
+	// lie, and the kind that survives for years: nobody can disprove it by trying,
+	// they just do the extra step and it works.
+	if strings.Contains(low, "upgrade") || strings.Contains(low, "cannot tell") {
+		t.Errorf("the note still hedges about a recreate no island needs since 8b850d1: %q", note)
 	}
-	if strings.Contains(low, "no island recreate") {
-		t.Errorf("the note still claims no recreate is ever needed, which is false for an "+
-			"island created before any provider existed: %q", note)
-	}
-	// ...and it must not pretend to know which island is which, because nothing
-	// available to this page distinguishes them.
-	if !strings.Contains(low, "cannot tell") {
-		t.Errorf("the note should admit it cannot tell which islands need the recreate, got %q", note)
-	}
+
 	// Nothing to say before the backend exists.
 	if got := localModelsAppliedNote(&localmodel.Status{Backend: "ollama"}); got != "" {
 		t.Errorf("an uninstalled backend should not talk about restarts, got %q", got)
