@@ -148,22 +148,41 @@ func localModelActions(ls *localmodel.Status) []localAction {
 // THE QUESTION IT ANSWERS is the one an operator asks next and the docs answer
 // in a comment nobody reading this screen will find: what do I have to restart?
 //
-// The answer is narrower and cheaper than it looks, and it is worth stating
-// exactly because every wider guess is a real cost:
+// WHAT IS SETTLED:
 //
 //   - NOT the daemon. Registering the provider is a store write plus a
 //     re-materialize of every island's config files (registerLocalProvider ->
 //     refreshIslandLLMConfigs); nothing about the daemon's own state is stale.
-//   - NOT the island, and not a recreate. The provider config is a DIRECTORY
-//     mount, so a rewrite is visible inside a container that is already running.
-//   - THE AGENT. The launch shim sources the .env at start, so a process that
-//     was already running holds its start-time environment and cannot see a
-//     provider that appeared afterwards.
+//   - THE AGENT, at minimum. The launch shim sources the .env at start, so a
+//     process that was already running holds its start-time environment.
 //
-// So the honest instruction is "restart the agents", and the TUI already has
-// that exact affordance for exactly this reason — the secrets pane's [R] and the
-// agent settings menu's Restart, both built for "you changed something the
-// running process cannot see".
+// AND THE PART I GOT WRONG, WHICH d3 CAUGHT BY RUNNING IT RATHER THAN READING
+// IT. I first wrote "no island recreate" here, reasoning from llm_refresh.go
+// that the provider config is a directory mount and a rewrite therefore lands
+// inside a running container. That is true — of islands that HAVE the mount.
+//
+// The /opt/host/llm bind is CONDITIONAL AT CONTAINER CREATE (server.go, binds
+// are appended only when islandLLMConfigDir returns a non-empty dir), and it
+// returns "" when no key-requiring agent resolved a provider at the time. So an
+// island created before any provider was configured has NO llm mount at all —
+// and that is exactly the operator on this page, because having no provider is
+// why they came here. For them, registerLocalProvider writes into a host
+// directory nothing in the container is looking at, and restarting the agent
+// re-reads a path that does not exist in its filesystem. It changes nothing,
+// silently, having followed the instruction exactly.
+//
+// So the note names BOTH remedies and does not pretend to know which applies:
+// nothing available to this page distinguishes an island that has the mount from
+// one that does not. Naming only the cheap one would be the reassuring-direction
+// failure with an evening attached, which is the whole reason to ask someone who
+// owns that half to check a claim about it.
+//
+// d3 is making the mount unconditional (the way island_secrets.go already does,
+// for the identical reason) and resolving the provider key file per agent at
+// launch instead of from the primary at create. When that lands, the second
+// bullet stops being true and this note gets simpler — deliberately not
+// pre-written for that world, because copy that describes an unshipped fix is
+// the same lie pointing forwards.
 func localModelsAppliedNote(ls *localmodel.Status) string {
 	if ls == nil || !ls.Installed {
 		return ""
@@ -177,7 +196,9 @@ func localModelsAppliedNote(ls *localmodel.Status) string {
 	if len(ls.Models) == 0 {
 		return ""
 	}
-	return "islands can reach this now — but an agent that is ALREADY RUNNING kept its\n" +
-		"start-time environment, so restart it to pick the provider up: [s] on the agent → Restart.\n" +
-		"No island recreate and no daemon restart: the provider config is a directory mount."
+	return "to use it from an agent — no daemon restart is involved either way:\n" +
+		"  · restart the agent, so it re-reads its environment:  [s] on the agent → Restart\n" +
+		"  · if that changes nothing, the island was created BEFORE any provider existed and\n" +
+		"    has no LLM config mount to read at all — it needs a recreate: `dejima upgrade <island>`.\n" +
+		"    This page cannot tell which islands those are."
 }

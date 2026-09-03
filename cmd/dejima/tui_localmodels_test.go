@@ -175,10 +175,29 @@ func TestTheRestartNoteNamesTheAgentAndRulesOutTheRest(t *testing.T) {
 	if !strings.Contains(low, "restart") || !strings.Contains(low, "agent") {
 		t.Errorf("the note must name the agent restart, got %q", note)
 	}
-	// The two costly things it must rule OUT, because an operator who guesses
-	// wide pays for it.
-	if !strings.Contains(low, "no island recreate") || !strings.Contains(low, "no daemon restart") {
-		t.Errorf("the note must say what is NOT needed, got %q", note)
+	if !strings.Contains(low, "no daemon restart") {
+		t.Errorf("the note must rule out the daemon restart, which is the costly wrong guess, got %q", note)
+	}
+	// AND IT MUST NAME THE RECREATE, because the cheap remedy is not always the
+	// right one. The /opt/host/llm bind is conditional at container create, so an
+	// island that had no provider when it was made has no mount to read — and
+	// that is exactly the operator on this page, since having no provider is why
+	// they came here. A note naming only the agent restart sends them to do
+	// something that changes nothing, silently, having followed it exactly.
+	//
+	// d3 found this by running it after I claimed the opposite from reading
+	// llm_refresh.go. The claim was true of islands that HAVE the mount.
+	if !strings.Contains(low, "upgrade") {
+		t.Errorf("the note must name the recreate for an island with no llm mount, got %q", note)
+	}
+	if strings.Contains(low, "no island recreate") {
+		t.Errorf("the note still claims no recreate is ever needed, which is false for an "+
+			"island created before any provider existed: %q", note)
+	}
+	// ...and it must not pretend to know which island is which, because nothing
+	// available to this page distinguishes them.
+	if !strings.Contains(low, "cannot tell") {
+		t.Errorf("the note should admit it cannot tell which islands need the recreate, got %q", note)
 	}
 	// Nothing to say before the backend exists.
 	if got := localModelsAppliedNote(&localmodel.Status{Backend: "ollama"}); got != "" {
