@@ -63,9 +63,18 @@ func runTUI(ctx context.Context, demo bool) error {
 	// quits the TUI into the raw bridge and a detach exits to the shell, but the
 	// summon chord (Ctrl-\) ends a session with errSummonBand, which brings us
 	// back here with the host-terminal band open instead of exiting.
+	// The gateway forwards live HERE, not on the model, and outside the loop.
+	// runTUI re-enters the dashboard with a freshly constructed model after every
+	// attach session — a registry on tuiModel would be discarded each time, so
+	// attaching to any agent would silently kill an open gateway UI. Deferred so
+	// the context-cancelled path tears them down too.
+	tunnels := newTunnelManager()
+	defer tunnels.CloseAll()
+
 	summonReturn := false
 	for {
 		m := initialTUIModel(c)
+		m.tunnels = tunnels
 		m.demo = demo
 		if summonReturn {
 			m.bandExpanded, m.bandFocused = true, true
@@ -225,6 +234,9 @@ type tuiModel struct {
 	importPane   *importView       // non-nil while the per-island Import files pane is open
 	restartPane  *restartView      // non-nil while the "which agents to restart" checklist is open
 	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
+	// tunnels is owned by runTUI and shared across dashboard re-entries; see
+	// tunnelManager. Nil in tests that do not exercise gateway UIs.
+	tunnels *tunnelManager
 	// escSeqState/escSeqAt track a split escape sequence across keypresses, so a
 	// terminal that delivers ESC [ A as three of them cannot fire the binding on
 	// "A". nowFn is injected so the window is testable without sleeping. See
@@ -1230,6 +1242,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.restartPending = "a newer dejima is installed on disk — restart dejima to apply it"
 		return m, nil
 
+	case gatewayOpenedMsg:
+		return m.onGatewayOpened(msg), nil
 	case importScopesMsg:
 		return m.onImportScopes(msg), nil
 	case importDoneMsg:
@@ -1826,6 +1840,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.creator = nil
+			// A GATEWAY AGENT IS USELESS UNTIL ITS UI IS REACHABLE, so creating one
+			// ends by opening it. Attaching would drop the operator at a headless
+			// agent's logs and leave them to discover `agent open` on their own —
+			// which is what happened.
+			//
+			// It goes through the same in-process forward as everything else, so the
+			// tunnel outlives this moment and the browser tab keeps working.
+			if port, isGW := m.gatewayPorts[msg.agentType]; isGW && port != 0 && m.tunnels != nil {
+				m.lastNotice = "created " + msg.name + " — waiting for its gateway to start…"
+				return m, tea.Batch(m.openGatewayCmd(msg.name, msg.agentID),
+					m.fetchListCmd(), m.fetchOverviewCmd())
+			}
 			// Open the new island in a new tab so the dashboard stays up; fall back
 			// to attaching in this terminal when there's no new-window backend.
 			// Attach straight into the PRIMARY agent (by id) rather than the bare
@@ -3577,16 +3603,75 @@ func (m tuiModel) openAgentGatewayUI(name, agentID string) (tea.Model, tea.Cmd) 
 		m.lastError = sshFacadeSetupStepsTUI()
 		return m, nil
 	}
-	if !canOpenNewWindow() {
-		m.lastNotice = "run `dejima agent open " + name + " " + agentID + "` in a terminal to reach its UI"
+	// HELD IN-PROCESS, not in a spawned window. The window used to own the ssh
+	// forward, so closing it killed the tunnel under an already-open browser tab
+	// with nothing anywhere saying why. Now the lifetime is one sentence: the UI
+	// works for as long as the dashboard is open.
+	if m.tunnels == nil {
+		// No registry (a test model, or a path that never got one). Fall back to
+		// the old window rather than silently doing nothing.
+		if !canOpenNewWindow() {
+			m.lastNotice = "run `dejima agent open " + name + " " + agentID + "` in a terminal to reach its UI"
+			return m, nil
+		}
+		if err := m.openAgentGatewayWindow(name, agentID); err != nil {
+			m.lastError = "open gateway UI: " + err.Error()
+		}
 		return m, nil
 	}
-	if err := m.openAgentGatewayWindow(name, agentID); err != nil {
-		m.lastError = "open gateway UI: " + err.Error()
-	} else {
-		m.lastNotice = "forwarding " + name + "'s gateway UI — opening your browser"
+
+	// Already forwarding this agent: re-open the tab rather than starting a
+	// second ssh onto a second port, which would strand the first tab.
+	if fwd := m.tunnels.Get(name, agentID); fwd != nil {
+		go func() { _ = openURL(fwd.URL) }()
+		m.lastNotice = "reopening " + name + "'s gateway UI — the forward is already up"
+		return m, nil
 	}
-	return m, nil
+
+	m.lastNotice = "connecting to " + name + "'s gateway…"
+	return m, m.openGatewayCmd(name, agentID)
+}
+
+// gatewayOpenedMsg reports the result of establishing a forward.
+type gatewayOpenedMsg struct {
+	island, agentID string
+	url             string
+	err             error
+}
+
+// openGatewayCmd establishes the forward OFF the Update loop.
+//
+// Establishing one is slow — an ssh handshake, then a wait for the gateway to
+// actually serve, which on a first launch means waiting out the framework's own
+// install. Doing that inline would freeze the dashboard for minutes.
+func (m tuiModel) openGatewayCmd(island, agentID string) tea.Cmd {
+	c, tunnels := m.client, m.tunnels
+	return func() tea.Msg {
+		fwd, err := tunnels.openGatewayForAgent(context.Background(), c, island, agentID, nil)
+		if err != nil {
+			return gatewayOpenedMsg{island: island, agentID: agentID, err: err}
+		}
+		return gatewayOpenedMsg{island: island, agentID: agentID, url: fwd.URL}
+	}
+}
+
+func (m tuiModel) onGatewayOpened(msg gatewayOpenedMsg) tuiModel {
+	if msg.err != nil {
+		// SAY THE ISLAND IS FINE. This runs straight after a create, and a first
+		// launch installs the framework inside the container — which can outlast
+		// the wait. "Couldn't open the UI" alone reads as "the create failed",
+		// which is the shape the operator has already been burned by once with a
+		// clone. The island exists; only the console is not up yet.
+		m.lastError = msg.island + " is running — its gateway UI isn't reachable yet: " +
+			msg.err.Error() + " (a first launch installs the framework inside the " +
+			"island, which can take minutes; press ⏎ on the agent to try again)"
+		return m
+	}
+	go func() { _ = openURL(msg.url) }()
+	// Say what keeps it alive. The old notice was silent about that, which is how
+	// a window nobody knew was load-bearing got closed.
+	m.lastNotice = msg.island + "'s gateway UI is open — the forward stays up while this dashboard does"
+	return m
 }
 
 // openIslandAgents opens one window per attachable agent on the island (Enter on
@@ -3685,6 +3770,19 @@ func (m tuiModel) attachableAgentIDs(name string) []string {
 // openAgentLogs opens a headless agent's logs in a new window, or points the
 // user at the CLI when no new-window backend is available.
 func (m tuiModel) openAgentLogs(name, agentID string) (tea.Model, tea.Cmd) {
+	// A GATEWAY AGENT'S OWN LOGS LIE ABOUT THEIR ADDRESS, and there is nothing we
+	// can do about that inside the container: OpenClaw prints "localhost:61500"
+	// because that is true where it is sitting, and it has no idea it is in an
+	// island. The operator reasonably typed it into a browser on the host and got
+	// nothing.
+	//
+	// So say it BESIDE the logs rather than trying to rewrite them. Rewriting an
+	// agent's output stream to fix an address risks mangling legitimate lines, and
+	// the note is what the operator needs anyway.
+	if _, isGW := m.agentGatewayPort(name, agentID); isGW {
+		m.lastNotice = "note: any localhost:PORT this agent prints is inside the island — " +
+			"press ⏎ on it to open the UI from this machine"
+	}
 	if canOpenNewWindow() {
 		if err := m.openAgentLogsWindow(name, agentID, ""); err != nil {
 			m.lastError = err.Error()

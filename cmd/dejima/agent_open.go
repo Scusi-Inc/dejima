@@ -476,25 +476,10 @@ func newAgentOpenCmd() *cobra.Command {
 				return err
 			}
 
-			// Keepalives, because this tunnel's whole job is to be LEFT OPEN. A
-			// console is something you open and come back to, so the traffic
-			// profile is long idle gaps — exactly what NAT tables and firewalls
-			// reap. Without ServerAlive, ssh sends nothing during those gaps, the
-			// path is silently dropped, and the browser tab reports the GATEWAY as
-			// disconnected. The gateway is fine; the tunnel under it is gone.
-			// ServerAliveInterval also bounds how long a dead tunnel masquerades as
-			// a live one: 3 × 30s, rather than until the OS notices.
-			sshArgs := []string{"-N",
-				"-o", "ExitOnForwardFailure=yes",
-				"-o", "ServerAliveInterval=30",
-				"-o", "ServerAliveCountMax=3",
-			}
-			sshArgs = append(sshArgs, khArgs...)
-			sshArgs = append(sshArgs,
-				"-L", fmt.Sprintf("%d:127.0.0.1:%d", localPort, gw),
-				"-p", sshPort,
-				island+"@"+host,
-			)
+			// Shared with the dashboard's in-process forward: see sshForwardArgs
+			// for why each flag is load-bearing. One builder so the two callers
+			// cannot drift on the flags that keep a tunnel alive.
+			sshArgs := sshForwardArgs(khArgs, localPort, gw, sshPort, island, host)
 			if printOnly {
 				fmt.Printf("%s\nssh %s\n", url, joinArgs(sshArgs))
 			}
