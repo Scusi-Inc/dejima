@@ -8,8 +8,8 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-09-03 against master at 6c95d79. The
-latest TAGGED release is v0.8.99, and master is ahead of it — so where this file
+Written 2026-08-17, last revised 2026-09-03 against v0.9.0. The
+latest TAGGED release is v0.9.0, and master may be ahead of it — so where this file
 describes something recent, check whether it says "on master" or names a
 version. Anyone running an installed dejima is running the release. Anything
 below may have drifted since. Development is moving fast right now: v0.8.83
@@ -282,8 +282,19 @@ Unproven rather than broken. Real code, no evidence of an end-to-end run:
   is a known blocker that is not an install problem: under sustained dashboard
   use the WSL VM runs out of socket resources (Wsl/Service/0x80072747) and can
   wedge the WSL service itself, needing `wsl --shutdown`. Two contributing
-  causes are fixed and neither is confirmed against the fault. So: the install
-  works and a long session is not yet something to rely on. The
+  causes are fixed and neither is confirmed against the fault.
+
+  A SECOND WINDOWS MACHINE, ON 2026-09-03, COULD NOT CONNECT AT ALL on v0.8.96,
+  and the way it failed is worth more than the fix. `dejima wsl status` reported
+  socat, docker and dejimad all OK and the socket "up", while every dial failed:
+  the dial resolved $HOME by a different route than the status check, got the
+  empty string, and looked for the daemon at /.dejima. So a WSL host could report
+  itself ready and be unreachable, with no surface disagreeing. Fixed in v0.9.0,
+  and unverified on a real distro at the time of writing — the operator's test.
+  Read that as: the install path passing once does not mean the connection path
+  is proven, and they are separate claims.
+
+  So: the install works and a long session is not yet something to rely on. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
   way. Windows as a CLIENT driving a server elsewhere is well-trodden and fine.
   Windows uninstall leaves three things behind: the binary in
