@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -252,6 +254,37 @@ func (d *Docker) Status(ctx context.Context, name string) (ContainerStatus, erro
 	}
 }
 
+// ContainerMounts lists the destinations currently mounted into the container.
+// An error is returned (not an empty list) when the container can't be
+// inspected, so a caller can tell "not mounted" from "didn't find out".
+func (d *Docker) ContainerMounts(ctx context.Context, name string) ([]string, error) {
+	out, stderr, err := d.run(ctx, "inspect", "-f",
+		"{{range .Mounts}}{{.Destination}}\n{{end}}", name)
+	if err != nil {
+		return nil, fmt.Errorf("inspect mounts for %s: %w: %s", name, err, strings.TrimSpace(stderr))
+	}
+	var dests []string
+	for _, line := range strings.Split(out, "\n") {
+		if d := strings.TrimSpace(line); d != "" {
+			dests = append(dests, d)
+		}
+	}
+	return dests, nil
+}
+
+// ContainerReapsOrphans reports whether this container runs an init as PID 1.
+// An error is returned (not false) when the container can't be inspected, so a
+// caller can tell "no reaper" from "didn't find out".
+func (d *Docker) ContainerReapsOrphans(ctx context.Context, name string) (bool, error) {
+	out, stderr, err := d.run(ctx, "inspect", "-f", "{{.HostConfig.Init}}", name)
+	if err != nil {
+		return false, fmt.Errorf("inspect init for %s: %w: %s", name, err, strings.TrimSpace(stderr))
+	}
+	// Docker renders an unset Init as "<no value>" rather than "false"; both mean
+	// no reaper, and neither is an error.
+	return strings.TrimSpace(out) == "true", nil
+}
+
 func (d *Docker) Inspect(ctx context.Context, name string) (Health, error) {
 	out, _, err := d.run(ctx, "inspect", "-f",
 		"{{.State.OOMKilled}}|{{.RestartCount}}|{{.State.ExitCode}}", name)
@@ -269,7 +302,26 @@ func (d *Docker) Inspect(ctx context.Context, name string) (Health, error) {
 }
 
 func (d *Docker) CreateContainer(ctx context.Context, req CreateRequest) (string, error) {
-	args := []string{"run", "-d", "--name", req.Name, "--restart", "unless-stopped"}
+	// --init puts tini at PID 1 so orphaned grandchildren get reaped.
+	//
+	// Without it the island's PID 1 is the entrypoint's `tail -f /dev/null`
+	// (image/start.sh), which never calls wait(). Anything whose parent exits
+	// first is reparented to it and becomes a zombie FOREVER — a zombie cannot be
+	// killed, only reaped, and nothing in the container reaps. Measured in a
+	// 29-hour-old island: 541 zombies out of 572 processes, 95% of the table, all
+	// ordinary agent work (gh, bash, go, sleep) rather than anything exotic.
+	//
+	// Not urgent at Docker's defaults — pid_max is in the millions and these
+	// islands set no cgroup pids limit, so exhaustion is decades away. It matters
+	// because the accumulation is monotonic and islands are long-lived by design,
+	// because anyone running with --pids-limit hits it far sooner, and because a
+	// process table that is 95% dead makes `ps` useless exactly when someone is
+	// debugging something else.
+	//
+	// A runtime flag rather than a change to start.sh: it cannot be undone by a
+	// later edit to the entrypoint that does not know about this, and tini's
+	// presence does not change what the entrypoint does.
+	args := []string{"run", "-d", "--init", "--name", req.Name, "--restart", "unless-stopped"}
 	if req.Network != "" {
 		args = append(args, "--network", req.Network)
 	}
@@ -361,9 +413,15 @@ func (d *Docker) Logs(ctx context.Context, name string, follow bool) (io.ReadClo
 // build fails the stream's final Read returns the build error instead of EOF
 // (via CloseWithError), so callers distinguish success from failure without a
 // side channel.
-func (d *Docker) BuildImage(ctx context.Context, contextDir, dockerfile, tag string) (io.ReadCloser, error) {
-	cmd := exec.CommandContext(ctx, d.bin(), "build", "-t", tag,
-		"-f", filepath.Join(contextDir, dockerfile), contextDir)
+func (d *Docker) BuildImage(ctx context.Context, contextDir, dockerfile, tag string, buildArgs map[string]string) (io.ReadCloser, error) {
+	args := []string{"build", "-t", tag, "-f", filepath.Join(contextDir, dockerfile)}
+	// Sorted so the command line is deterministic (map order isn't) — a stable
+	// argv keeps build output and any log of it diffable across runs.
+	for _, k := range slices.Sorted(maps.Keys(buildArgs)) {
+		args = append(args, "--build-arg", k+"="+buildArgs[k])
+	}
+	args = append(args, contextDir)
+	cmd := exec.CommandContext(ctx, d.bin(), args...)
 	r, w := io.Pipe()
 	cmd.Stdout = w
 	cmd.Stderr = w

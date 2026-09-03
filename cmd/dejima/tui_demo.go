@@ -6,6 +6,8 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/policy"
+	"github.com/aoos/dejima/internal/reposrc"
+	"github.com/aoos/dejima/internal/secrets"
 )
 
 // Demo mode (`dejima tui --demo`) drives the dashboard from a synthetic fleet
@@ -142,5 +144,26 @@ func demoPolicy() []policy.Rule {
 	return []policy.Rule{
 		{From: "storefront", To: "api-gateway", Action: "dispatch-task", MaxCount: 50, Used: 6,
 			ExpiresAt: time.Now().Add(38 * time.Minute), CreatedAt: time.Now().Add(-20 * time.Minute), CreatedBy: "operator"},
+	}
+}
+
+// demoSecrets is the synthetic per-island secret set for the site recording of
+// the secrets pane — plausible names, no real values, fixed fingerprints so the
+// clip is reproducible. See tui_secrets.go's demo branches.
+func demoSecrets(island string) []secrets.Meta {
+	base := time.Now().Add(-14 * 24 * time.Hour)
+	return []secrets.Meta{
+		{Name: "EXPO_TOKEN", CreatedAt: base, UpdatedAt: base.Add(9 * 24 * time.Hour), Fingerprint: "4f2a91c8"},
+		{Name: "NPM_TOKEN", CreatedAt: base.Add(2 * 24 * time.Hour), UpdatedAt: base.Add(2 * 24 * time.Hour), Fingerprint: "b7e0d613"},
+	}
+}
+
+// demoRepos is the synthetic repo list for the site recording of the guided
+// first-island flow — no real filesystem scan, so no real repo names leak.
+func demoRepos() []reposrc.Repo {
+	return []reposrc.Repo{
+		{Name: "storefront", Path: "/home/you/code/storefront"},
+		{Name: "api-gateway", Path: "/home/you/code/api-gateway"},
+		{Name: "infra", Path: "/home/you/code/infra"},
 	}
 }

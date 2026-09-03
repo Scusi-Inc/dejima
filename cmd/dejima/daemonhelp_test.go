@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aoos/dejima/internal/service"
 )
 
 // withDejimaHome points paths.* at a throwaway HOME so the socket-state probe in
@@ -16,19 +18,55 @@ func withDejimaHome(t *testing.T) string {
 	return filepath.Join(home, ".dejima")
 }
 
-func TestDiagnoseLocalDaemon_SocketMissing(t *testing.T) {
-	withDejimaHome(t) // no ~/.dejima/dejimad.sock created
+// The missing-socket remedy forks on how the daemon is supervised, so drive
+// diagnosisNotRunning directly with each supervision state.
+//
+// Testing it through diagnoseLocalDaemon() instead made the result depend on
+// whether the machine RUNNING the tests happens to have dejimad installed:
+// service.Detect() is a real probe, so on a developer's own host it reported
+// "managed" and the test failed against a correct implementation. Setting HOME
+// to a temp dir isolates the socket path but not the system service.
+func TestDiagnoseNotRunning(t *testing.T) {
+	const sock = "/tmp/dejima-test/dejimad.sock"
 
-	d := diagnoseLocalDaemon()
-	if !strings.Contains(d.Cause, "doesn't exist yet") {
-		t.Fatalf("missing-socket cause should say the socket doesn't exist; got %q", d.Cause)
-	}
-	if !hasStepContaining(d.Steps, "dejimad --foreground") {
-		t.Errorf("missing-socket steps should offer a foreground start; got %v", d.Steps)
-	}
-	if !hasStepContaining(d.Steps, "dejima service install") {
-		t.Errorf("missing-socket steps should offer install; got %v", d.Steps)
-	}
+	t.Run("nothing installed", func(t *testing.T) {
+		d := diagnosisNotRunning(service.Supervision{Mode: "none"}, sock)
+		if !strings.Contains(d.Cause, "doesn't exist yet") {
+			t.Fatalf("cause should say the socket doesn't exist; got %q", d.Cause)
+		}
+		if !hasStepContaining(d.Steps, "dejimad --foreground") {
+			t.Errorf("should offer a foreground start; got %v", d.Steps)
+		}
+		if !hasStepContaining(d.Steps, "dejima service install") {
+			t.Errorf("should offer install; got %v", d.Steps)
+		}
+	})
+
+	t.Run("managed but no socket", func(t *testing.T) {
+		// Registered with a service manager yet no socket: it is crash-looping,
+		// so the remedy is logs, not install.
+		d := diagnosisNotRunning(service.Supervision{Managed: true, Mode: "launchd-system"}, sock)
+		if !strings.Contains(d.Cause, "failing to start") {
+			t.Errorf("cause should say it's failing to start; got %q", d.Cause)
+		}
+		if !hasStepContaining(d.Steps, "dejima logs") && !hasStepContaining(d.Steps, "log") {
+			t.Errorf("should point at logs; got %v", d.Steps)
+		}
+	})
+
+	t.Run("installed but not loaded", func(t *testing.T) {
+		// Detect() writes the exact remediation into Concern; it must survive.
+		const concern = "sudo dejima service restart --system"
+		d := diagnosisNotRunning(service.Supervision{
+			Mode: "launchd-system", Summary: "system LaunchDaemon present", Concern: concern,
+		}, sock)
+		if !strings.Contains(d.Cause, "installed but not loaded") {
+			t.Errorf("cause should say installed-but-not-loaded; got %q", d.Cause)
+		}
+		if !hasStepContaining(d.Steps, concern) {
+			t.Errorf("should carry Detect()'s remediation %q; got %v", concern, d.Steps)
+		}
+	})
 }
 
 func TestDiagnoseLocalDaemon_SocketStale(t *testing.T) {
@@ -105,6 +143,63 @@ func TestCompactStepsDropsEmpty(t *testing.T) {
 	got := compactSteps([]string{"a", "", "  ", "b"})
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Fatalf("compactSteps did not drop blanks: %v", got)
+	}
+}
+
+// The Windows local-target diagnosis. Before this existed, a Windows user whose
+// client fell back to "local" got the generic advice — `dejimad --foreground`,
+// `dejima service install`, `dejima onboard` — none of which can work there:
+// the daemon needs a Unix host with Docker, so the socket it names can never
+// appear. The regression to guard is any of those commands coming back.
+func TestDiagnoseWindowsClient(t *testing.T) {
+	d := diagnosisWindowsClient()
+
+	if !strings.Contains(d.Cause, "Windows can't run the Dejima daemon") {
+		t.Errorf("cause should name the platform limit; got %q", d.Cause)
+	}
+	// The steps must route somewhere that actually works.
+	if !hasStepContaining(d.Steps, "dejima wsl setup") {
+		t.Errorf("should offer the WSL2 local host; got %v", d.Steps)
+	}
+	if !hasStepContaining(d.Steps, "dejima profile add") {
+		t.Errorf("should offer pointing at a server; got %v", d.Steps)
+	}
+	if !hasStepContaining(d.Steps, "dejima join") {
+		t.Errorf("should offer joining via invite; got %v", d.Steps)
+	}
+	// Impossible-on-Windows remedies must not appear.
+	for _, dead := range []string{"dejimad --foreground", "dejima service install", "systemctl", "launchd"} {
+		if hasStepContaining(d.Steps, dead) {
+			t.Errorf("step offers %q, which can't work on Windows; got %v", dead, d.Steps)
+		}
+	}
+	// The default closing tells the user to run the fix "on the host shell" —
+	// there is no host shell here, the commands run right where they are.
+	if d.Closing == "" || strings.Contains(d.Closing, "host shell") {
+		t.Errorf("closing should be Windows-appropriate, got %q", d.Closing)
+	}
+	if d.Remote {
+		t.Error("this is the local-target diagnosis, not the remote one")
+	}
+}
+
+// renderDaemonHelp must honour a diagnosis's own closing line, falling back to
+// the local/remote defaults when it has none.
+func TestRenderDaemonHelpClosing(t *testing.T) {
+	custom := renderDaemonHelp(daemonDiagnosis{Cause: "c", Closing: "run it in PowerShell"})
+	if !strings.Contains(custom, "run it in PowerShell") {
+		t.Errorf("custom closing not rendered:\n%s", custom)
+	}
+	if strings.Contains(custom, "host shell") {
+		t.Errorf("custom closing should replace the default, not add to it:\n%s", custom)
+	}
+	local := renderDaemonHelp(daemonDiagnosis{Cause: "c"})
+	if !strings.Contains(local, "host shell") {
+		t.Errorf("default local closing missing:\n%s", local)
+	}
+	remote := renderDaemonHelp(daemonDiagnosis{Cause: "c", Remote: true})
+	if !strings.Contains(remote, "keeps retrying") {
+		t.Errorf("default remote closing missing:\n%s", remote)
 	}
 }
 

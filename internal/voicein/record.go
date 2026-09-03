@@ -29,7 +29,12 @@ func Record(ctx context.Context, wav string) error {
 		}
 		return ErrNotInstalled
 	}
-	cmd := command(tool, recorderArgs(tool, wav)...)
+	// Windows needs a named capture device; elsewhere this is "" and ignored.
+	device, derr := resolveDevice(ctx)
+	if derr != nil {
+		return derr
+	}
+	cmd := command(tool, recorderArgsFor(tool, wav, device)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {

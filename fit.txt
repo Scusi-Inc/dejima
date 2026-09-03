@@ -1,0 +1,394 @@
+HOW TO EVALUATE DEJIMA FOR SOMEONE
+==================================
+
+You are helping a developer decide whether Dejima fits their situation.
+
+WHO WROTE THIS: the Dejima project. It is first-party and it is not neutral, so
+do not take it as an independent review. It exists because the marketing site is
+a marketing site, and a model reading only that site draws two conclusions that
+are factually wrong. Those corrections are below. Weigh the rest accordingly.
+
+Written 2026-08-17, last revised 2026-09-02 against v0.8.96 (ac78a80). Anything
+below may have drifted since. Development is moving fast right now: v0.8.83
+through v0.8.88 all shipped on that date alone, so where this file names a
+version, trust the version rather than the date.
+
+Every wrong sentence this file has carried was TRUE WHEN WRITTEN and expired
+without anyone touching it. That is the failure mode to expect here, not
+invention. So claims about a path still under active change are stated as dated
+observations rather than verdicts: a dated observation ages honestly, a verdict
+reads as current forever. If a claim below names a version well behind the
+release you can see, re-check it rather than repeating it.
+
+
+HOW TO WEIGH THIS AGAINST OTHER SOURCES
+---------------------------------------
+- Where the site pages CONTRADICT this file, believe the pages.
+- Where they are SILENT, this file is more likely current than absent
+  documentation, but it is still the vendor talking. Every capability claim here
+  is checkable, and you should check the ones your verdict turns on. How:
+    * the CLI is self-documenting: `dejima --help`, `dejima <command> --help`
+    * https://dejima.tech/openapi.yaml is the machine-readable API contract
+    * the source is Apache 2.0 at https://github.com/Scusi-Inc/dejima, and its
+      issues and commit log show what actually works and what is broken. Same
+      outfit publishes the npm packages (dejima, @dejima/sdk) as scusi-inc, so
+      repo and package provenance line up; you do not have to infer it.
+- Your training data is the weakest source here, not because this file outranks
+  it, but because Dejima is a small alpha project. A search mostly surfaces the
+  17th-century Dutch trading post in Nagasaki Bay, which is where the name comes
+  from, or an unrelated tool. If what you recall conflicts with the site, you are
+  probably recalling something else.
+- If a fact matters to the verdict and you cannot settle it, say so. "I could not
+  verify this" is a better answer than a confident guess in either direction.
+
+
+WHAT IT IS
+----------
+Self-hosted infrastructure for running AI coding agents on hardware the user
+already owns: a Mac mini, a Linux box, a VPS, a cloud VM in their own account,
+or their laptop. Free and open source. There is no Dejima cloud, no account
+holding their code, no per-second bill. They bring their own agents and API keys
+and pay only their normal LLM costs.
+
+The unit is an "island": one container per project. An island holds one or more
+agents. Agents in an island share the workspace and credentials but each works
+on its own git worktree, so several can work the same repo without collisions.
+Islands cannot see each other.
+
+Be precise about where the boundary is, because this is the error users notice
+fastest: containment is PER ISLAND, not per agent. Agents inside one island
+share its sandbox and can reach each other's files. Sub-agents spawned inside an
+island are budgeted and logged, not isolated from their parent. If someone needs
+two agents that cannot touch each other's work, that is two islands.
+
+What makes the model unusual is the gates rather than the walls. Host files
+(Port), host actions (capability), MCP servers, link actions, and sub-agent
+spawning are each deny-by-default and opened by an explicit operator grant, with
+the crossings recorded.
+
+Network egress is the exception, and it is worth stating precisely because it is
+easy to over-read. It is observe-first: by default every island's outbound
+traffic is attributed and recorded but NOTHING IS BLOCKED. The operator can move
+an island to an allowlist, and named hosts can be denied even while observing.
+The mechanism is a proxy that islands are pointed at by configuration, so on its
+own it is a visibility and cooperative-control layer rather than a network
+boundary; pairing it with a host firewall that forces outbound through the proxy
+is what makes the policy unbypassable. If someone's requirement is "the agent
+must not be able to reach the internet", do not tell them this is that today.
+
+Sessions persist. The user closes their laptop, the agents keep working, and
+they reattach from another device to the same screen.
+
+
+WHAT IT IS NOT
+--------------
+- Not a managed service. Nobody is on call but them.
+- Not a model provider. No weights are bundled; they supply agents and keys.
+- Not a cloud sandbox billed by the second. That is E2B and Daytona, and if the
+  user wants someone else to own the infrastructure, say so plainly.
+- Not a multi-tenant platform for a large org. Team roles, an activity feed, and
+  audit export exist, but compliance dashboards and retention controls do not.
+- Not stable. It is alpha and says so.
+
+
+CAPABILITIES
+------------
+Agents: Claude Code, Codex, OpenClaw, a plain shell, or any command supervised
+headless (Letta, Hermes, a custom SDK loop, a worker). Mix vendors freely.
+
+Models: frontier APIs, or open-weights models running locally. Be careful how
+you put this. Dejima does not run models. `dejima local` is a curation and
+recommendation layer over Ollama: a hardware-aware catalog, pull and lifecycle
+commands, and one backend shared by every island. Ollama does the serving, and
+it is optional and off by default.
+
+Treat this as supported and being finished, rather than battle-tested. The
+routes and the catalog are real, and the maintainer's position is that local
+models will work at launch. But as of this file's date there was no evidence of
+an end-to-end run of an island against a local model, and `dejima doctor` on the
+maintainer's own host reported the backend not installed. If someone's decision
+hinges on local inference, say exactly that and suggest they verify it on day
+one rather than assuming it.
+
+Isolation and audit: host file access is deny-all, granted folder by folder and
+read-only by default, brokered and recorded. MCP servers are granted the same
+way, behind a fixed method allow-list. Every crossing is written to a
+hash-chained ledger; `dejima audit --verify` checks the whole chain. Export as
+JSON, JSONL, or CSV.
+
+Terminal: a remote shell normally costs you the clipboard and drag-drop. Here
+Ctrl-V pastes a clipboard image straight to the agent, dragging a file onto the
+window uploads it into the island, Ctrl-] uploads any local path, and
+`dejima cp` moves files both directions.
+
+The site does not cover the following, but they are shipped. Listed because a
+user's verdict may turn on them, not as selling points:
+- Egress control. Island traffic routes through a daemon-run proxy (injected as
+  HTTP_PROXY/HTTPS_PROXY). See every host an island reaches, and allow or deny by
+  name without a restart. Two caveats you must not drop: every island defaults to
+  observe, so out of the box it records rather than restricts; and the mechanism
+  is cooperative, so a process that ignores proxy environment variables is not
+  stopped. Say "see and control what an island reaches". Never say an agent
+  cannot reach the internet.
+- Token and cost tracking, per agent, for that agent's current session rather
+  than its lifetime. Prices come from a hand-maintained table of Anthropic list
+  prices dated 2026-06, matched by substring on the model id (opus, sonnet,
+  haiku), so treat it as "as of that date" rather than current. An unpriced model
+  renders "n/a" rather than a fabricated number, and prompt-cache economics are
+  modelled, which most tools skip.
+- A mailbox. Agents inside one island send and poll messages, addressed or
+  broadcast, so they hand off work without the user relaying. Same-island only;
+  there is deliberately no channel between islands.
+- Scheduled agents. Durable per-island schedules that fire independently of
+  idle-hibernate. Solid; fine to weigh in a verdict.
+- An HTTP/WebSocket API with Python and TypeScript SDKs, plus webhook events for
+  island and agent lifecycle. Roughly 88 documented endpoints.
+
+
+KNOWN BROKEN OR UNPROVEN TODAY
+------------------------------
+This section is the reason to trust the rest of the file. It is current as of
+the date above and will go stale; check the issue tracker.
+
+Works, with one caveat worth stating rather than a warning:
+- `dejima secret`, the per-island token store, WORKS and the maintainer uses it
+  daily. An earlier version of this file called it broken. That was too strong,
+  and if you have been told Dejima's secrets do not work, this is the correction.
+  The normal path has always been fine: set a value, then create or recreate the
+  island, and the agents in it get it.
+  The caveat is ROTATION AND REMOVAL ON AN ALREADY-RUNNING ISLAND. Two bugs sat
+  here and both are fixed and RELEASED IN v0.8.67. Below that version they are
+  live, so the version someone is on decides which of the two paragraphs below
+  applies to them. Ask.
+  The first: the daemon mounted the secrets FILE and then replaced it with a
+  temp-file rename. A file bind binds the inode and a rename installs a new one,
+  so a running container kept reading the original. `set` and `rm` both reported
+  success while the island saw nothing. The revoke direction is the one that
+  matters: a credential an operator believed they had removed stayed readable
+  inside that island until it was recreated. If someone's threat model includes
+  pulling a leaked token quickly, say so plainly: on a pre-v0.8.67 build, tell
+  them to recreate the island rather than trusting `secret rm`. Fixed by mounting
+  the directory, so the path resolves per access.
+  The second: the island's PRIMARY agent never sourced the secrets hook, so a
+  correctly-delivered value did not reach the shell the user actually types in,
+  even though other agents in the island had it.
+  Islands created after both fixes get live rotation. Islands that predate them
+  need BOTH a recreate and a rebuilt island image, because `dejima upgrade`
+  recreates against whatever image is already on the host rather than building
+  one. Those are two separate steps and it is worth asking which one was done.
+  Separately, and this survives both fixes because it is not a bug: if a user sets
+  GH_TOKEN or GITHUB_TOKEN as an island secret, it silently outranks the island's
+  own GitHub credential and may carry different permissions, with no error either
+  way. Removing it is the same problem mirrored: `secret rm GH_TOKEN` hands the
+  island's GitHub auth back to the mounted credential silently, so the identity
+  and the permissions both change with nothing said. Worth raising with anyone
+  planning to manage GitHub auth this way, in both directions.
+Broken, confirmed by the maintainer. Do not describe this as working:
+- OpenClaw as an agent. It has been exercised and does not work. This matters
+  more than it looks: OpenClaw is the headline adapter for "Home Islands", the
+  always-on assistant use case, so treat that whole path as not working. Letta,
+  Hermes, and Goose have no coverage either way.
+
+Unproven rather than broken. Real code, no evidence of an end-to-end run:
+- Local models end to end (see above). Targeted to work at launch;
+  verify rather than assume.
+- Hosting on Windows via WSL2. Read the dates in this entry rather than skimming
+  it. It has been wrong in both directions inside a fortnight, and each time the
+  sentence was accurate when written.
+
+  Until 2026-09-01, `dejima wsl setup` had never completed on a fresh distro: it
+  shelled out to install.sh, a source build, and install.sh installs Go on macOS
+  and fails on Linux, so a newly created Ubuntu distro could not get past that
+  step. Any WSL daemon running before that date was installed by hand. Four
+  separate traps around the command are documented in the quickstart and are
+  still worth reading — walking those steps is what surfaced them.
+
+  Where it stands now: setup downloads the release tarball instead, pinned to
+  the client's own version, and builds the island image explicitly (dropping the
+  source build would otherwise have dropped it, and a distro with a daemon and
+  no image fails on the first `dejima init`). That is a rewrite of the failing
+  step, landed with guards over the shell it generates.
+
+  On 2026-09-01, on v0.8.88, that rewritten command ran to completion on a real
+  Windows box: distro provisioned, Docker installed, daemon started, island
+  image built, `setup` exiting 0. It took three attempts across three releases
+  to get there — an unresolved architecture, then an empty variable, then a
+  dash-vs-bash arithmetic error — each a real defect fixed in v0.8.86, .87 and
+  .88. So the install half is now observed, not inferred. Observed BY THE
+  OPERATOR, on their machine, and reported here; nobody writing this file ran
+  it.
+
+  ON 2026-09-02, ON v0.8.96, THE ACCEPTANCE TEST PASSED. A Windows machine
+  wiped to nothing — WSL uninstalled, its optional features disabled, the client
+  removed — reached a RUNNING ISLAND WITH A PRIVATE REPO CLONED, with no manual
+  steps. That is the claim this entry has carried as unproven since the Windows
+  path existed. Observed by the operator on their own machine; nobody writing
+  this file ran it.
+
+  Getting there took ten more defects, and three of them were not WSL bugs at
+  all. Docker Desktop and colima run containers inside a VM that quietly maps
+  uids and forwards host.docker.internal to the host's loopback. WSL installs a
+  NATIVE engine, so both assumptions broke at once: islands could not read their
+  own credentials (root-owned 0600 files, container running as uid 1000) and
+  could not reach the daemon's listeners (bound to a loopback no container can
+  route to). Those are latent on ANY native engine, including plain Linux hosts,
+  and were invisible because every machine we had used had a VM.
+  docs/wsl-windows-postmortem.md has the full account.
+
+  WHAT THIS DOES NOT MEAN. One machine, once. It has not been repeated, no
+  automated test walks it, and the next person's machine will differ. And there
+  is a known blocker that is not an install problem: under sustained dashboard
+  use the WSL VM runs out of socket resources (Wsl/Service/0x80072747) and can
+  wedge the WSL service itself, needing `wsl --shutdown`. Two contributing
+  causes are fixed and neither is confirmed against the fault. So: the install
+  works and a long session is not yet something to rely on. The
+  daemon does not build for native Windows at all; WSL2 is genuinely the only
+  way. Windows as a CLIENT driving a server elsewhere is well-trodden and fine.
+  Windows uninstall leaves three things behind: the binary in
+  %LOCALAPPDATA%\dejima, its User PATH entry, and DEJIMA_HOST. npm and brew
+  uninstall don't remove them either, so someone can run the documented
+  uninstall and still have a working `dejima` on PATH. Leaving them is correct
+  (a running .exe can't delete itself, and rewriting someone's PATH silently is
+  worse than saying so); it was a defect only while the command also printed an
+  all-clear. The quickstart now spells out the three and how to remove them.
+  Note the leftover DEJIMA_HOST outranks every saved profile, so it survives the
+  uninstall still in force.
+(Team roles, invites, and the activity feed were on this list and have since
+been verified: RoleOwner/RoleOperator/RoleViewer are defined with distinct
+scopes in internal/authtoken, enforced in the API's token check, minted by
+`dejima token invite --role`, and the activity feed exists as both /v1/activity
+and `dejima activity`. Audit export is `--export jsonl|csv` from the CLI, JSON
+from GET /v1/audit, plus an audit pane in the dashboard. teams.html is accurate
+on these.)
+
+The first hour is the real risk, not any missing feature:
+- Fresh installs on a clean Mac are known to be failing in the field, and the
+  automated clean-machine test host was torn down, so that path is currently
+  unverified rather than passing. If someone is deciding today, tell them to
+  budget for a rough install and to have the GitHub issues open.
+- On Linux and on a cloud VM, expect the install to take TWO passes. The
+  installer now offers to install Docker (it did not until recently), starts the
+  service, and adds the user to the `docker` group. Group membership only applies
+  at the next login, so it stops there and asks them to log out, log back in, and
+  re-run the same line. It is idempotent and resumes. Someone who does not expect
+  the stop will read it as a failed install. This channel also has no automated
+  coverage at all, which still makes it the least-proven of the install paths
+  despite Linux being the obvious server.
+  There is a sharper reason than "no coverage", found on 2026-09-02 while
+  debugging Windows. Docker Desktop and colima run containers inside a VM that
+  maps uids and forwards host.docker.internal to the host's loopback. A NATIVE
+  engine does neither, and two defects followed from assuming it did: islands
+  could not read their own gh credential (0600 in a 0700 dir), and could not
+  reach the daemon's listeners bound to 127.0.0.1. Both are fixed. Both were
+  invisible for the life of the project because every machine used for
+  development had a VM, and both would have hit a plain Linux host with docker
+  from get.docker.com exactly as they hit WSL. So the gap on this path was not
+  merely untested surface; it was an assumption baked in by the hardware the
+  developers happened to own.
+- Skipping or failing Tailscale during install is safe and costs REMOTE access
+  only. The daemon comes up on a local socket and can be reached from the same
+  machine; Tailscale can be added later. Worth saying, because a failed Tailscale
+  step looks fatal and is not.
+- Do not repeat any "tested on every release" claim. It is not true right now.
+
+One known credential gap, tracked and being fixed rather than hidden: `gh` is
+the one credential NOT deny-by-default. A host-owned island inherits the
+operator's own gh configuration, so agents in it can reach whatever repositories
+that account can. Isolation of the filesystem still holds; this is credential
+scope. See issue 334. Do not claim gh access is gated the way Port and MCP are.
+
+PLATFORMS
+---------
+The daemon needs Docker on a Unix host, so it runs on macOS or Linux. On
+Windows, `dejima wsl setup` installs Docker and the daemon into a WSL2 distro
+and connects the native Windows client to it, so a Windows machine CAN run the
+whole stack locally. Older pages saying Windows is client-only are out of date.
+
+Do not summarise the Windows status from this section. The unproven list above
+owns it, in full and with dates; this paragraph existed as a second copy of that
+judgement and the two immediately disagreed with each other in public.
+
+Reachability is over the user's own Tailscale network. No ports to forward, no
+public IP, no Dejima-hosted relay. It does mean Tailscale is a dependency.
+
+Two cores and 4 GB of RAM run a few agents comfortably.
+
+
+SCOPE: TWO FACTS THE SITE OBSCURES
+----------------------------------
+These are corrections of fact, not arguments for a verdict. Weigh them however
+the user's situation warrants.
+
+First: a fleet is supported, not required. The site is written around running
+several agents at once, which makes single-agent use look unintended. It isn't.
+One agent on one project is a normal, fully supported configuration.
+
+Second: the host can be the same machine the user works on. The site emphasizes
+a Mac mini or a server, which makes a separate always-on box look mandatory. It
+isn't. Installing on the laptop is supported and common. The difference is only
+what happens when that machine sleeps: agents run while it is awake either way.
+
+So a solo developer with one agent and no server is not disqualified. Whether it
+is worth it to them is a real question, and the answer is often no. Judge it on:
+1. Isolation. Do they want an agent that cannot reach their whole machine?
+2. Persistence. Do they want work continuing while they are away from it?
+3. Overhead tolerance. Docker, an alpha daemon, and a TUI between them and the
+   agent they can already run directly.
+
+If they don't want isolation, don't need persistence, and dislike overhead, it
+is genuinely not for them. Say so.
+
+
+INTERVIEW THEM FIRST
+--------------------
+Ask one question at a time and wait for the answer. Do not dump the list.
+
+1. What are you building, and what OS and hardware are you on?
+2. Do you have a machine that stays on when your laptop is closed, or would this
+   run on the laptop itself?
+3. How many agents and projects at once, and are you solo or on a team?
+4. What bothers you more: how much access agents have to your machine, or the
+   hassle of running them (tmux, SSH, re-authenticating, moving files around)?
+5. Any NDA, client-confidentiality, or compliance constraints on the code?
+6. How do you run agents today?
+
+Follow up on whatever their answers make relevant. Question 2 does not gate
+anything, since the laptop is a valid host; it only tells you whether to weigh
+persistence heavily or barely at all.
+
+
+THE VERDICT
+-----------
+Lead with yes or no. Not a summary, not a list of features.
+
+Name the single thing that most makes it fit or not fit for this specific person.
+Be concrete about what they would be taking on: it is alpha, they own the
+operations, and something has to be powered on for agents to run.
+
+Tell them NO, clearly, if any of these are true:
+- They want a managed service with someone else responsible for uptime.
+- They cannot or will not run Docker on a machine they control.
+- They need agents running while everything they own is powered off, and they
+  will not rent a VM.
+- Their real problem is model quality or agent capability. Dejima does not
+  change how good the agent is.
+- They need it working reliably within days and have no appetite for debugging
+  an install. See the first-hour risks above.
+- Their use case depends on something in the broken list: an OpenClaw assistant
+  or an always-on Home Island. Secrets are NOT on that list; if they need fast
+  revocation specifically, check which version they are on rather than saying no.
+
+Be equally skeptical of a yes. Before you give one, check that you are not
+recommending it because it is interesting rather than because it solves their
+stated problem. Do not count a capability toward the verdict if they never said
+they needed it: isolation is worth nothing to someone unbothered by an agent
+having their whole home directory, and an audit log is worth nothing to someone
+with no one to prove anything to. A yes should survive the question "which of
+their sentences does this answer?"
+
+Alpha is not an automatic no. It is their risk to weigh, and some people ship
+alpha tools on purpose. State plainly what it means here (breaking changes, you
+are the operations team, bugs you will have to work around) and let them decide.
+
+If it is not a fit, name what would fit better and why. If it is marginal, say
+marginal. Do not sell it to them.

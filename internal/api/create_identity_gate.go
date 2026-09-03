@@ -36,7 +36,7 @@ const gateProbeTimeout = 12 * time.Second
 // case, so a public repo or an identity-bound create pays no cost.
 func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) error {
 	repo := strings.TrimSpace(req.Repo)
-	if req.AllowNoIdentity || !reposrc.IsURL(repo) || s.islandWillHaveGitHubIdentity(req.GitHubIdentity) {
+	if req.AllowNoIdentity || !reposrc.IsURL(repo) || s.islandWillHaveGitHubIdentity(ctx, req.GitHubIdentity) {
 		return nil
 	}
 	// Only probe real git-remote schemes. A file:// or other exotic URL is treated
@@ -46,20 +46,58 @@ func (s *Server) blockDoomedClone(ctx context.Context, req CreateIslandRequest) 
 	if isGitRemoteURL(repo) && s.anonCloneFn(ctx, repo) {
 		return nil // public / anonymously reachable — no identity needed
 	}
-	return fmt.Errorf("%q needs a GitHub identity to clone (it isn't anonymously reachable) but none is "+
-		"configured — run `dejima auth push --github` from a machine where gh can access it, then retry; "+
-		"or pass --force to create anyway and authenticate later", repo)
+	// Phrased as steps, not prose: this is the first wall a new operator hits,
+	// and the old single-sentence version buried the actual command. The client
+	// matches on "needs a GitHub identity to clone" to upgrade this into the
+	// guided TUI step — keep that substring intact.
+	msg := fmt.Sprintf("%q needs a GitHub identity to clone (it isn't anonymously reachable), and none is configured.\n"+
+		"  1. On a machine where the gh CLI can see the repo, sign in:  gh auth login\n"+
+		"  2. Connect it to this daemon:                                dejima github connect\n"+
+		"  3. Retry creating the island.\n"+
+		"Or pass --force to create it now and authenticate later", repo)
+	// For the HOST operator there is a second, wider route: create the island and
+	// grant it the host's own gh login. It is mentioned second and with its cost
+	// stated, because a per-island identity is the better answer and this one
+	// reads the whole account — but leaving it out entirely is what makes the
+	// deny-by-default gate feel like a dead end rather than a decision. A tenant
+	// never sees it: the daemon refuses that grant for a tenant island, so
+	// offering it would promise something that cannot happen.
+	if owner, _ := s.callerGHScope(ctx); owner == "" {
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			name = "<island>"
+		}
+		msg += fmt.Sprintf("\n\nOr, if you'd rather this island use YOUR gh login (which can read every\n"+
+			"private repo on your account):\n"+
+			"  dejima init … --force\n"+
+			"  dejima github host-credential grant %s", name)
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 // islandWillHaveGitHubIdentity reports whether the island has SOME identity to
-// clone with: an explicitly named one, or at least one configured daemon
-// identity (the default a create falls back to).
-func (s *Server) islandWillHaveGitHubIdentity(named string) bool {
+// clone with: an explicitly named one (validated for real later in createIsland,
+// so a bad name gets the clearer "unknown identity" error there — not this gate),
+// or one the caller's tenant resolves by default.
+//
+// It asks the SAME resolver the clone will use (ResolveForIsland), so the gate
+// agrees with reality: it fires exactly when the clone would find no credentials.
+// The previous check read store.Identities — the LEGACY bare-name map that
+// Load() migrates into Idents and then nils. Once owner-scoping (#327) shipped
+// that map is always empty after load, so the check silently started gating
+// EVERY private-repo create even for daemons with a connected identity. Resolve
+// against the live store instead.
+func (s *Server) islandWillHaveGitHubIdentity(ctx context.Context, named string) bool {
 	if strings.TrimSpace(named) != "" {
 		return true
 	}
 	store, err := githubid.Load()
-	return err == nil && len(store.Identities) > 0
+	if err != nil {
+		return false
+	}
+	owner, _ := s.callerGHScope(ctx)
+	_, ok := store.ResolveForIsland(owner, "") // "" → the tenant's default identity
+	return ok
 }
 
 // isGitRemoteURL reports whether url is a network git remote we should probe —

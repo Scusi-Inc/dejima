@@ -27,7 +27,7 @@
 {"@type":"ListItem","position":3,"name":"Keep agents off your private files","item":"https://dejima.tech/use-cases/keep-agents-off-private-files.html"}]},
 {"@type":"WebPage","name":"Keep AI coding agents off your private files","url":"https://dejima.tech/use-cases/keep-agents-off-private-files.html","description":"Dejima denies an AI agent all host-file access by default. It sees only the folders you grant, read-only if you choose, and every crossing is written to a tamper-evident audit log.","isPartOf":{"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"}},
 {"@type":"FAQPage","mainEntity":[
-{"@type":"Question","name":"Can an AI coding agent access my private files?","acceptedAnswer":{"@type":"Answer","text":"Not in Dejima, unless you let it. Each agent runs in a container that is denied all host-file access by default. It sees only the folders you explicitly grant, read-only if you choose, and every access is logged."}},
+{"@type":"Question","name":"Can an AI coding agent access my private files?","acceptedAnswer":{"@type":"Answer","text":"Not in Dejima, unless you let it. Agents run inside an island, a container denied all host-file access by default. It sees only the folders you explicitly grant, read-only if you choose, and every access is logged."}},
 {"@type":"Question","name":"How do I stop an AI agent from reading my SSH keys or other repos?","acceptedAnswer":{"@type":"Answer","text":"Run it in Dejima. The agent's island can't see your home directory, your keys, or your other projects. You grant one folder at a time through a broker, and nothing else on your machine is reachable."}},
 {"@type":"Question","name":"What happens if an agent gets prompt-injected?","acceptedAnswer":{"@type":"Answer","text":"Containment limits the damage. A hijacked agent still can't reach anything you didn't grant, can't widen its own access, and every crossing it does make is recorded, so you can see exactly what it touched."}}
 ]}
@@ -48,8 +48,8 @@
   <a href="../guides/">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <article class="post">
@@ -73,7 +73,7 @@
   <div class="cards">
     <div class="card">
       <h3>Deny-all by default</h3>
-      <p>Each agent runs in an island, a container that can't see your host files at all. No shared mount, no path it can reach by guessing. The starting point is zero access.</p>
+      <p>Agents run inside an island, a container that can't see your host files at all. No shared mount, no path it can reach by guessing. The starting point is zero access.</p>
     </div>
     <div class="card">
       <h3>One folder, read-only</h3>
@@ -93,7 +93,7 @@
   <div class="faq">
     <div class="faq-item">
       <h3>Can an AI coding agent access my private files?</h3>
-      <p>Not in Dejima, unless you let it. Each agent runs in a container that's denied all host-file access by default. It sees only the folders you explicitly grant, read-only if you choose, and every access is logged.</p>
+      <p>Not in Dejima, unless you let it. Agents run inside an island, a container denied all host-file access by default. It sees only the folders you explicitly grant, read-only if you choose, and every access is logged.</p>
     </div>
     <div class="faq-item">
       <h3>How do I stop an AI agent from reading my SSH keys or other repos?</h3>
@@ -120,7 +120,7 @@
   <a href="../guides/">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>

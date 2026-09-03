@@ -17,16 +17,20 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
+	"path/filepath"
+
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/events"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/localmodel"
 	"github.com/aoos/dejima/internal/policy"
+	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
-	"github.com/aoos/dejima/internal/voicein"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // newTUICmd is the interactive dashboard. Launched by `dejima` with no args.
@@ -59,9 +63,18 @@ func runTUI(ctx context.Context, demo bool) error {
 	// quits the TUI into the raw bridge and a detach exits to the shell, but the
 	// summon chord (Ctrl-\) ends a session with errSummonBand, which brings us
 	// back here with the host-terminal band open instead of exiting.
+	// The gateway forwards live HERE, not on the model, and outside the loop.
+	// runTUI re-enters the dashboard with a freshly constructed model after every
+	// attach session — a registry on tuiModel would be discarded each time, so
+	// attaching to any agent would silently kill an open gateway UI. Deferred so
+	// the context-cancelled path tears them down too.
+	tunnels := newTunnelManager()
+	defer tunnels.CloseAll()
+
 	summonReturn := false
 	for {
 		m := initialTUIModel(c)
+		m.tunnels = tunnels
 		m.demo = demo
 		if summonReturn {
 			m.bandExpanded, m.bandFocused = true, true
@@ -123,9 +136,11 @@ type tuiModel struct {
 	// Setup-readiness snapshot (fetched once at Init) so the UI can warn about a
 	// missing credential BEFORE an island is created rather than at first agent
 	// attach. setupChecked guards against a false warning before the fetch lands.
-	setupChecked bool
-	claudeSeeded bool            // daemon can seed new islands with Claude creds
-	agentKeyGap  map[string]bool // agent type → requires an LLM provider key, none configured for it
+	setupChecked   bool
+	claudeSeeded   bool                // daemon can seed new islands with Claude creds
+	agentKeyGap    map[string]bool     // agent type → requires an LLM provider key, none configured for it
+	gatewayPorts   map[string]int      // agent type → its localhost gateway port (0/absent = no UI)
+	agentProviders map[string][]string // agent type → the providers it supports (guided key step)
 
 	selected int
 	grouped  bool // group the island list by repo (toggled with `p`)
@@ -153,6 +168,10 @@ type tuiModel struct {
 	sshPort        string // resolved SSH-façade port
 	sshResolvedFor string // the SSHAddr we last resolved, so we don't re-exec tailscale each frame
 	latestRelease  string // newest published release tag (from GitHub; "" until fetched)
+	latestNotes    string // the newest release's curated notes (for the update blurb)
+	latestURL      string // the newest release's page URL ("view more")
+	selfStamp      string // on-disk identity of this executable at startup
+	updateCheckErr string // why the last release check failed ("" = it succeeded)
 	clientUpdate   bool   // this CLI build is behind latestRelease
 	daemonUpdate   bool   // the connected daemon is behind latestRelease
 	connectTo      string // set on quit-to-connect; main() acts on this
@@ -176,9 +195,15 @@ type tuiModel struct {
 	dirtyOps     map[string]string // name → "hibernating" etc. (transient hint)
 	building     bool              // island image build in flight
 
-	ticks         int            // tickMsg counter: drives footer-tip rotation + occasional voice re-check
-	voice         voicein.Status // cached voice-dictation readiness (refreshed on tick + settings-open)
-	voiceTipShown int            // times the voice tip has been shown this session; eases the boost after voiceBoostCap
+	ticks int // tickMsg counter: drives footer-tip rotation + occasional voice re-check
+
+	// gen identifies the current connection. It is bumped every time activeHost
+	// changes, and every dashboard fetch stamps the value it was issued under, so
+	// a reply from a daemon we have since switched away from can be dropped
+	// instead of applied. Without it the previous server's islands reappear under
+	// the new server's name — and, worse, clear the diagnosis explaining why the
+	// new one is unreachable. See listMsg / overviewMsg / detailMsg.
+	gen int
 
 	help       bool            // help overlay visible (all key sections always shown)
 	helpMore   bool            // help: the collapsible reference (glyphs + CLI) is expanded
@@ -205,7 +230,30 @@ type tuiModel struct {
 	identity     *identityView     // non-nil while the visual-identity editor is open (opened with `i`)
 	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
 	github       *githubView       // non-nil while the self-serve GitHub identity pane is open (settings → GitHub)
+	secretsPane  *secretsView      // non-nil while the per-island Secrets pane is open
+	importPane   *importView       // non-nil while the per-island Import files pane is open
+	restartPane  *restartView      // non-nil while the "which agents to restart" checklist is open
 	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
+	// tunnels is owned by runTUI and shared across dashboard re-entries; see
+	// tunnelManager. Nil in tests that do not exercise gateway UIs.
+	tunnels *tunnelManager
+	// escSeqState/escSeqAt track a split escape sequence across keypresses, so a
+	// terminal that delivers ESC [ A as three of them cannot fire the binding on
+	// "A". nowFn is injected so the window is testable without sleeping. See
+	// escseq.go.
+	escSeqState int
+	escSeqAt    time.Time
+	nowFn       func() time.Time
+	// keyLog records every received key when DEJIMA_KEYLOG is set. nil (and a
+	// no-op) otherwise. See keylog.go.
+	keyLog *keyLogger
+	// observed is the observed-agent collection: agents Dejima can SEE and cannot
+	// STOP, running outside every island. nil means we have not (or could not)
+	// load it, which renders NOTHING — deliberately distinct from a loaded
+	// response with no agents. A daemon that is unreachable or too old to serve
+	// the endpoint must never be able to tell the operator that no ungated agents
+	// exist. See tui_observed.go.
+	observed *api.ObservedAgentsResponse
 	// pendingActions is the polled queue of cross-island actions awaiting approval
 	// (action gate, Lane 5 P3). Drives the announcement-bar badge; empty when the
 	// gate is unused/disabled. See tui_approvals.go.
@@ -237,6 +285,13 @@ type tuiModel struct {
 	// but this running process is still the old one until they relaunch. Stays
 	// until restart or an explicit [esc] dismiss.
 	restartPending string
+	// imageBuiltPending is an ORANGE, sticky banner for a finished island image
+	// build. Same "landed but needs the user to act" shape as restartPending: the
+	// new image exists, but every running island keeps its old one until it's
+	// recreated onto the new image, so the build is only half the job. Success used
+	// to be rendered NOWHERE (the footer's ⏳ just vanished), which left no way to
+	// tell a finished build from a build that never started. Sticky until [esc].
+	imageBuiltPending string
 	// updating is a BLUE in-progress banner shown while an update command is
 	// running — a daemon source update does `git pull && make install` (tens of
 	// seconds) before it restarts, and without this the TUI looks frozen between
@@ -251,6 +306,11 @@ type confirmPrompt struct {
 	agent  string // for "remove-agent"
 	answer string
 	force  bool // for "update-daemon": apply even with terminals attached
+	// strict escalates a y/n gate to typing the target's id, for the case where
+	// the same action costs more than usual — restarting an agent that is
+	// mid-task throws away the turn it's working on. Decided when the prompt is
+	// built, so confirmExpectation stays a pure function of the prompt.
+	strict bool
 }
 
 // actionMenu is the per-row context menu (opened with ⏎ on an island/agent/
@@ -280,6 +340,17 @@ type actionMenuItem struct {
 	// open, when set, is a menu-only action with no global hotkey — chooseMenuItem
 	// calls it directly (after re-anchoring) instead of re-dispatching a key.
 	open func(tuiModel) (tea.Model, tea.Cmd)
+	// nav marks a level-navigation button (e.g. "Dejima settings", "Island
+	// settings") rendered at the top of the menu above a separator — it moves
+	// between the Dejima/island/agent settings levels rather than acting on a row.
+	nav bool
+	// boundary marks the things you do TO an island from OUTSIDE it: putting
+	// files in, putting secrets in. Everything else in this menu configures the
+	// island. They group together at the top under a double rule, because
+	// "crosses the containment boundary" is the distinction the whole product is
+	// organised around — the grants pane draws the same line — and burying them
+	// among settings makes them read as settings.
+	boundary bool
 }
 
 func initialTUIModel(c *api.Client) tuiModel {
@@ -287,12 +358,18 @@ func initialTUIModel(c *api.Client) tuiModel {
 	cfg, _ := clientcfg.Load()
 	m := tuiModel{
 		client:       c,
+		nowFn:        time.Now,
+		keyLog:       openKeyLog(),
 		dirtyOps:     map[string]string{},
 		expanded:     map[string]bool{},
 		activeHost:   host,
 		activeLabel:  label,
 		activeSource: source,
 		editor:       cfg.Editor,
+		// Remember which copy of the binary we started from, so an out-of-band
+		// replacement (make install, a package manager, another terminal) can be
+		// noticed and reported as "restart" rather than as an available update.
+		selfStamp: selfBinaryStamp(),
 	}
 	// One-time, gentle nudge for Apple Terminal users (no agent tabs, no OSC 52
 	// clipboard). macTermNudge persists a marker the first time it fires, so this
@@ -310,14 +387,35 @@ func initialTUIModel(c *api.Client) tuiModel {
 type settingsModel struct {
 	page settingsPage
 	sel  int
+	// Local-models sub-page state, fetched async when the page opens.
+	localStatus *localmodel.Status
+	localErr    string
+	// localActs are the runnable rows derived from localStatus — there is
+	// nothing to move through until the status lands, and what's offered
+	// depends on it (install a missing backend, pull the recommended model).
+	localActs   []localAction
+	localNotice string // outcome of the last action run from this page
+	// Provider-keys sub-page. provCreds is what the daemon holds; provCands is
+	// every provider an agent COULD use, so the page can offer one that has no
+	// key yet — ListProviderCredentials returns nothing at all on a fresh daemon,
+	// and a page that lists only what exists can never add the first key.
+	provCreds  []providercreds.Meta
+	provCands  []string
+	provErr    string
+	provSel    int
+	provInput  string
+	provBusy   bool
+	provNotice string
 }
 
 type settingsPage int
 
 const (
-	settingsTop      settingsPage = iota // the preferences list
-	settingsEditor                       // the editor radio sub-page
-	settingsTerminal                     // the default-terminal radio sub-page
+	settingsTop       settingsPage = iota // the preferences list
+	settingsEditor                        // the editor radio sub-page
+	settingsLocal                         // the local-models status sub-page
+	settingsProviders                     // LLM provider keys: list, add, rotate
+	settingsTerminal                      // the default-terminal radio sub-page
 )
 
 type editorChoice struct {
@@ -334,9 +432,15 @@ var editorChoices = []editorChoice{
 	{"VS Code Insiders", "code-insiders"},
 }
 
+// switchKey is the accelerator for the connection switcher: both the key
+// handleKey binds and the key the header prints. One constant, because the two
+// drifting apart is exactly what went wrong — `s` switched servers, then became
+// the row menu, and the header kept advertising it for another release.
+const switchKey = "C"
+
 // terminalChoices is the "Default terminal" radio: which terminal to spawn
-// agent/host windows into (value stored in clientcfg.Terminal; "" = auto-detect
-// from $TERM_PROGRAM). DEJIMA_TERMINAL overrides this at runtime.
+// agent/host windows into (stored as clientcfg.Terminal; "" = auto-detect from
+// $TERM_PROGRAM). DEJIMA_TERMINAL overrides it at runtime.
 var terminalChoices = []editorChoice{
 	{"Auto-detect", ""},
 	{"Ghostty", "ghostty"},
@@ -356,10 +460,10 @@ func terminalIndex(v string) int {
 }
 
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 9 // editor · group-by-repo · connection target · team · check-for-updates · update · voice · github · terminal
+const settingsTopLen = 10 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models · provider keys · terminal
+// NB: voice dictation was row 6; it is roadmapped, not wired — see docs/roadmap.md.
 
 func (m tuiModel) openSettings() tuiModel {
-	m.voice = voicein.Check() // fresh status for the Voice-dictation row
 	m.settings = &settingsModel{page: settingsTop}
 	return m
 }
@@ -380,12 +484,21 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch s.page {
 	case settingsEditor:
 		rows = len(editorChoices)
+	case settingsLocal:
+		rows = len(s.localActs) // only the actions the current status allows
 	case settingsTerminal:
 		rows = len(terminalChoices)
 	}
+	// The provider-keys page owns its keys entirely: j, k and q are legal
+	// characters in an API key, and the shared handling below would eat them as
+	// cursor movement and "close". agentAdderKeyStep solves the same problem the
+	// same way — navigate with arrows, delegate early.
+	if s.page == settingsProviders {
+		return m.settingsProvidersKey(msg)
+	}
 	switch msg.String() {
-	case "esc", "q", "ctrl+c", "left", "h":
-		if s.page != settingsTop { // a sub-page → back to the top page, don't close
+	case "esc", "ctrl+[", "q", "ctrl+c", "left", "h":
+		if s.page == settingsEditor || s.page == settingsLocal || s.page == settingsProviders || s.page == settingsTerminal { // back to the top page, don't close
 			s.page, s.sel = settingsTop, 0
 			return m, nil
 		}
@@ -402,7 +515,8 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter", "right", "l", " ":
-		if s.page == settingsTop {
+		switch s.page {
+		case settingsTop:
 			switch s.sel {
 			case 0: // Preferred editor → sub-page
 				s.page, s.sel = settingsEditor, editorIndex(m.editor)
@@ -412,13 +526,17 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 2: // Connection target → reuse the existing switcher overlay
 				m.settings = nil
 				return m.openSwitcher()
-			case 3: // Team & invites → the owner-only Team overlay (same as `I`)
+			case 3: // GitHub → the self-serve identity pane (account/identity, grouped
+				// with Team below)
+				m.settings = nil
+				return m.openGithubView()
+			case 4: // Team & invites → the owner-only Team overlay (same as `I`)
 				m.settings = nil
 				return m.openTeamView()
-			case 4: // Check for updates (re-poll GitHub) — stays open; line refreshes
+			case 5: // Check for updates (re-poll GitHub) — stays open; line refreshes
 				m.lastNotice = "checking for updates…"
-				return m, tea.Batch(fetchLatestReleaseCmd(), m.fetchOverviewCmd())
-			case 5: // Update — same flow as 'u'/'U': client first, then the daemon (the
+				return m, tea.Batch(fetchLatestReleaseCmd(), checkSelfBinaryCmd(m.selfStamp), m.fetchOverviewCmd())
+			case 6: // Update — same flow as 'u'/'U': client first, then the daemon (the
 				// daemon update goes through the fleet-wide-restart warning + gate).
 				m.settings = nil
 				m.updateError = ""
@@ -430,30 +548,23 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.lastNotice = "already up to date"
 				}
 				return m, nil
-			case 6: // Voice dictation — install if not ready; ready is informational
-				m.voice = voicein.Check() // re-check right now (may have changed)
-				if m.voice.Ready() {
-					m.lastNotice = "voice dictation is ready — run `dejima voice <island>`"
-					return m, nil
-				}
-				m.settings = nil
-				if err := m.openVoiceInstallWindow(); err != nil {
-					m.lastNotice = "run `dejima voice install` in a terminal to set up voice dictation"
-				} else {
-					m.lastNotice = "installing voice dictation in a new window…"
-				}
-				return m, nil
-			case 7: // GitHub → the self-serve identity pane
-				m.settings = nil
-				return m.openGithubView()
-			case 8: // Default terminal → radio sub-page
+			case 9: // Default terminal → radio sub-page
 				cfg, _ := clientcfg.Load()
 				s.page, s.sel = settingsTerminal, terminalIndex(cfg.Terminal)
 				return m, nil
+			case 8: // Provider keys → list + set/rotate (fetched async)
+				s.page, s.sel = settingsProviders, 0
+				s.provCreds, s.provCands, s.provErr = nil, nil, ""
+				s.provSel, s.provInput, s.provBusy, s.provNotice = 0, "", false, ""
+				return m, m.fetchProviderCredsCmd()
+			case 7: // Local models → read-only status sub-page (fetched async)
+				s.page, s.sel = settingsLocal, 0
+				s.localStatus, s.localErr = nil, ""
+				return m, m.fetchLocalStatusCmd()
 			}
-		}
-		if s.page == settingsTerminal {
-			// Default-terminal sub-page: choose + persist, then back to the top page.
+			return m, nil
+		case settingsTerminal:
+			// Choose a terminal + persist, then back to the top page.
 			choice := terminalChoices[s.sel]
 			cfg, _ := clientcfg.Load()
 			cfg.Terminal = choice.cmd
@@ -466,23 +577,134 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			s.page, s.sel = settingsTop, 0
 			return m, nil
+		case settingsEditor:
+			// Choose an editor + persist, then back to the top page.
+			choice := editorChoices[s.sel]
+			m.editor = choice.cmd
+			cfg, _ := clientcfg.Load()
+			cfg.Editor = choice.cmd
+			if err := clientcfg.Save(cfg); err != nil {
+				m.lastError = "couldn't save settings: " + err.Error()
+			} else if choice.cmd == "" {
+				m.lastNotice = "editor: auto-detect"
+			} else {
+				m.lastNotice = "editor set to " + choice.label
+			}
+			s.page, s.sel = settingsTop, 0
+			return m, nil
+		case settingsLocal:
+			if s.sel < 0 || s.sel >= len(s.localActs) {
+				return m, nil
+			}
+			s.localNotice = ""
+			return m, runLocalActionCmd(s.localActs[s.sel])
 		}
-		// Editor sub-page: choose + persist, then back to the top page.
-		choice := editorChoices[s.sel]
-		m.editor = choice.cmd
-		cfg, _ := clientcfg.Load()
-		cfg.Editor = choice.cmd
-		if err := clientcfg.Save(cfg); err != nil {
-			m.lastError = "couldn't save settings: " + err.Error()
-		} else if choice.cmd == "" {
-			m.lastNotice = "editor: auto-detect"
-		} else {
-			m.lastNotice = "editor set to " + choice.label
-		}
-		s.page, s.sel = settingsTop, 0
 		return m, nil
 	}
 	return m, nil
+}
+
+// localAction is a runnable row on the local-models sub-page. Each one shells
+// out to the matching `dejima local …` subcommand rather than calling the API
+// from here: install may have to run the backend's own installer on THIS
+// machine, with a terminal for its sudo prompt (see installLocalBackendHere),
+// and a pull streams a multi-GB progress bar. tea.ExecProcess hands the child
+// the real terminal and takes it back afterwards, so both behave exactly as
+// they do from a shell — which is also why neither is reimplemented here.
+type localAction struct {
+	label string   // the row
+	verb  string   // names the action in the outcome notice
+	args  []string // argv after the dejima binary
+}
+
+// localActions derives the runnable rows from the backend status. Everything
+// not listed stays CLI-only (`dejima local rm`, `dejima local off`): those are
+// destructive or rare, and this page is the setup path.
+func localActions(ls *localmodel.Status) []localAction {
+	if ls == nil {
+		return nil
+	}
+	backend := string(ls.Backend)
+	if backend == "" {
+		backend = "the backend"
+	}
+	if !ls.Installed {
+		// Nothing else is possible until the backend exists on the host.
+		return []localAction{{
+			label: "Install " + backend + " on the host",
+			verb:  "install",
+			args:  []string{"local", "install"},
+		}}
+	}
+	var acts []localAction
+	if top := ls.Recommend.Top; top != nil && !localModelPulled(ls, *top) {
+		acts = append(acts, localAction{
+			label: fmt.Sprintf("Pull %s (%s) — recommended for this host", top.Alias, top.Params),
+			verb:  "pull " + top.Alias,
+			args:  []string{"local", "pull", top.Alias},
+		})
+	}
+	// Installing an already-installed backend is just provider registration —
+	// the path back for a host where someone installed the backend by hand, or
+	// where `dejima local off` deregistered it. See handleLocalInstall.
+	acts = append(acts, localAction{
+		label: "Register the `local` provider with the daemon",
+		verb:  "register",
+		args:  []string{"local", "install"},
+	})
+	return acts
+}
+
+// localModelPulled reports whether a curated model is already on the host,
+// matching either the alias the catalog knows it by or the backend ref.
+func localModelPulled(ls *localmodel.Status, m localmodel.Model) bool {
+	for _, got := range ls.Models {
+		if got.Ref == m.Ref || (got.Alias != "" && got.Alias == m.Alias) {
+			return true
+		}
+	}
+	return false
+}
+
+// localActionMsg reports that a local-models action finished (or couldn't be
+// started at all).
+type localActionMsg struct {
+	verb string
+	err  error
+}
+
+// runLocalActionCmd suspends the TUI, runs `dejima <args…>` on the real
+// terminal, and resumes. DEJIMA_PAUSE_AFTER keeps the child's last screen up
+// until Enter — without it the installer's summary (or its error) is wiped by
+// the redraw the moment it exits.
+func runLocalActionCmd(act localAction) tea.Cmd {
+	exe, err := os.Executable()
+	if err != nil {
+		return func() tea.Msg { return localActionMsg{verb: act.verb, err: err} }
+	}
+	c := exec.Command(exe, act.args...)
+	c.Env = append(os.Environ(), "DEJIMA_PAUSE_AFTER=1")
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return localActionMsg{verb: act.verb, err: err}
+	})
+}
+
+// localStatusMsg carries the managed local-model status into the settings
+// overlay's Local-models sub-page.
+type localStatusMsg struct {
+	status *localmodel.Status
+	err    error
+}
+
+// fetchLocalStatusCmd loads the local-model backend status for the sub-page.
+func (m tuiModel) fetchLocalStatusCmd() tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		st, err := c.LocalStatus(ctx)
+		return localStatusMsg{status: st, err: err}
+	}
 }
 
 // toggleGrouped flips repo-grouping and re-anchors the cursor on the island it
@@ -534,10 +756,26 @@ func (m tuiModel) toggleOwnerLens() tuiModel {
 // ---------------------------------------------------------------------------
 
 type tickMsg time.Time
-type listMsg []api.IslandInfo
+
+// The dashboard fetches carry the connection generation they were issued for.
+//
+// Without it, switching targets leaves a window in which an in-flight request to
+// the OLD daemon (up to its 8s timeout, and the poll fires every 2s) lands after
+// the switch and is applied as if fresh — repopulating the previous server's
+// islands under the new server's name, clearing lastError, and wiping the
+// daemon diagnosis. Nothing about a bare `listMsg` says which daemon produced
+// it, so the handler cannot tell. See tuiModel.gen.
+type listMsg struct {
+	gen     int
+	islands []api.IslandInfo
+}
 type terminalsMsg []hostterm.Terminal
-type overviewMsg *api.OverviewResponse
+type overviewMsg struct {
+	gen int
+	ov  *api.OverviewResponse
+}
 type detailMsg struct {
+	gen    int
 	info   *api.IslandInfo
 	events []events.Event
 }
@@ -547,6 +785,10 @@ type opCompleteMsg struct {
 	verb   string
 	err    error
 	notice string // optional success notice to surface (e.g. an auto-renamed label)
+	// agent carries the target of a per-agent op, so a guard rejection can arm a
+	// follow-up confirm for the SAME agent rather than the highlighted row (which
+	// a refresh may have moved out from under the operator).
+	agent string
 }
 
 // renameNotice returns an operator notice when the daemon auto-incremented a
@@ -608,9 +850,10 @@ func releaseTickCmd() tea.Cmd {
 }
 
 func (m tuiModel) fetchListCmd() tea.Cmd {
+	gen := m.gen
 	if m.demo {
 		tick := m.demoTick
-		return func() tea.Msg { return listMsg(demoIslands(tick)) }
+		return func() tea.Msg { return listMsg{gen: gen, islands: demoIslands(tick)} }
 	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -619,14 +862,15 @@ func (m tuiModel) fetchListCmd() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return listMsg(list)
+		return listMsg{gen: gen, islands: list}
 	}
 }
 
 func (m tuiModel) fetchOverviewCmd() tea.Cmd {
+	gen := m.gen
 	if m.demo {
 		tick := m.demoTick
-		return func() tea.Msg { return overviewMsg(demoOverview(tick)) }
+		return func() tea.Msg { return overviewMsg{gen: gen, ov: demoOverview(tick)} }
 	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -635,7 +879,7 @@ func (m tuiModel) fetchOverviewCmd() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return overviewMsg(o)
+		return overviewMsg{gen: gen, ov: o}
 	}
 }
 
@@ -680,11 +924,12 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 	if name == "" {
 		return nil // e.g. the trailing "+ new island" row has no island
 	}
+	gen := m.gen
 	if m.demo {
 		tick := m.demoTick
 		return func() tea.Msg {
 			if info, ok := demoIsland(name, tick); ok {
-				return detailMsg{info: info}
+				return detailMsg{gen: gen, info: info}
 			}
 			return nil
 		}
@@ -697,7 +942,7 @@ func (m tuiModel) fetchDetailCmd(name string) tea.Cmd {
 			return errMsg{err}
 		}
 		evs, _ := m.client.IslandEvents(ctx, name)
-		return detailMsg{info: info, events: evs}
+		return detailMsg{gen: gen, info: info, events: evs}
 	}
 }
 
@@ -713,12 +958,19 @@ func (m tuiModel) Init() tea.Cmd {
 		// fleet, polled on the tick so it animates. Keeps recordings clean.
 		return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd(), tickCmd())
 	}
-	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
+	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchObservedCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
-// latestReleaseMsg carries the newest published release tag (or "" on any
-// error — the update banner simply stays hidden, never blocks the TUI).
-type latestReleaseMsg struct{ latest string }
+// latestReleaseMsg carries the newest published release tag, or the reason the
+// check failed. Both matter: an empty tag with no reason is indistinguishable
+// from "you're on the latest", which is how a rate-limited check came to report
+// "already up to date" while silently knowing nothing.
+type latestReleaseMsg struct {
+	latest string
+	notes  string // the release body — source of the update blurb
+	url    string // the release page — "view more"
+	err    error
+}
 
 // fetchLatestReleaseCmd queries GitHub for the latest release tag. Run sparingly
 // (Init, manual refresh, and the slow releaseCheckInterval re-poll), never on the
@@ -727,11 +979,50 @@ func fetchLatestReleaseCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		v, err := selfupdate.LatestRelease(ctx)
+		info, err := selfupdate.LatestReleaseInfo(ctx)
 		if err != nil {
-			return latestReleaseMsg{}
+			return latestReleaseMsg{err: err}
 		}
-		return latestReleaseMsg{latest: v}
+		return latestReleaseMsg{latest: info.Tag, notes: info.Notes, url: info.URL}
+	}
+}
+
+// selfBinaryStamp identifies the on-disk copy of the running executable, so a
+// replacement underneath us is detectable. Empty when it can't be read.
+func selfBinaryStamp() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	fi, err := os.Stat(exe)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d-%d", fi.Size(), fi.ModTime().UnixNano())
+}
+
+// selfBinaryChangedMsg reports that the executable on disk is no longer the one
+// this process was started from.
+type selfBinaryChangedMsg struct{}
+
+// checkSelfBinaryCmd compares the on-disk executable against the stamp taken at
+// startup. A running process keeps its compiled-in version forever, so after an
+// out-of-band update (make install, a package manager, another terminal) the TUI
+// would go on reporting the OLD version and offering to "update" a client that
+// is already current — and re-download it. Noticing the swap lets it say
+// "restart" instead, which is the only thing that actually helps.
+func checkSelfBinaryCmd(startStamp string) tea.Cmd {
+	return func() tea.Msg {
+		if startStamp == "" {
+			return nil
+		}
+		if now := selfBinaryStamp(); now != "" && now != startStamp {
+			return selfBinaryChangedMsg{}
+		}
+		return nil
 	}
 }
 
@@ -759,6 +1050,44 @@ func applyClientUpdateCmd(ver string) tea.Cmd {
 		return clientUpdatedMsg{version: ver, err: err}
 	}
 }
+
+// daemonUpdateVerifyMsg carries what the daemon reports about itself once it is
+// back, after an update whose response we never got to read.
+type daemonUpdateVerifyMsg struct {
+	version string
+	want    string
+	err     error
+}
+
+// verifyDaemonUpdateCmd waits for the restarted daemon and asks its version.
+//
+// This exists because the SUCCESS PATH OF A DAEMON UPDATE LOOKS LIKE A NETWORK
+// FAILURE: the daemon replaces its binary and restarts, which is the whole
+// point, and the connection carrying the response dies as a direct consequence.
+// A client that reports the transport error tells the operator their update
+// failed at the exact moment it worked.
+func (m tuiModel) verifyDaemonUpdateCmd(want string) tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		// Poll rather than sleep-once: a restart takes as long as it takes, and
+		// on WSL the transport has to re-establish a subprocess as well.
+		for attempt := 0; attempt < 20; attempt++ {
+			time.Sleep(3 * time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			o, err := c.Overview(ctx)
+			cancel()
+			if err == nil && o != nil && o.DaemonVersion != "" {
+				return daemonUpdateVerifyMsg{version: o.DaemonVersion, want: want}
+			}
+		}
+		return daemonUpdateVerifyMsg{want: want, err: errDaemonNeverReturned}
+	}
+}
+
+// errDaemonNeverReturned distinguishes "the daemon did not come back" from "it
+// came back on the old version". Those have different causes and different
+// remedies, and collapsing them is how a diagnosis names the wrong thing.
+var errDaemonNeverReturned = errors.New("the daemon did not come back after restarting")
 
 // daemonUpdatedMsg is the result of asking the daemon to update itself.
 type daemonUpdatedMsg struct {
@@ -788,26 +1117,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Recorded BEFORE any handling, so the log shows what the terminal sent
+		// rather than what we made of it — the whole point is to settle whether
+		// escape sequences arrive intact. No-op unless DEJIMA_KEYLOG is set.
+		m.keyLog.record(msg)
 		return m.handleKey(msg)
 
 	case tickMsg:
 		m.ticks++
-		// Re-probe voice-dictation readiness occasionally (not per frame): the first
-		// tick, then every voiceCheckTicks. Cheap (PATH + stat), and it demotes the
-		// voice footer tip once the operator has set it up.
-		if m.ticks%voiceCheckTicks == 1 {
-			m.voice = voicein.Check()
-		}
-		// At each tip-rotation boundary, count a voice-tip showing so its boost eases
-		// to normal rotation after enough exposure (don't perma-nag a veteran who
-		// deliberately skips voice — the tip stays in the pool, just stops repeating).
-		if m.ticks%tipRotateTicks == 0 && m.footerTipText() == tipVoice {
-			m.voiceTipShown++
-		}
 		if m.demo {
 			m.demoTick++ // advance the synthetic fleet so agent states churn on screen
 		}
 		cmds := []tea.Cmd{tickCmd(), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd()}
+		if c := m.fetchObservedCmd(); c != nil {
+			cmds = append(cmds, c)
+		}
 		if name := m.selectedName(); name != "" {
 			cmds = append(cmds, m.fetchDetailCmd(name))
 		}
@@ -839,7 +1163,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-poll GitHub and re-arm the slow ticker. The result (latestReleaseMsg)
 		// recomputes clientUpdate/daemonUpdate, so a release that dropped mid-
 		// session lights up the announcement bar without an R or a relaunch.
-		return m, tea.Batch(releaseTickCmd(), fetchLatestReleaseCmd())
+		return m, tea.Batch(releaseTickCmd(), fetchLatestReleaseCmd(), checkSelfBinaryCmd(m.selfStamp))
 
 	case terminalsMsg:
 		m.terminals = msg
@@ -876,7 +1200,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchTerminalsCmd()
 
 	case listMsg:
-		m.islands = sortIslands(msg)
+		// A reply from a daemon we have since switched away from. Applying it would
+		// repaint the previous server's islands under the new server's name and,
+		// because of the two lines below, clear the very diagnosis explaining why
+		// the new target is unreachable.
+		if msg.gen != m.gen {
+			return m, nil
+		}
+		m.islands = sortIslands(msg.islands)
 		m.lastError = ""
 		m.daemonHelp = nil // a successful load means the daemon is back
 		if n := m.rowCount(); m.selected >= n {
@@ -890,24 +1221,51 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case deviceStartedMsg:
+		mm, cmd := m.applyDeviceStarted(msg)
+		return mm, cmd
+
+	case devicePolledMsg:
+		mm, cmd := m.applyDevicePolled(msg)
+		return mm, cmd
+
+	case devicePollTickMsg:
+		// Only the flow this tick was scheduled for may act on it: a tick from a
+		// cancelled sign-in must not drive the one that replaced it.
+		if m.github != nil && m.github.connect != nil && m.github.connect.sessionID == msg.sessionID {
+			return m, m.pollDeviceFlowCmd(m.github.connect)
+		}
+		return m, nil
+
+	case observedMsg:
+		if msg.gen != m.gen {
+			return m, nil // stale: issued against a target we've switched away from
+		}
+		m.observed = msg.resp
+		return m, nil
+
 	case overviewMsg:
-		m.overview = msg
+		if msg.gen != m.gen {
+			return m, nil // stale: issued against a target we've switched away from
+		}
+		ov := msg.ov
+		m.overview = ov
 		m.tipTick++ // rotate the header Tip line on the poll cadence
-		if msg != nil {
+		if ov != nil {
 			// The caller's own identity (multi-tenant "who am I") drives the
 			// ownership lens: callerOwner is what the your-islands view filters to,
 			// callerRole gates the own/all toggle to the host owner.
-			m.callerOwner, m.callerRole = msg.Owner, msg.Role
-			m.skew = versionSkew(msg.DaemonVersion, msg.APIVersion)
+			m.callerOwner, m.callerRole = ov.Owner, ov.Role
+			m.skew = versionSkew(ov.DaemonVersion, ov.APIVersion)
 			// Resolve the SSH endpoint once per distinct addr (endpointFromAddr
 			// may exec `tailscale`), not every render, so the detail panel can
 			// show a connect string cheaply.
-			if msg.SSHAddr != "" && msg.SSHAddr != m.sshResolvedFor {
-				if h, p, err := endpointFromAddr(msg.SSHAddr, m.client.DaemonHost()); err == nil {
-					m.sshHost, m.sshPort, m.sshResolvedFor = h, p, msg.SSHAddr
+			if ov.SSHAddr != "" && ov.SSHAddr != m.sshResolvedFor {
+				if h, p, err := endpointFromAddr(ov.SSHAddr, m.client.DaemonHost()); err == nil {
+					m.sshHost, m.sshPort, m.sshResolvedFor = h, p, ov.SSHAddr
 				}
 			}
-			m.daemonUpdate = daemonUpdateAvailable(m.latestRelease, msg)
+			m.daemonUpdate = daemonUpdateAvailable(m.latestRelease, ov)
 		}
 		return m, m.fetchTerminalsCmd() // nil (no-op) unless host terminals are on
 
@@ -915,13 +1273,143 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupChecked = true
 		m.claudeSeeded = msg.claudeSeeded
 		m.agentKeyGap = msg.keyGap
+		m.gatewayPorts = msg.gatewayPort
+		m.agentProviders = msg.providers
 		return m, nil
+
+	case selfBinaryChangedMsg:
+		// The binary was replaced out of band; this process is now the stale one.
+		// Offering another update would re-download what is already installed.
+		m.clientUpdate = false
+		m.restartPending = "a newer dejima is installed on disk — restart dejima to apply it"
+		return m, nil
+
+	case gatewayOpenedMsg:
+		return m.onGatewayOpened(msg), nil
+	case importScopesMsg:
+		return m.onImportScopes(msg), nil
+	case importDoneMsg:
+		return m.onImportDone(msg), nil
+	case islandSecretsMsg:
+		if v := m.secretsPane; v != nil && v.island == msg.island {
+			v.loading = false
+			if msg.err != nil {
+				v.err = msg.err.Error()
+			} else {
+				v.err, v.secrets = "", msg.secrets
+				if v.cursor >= len(v.secrets) { // a removal can shrink the list
+					v.cursor = max(0, len(v.secrets)-1)
+				}
+				if msg.added != "" {
+					v.restartPending = true
+					v.notice = "stored " + msg.added
+				}
+			}
+		}
+		return m, nil
+
+	case restartDoneMsg:
+		if v := m.restartPane; v != nil && v.island == msg.island {
+			v.busy = false
+			verb := "restarted"
+			if msg.updated {
+				verb = "updated"
+			}
+			switch {
+			case len(msg.failed) > 0:
+				v.notice = ""
+				v.err = fmt.Sprintf("%d %s; failed: %s", msg.ok, verb, strings.Join(msg.failed, ", "))
+				if msg.err != nil {
+					v.err += " (" + msg.err.Error() + ")"
+				}
+			case len(msg.notRelaunched) > 0:
+				// Installed but still running the old process. Not a success line:
+				// the version on disk and the version in memory disagree, and only
+				// a restart settles it.
+				v.notice = ""
+				v.err = fmt.Sprintf("%d updated, but %s did not relaunch — the NEW version is "+
+					"installed and the OLD one is still running. Restart them with [⏎].",
+					msg.ok, strings.Join(msg.notRelaunched, ", "))
+			case msg.updated:
+				v.err = ""
+				v.notice = fmt.Sprintf("updated and relaunched %d agent(s) on the new version. [esc] to close.", msg.ok)
+			default:
+				v.err = ""
+				v.notice = fmt.Sprintf("restarted %d agent(s) — new environment loaded. [esc] to close.", msg.ok)
+			}
+		}
+		return m, nil
+
+	case providerCredsMsg:
+		if st := m.settings; st != nil && st.page == settingsProviders {
+			if msg.err != nil {
+				st.provErr = msg.err.Error()
+			} else {
+				st.provCreds, st.provCands, st.provErr = msg.creds, msg.cands, ""
+			}
+		}
+		return m, nil
+
+	case providerKeySavedMsg:
+		if st := m.settings; st != nil && st.page == settingsProviders {
+			st.provBusy = false
+			if msg.err != nil {
+				st.provErr, st.provNotice = msg.err.Error(), ""
+				return m, nil
+			}
+			st.provCreds, st.provErr = msg.creds, ""
+			st.provNotice = fmt.Sprintf("%s key saved — restart an agent to pick it up", msg.provider)
+		}
+		// Clear the stale key-gap the agent picker warns from, or it keeps saying
+		// "needs an LLM key (none set)" about a key just stored. Refetching is the
+		// authoritative version of what adderKeySetMsg does by hand.
+		return m, m.fetchSetupReadinessCmd()
+
+	case localStatusMsg:
+		// Land the status in the settings sub-page only if it's still open on it.
+		if s := m.settings; s != nil && s.page == settingsLocal {
+			if msg.err != nil {
+				s.localErr, s.localActs = msg.err.Error(), nil
+			} else {
+				s.localStatus, s.localErr = msg.status, ""
+				s.localActs = localActions(msg.status)
+			}
+			// What's offered changes with the status (an install removes its own
+			// row), so a cursor left over from the previous list can point past
+			// the end of this one.
+			if s.sel >= len(s.localActs) {
+				s.sel = 0
+			}
+		}
+		return m, nil
+
+	case localActionMsg:
+		s := m.settings
+		if s == nil || s.page != settingsLocal {
+			return m, nil
+		}
+		if msg.err != nil {
+			s.localNotice = styleErrored.Render("✗ " + msg.verb + " didn't finish: " + msg.err.Error())
+		} else {
+			s.localNotice = styleRunning.Render("✓ " + msg.verb + " finished")
+		}
+		// Re-ask the daemon rather than assuming: the status is what decides
+		// which rows the page now offers, and the child may have half-succeeded.
+		s.localStatus, s.localErr, s.localActs = nil, "", nil
+		return m, m.fetchLocalStatusCmd()
 
 	case latestReleaseMsg:
 		if msg.latest != "" {
 			m.latestRelease = msg.latest
+			m.latestNotes = msg.notes
+			m.latestURL = msg.url
+			m.updateCheckErr = ""
 			m.clientUpdate = selfupdate.Evaluate(version.Version, msg.latest, selfupdate.DetectMode()).UpdateAvailable
 			m.daemonUpdate = daemonUpdateAvailable(msg.latest, m.overview)
+		} else if msg.err != nil {
+			// Remember WHY we don't know, so [U] can say "couldn't check"
+			// instead of claiming the build is current.
+			m.updateCheckErr = msg.err.Error()
 		}
 		return m, nil
 
@@ -939,16 +1427,43 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case daemonUpdateVerifyMsg:
+		m.updating = ""
+		switch {
+		case msg.err != nil:
+			m.updateError = "daemon update: " + msg.err.Error() +
+				" — check it with `dejima wsl status`, or `wsl -d <distro> -u root -- systemctl status dejimad`"
+		case msg.want != "" && msg.version == msg.want:
+			// It worked. The error we saw was the restart, which is what an
+			// update is.
+			m.daemonUpdate = false
+			return m, m.showUpdateApplied("daemon updated to " + msg.version)
+		default:
+			// Back, but not on the new version: a genuine failure, and now it
+			// can say so precisely instead of reporting a transport error.
+			m.updateError = "daemon restarted but is still on " + msg.version +
+				" — the update did not take"
+		}
+		return m, nil
+
 	case daemonUpdatedMsg:
 		m.updating = "" // the in-progress banner gives way to the result
 		switch {
 		case msg.err != nil:
-			// The install now runs synchronously, so an error here is a real
-			// failure (git pull / make install / missing sudoers) — surface it
-			// stickily (updateError), since the transient lastError would be
-			// wiped by the next 2s poll before it could be read.
-			m.updateError = "daemon update failed: " + msg.err.Error()
-			m.updateApplied, m.restartPending = "", ""
+			// AN ERROR HERE IS NOT NECESSARILY A FAILURE, and treating it as one
+			// reported "daemon update failed" for updates that had just
+			// succeeded. The daemon installs the new binary and then RESTARTS
+			// itself; on the WSL transport every connection is a wsl.exe + socat
+			// subprocess, so the restart tears the tunnel down and the in-flight
+			// response dies with it. The operator saw "dejimad unavailable" while
+			// `dejimad --version` reported the new version.
+			//
+			// So verify by OUTCOME rather than by response: wait for the daemon
+			// to come back and ask what version it is. That is the question
+			// anyone actually has, and unlike the response it survives the
+			// restart the update deliberately caused.
+			m.updating = "daemon restarting — checking the new version…"
+			return m, m.verifyDaemonUpdateCmd(m.latestRelease)
 		case msg.resp != nil && msg.resp.Applying:
 			// The daemon restarts itself and reconnects — no user action needed,
 			// so this is a green "done" that fades on its own.
@@ -986,6 +1501,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.grants.applyLoaded(msg)
 		}
 		return m, nil
+
+	case hostGHActionMsg:
+		if m.grants == nil {
+			return m, nil
+		}
+		m.grants.applyHostGHAction(msg)
+		if msg.err != nil {
+			return m, nil
+		}
+		// Re-read from the daemon rather than assuming the mutation's shape —
+		// the pane should show what IS, not what we asked for.
+		return m, m.loadGrantsCmd(m.grants.island)
 
 	case tokensLoadedMsg:
 		if m.team != nil {
@@ -1122,14 +1649,19 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case providerKeySetMsg:
-		if m.modelEditor != nil {
-			m.modelEditor.busy = false
+		if ed := m.modelEditor; ed != nil {
+			ed.busy = false
 			if msg.err != nil {
 				m.lastError = "set provider key: " + msg.err.Error()
 			} else {
-				m.modelEditor.keySet = true
-				m.modelEditor.enteringKey = false
-				m.modelEditor.keyInput = ""
+				ed.keySet, ed.keyInput = true, ""
+				if ed.applyCfgAfterKey {
+					// The save also changed provider/model — apply it, then that
+					// message closes the editor (and prompts a recreate if needed).
+					ed.applyCfgAfterKey, ed.busy = false, true
+					return m, m.applyAgentConfigCmd(ed.island, ed.agentID, ed.currentProvider(), ed.model)
+				}
+				m.modelEditor = nil // key stored — close the pop-up
 				m.lastNotice = "key set for " + msg.provider + " — applies to all " + msg.provider + " agents"
 			}
 		}
@@ -1157,6 +1689,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case detailMsg:
+		if msg.gen != m.gen {
+			return m, nil // stale: belongs to a previous connection
+		}
 		if name := m.selectedName(); msg.info != nil && msg.info.Name == name {
 			m.detail = msg.info
 			m.events_ = msg.events
@@ -1199,6 +1734,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// A purge blocked by the unpushed-work guard ends with "...--force...".
 			// Offer a force-purge confirmation instead of just surfacing the error,
 			// so the operator can override from the TUI without dropping to the CLI.
+			// Same shape for an agent removal the worktree guard refused: offer the
+			// override in place rather than making the operator drop to the CLI.
+			// Note it is armed with msg.agent, not the highlighted row — a list
+			// refresh between the request and this reply could otherwise point the
+			// override at a different agent than the one that was refused.
+			if msg.verb == "remove-agent" && strings.Contains(msg.err.Error(), "--force") {
+				m.lastError = msg.err.Error()
+				m.confirm = &confirmPrompt{verb: "force-remove-agent", island: msg.name, agent: msg.agent}
+				return m, nil
+			}
 			if msg.verb == "purge" && strings.Contains(msg.err.Error(), "--force") {
 				m.lastError = msg.err.Error()
 				m.confirm = &confirmPrompt{verb: "force-purge", island: msg.name}
@@ -1220,12 +1765,57 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.building = false
 		if msg.err != nil {
 			m.lastError = fmt.Sprintf("image build: %v", msg.err)
+		} else {
+			// Building the image changes nothing on its own — a running island stays on
+			// the image it was created from. Name the second step, since that's the one
+			// that actually moves an island onto what we just built. Action first, so
+			// the narrow-terminal clip eats the parenthetical rather than the
+			// instruction.
+			m.imageBuiltPending = "image built — now: select an island, [s] → \"Upgrade to the image on the host\" (islands keep their old image until recreated)"
 		}
 		return m, m.fetchOverviewCmd()
 
 	case reposDiscoveredMsg:
 		if m.creator != nil {
 			m.creator.onReposDiscovered(msg)
+		}
+		return m, nil
+
+	case creatorKeySetMsg:
+		if c := m.creator; c != nil {
+			c.keyBusy = false
+			if msg.err != nil {
+				c.err = "save key: " + msg.err.Error()
+			} else {
+				if c.keySetOK == nil {
+					c.keySetOK = map[string]bool{}
+				}
+				c.keySetOK[msg.provider] = true
+				c.err, c.keyInput = "", ""
+				c.step = stepAgents // key stored — continue to the roster
+			}
+		}
+		return m, nil
+
+	case adderKeySetMsg:
+		if a := m.agentAdder; a != nil {
+			a.keyBusy = false
+			if msg.err != nil {
+				a.err = "save key: " + msg.err.Error()
+			} else {
+				// The provider key now exists — clear the local gap so a second add
+				// this session doesn't re-prompt, then continue to the label step.
+				for t, provs := range m.agentProviders {
+					for _, p := range provs {
+						if p == msg.provider {
+							delete(m.agentKeyGap, t)
+						}
+					}
+				}
+				a.keyGap = m.agentKeyGap
+				a.err, a.keyInput = "", ""
+				a.phase = adderLabel
+			}
 		}
 		return m, nil
 
@@ -1292,6 +1882,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.creator = nil
+			// A GATEWAY AGENT IS USELESS UNTIL ITS UI IS REACHABLE, so creating one
+			// ends by opening it. Attaching would drop the operator at a headless
+			// agent's logs and leave them to discover `agent open` on their own —
+			// which is what happened.
+			//
+			// It goes through the same in-process forward as everything else, so the
+			// tunnel outlives this moment and the browser tab keeps working.
+			if port, isGW := m.gatewayPorts[msg.agentType]; isGW && port != 0 && m.tunnels != nil {
+				m.lastNotice = "created " + msg.name + " — waiting for its gateway to start…"
+				return m, tea.Batch(m.openGatewayCmd(msg.name, msg.agentID),
+					m.fetchListCmd(), m.fetchOverviewCmd())
+			}
 			// Open the new island in a new tab so the dashboard stays up; fall back
 			// to attaching in this terminal when there's no new-window backend.
 			// Attach straight into the PRIMARY agent (by id) rather than the bare
@@ -1314,6 +1916,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// FIRST, before any binding can act on it: drop a byte that is a fragment of
+	// an escape sequence a terminal failed to deliver atomically. On such a
+	// terminal the up arrow arrives as esc, then "[", then "A" — and "A" opens
+	// the audit ledger. See escseq.go. This is above the overlay dispatch on
+	// purpose: every pane binds letters, so a guard inside one of them would
+	// leave the rest exposed.
+	mm, swallow := m.swallowEscapeSequenceByte(msg)
+	m = mm
+	if swallow {
+		return m, nil
+	}
 	// A success notice lingers until the next keystroke, then clears (an action
 	// may set a fresh one — e.g. setup-ssh sets it via runConfirmed below).
 	m.lastNotice = ""
@@ -1323,7 +1936,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// and the Enter, leaving the modal unusable.
 	if m.confirm != nil {
 		switch msg.String() {
-		case "esc", "ctrl+c":
+		case "esc", "ctrl+[", "ctrl+c":
 			m.confirm = nil
 			return m, nil
 		case "enter":
@@ -1336,8 +1949,16 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		default:
-			if len(msg.String()) == 1 {
-				m.confirm.answer += msg.String()
+			// Read the RUNES, not the byte length of the formatted key string.
+			// `len(msg.String()) == 1` is a byte test wearing a character test's
+			// clothes: it drops every multi-byte rune, and on Windows it can
+			// reject an ordinary keypress whose String() carries more than the
+			// character itself — which is how a confirm that says "Type y then
+			// press Enter" silently refuses to accept y. Same defect class as
+			// e92f32c, in the one dialog where the alternative is being unable
+			// to say yes to anything at all.
+			if typed := pastableInput(msg); typed != "" {
+				m.confirm.answer += typed
 			}
 			return m, nil
 		}
@@ -1354,10 +1975,22 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.agentAdder != nil {
 		return m.agentAdderKey(msg)
 	}
+	// The Import pane owns keys while open.
+	if m.importPane != nil {
+		return m.importKey(msg)
+	}
+	// The Secrets pane owns keys while open.
+	if m.secretsPane != nil {
+		return m.secretsKey(msg)
+	}
+	// The restart checklist owns keys while open.
+	if m.restartPane != nil {
+		return m.restartKey(msg)
+	}
 	// The help overlay owns keys while shown.
 	if m.help {
 		switch msg.String() {
-		case "?", "esc", "q":
+		case "?", "esc", "ctrl+[", "q":
 			m.help = false
 		case "a":
 			m.helpMore = !m.helpMore // expand / collapse the reference dropdown
@@ -1449,6 +2082,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Trust surface — what the highlighted island can reach (Port · MCP ·
 		// links · capabilities). Agent rows inherit their island's grants.
 		return m.openGrantsView(m.selectedName())
+	case "$":
+		// Per-island secrets. '$' for the shell-variable association — these are
+		// environment variables to the tools that use them.
+		return m.openSecretsView(m.selectedIslandName())
 	case "V":
 		// Action-gate approvals — the queue of cross-island actions awaiting a
 		// decision (reView) + the active auto-approve rules. Refresh both on open.
@@ -1487,6 +2124,23 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		return m.openCreator()
+	case "L":
+		// Only on the empty first-run screen, and only while the credential is
+		// actually missing — the same condition that renders the offer. A key
+		// that does something on one screen and nothing on another is worse than
+		// no key, so this stays tied to the text advertising it.
+		if len(m.islands) == 0 && m.setupChecked && !m.claudeSeeded {
+			if !canOpenNewWindow() {
+				m.lastNotice = "can't open a window here — press r after setting Claude up on this machine"
+				return m, nil
+			}
+			if err := m.openAuthPushWindow(); err != nil {
+				m.lastError = "couldn't open a window for the Claude setup"
+				return m, nil
+			}
+			m.lastNotice = "opened `dejima auth push` — it copies this machine's Claude login to the server"
+			return m, nil
+		}
 	case "/", "`":
 		// Toggle + focus the pinned host-terminal band (above the island list).
 		// `/` is the primary key; backtick kept as an alias.
@@ -1509,12 +2163,28 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.lastNotice = hostTerminalsOffNote
 		return m, nil
-	case "s", "S", ",":
-		// General settings (editor · group-by-repo · connection target). Both s and
-		// S open it (S used to be SSH setup — that moved into the Server menu [H] and
-		// the per-row actions menu [m]). Server switching lives inside here rather
-		// than owning its own hotkey.
+	case "s":
+		// Contextual settings. On an island/agent row `s` opens that row's settings
+		// menu (which carries a "Dejima settings" nav button, and — for agents — an
+		// "Island settings" one); anywhere else it drops straight into the global
+		// Dejima settings. This subsumes the old `m` per-row action menu.
+		if r := m.currentRow(); r.kind == rowIsland || r.kind == rowAgent {
+			if mm, ok := m.openActionMenu(); ok {
+				return mm, nil
+			}
+		}
 		return m.openSettings(), nil
+	case "S", ",":
+		// Direct shortcuts to the global Dejima settings, regardless of the
+		// highlighted row (power-user accelerators; `s` on a plain row does the same).
+		return m.openSettings(), nil
+	case switchKey:
+		// Switch which server the dashboard is attached to. The header advertises
+		// this key next to the server it names, which is where you notice you are
+		// on the wrong one; it also stays reachable at Settings → Connection
+		// target. `s` used to do this and now opens the highlighted row's menu —
+		// the header went on saying "[s] switch" long after it stopped switching.
+		return m.openSwitcher()
 	case ">":
 		// In-island /workspace shell for the selected island. (Enter opens the
 		// island's agents; `>` — a shell prompt — opens the contained shell.)
@@ -1558,14 +2228,6 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// affordance row it runs the creator / add-agent flow. The per-row action
 		// menu lives on `m`, not here, so opening never costs an extra keystroke.
 		return m.activateRow()
-	case "m":
-		// Per-row action menu — the lifecycle/setup actions (hibernate, reset,
-		// rename, ssh setup, purge…) that used to crowd the footer, now hanging
-		// off the highlighted island/agent/terminal row.
-		if mm, ok := m.openActionMenu(); ok {
-			return mm, nil
-		}
-		return m, nil
 	case "c":
 		// Open the island's repo in VS Code / Cursor over Remote-SSH, straight at
 		// /workspace — no folder-browsing. Needs the SSH façade (so the dejima-<island>
@@ -1649,11 +2311,12 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r := m.currentRow(); r.island != "" {
 			return m.openAgentAdder(r.island)
 		}
-	case "X":
-		// Remove the selected agent (agent rows only). An island may have zero
-		// agents — you can still shell into it. The daemon enforces the one
-		// exception (a headless first agent that is the container's PID 1) and
-		// surfaces it as an error here.
+	case "x", "X":
+		// Remove the selected agent (agent rows only). Both cases, so pressing
+		// the accelerator shown in the [s] menu ("x") works and the old uppercase
+		// binding keeps working. An island may have zero agents — you can still
+		// shell into it. The daemon enforces the one exception (a headless first
+		// agent that is the container's PID 1) and surfaces it as an error here.
 		if r := m.currentRow(); r.kind == rowAgent {
 			m.confirm = &confirmPrompt{verb: "remove-agent", island: r.island, answer: "", agent: r.agentID}
 		}
@@ -1713,6 +2376,19 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.opCmd(name, "hibernate")
 		}
 	case "w":
+		// The daemon-help panel only renders when there are NO islands (see
+		// renderList), so there is nothing for "wake" to act on while it's up —
+		// which makes `w` free to mean the thing the panel is actually offering.
+		// Windows can't host dejimad, so the local target's only real fix is a
+		// host in WSL2; turn that from a command to retype into a keystroke.
+		if m.daemonHelp != nil && offerWSLSetup(*m.daemonHelp, wsl.Supported()) {
+			if err := m.openWSLSetupWindow(); err != nil {
+				m.lastError = err.Error()
+			} else {
+				m.lastNotice = "opened `dejima wsl setup` in a new window — the dashboard stays here"
+			}
+			return m, nil
+		}
 		if name := m.selectedName(); name != "" {
 			m.dirtyOps[name] = "waking"
 			return m, m.opCmd(name, "wake")
@@ -1728,12 +2404,16 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// fleet-wide" confirm + the defer-while-attached gate (see the update-daemon
 		// verb) — so it's a consented action, not a silent side effect, and clients
 		// reconnect through the restart. Also reachable deliberately via [H]. (Old
-		// lowercase-u = island-upgrade moved into the [m] actions menu.)
+		// lowercase-u = island-upgrade moved into the [s] settings menu.)
 		m.updateError = "" // clear a prior failure when retrying
 		if m.clientUpdate {
 			m.confirm = &confirmPrompt{verb: "update-client"}
 		} else if m.daemonUpdate {
 			m.confirm = &confirmPrompt{verb: "update-daemon"}
+		} else if m.updateCheckErr != "" {
+			// We never learned what the latest release is, so "up to date" would
+			// be a claim we can't support.
+			m.updateError = "couldn't check for updates: " + m.updateCheckErr
 		} else {
 			m.lastNotice = "already up to date"
 		}
@@ -1748,15 +2428,17 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "H":
 		// Server menu — host/daemon controls (update daemon, SSH setup, build image,
-		// refresh). A discoverable surface mirroring the per-row [m] actions menu; the
+		// refresh). A discoverable surface mirroring the per-row [s] settings menu; the
 		// direct keys (/, b, R) still work. The daemon self-update lives ONLY here,
 		// behind an explicit fleet-wide-restart warning.
 		return m.openServerMenu(), nil
-	case "esc":
-		// Dismiss whichever sticky update banner is showing (no overlay here):
-		// a failure, or an applied-but-needs-restart notice. (Green fades itself.)
+	case "esc", "ctrl+[":
+		// Dismiss whichever sticky banner is showing (no overlay here): a failure, an
+		// applied-but-needs-restart notice, or a built-image-needs-upgrade notice.
+		// (Green fades itself.)
 		m.updateError = ""
 		m.restartPending = ""
+		m.imageBuiltPending = ""
 		return m, nil
 	case "R":
 		return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd(), fetchLatestReleaseCmd())
@@ -1767,9 +2449,27 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	switch c.verb {
 	case "reset":
-		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+		// Typing the island name, like purge. Reset destroys the shared home volume
+		// — every agent's conversation history and every tool login in the island,
+		// irreversibly — and it sits one shift-key from [R] refresh and one letter
+		// from the restart people actually want. `remove-secret` is strictly less
+		// destructive and already asks you to type a name; this should not be the
+		// cheaper keystroke of the two.
+		if strings.TrimSpace(c.answer) == c.island {
 			m.dirtyOps[c.island] = "resetting"
 			return m, m.opCmd(c.island, "reset")
+		}
+	case "restart-agent", "restart-agent-cold":
+		// Relaunch one agent's process so it picks up a new environment (a secret, a
+		// model change). --resume keeps the conversation; cold doesn't. Gated on "y"
+		// normally, and on the agent id when it looks mid-task — see confirmPrompt.strict.
+		ok := strings.ToLower(strings.TrimSpace(c.answer)) == "y"
+		if c.strict {
+			ok = strings.TrimSpace(c.answer) == c.agent
+		}
+		if ok {
+			m.dirtyOps[c.island] = "restarting agent"
+			return m, m.restartAgentCmd(c.island, c.agent, c.verb == "restart-agent")
 		}
 	case "upgrade":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
@@ -1787,6 +2487,12 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 	case "build-image":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			m.building = true
+			// renderFooterLeft early-returns on lastError before it ever reaches the
+			// building case, and lastError is sticky until [esc] — so a stale error
+			// from some earlier op would silently swallow the footer's ⏳ for the whole
+			// build. Starting a build is a clean slate; drop it.
+			m.lastError = ""
+			m.imageBuiltPending = ""
 			return m, m.buildImageCmd()
 		}
 	case "purge":
@@ -1795,7 +2501,14 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			return m, m.opCmd(c.island, "purge")
 		}
 	case "force-purge":
-		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+		// The island name, not "y" — the escalated verb must not be the cheaper
+		// one. Plain purge already types the name; force-purge is purge PLUS
+		// overriding the guard, and it is offered at the exact moment the daemon
+		// has PROVEN there is unpushed or uncommitted work to lose. That is when a
+		// confirmation is most worth asking, not least. The operator has typed the
+		// name once already, which makes this the cheapest possible ask and the
+		// best-justified one in the app.
+		if strings.TrimSpace(c.answer) == c.island {
 			m.lastError = ""
 			m.dirtyOps[c.island] = "purging"
 			return m, m.opCmd(c.island, "purge-force")
@@ -1805,16 +2518,43 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 		// a destructive op shouldn't go through on a single keystroke.
 		if strings.TrimSpace(c.answer) == c.agent {
 			m.dirtyOps[c.island] = "removing agent"
-			return m, m.removeAgentCmd(c.island, c.agent)
+			return m, m.removeAgentCmd(c.island, c.agent, false)
+		}
+	case "force-remove-agent":
+		// The override after the worktree guard refused. It types the agent id
+		// AGAIN rather than dropping to "y", because the escalated variant must not
+		// be the cheaper one: force-purge made exactly that mistake until finding B
+		// of the same sweep (plain purge typed the island name while forcing it
+		// took one key), and this is the same moment — the daemon has just PROVEN
+		// there is work to lose, which is when a confirmation is most worth asking,
+		// not least.
+		if strings.TrimSpace(c.answer) == c.agent {
+			m.lastError = ""
+			m.dirtyOps[c.island] = "removing agent"
+			return m, m.removeAgentCmd(c.island, c.agent, true)
+		}
+	case "remove-secret":
+		// Typing the NAME, like purge types the island name — removing a secret
+		// breaks whatever tool was using it, so it shouldn't ride on one key.
+		if strings.TrimSpace(c.answer) == c.agent {
+			if v := m.secretsPane; v != nil {
+				v.restartPending = true
+			}
+			return m, m.removeSecretCmd(c.island, c.agent)
 		}
 	case "remove-terminal":
 		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
 			return m, m.removeTerminalCmd(c.agent) // c.agent carries the terminal id
 		}
 	case "approve-action":
-		// Approving a DESTRUCTIVE cross-island action: require a typed "y" so it
-		// can't be rubber-stamped. (c.agent carries the action id.)
-		if strings.ToLower(strings.TrimSpace(c.answer)) == "y" {
+		// The action id, not "y". The comment here used to say "require a typed
+		// 'y' so it can't be rubber-stamped" over a gate that a single keystroke
+		// satisfied — a containment claim in a source file that the code didn't
+		// support. Resolved toward the comment, because this is the only verb in
+		// the app that EXECUTES something on another island, and `remove-secret`
+		// (far less consequential) already asks for a typed name.
+		// (c.agent carries the action id.)
+		if strings.TrimSpace(c.answer) == c.agent {
 			return m, m.approveActionCmd(c.agent)
 		}
 	case "deny-action":
@@ -1861,7 +2601,47 @@ func (m tuiModel) runConfirmed(c confirmPrompt) (tea.Model, tea.Cmd) {
 			return m, m.updateDaemonCmd(c.force)
 		}
 	}
+	// Nothing above acted, which means the typed answer didn't satisfy the gate.
+	// Say so. A confirmation that silently closes is indistinguishable from one
+	// that worked — which is exactly how "delete does nothing, no error" went
+	// unexplained: the operation was never attempted and nothing said why.
+	if want := confirmExpectation(c); want != "" {
+		typed := strings.TrimSpace(c.answer)
+		if typed == "" {
+			m.lastError = fmt.Sprintf("%s cancelled — %s", c.verb, want)
+		} else {
+			m.lastError = fmt.Sprintf("%s not confirmed — %s (you typed %q)", c.verb, want, typed)
+		}
+	}
 	return m, nil
+}
+
+// confirmExpectation describes what a typed confirmation needed, for the
+// message shown when it didn't match. Mirrors the gates in runConfirmed —
+// a verb missing here degrades to silence, so keep the two together.
+func confirmExpectation(c confirmPrompt) string {
+	switch c.verb {
+	case "purge", "reset", "force-purge":
+		return fmt.Sprintf("type the island name %q exactly", c.island)
+	case "remove-agent", "force-remove-agent":
+		return fmt.Sprintf("type the agent id %q exactly", c.agent)
+	case "remove-secret":
+		return fmt.Sprintf("type the secret name %q exactly", c.agent)
+	case "approve-action":
+		return fmt.Sprintf("type the action id %q exactly", c.agent)
+	case "restart-agent", "restart-agent-cold":
+		if c.strict {
+			return fmt.Sprintf("type the agent id %q exactly — it looks mid-task", c.agent)
+		}
+		return `type "y" to confirm`
+	case "upgrade", "recreate-island", "build-image",
+		"remove-terminal", "open-all-agents", "setup-ssh",
+		"update-client", "update-daemon":
+		return `type "y" to confirm`
+	}
+	// relabel-agent / rename-island / deny-action always act; approve-rule
+	// depends on the action still being pending, not on the typed text.
+	return ""
 }
 
 // setupAccountSSH authorizes this machine's default SSH key fleet-wide and
@@ -1946,13 +2726,14 @@ func (m tuiModel) relabelAgentCmd(name, agentID, label string) tea.Cmd {
 	}
 }
 
-// removeAgentCmd removes an agent from an island.
-func (m tuiModel) removeAgentCmd(name, agentID string) tea.Cmd {
+// removeAgentCmd removes an agent from an island. force skips the daemon's
+// worktree guard, which refuses when the agent has uncommitted work.
+func (m tuiModel) removeAgentCmd(name, agentID string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		err := m.client.RemoveAgent(ctx, name, agentID)
-		return opCompleteMsg{name: name, verb: "remove-agent", err: err}
+		err := m.client.RemoveAgent(ctx, name, agentID, force)
+		return opCompleteMsg{name: name, verb: "remove-agent", err: err, agent: agentID}
 	}
 }
 
@@ -1973,7 +2754,15 @@ func (m tuiModel) buildImageCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
-		return imageBuildDoneMsg{err: m.client.BuildImage(ctx, io.Discard)}
+		// See tui_create.go: the tail is what makes a failure actionable.
+		tail := newBuildTail(40)
+		if err := m.client.BuildImage(ctx, tail); err != nil {
+			if out := tail.String(); out != "" {
+				return imageBuildDoneMsg{err: fmt.Errorf("%w\n\n%s", err, out)}
+			}
+			return imageBuildDoneMsg{err: err}
+		}
+		return imageBuildDoneMsg{}
 	}
 }
 
@@ -2013,6 +2802,7 @@ const (
 	rowIsland      rowKind = iota // an island header (also the primary, when collapsed)
 	rowAgent                      // an agent under an expanded island
 	rowAddAgent                   // the "+ add agent" affordance under an expanded island
+	rowSecrets                    // the island's secrets line, below its agents
 	rowNewIsland                  // the trailing "+ new island" affordance
 	rowTerminal                   // a host terminal (uncontained shell) in the Host section
 	rowNewTerminal                // the "+ new terminal" affordance
@@ -2096,6 +2886,10 @@ func (m tuiModel) visibleRows() []treeRow {
 				rows = append(rows, treeRow{kind: rowAgent, island: isl.Name, agentID: a.ID, depth: depth[i]})
 			}
 			rows = append(rows, treeRow{kind: rowAddAgent, island: isl.Name})
+			// Secrets sit BELOW the agents: they're island-scoped configuration,
+			// not another thing that runs. Always present, so an operator learns
+			// the feature exists without having to go looking for a keybinding.
+			rows = append(rows, treeRow{kind: rowSecrets, island: isl.Name})
 		}
 	}
 	rows = append(rows, treeRow{kind: rowNewIsland})
@@ -2238,6 +3032,33 @@ func (m tuiModel) isHeadlessAgent(island, agentID string) bool {
 	return false
 }
 
+// agentGatewayPort returns the localhost gateway port for the agent (or the
+// island's primary), and whether it has one. A gateway agent (OpenClaw, Letta,
+// Goose) has a web/control UI that `dejima agent open` forwards; the TUI uses
+// this to offer "open UI" instead of only logs.
+func (m tuiModel) agentGatewayPort(island, agentID string) (int, bool) {
+	isl, ok := m.islandByName(island)
+	if !ok {
+		return 0, false
+	}
+	typ := ""
+	if agentID == "" {
+		if len(isl.Agents) > 0 {
+			typ = isl.Agents[0].Type
+		} else {
+			typ = isl.Agent
+		}
+	} else {
+		for _, a := range isl.Agents {
+			if a.ID == agentID {
+				typ = a.Type
+			}
+		}
+	}
+	port := m.gatewayPorts[typ]
+	return port, port > 0
+}
+
 // activateRow handles Enter/o on the selected row: affordance rows open the
 // creator or add-agent flow; island and agent rows open a workspace, except
 // headless agents, which open their logs (they have no attach surface).
@@ -2245,10 +3066,25 @@ func (m tuiModel) isHeadlessAgent(island, agentID string) bool {
 // row kind and (for islands) running/hibernated state so it only ever offers
 // actions that make sense right now. Returns ok=false for rows that have no
 // menu (affordances), so ⏎ falls through to activateRow.
+// openActionMenu opens the contextual settings menu for the highlighted row.
+// Bound to `s`: an island row → island settings, an agent row → agent settings.
 func (m tuiModel) openActionMenu() (tuiModel, bool) {
-	row := m.currentRow()
+	return m.buildMenuFor(m.currentRow())
+}
+
+// buildMenuFor builds the contextual settings menu for a given row. Separate from
+// openActionMenu so a level-nav button (e.g. an agent menu's "Island settings")
+// can rebuild the menu for a different row without moving the list cursor. Each
+// menu carries nav buttons at the top linking the three settings levels:
+// Dejima (global) ← Island ← Agent.
+func (m tuiModel) buildMenuFor(row treeRow) (tuiModel, bool) {
+	// dejimaNav opens the global preferences overlay; present on every level.
+	dejimaNav := actionMenuItem{label: "⚙  Dejima settings", nav: true, open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+		return mm.openSettings(), nil
+	}}
 	var (
 		title string
+		nav   []actionMenuItem
 		items []actionMenuItem
 	)
 	switch row.kind {
@@ -2257,61 +3093,114 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 		if !ok {
 			return m, false
 		}
+		nav = []actionMenuItem{dejimaNav}
 		title = "island · " + isl.Name + "  (" + isl.Container + ")"
+		islandName := isl.Name
 		if isl.Container == "running" {
 			items = append(items,
 				actionMenuItem{label: "Open (new tab)", key: "o"},
 				actionMenuItem{label: "Attach in this terminal", key: "a"},
 				actionMenuItem{label: "Add an agent", key: "+"},
-				actionMenuItem{label: "Hibernate", key: "h"},
 			)
 			if m.overview != nil && m.overview.SSHAddr != "" {
 				items = append(items, actionMenuItem{label: "Open in VS Code / Cursor (/workspace)", key: "c"})
 			}
+			// Lifecycle (non-destructive): stop-and-keep, then the two halves of
+			// rolling onto a new image — kept clear of the danger block at the bottom.
+			//
+			// REBUILD SITS ABOVE UPGRADE BECAUSE IT COMES FIRST. `dejima upgrade`
+			// recreates a container against whatever image is already on the host; it
+			// never builds one. This menu offered the second step and not the first,
+			// so an operator who came here to roll an island forward could only do the
+			// half that silently keeps the old image — the exact window c058652
+			// patched (a new daemon mounting /opt/host/secrets.d while the old image's
+			// load-secrets.sh still read /opt/host/secrets.env).
+			//
+			// `b` on the dashboard has always opened this confirm, and the Server menu
+			// [H] already lists it as a host control. Neither is where someone looking
+			// for "upgrade" looks. Reusing the same accelerator adds a place to find
+			// the action, not a second meaning for the key.
+			items = append(items,
+				actionMenuItem{label: "Hibernate", key: "h"},
+				rebuildImageItem(m.building),
+				// Not "the current image": nothing here checks that the host's image is
+				// current, and after this recreate the island is stamped with the DAEMON's
+				// version either way (server.go, upgradeIsland) — so the word would be a
+				// claim the code never verifies.
+				actionMenuItem{label: "Upgrade to the image on the host (recreate — does not rebuild)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					mm.confirm = &confirmPrompt{verb: "upgrade", island: islandName}
+					return mm, nil
+				}},
+			)
 		} else {
 			items = append(items, actionMenuItem{label: "Wake", key: "w"})
 		}
+		// Config block, grouped: identity (rename + look), then compute, then the
+		// permission/reach items contiguously (network → host files → tokens → spawn).
 		items = append(items, actionMenuItem{label: "Rename", key: "e"})
-		islandName := isl.Name
+		items = append(items, actionMenuItem{label: "Color & glyph… (visual identity)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openIdentityEditor(islandName)
+		}})
 		items = append(items, actionMenuItem{label: "Resources… (memory · OOM priority)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openResourceEditor(islandName)
 		}})
 		items = append(items, actionMenuItem{label: "Grants… (what it can reach)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openGrantsView(islandName)
 		}})
-		items = append(items, actionMenuItem{label: "Sub-agent budget… (spawn grant)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
-			return mm.openSpawnGrantEditor(islandName)
-		}})
 		items = append(items, actionMenuItem{label: "Port scopes… (brokered host-file access)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 			return mm.openScopeView(islandName)
 		}})
-		items = append(items, actionMenuItem{label: "Color & glyph… (visual identity)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
-			return mm.openIdentityEditor(islandName)
+		items = append(items, actionMenuItem{label: "⇅  Import files… (brokered, ledgered)", boundary: true, open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openImportView(row.island)
+		}})
+		items = append(items, actionMenuItem{label: "🔑  Secrets… (tokens this island's tools use)", boundary: true, open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openSecretsView(islandName)
+		}})
+		items = append(items, actionMenuItem{label: "Sub-agent budget… (spawn grant)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			return mm.openSpawnGrantEditor(islandName)
 		}})
 		if m.overview != nil && m.overview.SSHAddr != "" {
 			items = append(items, actionMenuItem{label: "SSH setup (this device → every island)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 				return mm.startSSHSetup()
 			}})
 		}
+		// Destructive block, grouped at the very bottom (both rendered in alarm color).
 		if isl.Container == "running" {
-			upgradeName := isl.Name
-			items = append(items,
-				actionMenuItem{label: "Reset agent state", key: "r", danger: true},
-				actionMenuItem{label: "Upgrade to the current image", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
-					mm.confirm = &confirmPrompt{verb: "upgrade", island: upgradeName}
-					return mm, nil
-				}},
-			)
+			// Named for what it destroys. "Reset agent state" sounded like a restart
+			// and sat in the same menu as one; it erases every agent's memory.
+			items = append(items, actionMenuItem{label: "Erase all agent memory (conversations + logins)", key: "r", danger: true})
 		}
 		items = append(items, actionMenuItem{label: "Purge island", key: "d", danger: true})
 	case rowAgent:
-		isl, _ := m.islandByName(row.island)
+		isl, _ := m.islandWithAgentState(row.island)
 		label := agentByID(isl, row.agentID).Label
 		if label == "" {
 			label = row.agentID
 		}
+		// Agent settings sit one level down: offer a jump to its island's settings
+		// as well as the global Dejima settings.
+		islandRow := treeRow{kind: rowIsland, island: row.island}
+		nav = []actionMenuItem{dejimaNav, {label: "🏝  Island settings", nav: true, open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+			nm, ok := mm.buildMenuFor(islandRow)
+			if !ok {
+				return mm, nil
+			}
+			return nm, nil
+		}}}
 		title = "agent · " + label
-		if m.isHeadlessAgent(row.island, row.agentID) {
+		if _, isGW := m.agentGatewayPort(row.island, row.agentID); isGW {
+			// A gateway agent (OpenClaw/Letta/Goose): its web UI is the point, so
+			// lead with it. Logs stay one item down.
+			gwIsland, gwAgent := row.island, row.agentID
+			items = append(items,
+				actionMenuItem{label: "Open UI (gateway)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					return mm.openAgentGatewayUI(gwIsland, gwAgent)
+				}},
+				actionMenuItem{label: "View logs", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					return mm.openAgentLogs(gwIsland, gwAgent)
+				}},
+			)
+		} else if m.isHeadlessAgent(row.island, row.agentID) {
 			items = append(items, actionMenuItem{label: "View logs", key: "o"})
 		} else {
 			items = append(items,
@@ -2320,6 +3209,26 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 			)
 		}
 		agentIsland, agentRowID := row.island, row.agentID
+		// Restart, right under open/attach: the lifecycle block, mirroring the island
+		// menu's ordering. This is the action an operator wants after adding a secret
+		// or changing a model, and until now it existed only as `dejima agent restart`
+		// on the CLI and as [R] inside the secrets pane. Someone looking for it here
+		// found "Reset agent state" instead — a destructive near-homonym — which is
+		// how an operator lost a working session. Resume is listed first and named for
+		// what it preserves, because continuing the conversation is what people mean.
+		if isl.Container == "running" {
+			busy := agentIsBusy(agentByID(isl, agentRowID))
+			items = append(items,
+				actionMenuItem{label: "Restart (keeps its conversation)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					mm.confirm = &confirmPrompt{verb: "restart-agent", island: agentIsland, agent: agentRowID, strict: busy}
+					return mm, nil
+				}},
+				actionMenuItem{label: "Restart cold (starts a new conversation)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
+					mm.confirm = &confirmPrompt{verb: "restart-agent-cold", island: agentIsland, agent: agentRowID, strict: busy}
+					return mm, nil
+				}},
+			)
+		}
 		items = append(items,
 			actionMenuItem{label: "Model / provider / key…", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 				return mm.openModelEditor(agentIsland, agentRowID)
@@ -2328,13 +3237,63 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 				return mm.openGrantsView(agentIsland)
 			}},
 			actionMenuItem{label: "Rename (relabel)", key: "e"},
-			actionMenuItem{label: "Remove agent", key: "X", danger: true},
+			actionMenuItem{label: "Remove agent", key: "x", danger: true},
 		)
 	default:
 		return m, false
 	}
-	m.menu = &actionMenu{title: title, items: items, row: row}
+	// Nav buttons ride at the top above a separator; the cursor lands on the first
+	// real action so opening a menu and hitting ⏎ still does the obvious thing.
+	//
+	// Between them sit the boundary-crossing actions (import files, secrets),
+	// hoisted out of wherever they were appended. Partitioning here rather than
+	// asking every call site to append in the right order means a new boundary
+	// action lands in the right group by setting one field, instead of by
+	// remembering an ordering convention.
+	boundary, rest := partitionBoundary(items)
+	all := append(append(nav, boundary...), rest...)
+	sel := len(nav)
+	m.menu = &actionMenu{title: title, items: all, row: row, sel: sel}
 	return m, true
+}
+
+// menuActionName is the part of a menu label an operator actually scans for: the
+// action, without its trailing "(…)" gloss (which renders muted). Copy that tells
+// someone to go find a menu item should name THIS, not the whole label — and
+// should get it from here rather than keeping its own copy of the string.
+func menuActionName(label string) string {
+	if p := strings.Index(label, " ("); p >= 0 && strings.HasSuffix(label, ")") {
+		return label[:p]
+	}
+	return label
+}
+
+// rebuildImageItem is the "rebuild the island image" row, shared by the Server
+// menu [H] and every island's settings menu [s] so the two can't drift into
+// naming the same action differently.
+//
+// It goes DISABLED while a build is in flight rather than staying selectable:
+// the `b` handler already no-ops when m.building, and a menu row that visibly
+// does nothing when chosen is the same failure as a button that lies — the
+// operator can't tell "already running" from "didn't register".
+func rebuildImageItem(building bool) actionMenuItem {
+	if building {
+		return actionMenuItem{label: "Rebuilding the island image… (in progress)", disabled: true}
+	}
+	return actionMenuItem{label: "Rebuild the island image (host-wide; islands pick it up on upgrade)", key: "b"}
+}
+
+// partitionBoundary splits menu items into the boundary-crossing group and
+// everything else, preserving each group's relative order.
+func partitionBoundary(items []actionMenuItem) (boundary, rest []actionMenuItem) {
+	for _, it := range items {
+		if it.boundary {
+			boundary = append(boundary, it)
+			continue
+		}
+		rest = append(rest, it)
+	}
+	return boundary, rest
 }
 
 // actionMenuKey drives the open menu: navigate, select (re-dispatching the
@@ -2342,7 +3301,7 @@ func (m tuiModel) openActionMenu() (tuiModel, bool) {
 // own accelerator key selects it directly.
 func (m tuiModel) actionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	case "esc", "ctrl+[", "q", "ctrl+c":
 		m.menu = nil
 		return m, nil
 	case "j", "down":
@@ -2405,7 +3364,7 @@ func (m tuiModel) chooseMenuItem(it actionMenuItem) (tea.Model, tea.Cmd) {
 
 // startSSHSetup arms the account-wide SSH-setup confirm (authorize this machine's
 // key fleet-wide + write ~/.ssh/config for every island), or explains the façade
-// is off. Reachable from the Server menu [H] and the per-row actions menu [m];
+// is off. Reachable from the Server menu [H] and the per-row settings menu [s];
 // it used to be the top-level S key (now Settings).
 func (m tuiModel) startSSHSetup() (tea.Model, tea.Cmd) {
 	if m.overview == nil || m.overview.SSHAddr == "" {
@@ -2417,7 +3376,7 @@ func (m tuiModel) startSSHSetup() (tea.Model, tea.Cmd) {
 }
 
 // openServerMenu builds the Server menu [H] — host/daemon controls that used to be
-// scattered across top-level keys. It mirrors the per-row actions menu ([m]) but
+// scattered across top-level keys. It mirrors the per-row settings menu ([s]) but
 // is global (not anchored to a list row). The daemon self-update lives ONLY here,
 // behind an explicit fleet-wide-restart warning, so it can never fire as a side
 // effect of a routine keypress. The direct keys (/, b, R) still work; this is an
@@ -2443,7 +3402,7 @@ func (m tuiModel) openServerMenu() tuiModel {
 	items = append(items, actionMenuItem{label: "Set up SSH (this device → every island)", open: func(mm tuiModel) (tea.Model, tea.Cmd) {
 		return mm.startSSHSetup()
 	}})
-	items = append(items, actionMenuItem{label: "Build island image", key: "b"})
+	items = append(items, rebuildImageItem(m.building))
 	if m.hostTerminalsAvailable() {
 		items = append(items, actionMenuItem{label: "Host terminals", key: "/"})
 	}
@@ -2531,7 +3490,7 @@ func (m tuiModel) resEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	case "esc", "ctrl+[", "q", "ctrl+c":
 		m.resEditor = nil
 		return m, nil
 	case "down", "j":
@@ -2613,6 +3572,8 @@ func (m tuiModel) renderResourceEditor() string {
 func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 	row := m.currentRow()
 	switch row.kind {
+	case rowSecrets:
+		return m.openSecretsView(row.island)
 	case rowNewIsland:
 		return m.openCreator()
 	case rowAddAgent:
@@ -2632,6 +3593,28 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 	if row.agentID == "" {
 		return m.openIslandAgents(name)
 	}
+	// A key-requiring agent with no key configured is dead on arrival: its UI just
+	// errors and its logs only echo "No API key found for provider …" — the exact
+	// dead end operators kept landing in. Route Enter straight to the fix (the
+	// provider/model/key editor) instead of opening a useless surface.
+	if isl, ok := m.islandByName(name); ok {
+		if a := agentByID(isl, row.agentID); a.AuthState == "missing-provider-auth" {
+			prov := a.Provider
+			if prov == "" {
+				prov = "its provider"
+			}
+			mm, cmd := m.openModelEditor(name, row.agentID)
+			if tm, ok := mm.(tuiModel); ok {
+				tm.lastNotice = a.Type + " has no API key for " + prov +
+					" — set it here; you'll be offered a recreate to apply it"
+				return tm, cmd
+			}
+			return mm, cmd
+		}
+	}
+	if _, isGW := m.agentGatewayPort(name, row.agentID); isGW {
+		return m.openAgentGatewayUI(name, row.agentID)
+	}
 	if m.isHeadlessAgent(name, row.agentID) {
 		return m.openAgentLogs(name, row.agentID)
 	}
@@ -2649,6 +3632,89 @@ func (m tuiModel) activateRow() (tea.Model, tea.Cmd) {
 // asks before spawning them all (so a stray Enter on a big island can't blanket
 // the screen in tabs).
 const openAllConfirmThreshold = 4
+
+// openAgentGatewayUI forwards a gateway agent's web UI to this machine and opens
+// it (the TUI equivalent of `dejima agent open`), so an operator never has to
+// drop to the CLI to reach an OpenClaw/Letta/Goose console.
+//
+// The one hard prerequisite is the SSH façade (the tunnel runs over it). Rather
+// than spawn a window that fails, check first and point the operator at enabling
+// it — the actionable nudge instead of a raw error.
+func (m tuiModel) openAgentGatewayUI(name, agentID string) (tea.Model, tea.Cmd) {
+	if m.overview == nil || m.overview.SSHAddr == "" {
+		m.lastError = sshFacadeSetupStepsTUI()
+		return m, nil
+	}
+	// HELD IN-PROCESS, not in a spawned window. The window used to own the ssh
+	// forward, so closing it killed the tunnel under an already-open browser tab
+	// with nothing anywhere saying why. Now the lifetime is one sentence: the UI
+	// works for as long as the dashboard is open.
+	if m.tunnels == nil {
+		// No registry (a test model, or a path that never got one). Fall back to
+		// the old window rather than silently doing nothing.
+		if !canOpenNewWindow() {
+			m.lastNotice = "run `dejima agent open " + name + " " + agentID + "` in a terminal to reach its UI"
+			return m, nil
+		}
+		if err := m.openAgentGatewayWindow(name, agentID); err != nil {
+			m.lastError = "open gateway UI: " + err.Error()
+		}
+		return m, nil
+	}
+
+	// Already forwarding this agent: re-open the tab rather than starting a
+	// second ssh onto a second port, which would strand the first tab.
+	if fwd := m.tunnels.Get(name, agentID); fwd != nil {
+		go func() { _ = openURL(fwd.URL) }()
+		m.lastNotice = "reopening " + name + "'s gateway UI — the forward is already up"
+		return m, nil
+	}
+
+	m.lastNotice = "connecting to " + name + "'s gateway…"
+	return m, m.openGatewayCmd(name, agentID)
+}
+
+// gatewayOpenedMsg reports the result of establishing a forward.
+type gatewayOpenedMsg struct {
+	island, agentID string
+	url             string
+	err             error
+}
+
+// openGatewayCmd establishes the forward OFF the Update loop.
+//
+// Establishing one is slow — an ssh handshake, then a wait for the gateway to
+// actually serve, which on a first launch means waiting out the framework's own
+// install. Doing that inline would freeze the dashboard for minutes.
+func (m tuiModel) openGatewayCmd(island, agentID string) tea.Cmd {
+	c, tunnels := m.client, m.tunnels
+	return func() tea.Msg {
+		fwd, err := tunnels.openGatewayForAgent(context.Background(), c, island, agentID, nil)
+		if err != nil {
+			return gatewayOpenedMsg{island: island, agentID: agentID, err: err}
+		}
+		return gatewayOpenedMsg{island: island, agentID: agentID, url: fwd.URL}
+	}
+}
+
+func (m tuiModel) onGatewayOpened(msg gatewayOpenedMsg) tuiModel {
+	if msg.err != nil {
+		// SAY THE ISLAND IS FINE. This runs straight after a create, and a first
+		// launch installs the framework inside the container — which can outlast
+		// the wait. "Couldn't open the UI" alone reads as "the create failed",
+		// which is the shape the operator has already been burned by once with a
+		// clone. The island exists; only the console is not up yet.
+		m.lastError = msg.island + " is running — its gateway UI isn't reachable yet: " +
+			msg.err.Error() + " (a first launch installs the framework inside the " +
+			"island, which can take minutes; press ⏎ on the agent to try again)"
+		return m
+	}
+	go func() { _ = openURL(msg.url) }()
+	// Say what keeps it alive. The old notice was silent about that, which is how
+	// a window nobody knew was load-bearing got closed.
+	m.lastNotice = msg.island + "'s gateway UI is open — the forward stays up while this dashboard does"
+	return m
+}
 
 // openIslandAgents opens one window per attachable agent on the island (Enter on
 // an island row). It falls back to the in-island shell when there's nothing to
@@ -2668,13 +3734,49 @@ func (m tuiModel) openIslandAgents(name string) (tea.Model, tea.Cmd) {
 
 // openAgents opens a window for each given agent id; errors surface but don't
 // stop the rest from opening.
+//
+// Failures are AGGREGATED rather than assigned in the loop. Assigning
+// m.lastError per iteration meant each failure overwrote the one before it, so
+// a fan-out where every window failed reported a single message naming the last
+// agent — indistinguishable from one unlucky agent among many that worked. That
+// is the worst shape for this particular call: it is the only path that spawns
+// N windows at once (Enter on an island row), so it is also the only one where
+// a systemic failure looks local.
+//
+// Caveat worth knowing when reading a "success" here: on the Windows backend
+// openWindowsTerminal runs `wt.exe … new-tab … cmd /c <inner>`, and .Run()
+// reports whether WINDOWS TERMINAL started, not whether <inner> did. A tab that
+// comes up showing a ConPTY launch error ("[error 0x… when launching …]") is
+// invisible to us and counts as opened. Detecting that needs a handshake back
+// from the spawned client, which does not exist yet.
 func (m tuiModel) openAgents(name string, ids []string) (tea.Model, tea.Cmd) {
+	var (
+		failed   []string
+		firstErr string
+	)
 	for _, id := range ids {
 		if err := m.openInNewWindow(name, id, ""); err != nil {
-			m.lastError = err.Error()
+			failed = append(failed, id)
+			if firstErr == "" {
+				firstErr = err.Error()
+			}
 		}
 	}
+	if len(failed) > 0 {
+		m.lastError = openAgentsError(len(ids), failed, firstErr)
+	}
 	return m, nil
+}
+
+// openAgentsError renders the aggregate. A lone failure reads as its own error
+// (adding "1 of 1" would be noise); several report the count and which agents,
+// so a systemic failure is legible as one, with a representative cause attached.
+func openAgentsError(total int, failed []string, firstErr string) string {
+	if len(failed) == 1 {
+		return firstErr
+	}
+	return fmt.Sprintf("%d of %d agent windows failed to open (%s): %s",
+		len(failed), total, strings.Join(failed, ", "), firstErr)
 }
 
 // openIslandShell attaches the local terminal to the island's in-island shell at
@@ -2710,6 +3812,19 @@ func (m tuiModel) attachableAgentIDs(name string) []string {
 // openAgentLogs opens a headless agent's logs in a new window, or points the
 // user at the CLI when no new-window backend is available.
 func (m tuiModel) openAgentLogs(name, agentID string) (tea.Model, tea.Cmd) {
+	// A GATEWAY AGENT'S OWN LOGS LIE ABOUT THEIR ADDRESS, and there is nothing we
+	// can do about that inside the container: OpenClaw prints "localhost:61500"
+	// because that is true where it is sitting, and it has no idea it is in an
+	// island. The operator reasonably typed it into a browser on the host and got
+	// nothing.
+	//
+	// So say it BESIDE the logs rather than trying to rewrite them. Rewriting an
+	// agent's output stream to fix an address risks mangling legitimate lines, and
+	// the note is what the operator needs anyway.
+	if _, isGW := m.agentGatewayPort(name, agentID); isGW {
+		m.lastNotice = "note: any localhost:PORT this agent prints is inside the island — " +
+			"press ⏎ on it to open the UI from this machine"
+	}
 	if canOpenNewWindow() {
 		if err := m.openAgentLogsWindow(name, agentID, ""); err != nil {
 			m.lastError = err.Error()
@@ -2725,6 +3840,18 @@ func (m tuiModel) openAgentLogs(name, agentID string) (tea.Model, tea.Cmd) {
 }
 
 // currentRow returns the selected tree row, or a zero row if none.
+// selectedIslandName returns the island the cursor is on — the island itself,
+// or the island owning the selected agent row. "" when nothing is selected.
+func (m tuiModel) selectedIslandName() string {
+	if r := m.currentRow(); r.island != "" {
+		return r.island
+	}
+	if len(m.islands) == 1 {
+		return m.islands[0].Name // unambiguous with a single island
+	}
+	return ""
+}
+
 func (m tuiModel) currentRow() treeRow {
 	rows := m.visibleRows()
 	if m.selected < 0 || m.selected >= len(rows) {
@@ -2806,7 +3933,7 @@ var (
 
 func (m tuiModel) View() string {
 	if m.width == 0 {
-		return "loading…"
+		return styleAccent.Render("loading…")
 	}
 
 	header := m.renderHeader()
@@ -2907,6 +4034,18 @@ func (m tuiModel) View() string {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderGithubView())
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
+	if m.importPane != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.renderImport())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.secretsPane != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.secretsPane.view(m.width - 4))
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.restartPane != nil {
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.restartPane.view(m.width - 4))
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
 	if m.aggregate != nil {
 		box := styleMenuBox.Render(m.renderAggregateView())
 		body := lipgloss.Place(m.width-2, m.height-hh-2, lipgloss.Center, lipgloss.Center, box)
@@ -2917,11 +4056,21 @@ func (m tuiModel) View() string {
 	// The pinned host-terminal band sits between the header and the island list;
 	// the body sizes off (header + band) height so nothing is pushed off-screen.
 	band, bandH := m.renderBand(m.width - 2)
-	body := m.renderBody(hh + bandH)
+	// Observed agents get a SIBLING region directly beneath the host band, not a
+	// row in the island tree: the two ungated regions sit adjacent, above the
+	// tree, and everything below them is the contained half of the screen. See
+	// tui_observed.go for why this copies the band's grammar rather than
+	// inventing a second treatment.
+	obs, obsH := m.renderObservedRegion(m.width - 2)
+	body := m.renderBody(hh + bandH + obsH)
+	parts := []string{header}
 	if band != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, header, band, body, footer)
+		parts = append(parts, band)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	if obs != "" {
+		parts = append(parts, obs)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, append(parts, body, footer)...)
 }
 
 // renderPanicBanner returns an alarm banner while the daemon is in panic mode
@@ -3002,6 +4151,12 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 		// result (applied / restart-pending / error).
 		return " ⟳ " + m.updating,
 			" ⟳ updating… ", styleWarnBroadcast, true
+	case m.building:
+		// Same reasoning as m.updating: a cold-cache image build runs for minutes
+		// with no other feedback than a footer glyph that any error or notice hides,
+		// so the header says it plainly for as long as it's in flight.
+		return " ⟳ building the island image — minutes on a cold cache, seconds if Docker can reuse its layers",
+			" ⟳ building image ", styleWarnBroadcast, true
 	case m.updateError != "":
 		// A failed self-update outranks everything else here and stays put (red)
 		// until retried [U] or dismissed [esc] — never wiped by a poll.
@@ -3012,6 +4167,9 @@ func (m tuiModel) announcement() (full, short string, style lipgloss.Style, ok b
 		// sticks (orange) until they restart or dismiss it.
 		return " ⟳ " + m.restartPending + "   ·   [esc] dismiss",
 			" ⟳ restart to apply ", styleWarnBroadcast, true
+	case m.imageBuiltPending != "":
+		return " ✓ " + m.imageBuiltPending + "   ·   [esc] dismiss",
+			" ✓ image built ", styleWarnBroadcast, true
 	case m.updateApplied != "":
 		// A clean landing — green, and it fades on its own (updateNoticeFadedMsg).
 		return " ✓ " + m.updateApplied,
@@ -3108,16 +4266,19 @@ func (m tuiModel) renderHeader() string {
 	}
 	logo := strings.Join(logoLines, "\n")
 
-	// server: <label>  ·  [s] switch  [·  ssh <addr>]
-	// [s] opens settings, where "connection target" changes which server the
-	// dashboard attaches to. The ssh hint appears only when the daemon has the
-	// SSH-façade listener on (--ssh); `dejima ssh config <island> --install`
-	// resolves the full address.
+	// server: <label>  ·  [C] switch  [·  ssh <addr>]
+	// [C] opens the connection switcher (also at Settings → Connection target).
+	// It said [s] until `s` became the row menu, at which point the header was
+	// pointing the operator at a menu for the island they happened to be on —
+	// so the key named here and the key that switches must stay the same one,
+	// which TestHeaderSwitchKeyActuallySwitches holds down. The ssh hint appears
+	// only when the daemon has the SSH-façade listener on (--ssh);
+	// `dejima ssh config <island> --install` resolves the full address.
 	serverLine := styleMuted.Render("server: ") + styleAccent.Render(label)
 	if m.activeSource == "env" {
 		serverLine += styleMuted.Render(" via $DEJIMA_HOST")
 	}
-	serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("[s]") + styleMuted.Render(" switch")
+	serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("["+switchKey+"]") + styleMuted.Render(" switch")
 	// Team controls are owner-only; surface the hint unless we know the caller is
 	// a teammate (fail-open before the daemon reports identity, matching the lens).
 	if m.callerRole == "" || m.callerRole == "owner" {
@@ -3134,7 +4295,11 @@ func (m tuiModel) renderHeader() string {
 	// when there's something to say (an available update, today).
 	topLine := ""
 	if full, _, style, ok := m.announcement(); ok {
-		topLine = style.Width(infoW).Render(full)
+		// Clip to infoW BEFORE styling: .Width() pads to infoW but *wraps* anything
+		// longer, and a banner that grows to two rows pushes the 7-row info block out
+		// of alignment with the logo. At the narrow end of full-header mode (width 99)
+		// infoW is only ~55 columns, which most banner texts exceed.
+		topLine = style.Width(infoW).Render(truncateDisplay(full, infoW))
 	}
 
 	// The two former subtitle lines are collapsed into one, freeing a row for a
@@ -3145,9 +4310,18 @@ func (m tuiModel) renderHeader() string {
 		topLine,
 		styleTitle.Render("Dejima") + styleMuted.Render(" — isolated islands for AI coding agents, on your own hardware"),
 		"",
-		styleMuted.Render("Each island is a repo in its own container — agents keep running."),
+		// The static "each island is a repo in its own container" line explained
+		// the product to someone already looking at it, every single frame. The
+		// rotating tip earns that row instead.
+		//
+		// Tip sits directly ON the key legend deliberately: both answer "what can
+		// I do here", so they read as one block. The spare row goes below them
+		// instead, separating that guidance from the server line, which is status
+		// rather than something to act on. Floating the tip between two blanks
+		// left it looking orphaned. Still exactly 7 rows, to match the logo.
 		tipLine,
 		styleAccent.Render("↑/↓") + styleMuted.Render(" pick  ·  ") + styleAccent.Render("⏎") + styleMuted.Render(" open agent(s)  ·  ") + styleAccent.Render(">") + styleMuted.Render(" shell  ·  ") + styleAccent.Render("s") + styleMuted.Render(" settings  ·  ") + styleAccent.Render("?") + styleMuted.Render(" help"),
+		"",
 		serverLine,
 	}, "\n")
 	info = lipgloss.NewStyle().MaxWidth(infoW).Render(info)
@@ -3298,6 +4472,15 @@ func (m tuiModel) scrollDetail(pages int) tuiModel {
 	return m
 }
 
+// The island list's cursor, in its two states. Filled while the list has the
+// keys; hollow while another region (today only the host-terminal band) has
+// them. The pair is a GLYPH difference, not just a color one, so "who gets the
+// next keystroke" is answerable from a screenshot.
+const (
+	cursorFocused = "▶"
+	cursorBlurred = "▹"
+)
+
 func (m tuiModel) renderList(width int) (string, int) {
 	if len(m.islands) == 0 {
 		if m.lastError != "" {
@@ -3310,12 +4493,43 @@ func (m tuiModel) renderList(width int) (string, int) {
 		// (visibleRows always ends with it), so Enter creates one — but say so,
 		// since a bare empty pane gave no hint that the TUI itself can set one up
 		// (people were told to quit and use the CLI). Make it an obvious prompt.
-		body := styleAccent.Render("+ Set up your first island") + "\n\n" +
-			styleMuted.Render("Press Enter to start — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
-		// Nudge missing Claude creds before the first island, so claude-code/codex
-		// agents don't start unauthenticated and fail at first attach.
+		// Render it as a SELECTED row, not a heading. The row genuinely is
+		// selected — Enter already worked — but with no ▶ and no highlight it
+		// read as decoration, so people didn't know it was the thing to press.
+		body := styleSelected.Render("▶ + Set up your first island") + "\n\n" +
+			styleAccent.Render("Press ⏎ to start") + styleMuted.Render(" — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
+		// Nudge missing Claude creds before the first island, so a claude-code
+		// agent doesn't start unauthenticated and fail at first attach.
+		//
+		// CLAUDE-CODE ONLY. This used to say "claude-code/codex agents start
+		// authenticated", which is false: `dejima auth push` pushes a CLAUDE
+		// session (agentcreds.LoadClaude — that is the only thing the package
+		// loads), and codex is OpenAI. A Claude session does not authenticate it.
+		//
+		// A wrong sentence about credentials, on the first screen a new operator
+		// sees, is worse than no sentence: someone who ran auth push and then
+		// added a codex agent would believe it was set up and meet the failure at
+		// first attach, with the one surface that mentioned it having told them
+		// otherwise. Codex signs in on its own, into its own state dir.
 		if m.setupChecked && !m.claudeSeeded {
-			body += "\n\n" + styleWaiting.Render("⚠ no Claude credentials yet — run `dejima auth push` (from a machine where\n  `claude` is logged in) so claude-code/codex agents start authenticated.")
+			// AN OFFER, NOT A WARNING.
+			//
+			// This was a ⚠ on the empty-state screen, shown BEFORE any agent is
+			// chosen — so it presented an optional convenience as a missing
+			// prerequisite, to people who may be about to use a provider key or a
+			// shell agent and need none of it. Seeding is a shortcut: without it
+			// you attach once and log in inside the island.
+			//
+			// It also says ONE ACCOUNT, EVERY ISLAND, because that is the part
+			// worth knowing and the part nobody could have guessed: the credential
+			// lives on the daemon, not in an island, so it is seeded once and
+			// every island created afterwards inherits it.
+			body += "\n\n" + styleAccent.Render("[L] Set up Claude for every island") +
+				styleMuted.Render("  (recommended)") +
+				styleMuted.Render("\n  Copies this machine's Claude login to the server, once. Every island\n"+
+					"  created afterwards starts authenticated — you never log in per island.\n"+
+					"  Optional: skip it and log in inside an island, or set a provider key\n"+
+					"  instead ("+styleAccent.Render("s")+" → Provider keys).")
 		}
 		return body, -1
 	}
@@ -3349,8 +4563,19 @@ func (m tuiModel) renderList(width int) (string, int) {
 		case rowNewIsland:
 			line = styleAccent.Render("+ new island")
 		case rowAddAgent:
-			// Caps the island's child group (└); agent rows above it branch (├).
+			// Agent rows above branch (├); the secrets row below now caps the group.
 			line = "   " + styleMuted.Render("└ + add agent")
+		case rowSecrets:
+			// Always shown, so the feature is discoverable without knowing a
+			// keybinding — the count tells an operator at a glance whether this
+			// island has any. Left-aligned with the "+ add agent" affordance (no
+			// tree connector): it's a sibling island-level action, not a child of it.
+			isl := byName[row.island]
+			label := glyphSecrets + " secrets"
+			if n := isl.SecretsCount; n > 0 {
+				label = fmt.Sprintf("%s secrets (%d)", glyphSecrets, n)
+			}
+			line = "   " + styleMuted.Render(label)
 		case rowAgent:
 			isl := byName[row.island]
 			a := agentByID(isl, row.agentID)
@@ -3392,8 +4617,26 @@ func (m tuiModel) renderList(width int) (string, int) {
 			}
 		}
 		if i == m.selected {
+			// selLine is recorded whether or not this row is highlighted — it drives
+			// the viewport window, so dropping it while the band has focus would
+			// scroll the list out from under the cursor and back when focus returns.
 			selLine = strings.Count(b.String(), "\n") // line index this row will occupy
-			line = styleSelected.Render("▶ " + line)
+			if m.bandFocused {
+				// The host-terminal band owns the keys right now and draws its OWN
+				// highlighted row. Two highlighted lines on one screen is two claims
+				// about where the next keystroke lands, and only one of them is true.
+				// The cursor stays — hollow and muted — so the operator can still see
+				// where they were when [/] hands the keys back: position without a
+				// claim.
+				//
+				// Hollow rather than merely dimmed, because dimming is a COLOR
+				// difference and this has to survive a screenshot, a no-color
+				// terminal, and a test harness (lipgloss renders bare under the Ascii
+				// profile, so a color-only distinction is one no test can see).
+				line = styleMuted.Render(cursorBlurred) + " " + line
+			} else {
+				line = styleSelected.Render(cursorFocused + " " + line)
+			}
 		} else {
 			line = "  " + line
 		}
@@ -3429,6 +4672,19 @@ const (
 	glyphTerminal = "❯" // a plain shell/terminal you type into
 	glyphAgent    = "◆" // an AI agent you attach to (claude-code, codex, …)
 	glyphHeadless = "■" // headless agent — supervised background process, logs only
+
+	// glyphSecrets marks the per-island secrets row: U+26B7, a monochrome
+	// boxless key symbol.
+	//
+	// NOT the padlock emoji (U+1F512). Emoji are East Asian WIDE — the terminal
+	// draws two cells — but lipgloss/wcwidth count the text-presentation form as
+	// one. That one-cell disagreement wraps the row, and Bubble Tea's diff
+	// renderer (which counts newlines, not display width) then leaves the
+	// wrapped remainder on screen: the whole view duplicates on every repaint.
+	// The VARIATION SELECTOR-15 trick suppressed the colour but not the width,
+	// so it kept the bug. A text-default symbol that measures as one cell
+	// everywhere is the only safe kind here — like ◆/■/❯ above.
+	glyphSecrets = "⚷"
 )
 
 // agentTypeShell mirrors handlers.Shell — the plain-terminal agent type. Kept as
@@ -3564,18 +4820,21 @@ func (m tuiModel) renderBand(width int) (string, int) {
 			}
 			count = fmt.Sprintf("%d terminal%s", n, s)
 		}
-		line := fmt.Sprintf("%s %s %s %s   %s",
-			styleHeader.Render("▸ Host"), dot, styleMuted.Render(count),
-			styleMuted.Render("· not contained"), styleMuted.Render("[/] expand"))
+		// The key sits next to the arrow rather than trailing the line. It is
+		// the only affordance on this band, and at the far right it read as an
+		// afterthought on a row whose whole purpose is "press this".
+		line := fmt.Sprintf("%s %s %s %s %s",
+			styleHeader.Render("▸ [/] Host"), dot, styleMuted.Render(count),
+			styleMuted.Render("· not contained"), styleMuted.Render("· expand"))
 		return clip(line), 1
 	}
 
 	var b strings.Builder
 	// Header carries the action hints inline (rather than a separate footer line)
 	// so the pinned band stays compact: ⏎ attach · d delete · / close.
-	b.WriteString(styleHeader.Render("▾ Host terminals") + " " +
+	b.WriteString(styleHeader.Render("▾ [/] Host terminals") + " " +
 		styleMuted.Render("· not contained") + "   " +
-		styleMuted.Render("⏎ open · d delete · [/] collapse") + "\n")
+		styleMuted.Render("⏎ open · d delete · / collapse") + "\n")
 	for i, t := range m.terminals {
 		line := "  " + terminalRowText(t)
 		if i == m.bandSel {
@@ -3604,7 +4863,7 @@ func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "/", "`", "left", "q":
+	case "esc", "ctrl+[", "/", "`", "left", "q":
 		return collapse()
 	case "j", "down":
 		if m.bandSel < m.bandRowCount()-1 {
@@ -3762,13 +5021,22 @@ func (m tuiModel) renderDetail(_ int) string {
 		return styleTitle.Render("+ New island") + "\n\n" +
 			styleMuted.Render("Press ⏎ to pick a repo and an agent, then launch.")
 	}
+	if r := m.currentRow(); r.kind == rowSecrets {
+		body := styleTitle.Render(glyphSecrets+" Secrets") + "\n\n" +
+			styleMuted.Render("Tokens this island's tools read from the environment —\nEXPO_TOKEN, NPM_TOKEN, API keys.") + "\n\n" +
+			styleMuted.Render("Press ⏎ to view, add, or rotate. Values are never shown.") + "\n\n"
+		// The caveat belongs where someone decides what to put in, not only in
+		// the pane they see afterwards.
+		body += styleMuted.Render("Agents in this island can read these. Keeps them out of\nyour repo, and gives one place to rotate and revoke.")
+		return body
+	}
 	if m.currentRow().kind == rowAddAgent {
 		return styleTitle.Render("+ Add agent") + "\n\n" +
 			styleMuted.Render("Press ⏎ to add an agent to "+styleAccent.Render(m.selectedName())+styleMuted.Render(".\nClaude Code, Codex, a terminal, or a headless command."))
 	}
 	if m.detail == nil {
 		if name := m.selectedName(); name != "" {
-			return styleMuted.Render("loading " + name + "…")
+			return styleAccent.Render("⏳ loading " + name + "…")
 		}
 		return styleMuted.Render("select an island")
 	}
@@ -3933,6 +5201,16 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		kind = "headless — background process, logs only"
 	}
 	b.WriteString(fmt.Sprintf("kind:      %s %s\n", agentGlyph(a), styleMuted.Render(kind)))
+	// Gateway agents (OpenClaw/Letta/Goose) have a web UI. Say so on the detail
+	// pane — and, when the façade that reaches it is off, that ⏎ shows the setup
+	// — so the requirement is learned by landing here, not only by a failed Enter.
+	if _, isGW := m.agentGatewayPort(d.Name, agentID); isGW {
+		if m.overview != nil && m.overview.SSHAddr != "" {
+			b.WriteString("ui:        " + styleMuted.Render("web console — ⏎ opens it in your browser") + "\n")
+		} else {
+			b.WriteString("ui:        " + styleWaiting.Render("web console — needs the SSH façade; ⏎ for setup steps") + "\n")
+		}
+	}
 	if sw, ss := agentStatus(a); sw != "" {
 		b.WriteString(fmt.Sprintf("state:     %s\n", ss.Render(sw)))
 	}
@@ -4026,7 +5304,7 @@ func (m tuiModel) renderFooter() string {
 		term = "   [/] host terminal"
 	}
 	keys1 := "[⏎] open agent(s)   [>] island shell" + term
-	keys2 := "[s] settings   [m] actions   [H] server   [space] expand   [?] help   [q] quit"
+	keys2 := "[s] settings   [H] server   [space] expand   [?] help   [q] quit"
 	left := m.renderFooterLeft()
 	pad1 := m.width - lipgloss.Width(keys1) - 2
 	if pad1 < 1 {
@@ -4066,7 +5344,9 @@ func (m tuiModel) renderFooterLeft() string {
 	}
 	o := m.overview
 	if o == nil {
-		return styleMuted.Render("loading…")
+		// Muted grey reads as "nothing here", which is exactly wrong while the
+		// daemon is being queried — the accent says something is happening.
+		return styleAccent.Render("⏳ loading…")
 	}
 	dockerGlyph := healthGlyph(o.DockerReachable)
 	imagePart := healthGlyph(o.IslandImagePresent) + " " + styleMuted.Render("image")
@@ -4097,6 +5377,17 @@ func (m tuiModel) renderFooterLeft() string {
 // renderHelp draws the help overlay: every key, grouped into flat, always-visible
 // sections (Island / Team / Server / TUI) — nothing hidden behind a toggle, so a
 // control like [I] invite is discoverable straight from `?`.
+// capitalizeFirst upper-cases the first letter of a help description so the line
+// leads with a capital for skimming, leaving symbol-first rows (⏎, ↑/↓) alone.
+func capitalizeFirst(s string) string {
+	// Capitalize a leading lowercase ASCII letter; leave already-capitalized text
+	// and a leading symbol/space untouched.
+	if s != "" && s[0] >= 'a' && s[0] <= 'z' {
+		return string(s[0]-32) + s[1:]
+	}
+	return s
+}
+
 func (m tuiModel) renderHelp() string {
 	var b strings.Builder
 	b.WriteString(styleTitle.Render("Dejima — how to use it"))
@@ -4118,7 +5409,7 @@ func (m tuiModel) renderHelp() string {
 		for _, kv := range rows {
 			key := runewidth.FillRight(kv[0], 9)          // display-width padding (bytes ≠ cols for ⏎/↑↓)
 			prefixW := 2 + runewidth.StringWidth(key) + 2 // "  " + key + "  "
-			desc := truncateDisplay(kv[1], contentW-prefixW)
+			desc := truncateDisplay(capitalizeFirst(kv[1]), contentW-prefixW)
 			b.WriteString(fmt.Sprintf("  %s  %s\n", styleAccent.Render(key), styleMuted.Render(desc)))
 		}
 		b.WriteString("\n")
@@ -4136,11 +5427,11 @@ func (m tuiModel) renderHelp() string {
 		{"v", "set an agent's LLM provider / model / key (key-requiring types)"},
 		{"[ ]", "reorder the highlighted agent within its island (move up / down)"},
 		{"a", "attach here — replaces the dashboard with the agent"},
-		{"m", "actions menu for the highlighted row (attach, hibernate, rename, upgrade, ssh, purge…)"},
+		{"s", "settings for the highlighted row — island or agent (attach, restart, model, grants, rename, hibernate, purge…); a nav button links up to global Dejima settings"},
 		{"c", "open the island in your editor over SSH, straight at /workspace"},
 		{"h", "hibernate — stop the container, keep all data"},
 		{"w", "wake a hibernated island"},
-		{"r", "reset agent state (workspace preserved) — confirms first"},
+		{"r", "ERASE agent memory island-wide — every conversation + every tool login; workspace kept. To pick up a new secret you want Restart, on the agent's [s] menu"},
 		{"d", "purge — destroy the island and its volumes — confirms first"},
 	})
 
@@ -4157,9 +5448,10 @@ func (m tuiModel) renderHelp() string {
 	sec("Server controls (the daemon / host)", [][2]string{
 		{"H", "server menu — update daemon · set up SSH fleet-wide · build image · refresh"},
 		{"u / U", "update Dejima — the client first, then the daemon if needed (daemon update warns + gates: it restarts the daemon, closing all terminals fleet-wide). Also in [H]"},
-		{"s / S", "settings — editor · group-by-repo · connection target (which server)"},
+		{"S / ,", "global Dejima settings — editor · group-by-repo · connection target (which server) · provider keys. Also `s` on empty space, or the top nav button in any row's settings menu"},
+		{switchKey, "switch server — saved connections, add/join one, or drop back to the local socket. The same list as Settings → Connection target, one key from the header that names the server you're on"},
 		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
-		{"b", "build the island image on the daemon host — confirms first"},
+		{"b", "rebuild the island image on the daemon host — the step BEFORE [s] → Upgrade, which only recreates against the image already there. Also in [H] and in an island's [s] menu"},
 		{"R", "refresh now"},
 	})
 
@@ -4168,9 +5460,17 @@ func (m tuiModel) renderHelp() string {
 		{"PgUp/PgDn", "scroll the detail panel (events, agents) — Ctrl-u/Ctrl-d also work"},
 		{"p", "group the island list by repo — multi-agent projects read as one"},
 		{"#", "reveal / hide agent ids (names only by default)"},
-		{"Ctrl-b d", "detach from a session — the agent keeps running inside"},
-		{"Ctrl-\\", "from inside a session: summon this dashboard — the session stays alive"},
 		{"?", "this help   ·   q quit the dashboard"},
+	})
+
+	// Chords that work WHILE attached to an agent — intercepted by `dejima
+	// connect` before the agent sees them, so they don't collide with the agent's
+	// own keys. Documented here because they're otherwise invisible.
+	sec("In an agent session", [][2]string{
+		{"Ctrl-V", "paste a clipboard image to the agent (Alt-V too; DEJIMA_PASTE_KEY)"},
+		{"Ctrl-]", "attach a local file — type/paste its path, it uploads (DEJIMA_ATTACH_KEY)"},
+		{"Ctrl-\\", "summon this dashboard — the session stays alive (when launched from here)"},
+		{"Ctrl-b d", "detach — the agent keeps running inside"},
 	})
 
 	// Everything above is keybindings — always visible. The rest is REFERENCE
@@ -4188,7 +5488,7 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n")
 	b.WriteString(styleAccent.Render("[a]") + styleMuted.Render(" ▾ less"))
 	b.WriteString("\n\n")
-	para := "An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs."
+	para := "An island = a contained workspace that can hold several agents sharing its\ncreds and git. ⏎ on an island opens all its agents (each in its own window); ⏎\non an agent opens just that one; > opens a shell at /workspace (inside the\ncontainer). Expand one with [space], then [+] add agents. Headless agents have\nno screen — ⏎ opens their logs, or a gateway agent's UI (OpenClaw/Letta/Goose)."
 	paraLines := strings.Split(para, "\n")
 	for i, l := range paraLines {
 		paraLines[i] = truncateDisplay(l, contentW)
@@ -4228,7 +5528,7 @@ func (m tuiModel) renderHelp() string {
 	}
 	b.WriteString(stateLine)
 	b.WriteString("\n  ")
-	b.WriteString(styleMuted.Render(truncateDisplay("islands are uniform by default; give one its own color + glyph via the actions menu (m → Color & glyph)", contentW-2)))
+	b.WriteString(styleMuted.Render(truncateDisplay("islands are uniform by default; give one its own color + glyph via island settings (s → Color & glyph)", contentW-2)))
 	b.WriteString("\n\n")
 
 	b.WriteString(styleHeader.Render(truncateDisplay("From the shell (scriptable; the TUI is just a front-end)", contentW)))
@@ -4280,11 +5580,46 @@ func (m tuiModel) renderConfirm() string {
 	var prompt, input string
 	switch c.verb {
 	case "reset":
-		prompt = fmt.Sprintf("Clear agent state for %q? (workspace preserved)", c.island)
+		// The old copy — "Clear agent state for %q? (workspace preserved)" — named
+		// what survives and not what dies, so it read as reassurance. It isn't:
+		// this wipes the shared home volume, which is where every agent's Claude
+		// transcripts and every tool login live. An operator pressed [r] meaning
+		// "restart so it picks up my new secret" and lost a working session.
+		// Name the loss, and name the thing they probably wanted instead.
+		prompt = fmt.Sprintf("ERASE agent memory for every agent in %q — all conversation history and all tool logins (gh, npm, …). They come back as blank agents. Cannot be undone; the workspace and your git worktrees are untouched.\n\nIf you meant \"pick up a new secret / setting\", that's Restart on the agent's [s] menu — it keeps the conversation.", c.island)
+		input = "the island name (" + c.island + ")"
+	case "restart-agent", "restart-agent-cold":
+		who := c.agent
+		if isl, ok := m.islandByName(c.island); ok {
+			if lbl := agentByID(isl, c.agent).Label; lbl != "" {
+				who = lbl
+			}
+		}
+		if c.verb == "restart-agent" {
+			prompt = fmt.Sprintf("Restart agent %q in %q, continuing its conversation. It relaunches in a fresh shell, so it picks up new secrets and settings.", who, c.island)
+		} else {
+			prompt = fmt.Sprintf("Restart agent %q in %q COLD — a new conversation. Its history stays on disk but it won't be resumed; use plain Restart to continue where it left off.", who, c.island)
+		}
+		if c.strict {
+			// Mid-task: a restart kills the process and the turn it's in the middle
+			// of goes with it. Say so, and make it cost a typed id rather than a key.
+			prompt += fmt.Sprintf("\n\n⚠  %s looks like it's working right now. Restarting loses the turn it's in the middle of.", who)
+			input = "the agent id (" + c.agent + ")"
+		}
 	case "upgrade":
-		prompt = fmt.Sprintf("Recreate %q on the current island image? (all state preserved)", c.island)
+		// "the current island image" was the reassuring half of a two-step operation
+		// whose first step this prompt never mentioned. Upgrade recreates against
+		// whatever image is on the host and then stamps the island with the DAEMON's
+		// version — so an island rolled onto a stale image reports itself level, and
+		// doctor agrees. Nothing available here can tell how old the host's image is
+		// (the daemon reports only whether it exists), so this says what it does and
+		// names the step that makes it current, rather than guessing.
+		prompt = fmt.Sprintf("Recreate %q against the island image already on the host? This does NOT rebuild the image — if the daemon has been updated since the image was built, rebuild first ([s] → Rebuild the island image). All state preserved.", c.island)
 	case "recreate-island":
-		prompt = fmt.Sprintf("OOM priority changed — restart %q now to apply? (recreates the container; workspace + agents preserved)", c.island)
+		// Generic recreate confirm (secrets apply, OOM-priority apply, …): be honest
+		// that running agent sessions restart — that's the disruption the operator
+		// is consenting to — while reassuring that persisted state survives.
+		prompt = fmt.Sprintf("Recreate %q now to apply changes? Running agent sessions restart; workspace + agent state preserved.", c.island)
 	case "build-image":
 		prompt = "Rebuild the island image? Takes a few minutes; islands pick it up on upgrade."
 	case "purge":
@@ -4292,6 +5627,7 @@ func (m tuiModel) renderConfirm() string {
 		input = "the island name (" + c.island + ")"
 	case "force-purge":
 		prompt = fmt.Sprintf("%q has unpushed/uncommitted work that will be LOST. Force-purge anyway?", c.island)
+		input = "the island name (" + c.island + ") again"
 	case "remove-agent":
 		who := c.agent
 		if isl, ok := m.islandByName(c.island); ok {
@@ -4299,12 +5635,57 @@ func (m tuiModel) renderConfirm() string {
 				who = lbl
 			}
 		}
-		prompt = fmt.Sprintf("Remove agent %q (id %s) from island %q — destroys its worktree + agent state.", who, c.agent, c.island)
+		// "destroys its worktree" reads as "removes a directory". Say what is IN
+		// the directory, and say what survives only after that — the branch really
+		// is kept, and putting it first is how the CLI's "(keeps its branch)"
+		// managed to be true and reassuring at the same time.
+		prompt = fmt.Sprintf("Remove agent %q (id %s) from island %q — deletes its worktree, DISCARDING anything uncommitted or untracked in it. Its branch and commits are kept.", who, c.agent, c.island)
 		input = "the agent id (" + c.agent + ")"
+	case "force-remove-agent":
+		who := c.agent
+		if isl, ok := m.islandByName(c.island); ok {
+			if lbl := agentByID(isl, c.agent).Label; lbl != "" {
+				who = lbl
+			}
+		}
+		prompt = fmt.Sprintf("The worktree guard refused: agent %q has uncommitted work. Remove it anyway and DISCARD that work permanently? Its branch and commits are kept; only what was never committed is lost.", who)
+		input = "the agent id (" + c.agent + ") again"
+	case "remove-secret":
+		prompt = fmt.Sprintf("Remove secret %q from island %q — tools using it will start failing.", c.agent, c.island)
+		input = "the secret name (" + c.agent + ")"
 	case "remove-terminal":
 		prompt = fmt.Sprintf("Close host terminal %s? (kills the shell on the daemon host)", c.agent)
 	case "approve-action":
-		prompt = fmt.Sprintf("⚠ Approve this DESTRUCTIVE cross-island action (%s)? It runs once approved.", c.agent)
+		// The confirm used to name the action by ID alone — and it REPLACES the
+		// approvals pane rather than overlaying it (see View), so the description
+		// the operator was reading is off-screen by the time they answer. The one
+		// verb in the app that executes something on another island was the one
+		// whose confirm said least about what it was approving, and the only way to
+		// re-read it was to cancel. The pane already says "never approve blind";
+		// this is what that has to mean here.
+		prompt = "⚠ Approve this DESTRUCTIVE cross-island action? It runs once approved.\n"
+		if a, ok := m.findPendingAction(c.agent); ok {
+			fromName := a.FromLabel
+			if fromName == "" {
+				fromName = m.agentDisplayIn(a.From, a.FromAgent)
+			}
+			toName := a.ToLabel
+			if toName == "" {
+				toName = m.agentDisplayIn(a.To, a.ToAgent)
+			}
+			params := a.Params
+			if params == "" {
+				params = "(none)"
+			}
+			prompt += fmt.Sprintf("\n  action:  %s\n  from:    %s/%s\n  to:      %s/%s\n  topic:   %s\n  params:  %s\n",
+				a.Action, a.From, fromName, a.To, toName, a.Topic, truncate(params, 200))
+		} else {
+			// The queue is in-memory and TTL-expires; an action can vanish between
+			// arming the confirm and rendering it. Say that rather than render a
+			// confident-looking prompt with the detail silently missing.
+			prompt += fmt.Sprintf("\n  action %s is no longer in the pending queue — it may have expired.\n  Cancel and refresh rather than approving something you can't see.\n", c.agent)
+		}
+		input = "the action id (" + c.agent + ")"
 	case "deny-action":
 		prompt = fmt.Sprintf("Deny action %s.", c.agent)
 		input = "an optional reason (or leave blank)"
@@ -4339,7 +5720,7 @@ func (m tuiModel) renderConfirm() string {
 	// obvious, not buried.
 	title := styleHeader.Render("Confirm")
 	switch c.verb {
-	case "purge", "force-purge", "remove-agent", "remove-terminal":
+	case "purge", "force-purge", "reset", "remove-agent", "force-remove-agent", "remove-terminal":
 		title = styleErrored.Render("⚠  Confirm")
 	}
 	// Wrap the question so a long one doesn't run off the box.
@@ -4351,6 +5732,21 @@ func (m tuiModel) renderConfirm() string {
 		width = 24
 	}
 	question := lipgloss.NewStyle().Width(width).Render(prompt)
+
+	// For an update, show a short "what's in this release" blurb (from the curated
+	// release notes) plus a link to read the rest — so applying an update is an
+	// informed choice, not a leap. Standard for every release: the notes are the
+	// GitHub release body, which we curate on each tag; this just surfaces them.
+	var extra string
+	if c.verb == "update-client" || c.verb == "update-daemon" {
+		if b := releaseBlurb(m.latestNotes); b != "" {
+			extra = "\n\n" + styleHeader.Render("What's in "+m.latestRelease) + "\n" +
+				lipgloss.NewStyle().Width(width).Render(styleMuted.Render(b))
+			if m.latestURL != "" {
+				extra += "\n" + styleMuted.Render("Full notes: "+m.latestURL)
+			}
+		}
+	}
 
 	// The action line: for a y/n verb, "▸ Type  y  then Enter"; for a typed verb,
 	// name what to type. The typed answer + cursor sit right after it.
@@ -4365,7 +5761,40 @@ func (m tuiModel) renderConfirm() string {
 	answerLine := styleHeader.Render("  › ") + styleTitle.Render(c.answer+"▌")
 
 	hint := styleMuted.Render("Enter = confirm    ·    Esc = cancel")
-	return title + "\n\n" + question + "\n\n" + action + "\n" + answerLine + "\n\n" + hint
+	return title + "\n\n" + question + extra + "\n\n" + action + "\n" + answerLine + "\n\n" + hint
+}
+
+// releaseBlurb distills a short, plain "what's in this update" line from a release
+// body (markdown): the first prose paragraph, past any leading heading, with the
+// markdown leaders/emphasis stripped and the length capped. Enough to say what the
+// update is in the confirm pop-up without reproducing the whole notes.
+func releaseBlurb(notes string) string {
+	var para []string
+	for _, ln := range strings.Split(notes, "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			if len(para) > 0 {
+				break // end of the first paragraph
+			}
+			continue
+		}
+		if strings.HasPrefix(t, "#") { // a heading: skip it, take the prose that follows
+			if len(para) > 0 {
+				break
+			}
+			continue
+		}
+		t = strings.TrimLeft(t, "-*># ") // list/quote/emphasis leaders
+		para = append(para, t)
+	}
+	blurb := strings.Join(para, " ")
+	blurb = strings.ReplaceAll(blurb, "**", "")
+	blurb = strings.ReplaceAll(blurb, "`", "")
+	const max = 240
+	if len(blurb) > max {
+		blurb = strings.TrimSpace(blurb[:max]) + "…"
+	}
+	return blurb
 }
 
 // renderActionMenu draws the inner content of the per-row context popup: a
@@ -4376,7 +5805,32 @@ func (m tuiModel) renderActionMenu() string {
 	var b strings.Builder
 	b.WriteString(styleHeader.Render(am.title))
 	b.WriteString("\n\n")
+	// Nav buttons (level-switching) ride at the top; a rule separates them from the
+	// row's own actions.
+	navCount, boundaryCount := 0, 0
+	for _, it := range am.items {
+		if it.nav {
+			navCount++
+		}
+		if it.boundary {
+			boundaryCount++
+		}
+	}
 	for i, it := range am.items {
+		if i == navCount && navCount > 0 {
+			// A DOUBLE rule when a boundary group follows, because what separates
+			// it from the nav buttons is not the same kind of break as what
+			// separates ordinary settings from each other. The heavier rule is the
+			// only thing carrying "these two cross the containment boundary".
+			rule := "   ──────────────────────────"
+			if boundaryCount > 0 {
+				rule = "   ══════════════════════════"
+			}
+			b.WriteString(styleMuted.Render(rule) + "\n")
+		}
+		if boundaryCount > 0 && i == navCount+boundaryCount {
+			b.WriteString(styleMuted.Render("   ──────────────────────────") + "\n")
+		}
 		mark := "   "
 		if i == am.sel && !it.disabled {
 			mark = styleAccent.Render(" ▸ ")
@@ -4396,7 +5850,14 @@ func (m tuiModel) renderActionMenu() string {
 		if it.key != "" {
 			accel = styleMuted.Render("  [" + it.key + "]")
 		}
-		b.WriteString(mark + st.Render(it.label) + accel + "\n")
+		// A trailing "(…)" gloss is rendered muted so the action name reads first.
+		label := st.Render(it.label)
+		if !it.disabled {
+			if name := menuActionName(it.label); name != it.label {
+				label = st.Render(name) + styleMuted.Render(it.label[len(name):])
+			}
+		}
+		b.WriteString(mark + label + accel + "\n")
 	}
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
@@ -4419,7 +5880,7 @@ func (m tuiModel) renderSettings() string {
 	}
 
 	if st.page == settingsEditor {
-		b.WriteString(styleHeader.Render("Settings · preferred editor"))
+		b.WriteString(styleHeader.Render("Dejima settings · preferred editor"))
 		b.WriteString("\n")
 		b.WriteString(styleMuted.Render("which editor 'c' opens an island in (Remote-SSH, at /workspace)"))
 		b.WriteString("\n\n")
@@ -4441,7 +5902,7 @@ func (m tuiModel) renderSettings() string {
 		}
 		b.WriteString(styleHeader.Render("Settings · default terminal"))
 		b.WriteString("\n")
-		b.WriteString(styleMuted.Render("which terminal 'open agent' / new windows spawn into (DEJIMA_TERMINAL overrides)"))
+		b.WriteString(styleMuted.Render("which terminal new windows spawn into (DEJIMA_TERMINAL overrides)"))
 		b.WriteString("\n\n")
 		for i, c := range terminalChoices {
 			dot := "○ "
@@ -4455,7 +5916,90 @@ func (m tuiModel) renderSettings() string {
 		return b.String()
 	}
 
-	b.WriteString(styleHeader.Render("Settings"))
+	if st.page == settingsProviders {
+		return m.renderProviders()
+	}
+	if st.page == settingsLocal {
+		b.WriteString(styleHeader.Render("Settings · local models"))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("a host inference backend islands share; manage with `dejima local`"))
+		b.WriteString("\n\n")
+		switch {
+		case st.localErr != "":
+			b.WriteString(styleErrored.Render("couldn't load status: " + st.localErr))
+			b.WriteString("\n")
+		case st.localStatus == nil:
+			b.WriteString(styleMuted.Render("loading…"))
+			b.WriteString("\n")
+		default:
+			ls := st.localStatus
+			var state string
+			switch {
+			case ls.Running:
+				state = styleRunning.Render("running")
+			case ls.Installed:
+				state = styleWaiting.Render("installed (not running)")
+			default:
+				state = styleMuted.Render("not installed")
+			}
+			b.WriteString(fmt.Sprintf("backend:  %s\n", ls.Backend))
+			b.WriteString("status:   " + state + "\n")
+			b.WriteString(styleMuted.Render(fmt.Sprintf("endpoint: %s  (provider %q)", ls.Endpoint, ls.Provider)) + "\n")
+			if ls.HostRAMGiB > 0 {
+				b.WriteString(styleMuted.Render(fmt.Sprintf("host RAM: %d GiB", ls.HostRAMGiB)) + "\n")
+			}
+			b.WriteString("\n")
+			if len(ls.Models) == 0 {
+				// The CLI hint is for the case the rows can't cover: a model
+				// outside the curated catalog. When there's a Pull row below,
+				// repeating a command to retype is what this page stopped being.
+				hint := "no models pulled — `dejima local pull <model>`"
+				for _, act := range st.localActs {
+					if strings.HasPrefix(act.verb, "pull") {
+						hint = "no models pulled"
+						break
+					}
+				}
+				b.WriteString(styleMuted.Render(hint) + "\n")
+			} else {
+				b.WriteString("pulled models:\n")
+				for _, mdl := range ls.Models {
+					line := "  • " + mdl.Ref
+					if mdl.Size != "" {
+						line += styleMuted.Render("  " + mdl.Size)
+					}
+					b.WriteString(line + "\n")
+				}
+			}
+			if top := ls.Recommend.Top; top != nil && localModelPulled(ls, *top) {
+				// Already pulled, so there's no row for it — say why it's the one
+				// to point an agent at.
+				b.WriteString("\n" + styleMuted.Render(fmt.Sprintf(
+					"recommended for this host: %s (%s) — pulled", top.Alias, top.Params)) + "\n")
+			}
+		}
+		if st.localNotice != "" {
+			b.WriteString("\n" + st.localNotice + "\n")
+		}
+		if len(st.localActs) > 0 {
+			b.WriteString("\n")
+			for i, act := range st.localActs {
+				lead, style := "   ", lipgloss.NewStyle()
+				if i == st.sel {
+					lead, style = styleAccent.Render(" ▸ "), styleSelected
+				}
+				b.WriteString(lead + style.Render(act.label) + "\n")
+			}
+			b.WriteString("\n")
+			b.WriteString(styleMuted.Render("↑/↓ move · ⏎ run (hands over the terminal) · esc back"))
+			return b.String()
+		}
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("esc back"))
+		return b.String()
+	}
+
+	b.WriteString(styleHeader.Render("Dejima settings"))
 	b.WriteString("\n")
 	// Version line: this client, the connected daemon (when it differs), and
 	// whether anything's behind the latest release.
@@ -4488,33 +6032,24 @@ func (m tuiModel) renderSettings() string {
 	case m.daemonUpdate:
 		updateRow = "Update                    " + styleWaiting.Render("daemon → "+m.latestRelease+" (restarts daemon)")
 	}
-	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
-	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))
-	row(2, "", "Connection target         "+styleMuted.Render(target)+styleMuted.Render("  →"))
-	row(3, "", "Team & invites            "+styleMuted.Render("invite a teammate, revoke access")+styleMuted.Render("  →"))
-	row(4, "", "Check for updates")
-	row(5, "", updateRow)
-	voiceRow := "Voice dictation           "
-	if m.voice.Ready() {
-		voiceRow += styleRunning.Render("ready ✓")
-	} else if miss := m.voice.Missing(); len(miss) > 0 {
-		voiceRow += styleMuted.Render("not set up · needs " + strings.Join(miss, ", ") + "  · ⏎ install")
-	} else {
-		voiceRow += styleMuted.Render("not set up  · ⏎ install")
-	}
-	row(6, "", voiceRow)
 	githubRow := "GitHub                    "
 	if miss := m.githubMissingCredIslands(); len(miss) > 0 {
 		githubRow += styleWaiting.Render(fmt.Sprintf("⚠ %d island(s) need reconnect", len(miss))) + styleMuted.Render("  →")
 	} else {
 		githubRow += styleMuted.Render("connect your GitHub for private repos") + styleMuted.Render("  →")
 	}
-	row(7, "", githubRow)
-	termLabel := "auto-detect"
-	if cfg, err := clientcfg.Load(); err == nil && cfg.Terminal != "" {
-		termLabel = terminalChoices[terminalIndex(cfg.Terminal)].label
-	}
-	row(8, "", "Default terminal          "+styleMuted.Render(termLabel)+styleMuted.Render("  →"))
+	// Order: display prefs (editor, grouping) · where you connect · account &
+	// collaborators (GitHub + Team, adjacent) · updates (the maintenance pair, last).
+	row(0, "", "Preferred editor          "+styleMuted.Render(editorLabel)+styleMuted.Render("  →"))
+	row(1, "", "Group islands by repo     "+styleMuted.Render(groupState))
+	row(2, "", "Connection target         "+styleMuted.Render(target)+styleMuted.Render("  →"))
+	row(3, "", githubRow)
+	row(4, "", "Team & invites            "+styleMuted.Render("invite a teammate, revoke access")+styleMuted.Render("  →"))
+	row(5, "", "Check for updates")
+	row(6, "", updateRow)
+	row(7, "", "Local models              "+styleMuted.Render("shared open-weights models (Ollama)")+styleMuted.Render("  →"))
+	row(8, "", "Provider keys             "+styleMuted.Render("Anthropic / OpenAI / Google API keys")+styleMuted.Render("  →"))
+	row(9, "", "Default terminal          "+styleMuted.Render("which terminal new windows open in")+styleMuted.Render("  →"))
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()

@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/invite"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // normalizeHost trims the entered daemon address and appends the default port
@@ -19,6 +20,11 @@ func normalizeHost(host string) string {
 	host = strings.TrimSpace(host)
 	if host == "" {
 		return ""
+	}
+	// `wsl://<distro>` is a distro name, not an address — it has no port to
+	// default, and appending one would make it undialable.
+	if wsl.IsHost(host) {
+		return wsl.Host(wsl.Distro(host))
 	}
 	if _, _, err := net.SplitHostPort(host); err != nil {
 		return net.JoinHostPort(host, "7273")
@@ -37,6 +43,10 @@ type switcherModel struct {
 	host     string
 	blob     string // join-flow input: a pasted `dejima-invite:` blob
 	err      string
+	// delActive records, at the moment [d] was pressed, whether the profile being
+	// deleted is the one we're currently connected through — so the prompt can
+	// warn that confirming also drops the session back to the local socket.
+	delActive bool
 }
 
 type switcherStep int
@@ -45,7 +55,9 @@ const (
 	swList switcherStep = iota
 	swAddLabel
 	swAddHost
-	swJoin // paste a team invite blob → decode → save profile → connect
+	swJoin          // paste a team invite blob → decode → save profile → connect
+	swRename        // rename the selected saved connection
+	swConfirmDelete // confirm removing the selected saved connection
 )
 
 // openSwitcher loads saved profiles (prepending a synthetic "local") and opens
@@ -73,10 +85,14 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switcherAddHostKey(msg)
 	case swJoin:
 		return m.switcherJoinKey(msg)
+	case swRename:
+		return m.switcherRenameKey(msg)
+	case swConfirmDelete:
+		return m.switcherConfirmDeleteKey(msg)
 	}
 	// swList
 	switch msg.String() {
-	case "esc", "q", "s", "ctrl+c":
+	case "esc", "ctrl+[", "q", "s", "ctrl+c":
 		m.switcher = nil
 	case "up", "k":
 		if s.cursor > 0 {
@@ -92,12 +108,47 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Join via a team invite — paste the blob an owner sent you. (Capital J and
 		// `i` both open it; lowercase j is list navigation above.)
 		s.step, s.blob, s.err = swJoin, "", ""
+	case "e":
+		if s.cursor > 0 { // "local" is synthetic — nothing to rename
+			s.step, s.label, s.err = swRename, s.profiles[s.cursor].Name, ""
+		}
 	case "d":
 		if s.cursor > 0 { // never delete the synthetic "local"
-			return m.switcherDelete()
+			s.delActive = s.profiles[s.cursor].Host == m.activeHost
+			s.step, s.err = swConfirmDelete, ""
 		}
 	case "enter":
 		return m.switcherActivate()
+	}
+	return m, nil
+}
+
+// switcherRenameKey collects a new display name for the selected connection and
+// commits it (host/token unchanged) on Enter.
+func (m tuiModel) switcherRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := m.switcher
+	switch msg.String() {
+	case "esc", "ctrl+[":
+		s.step, s.err = swList, ""
+	case "enter":
+		old := s.profiles[s.cursor].Name
+		if err := clientcfg.RenameProfile(old, s.label); err != nil {
+			s.err = err.Error()
+			return m, nil
+		}
+		newName := strings.TrimSpace(s.label)
+		if m.activeLabel == old {
+			m.activeLabel = newName // keep the header/status label in step
+		}
+		cfg, _ := clientcfg.Load()
+		s.profiles = append([]clientcfg.Profile{{Name: "local", Host: ""}}, cfg.Profiles...)
+		s.step, s.err = swList, ""
+	case "backspace":
+		if s.label != "" {
+			s.label = s.label[:len(s.label)-1]
+		}
+	default:
+		s.label += printableInput(msg)
 	}
 	return m, nil
 }
@@ -118,6 +169,7 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 	_ = clientcfg.Save(cfg)
 
 	m.client = c
+	m.gen++ // new connection: in-flight replies from the old target are now stale
 	m.activeHost = p.Host
 	m.activeLabel = p.Name
 	// An explicit pick in the switcher is profile- or local-sourced, never env —
@@ -142,8 +194,24 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
 }
 
+// switcherConfirmDeleteKey gates removal behind an explicit "y". Enter is
+// deliberately NOT a confirm: in the list Enter means "connect", so a d-then-
+// Enter reflex must never remove a connection. Unrecognized keys leave the
+// prompt up rather than resolving it either way.
+func (m tuiModel) switcherConfirmDeleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := m.switcher
+	switch msg.String() {
+	case "y", "Y":
+		return m.switcherDelete()
+	case "n", "N", "esc", "ctrl+[", "q", "ctrl+c":
+		s.step, s.err = swList, ""
+	}
+	return m, nil
+}
+
 func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 	s := m.switcher
+	s.step, s.err = swList, ""
 	target := s.profiles[s.cursor]
 	// Shared store mutation — the same path as `dejima profile rm`. Removes the
 	// profile and clears ActiveProfile if it was the one deleted (profile names
@@ -159,6 +227,7 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 	if target.Host == m.activeHost {
 		if c, err := clientForHost(""); err == nil {
 			m.client = c
+			m.gen++ // fell back to the local socket; drop replies from the deleted host
 			m.activeHost = ""
 			m.activeLabel = "local"
 			m.activeSource = "local"
@@ -185,7 +254,7 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherAddLabelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step = swList
 	case "enter":
 		if strings.TrimSpace(s.label) == "" {
@@ -205,12 +274,12 @@ func (m tuiModel) switcherAddLabelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step = swAddLabel
 	case "enter":
 		host := normalizeHost(s.host)
 		if host == "" {
-			s.err = "host is required (e.g. 100.77.85.107:7273)"
+			s.err = "host is required (e.g. 100.101.102.103:7273)"
 			return m, nil
 		}
 		cfg, _ := clientcfg.Load()
@@ -237,7 +306,7 @@ func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherJoinKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step, s.err = swList, ""
 		return m, nil
 	case "enter":
@@ -278,6 +347,7 @@ func (m tuiModel) switcherJoinSubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.client = c
+	m.gen++ // new connection: in-flight replies from the old target are now stale
 	m.activeHost = p.Host
 	m.activeLabel = name
 	m.activeSource = "profile"
@@ -319,16 +389,30 @@ func (s *switcherModel) view() string {
 
 	switch s.step {
 	case swAddLabel:
-		b.WriteString(styleMuted.Render("Name this connection (e.g. minion, work-vps)."))
+		b.WriteString(styleMuted.Render("Name this connection (e.g. mac-mini, work-vps)."))
 		b.WriteString("\n\nname: " + styleAccent.Render(s.label+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] next   [esc] back"))
 	case swAddHost:
 		b.WriteString(styleMuted.Render("Daemon address as ") + styleAccent.Render("host:port") + styleMuted.Render(" — the port is required (default ") + styleAccent.Render("7273") + styleMuted.Render(")."))
-		b.WriteString("\n" + styleMuted.Render("  e.g.  ") + styleAccent.Render("100.77.85.107:7273") + styleMuted.Render("  (a Tailscale IP)    or    ") + styleAccent.Render("minion:7273"))
+		b.WriteString("\n" + styleMuted.Render("  e.g.  ") + styleAccent.Render("100.101.102.103:7273") + styleMuted.Render("  (a Tailscale IP)    or    ") + styleAccent.Render("mac-mini:7273"))
 		b.WriteString("\n\nhost: " + styleAccent.Render(s.host+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("How to find it: on the machine running dejimad, run ") + styleAccent.Render("tailscale ip") + styleMuted.Render(" → use that address with ") + styleAccent.Render(":7273") + styleMuted.Render("."))
 		b.WriteString("\n" + styleMuted.Render("(a bare host with no :port gets :7273 added automatically.)"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] save   [esc] back"))
+	case swRename:
+		b.WriteString(styleMuted.Render("Rename this connection (host and token stay the same)."))
+		b.WriteString("\n\nname: " + styleAccent.Render(s.label+"_"))
+		b.WriteString("\n\n" + styleMuted.Render("[⏎] save   [esc] cancel"))
+	case swConfirmDelete:
+		p := s.profiles[s.cursor]
+		b.WriteString(styleMuted.Render("Remove this saved connection?"))
+		b.WriteString("\n\n  " + styleAccent.Render(p.Name) + "   " + styleMuted.Render(p.Host))
+		b.WriteString("\n\n" + styleMuted.Render("Only the saved entry goes away — the daemon, its islands, and their"))
+		b.WriteString("\n" + styleMuted.Render("agents are untouched. You can add it back with [a]."))
+		if s.delActive {
+			b.WriteString("\n\n" + styleErrored.Render("This is your active connection — deleting it drops you to the local socket."))
+		}
+		b.WriteString("\n\n" + styleMuted.Render("[y] delete   [n/esc] cancel"))
 	case swJoin:
 		b.WriteString(styleMuted.Render("Joining a teammate's server? Paste the ") + styleAccent.Render("dejima-invite:") + styleMuted.Render(" blob they sent you."))
 		b.WriteString("\n" + styleMuted.Render("It carries the host + your access token — no env vars, no manual host:port."))
@@ -355,7 +439,7 @@ func (s *switcherModel) view() string {
 			}
 			b.WriteString("\n")
 		}
-		b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] connect   [a] add   [J] join via invite   [d] delete   [esc] close"))
+		b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] connect   [a] add   [e] rename   [J] join via invite   [d] delete   [esc] close"))
 	}
 
 	if s.err != "" {

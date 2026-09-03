@@ -8,10 +8,10 @@ import (
 )
 
 func TestSSHConfigBlock(t *testing.T) {
-	got := sshConfigBlock("wildfire", "100.77.85.107", "2222")
+	got := sshConfigBlock("wildfire", "100.101.102.103", "2222")
 	for _, want := range []string{
 		"Host dejima-wildfire\n",
-		"HostName 100.77.85.107\n",
+		"HostName 100.101.102.103\n",
 		"Port 2222\n",
 		"User wildfire\n",
 	} {

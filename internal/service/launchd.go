@@ -2,12 +2,18 @@ package service
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
+
+	"github.com/aoos/dejima/internal/fdlimit"
 )
 
 const launchdLabel = "dev.dejima.dejimad"
@@ -44,9 +50,8 @@ func (m *launchdManager) Install(binaryPath string, args []string) error {
 	outLog := filepath.Join(logDir, "dejimad.out.log")
 	errLog := filepath.Join(logDir, "dejimad.err.log")
 
-	tmpl := template.Must(template.New("plist").Parse(launchdTemplate))
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, map[string]any{
+	if err := renderPlist(&buf, map[string]any{
 		"Label":            launchdLabel,
 		"ProgramArguments": append([]string{binaryPath}, args...),
 		"WorkingDir":       home,
@@ -66,18 +71,25 @@ func (m *launchdManager) Install(binaryPath string, args []string) error {
 	_ = exec.Command("launchctl", "bootout", "user/"+currentUID()+"/"+launchdLabel).Run()
 	_ = exec.Command("launchctl", "unload", path).Run()
 
-	// Try the GUI domain first — that's where LaunchAgents normally live and
-	// where launchd auto-loads them on desktop login. On a headless Mac (SSH,
-	// no console login) the gui domain doesn't exist, but the per-user
-	// `user/<uid>` domain does, so fall back to it: the daemon is then still
-	// supervised (KeepAlive restarts) for this boot. The user domain is torn
-	// down at shutdown and nothing re-bootstraps the agent at the next boot
-	// until someone logs in, so it's not reboot-durable — for that, point at
-	// the system LaunchDaemon install. `load -w` remains as a last resort for
-	// old launchctl versions without `bootstrap`.
-	stderrGUI, errGUI := runCaptureStderr("launchctl", "bootstrap", "gui/"+currentUID(), path)
-	if errGUI == nil {
-		return nil
+	// The GUI domain is where LaunchAgents normally live and where launchd
+	// auto-loads them on desktop login. The per-user `user/<uid>` domain is the
+	// headless fallback: still supervised (KeepAlive restarts) for this boot,
+	// but torn down at shutdown with nothing to re-bootstrap it until someone
+	// logs in — so not reboot-durable. For that, point at the system
+	// LaunchDaemon. `load -w` remains a last resort for old launchctl versions.
+	//
+	// Probe for a GUI (Aqua) domain before trying to bootstrap into it. On a
+	// headless Mac — SSH, no desktop login — that domain doesn't exist and the
+	// attempt fails with "125: Domain does not support specified action", which
+	// reads like a broken install rather than "nobody is logged in". Ask first,
+	// and if it's absent skip straight to the user domain with an explanation.
+	var stderrGUI string
+	errGUI := errNoGUIDomain
+	if guiDomainAvailable() {
+		stderrGUI, errGUI = runCaptureStderr("launchctl", "bootstrap", "gui/"+currentUID(), path)
+		if errGUI == nil {
+			return nil
+		}
 	}
 	if _, errUser := runCaptureStderr("launchctl", "bootstrap", "user/"+currentUID(), path); errUser == nil {
 		fmt.Fprintln(os.Stderr)
@@ -120,15 +132,50 @@ func runCaptureStderr(name string, args ...string) (string, error) {
 	return stderr.String(), err
 }
 
+// teardownTimeout bounds a service-teardown command.
+//
+// `launchctl bootout` is synchronous: it does not return until launchd has torn
+// the job down, which means waiting for every process launchd associates with
+// it. The daemon's descendants include host-terminal tmux servers — so an
+// operator running an uninstall FROM one of those shells is inside the job
+// being removed, and the wait is mutual: launchctl waits for the tmux tree,
+// which contains the launchctl. Neither ever finishes.
+//
+// preflightNotInsideDaemon catches the common shape of this before we start.
+// The timeout is the backstop for shapes it can't see, so the worst case is a
+// reported failure rather than a wedged terminal.
+const teardownTimeout = 90 * time.Second
+
+// runTeardown runs a teardown command under teardownTimeout, reporting a
+// timeout distinctly so the caller can explain it rather than appearing stuck.
+func runTeardown(name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), teardownTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("%s timed out after %s — launchd is likely waiting on a process this "+
+			"command is itself inside (a host terminal?). Run the uninstall from a plain shell on the host",
+			name, teardownTimeout)
+	}
+	if err != nil && strings.TrimSpace(stderr.String()) != "" {
+		return fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+	}
+	return err
+}
+
 func (m *launchdManager) Uninstall() error {
 	path, err := m.plistPath()
 	if err != nil {
 		return err
 	}
-	// Best-effort: bootout then unload, then remove the plist.
-	_ = exec.Command("launchctl", "bootout", "gui/"+currentUID()+"/"+launchdLabel).Run()
-	_ = exec.Command("launchctl", "bootout", "user/"+currentUID()+"/"+launchdLabel).Run()
-	_ = exec.Command("launchctl", "unload", path).Run()
+	// Best-effort, but bounded: see runTeardown on why an unbounded bootout can
+	// deadlock against the caller.
+	_ = runTeardown("launchctl", "bootout", "gui/"+currentUID()+"/"+launchdLabel)
+	_ = runTeardown("launchctl", "bootout", "user/"+currentUID()+"/"+launchdLabel)
+	_ = runTeardown("launchctl", "unload", path)
 	return os.Remove(path)
 }
 
@@ -156,8 +203,29 @@ func (m *launchdManager) Restart() error {
 		guiTarget, err, strings.TrimSpace(stderr))
 }
 
+// errNoGUIDomain marks "we never attempted the gui domain" so the diagnostic
+// below can say that, instead of reporting an exec error that never happened.
+var errNoGUIDomain = errors.New("no GUI session on this Mac (nobody logged in at the console)")
+
+// guiDomainAvailable reports whether launchd has an Aqua/GUI domain for this
+// user — i.e. whether someone is logged in at the desktop. Asking the domain
+// (no label) is the same mechanism Detect() already uses one level deeper.
+func guiDomainAvailable() bool {
+	return exec.Command("launchctl", "print", "gui/"+currentUID()).Run() == nil
+}
+
 func currentUID() string {
 	return fmt.Sprintf("%d", os.Getuid())
+}
+
+// renderPlist executes the shared plist template into w. Both the per-user
+// LaunchAgent and the system LaunchDaemon go through here so neither can drift
+// from the other on things like the file-descriptor limit.
+func renderPlist(w io.Writer, data map[string]any) error {
+	if _, ok := data["NumberOfFiles"]; !ok {
+		data["NumberOfFiles"] = fdlimit.Target
+	}
+	return template.Must(template.New("plist").Parse(launchdTemplate)).Execute(w, data)
 }
 
 const launchdTemplate = `<?xml version="1.0" encoding="UTF-8"?>
@@ -181,6 +249,15 @@ const launchdTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 {{- end}}
   <key>RunAtLoad</key>
   <true/>
+  <!-- launchd's default soft limit is 256 files, which a few concurrent island
+       egress tunnels exhaust; the daemon then hangs accepts instead of erroring.
+       The daemon also raises this itself at startup — this covers the gap for
+       anything that reads the limit before that runs. -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>{{.NumberOfFiles}}</integer>
+  </dict>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>

@@ -25,16 +25,29 @@ import (
 	"strings"
 	"time"
 
+	"strconv"
+
 	"github.com/aoos/dejima/internal/version"
 )
 
 // githubToken returns a GitHub token from the environment, if any, used to lift
 // the release-check off the unauthenticated 60/hr rate limit (→ 5000/hr).
+// TokenFallback, when set, supplies a GitHub token for the release-check API
+// calls if neither GITHUB_TOKEN nor GH_TOKEN is set — so a daemon (or client)
+// that already has a connected GitHub identity authenticates its update checks
+// (5000/hr) instead of sharing the anonymous 60/hr-per-IP limit. Wired at
+// startup to the connected identity; kept as a hook so selfupdate needn't import
+// the identity store (and stays usable with no token at all).
+var TokenFallback func() string
+
 func githubToken() string {
 	for _, e := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
 		if v := strings.TrimSpace(os.Getenv(e)); v != "" {
 			return v
 		}
+	}
+	if TokenFallback != nil {
+		return strings.TrimSpace(TokenFallback())
 	}
 	return ""
 }
@@ -51,12 +64,10 @@ const (
 // release was produced by `make release` (a packaged client build); anything
 // else ("dev", a git-describe string) is a working checkout.
 func DetectMode() Mode {
-	v := strings.TrimSpace(version.Version)
-	// A *clean* release tag (vX.Y.Z, no suffix) is a packaged client build.
-	// version.IsRelease accepts a git-describe string too (it ignores the
-	// "-N-gHASH"/"-dirty" suffix), so additionally require no suffix — that's
-	// what separates a release client from a `make`-from-checkout dev/server.
-	if version.IsRelease(v) && !strings.ContainsAny(v, "-+") {
+	// A *clean* release tag (vX.Y.Z, no suffix) is a packaged client build; a
+	// git-describe string is a `make`-from-checkout dev/server. That distinction
+	// now lives in version.IsExactRelease (IsRelease alone accepts the suffix).
+	if version.IsExactRelease(version.Version) {
 		return ModeRelease
 	}
 	return ModeSource
@@ -65,39 +76,151 @@ func DetectMode() Mode {
 // releasesURL is the GitHub "latest release" endpoint, overridable in tests.
 var releasesURL = "https://api.github.com/repos/aoos/dejima/releases/latest"
 
+// ReleaseInfo is the newest published release: its tag, its notes (the curated
+// release body — the source of the in-app "what's in this update" blurb), and the
+// URL of its release page ("view more").
+type ReleaseInfo struct {
+	Tag   string
+	Notes string
+	URL   string
+}
+
 // LatestRelease returns the tag of the newest published (non-prerelease) release.
 func LatestRelease(ctx context.Context) (string, error) {
+	info, err := LatestReleaseInfo(ctx)
+	return info.Tag, err
+}
+
+// LatestReleaseInfo returns the newest published release's tag, notes, and page
+// URL in one request. The notes are the release body we curate on every release;
+// the TUI shows a blurb of it in the update confirm so an operator sees WHAT the
+// update is before applying it (with the URL to read the rest).
+func LatestReleaseInfo(ctx context.Context) (ReleaseInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
 	if err != nil {
-		return "", err
+		return ReleaseInfo{}, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if tok := githubToken(); tok != "" {
+	tok := githubToken()
+	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("query latest release: %w", err)
+		return ReleaseInfo{}, fmt.Errorf("query latest release: %w", err)
 	}
 	defer resp.Body.Close()
-	// 403/429 from the GitHub API is almost always the unauthenticated rate limit
-	// (60/hr) — surface that plainly + the remedy, rather than a bare HTTP code.
+
+	// A REJECTED TOKEN MUST NOT BREAK A CHECK THAT NEEDS NO TOKEN.
+	//
+	// This reads a public release. The token exists only to lift the anonymous
+	// 60/hr-per-IP limit to 5000/hr — an optimisation, not a requirement. But
+	// sending an expired one turns a 200 into a 401, so having a BAD credential
+	// became worse than having none, and an operator whose token expired lost
+	// update checks entirely for a reason nothing connected to updates.
+	//
+	// That is what happened in the field: checks worked for hundreds of updates
+	// while anonymous, then broke a month after they were wired to a credential
+	// connected for private-repo clones.
+	//
+	// So: retry once, anonymously. Degrade to the rate limit rather than to
+	// nothing. The 401 is still surfaced when the retry ALSO fails, because then
+	// it is a real problem rather than a stale token.
+	if resp.StatusCode == http.StatusUnauthorized && tok != "" {
+		resp.Body.Close()
+		anon, aerr := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
+		if aerr != nil {
+			return ReleaseInfo{}, aerr
+		}
+		anon.Header.Set("Accept", "application/vnd.github+json")
+		resp, err = http.DefaultClient.Do(anon)
+		if err != nil {
+			return ReleaseInfo{}, fmt.Errorf("query latest release: %w", err)
+		}
+		defer resp.Body.Close()
+	}
+	// 403/429 from the GitHub API is usually the unauthenticated rate limit
+	// (60/hr, shared per source IP), but not always — a bad GITHUB_TOKEN also
+	// 403s, and telling that operator to "retry shortly" sends them to wait for
+	// a limit that was never the problem. Distinguish on the header GitHub sets
+	// specifically for exhaustion, and say when it clears so "shortly" isn't a
+	// guess.
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return "", fmt.Errorf("github API rate-limited (HTTP %d) — retry shortly, or set GITHUB_TOKEN to raise the limit", resp.StatusCode)
+		return ReleaseInfo{}, rateLimitError(resp)
+	}
+	// 401 is unambiguous and the generic message wasted an operator's time on it:
+	// GitHub rejected a token we SENT. The release check needs no auth at all —
+	// it reads a public release — so the token came from GITHUB_TOKEN, GH_TOKEN
+	// or the daemon's stored credential, and it is expired, revoked, or scoped so
+	// it cannot read this repo. "HTTP 401" sends the reader to look for an outage.
+	//
+	// The remedy is the part worth printing: unsetting the variable makes the
+	// check work immediately, because it never needed the token.
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ReleaseInfo{}, fmt.Errorf(
+			"github rejected the token we sent, and an anonymous retry failed too (HTTP 401).\n" +
+				"  See what you have:      dejima github ls\n" +
+				"  A good one already?     dejima github default <name>\n" +
+				"  Need a fresh token?     dejima github connect --default\n" +
+				"  Plain `connect` adds a SECOND identity and leaves the old one as the default,\n" +
+				"  which is what the daemon resolves — so if you have already run it, the fix is\n" +
+				"  `github default`, not another reconnect.\n" +
+				"  This check needs no auth at all (it reads a public release); the token only\n" +
+				"  avoids GitHub's 60/hr anonymous limit. So an expired one BREAKS a check that\n" +
+				"  would otherwise work.\n" +
+				"  Note `gh auth login` does NOT fix this: the daemon reads Dejima's own GitHub\n" +
+				"  identity store, not ~/.config/gh. Two stores, and only this one is consulted\n" +
+				"  here — an operator who refreshes the wrong one sees no change and no reason why")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
+		return ReleaseInfo{}, fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
 	}
 	var body struct {
 		TagName string `json:"tag_name"`
+		Body    string `json:"body"`
+		HTMLURL string `json:"html_url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("decode release: %w", err)
+		return ReleaseInfo{}, fmt.Errorf("decode release: %w", err)
 	}
 	if body.TagName == "" {
-		return "", fmt.Errorf("no tag in latest release")
+		return ReleaseInfo{}, fmt.Errorf("no tag in latest release")
 	}
-	return body.TagName, nil
+	return ReleaseInfo{Tag: body.TagName, Notes: body.Body, URL: body.HTMLURL}, nil
+}
+
+// rateLimitError turns a 403/429 into a message that says which of the two
+// causes it was, and — when the limit really is exhausted — how long until it
+// resets, so the caller isn't left guessing at "shortly".
+func rateLimitError(resp *http.Response) error {
+	remaining := strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining"))
+	if remaining != "" && remaining != "0" {
+		// Quota left, so exhaustion is not the cause — most likely a token that
+		// is invalid, expired, or lacks access.
+		if githubToken() != "" {
+			return fmt.Errorf("github API refused the update check (HTTP %d) — your GITHUB_TOKEN looks invalid or expired; unset it to fall back to anonymous checks", resp.StatusCode)
+		}
+		return fmt.Errorf("github API refused the update check (HTTP %d)", resp.StatusCode)
+	}
+
+	wait := ""
+	if reset := strings.TrimSpace(resp.Header.Get("X-RateLimit-Reset")); reset != "" {
+		if epoch, err := strconv.ParseInt(reset, 10, 64); err == nil {
+			if d := time.Until(time.Unix(epoch, 0)); d > 0 {
+				wait = fmt.Sprintf(" — resets in %s", d.Round(time.Minute))
+			}
+		}
+	}
+	if wait == "" {
+		wait = " — retry shortly"
+	}
+	if githubToken() != "" {
+		return fmt.Errorf("github API rate limit reached%s", wait)
+	}
+	// The anonymous limit is small and shared per source IP, so a busy network
+	// can exhaust it without this machine doing anything unusual.
+	return fmt.Errorf("github API rate limit reached for this network's IP address%s. "+
+		"The daemon is fine; only the update CHECK is blocked. Set GITHUB_TOKEN to raise the limit", wait)
 }
 
 // Status is the result of an update check.

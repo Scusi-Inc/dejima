@@ -23,4 +23,17 @@
 
 cli auth push         # pushes host Claude/GitHub creds — needs a logged-in host
 cli service uninstall # removes the launchd/systemd daemon service (tier3)
-cli ssh enroll        # writes client SSH keys + ~/.ssh/config on the host
+
+# Local-model endpoints that shell out to the backend CLI (ollama / install
+# script) — side-effectful, so not hit in surface tests. Backend logic is covered
+# by internal/localmodel unit tests + the `dejima local` CLI test; the read-only
+# GETs and /off are exercised in TestSurfaceLocalModels.
+api POST /v1/local/install
+api POST /v1/local/models/{name}/pull
+api DELETE /v1/local/models/{name}
+
+# Relaunches a real tmux session in the container (kill + re-create) — needs a
+# live island, so not hit in surface tests. Covered by the restart-checklist TUI
+# test (TestRestartChecklist), the CLI test (TestAgentRestartCommand), and the
+# restartAgentSession/handler logic.
+api POST /v1/islands/{name}/agents/{id}/restart

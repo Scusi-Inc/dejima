@@ -175,6 +175,48 @@ func RemoveProfile(name string) error {
 	return Save(cfg)
 }
 
+// RenameProfile changes a saved profile's display name, keeping its host/token
+// intact, and follows the rename into ActiveProfile so the active selection isn't
+// orphaned. "local" is the synthetic socket target and can't be renamed; an
+// unknown old name, an empty/"local" new name, or a collision with another
+// profile errors rather than corrupting the store.
+func RenameProfile(oldName, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if oldName == "" || oldName == "local" {
+		return fmt.Errorf("%q is the local socket and can't be renamed", oldName)
+	}
+	if newName == "" || newName == "local" {
+		return fmt.Errorf("a connection needs a name other than %q", "local")
+	}
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range cfg.Profiles {
+		switch cfg.Profiles[i].Name {
+		case newName:
+			if cfg.Profiles[i].Name != oldName {
+				return fmt.Errorf("a connection named %q already exists", newName)
+			}
+		case oldName:
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("no profile named %q", oldName)
+	}
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name == oldName {
+			cfg.Profiles[i].Name = newName
+		}
+	}
+	if cfg.ActiveProfile == oldName {
+		cfg.ActiveProfile = newName
+	}
+	return Save(cfg)
+}
+
 // TokenForHost returns the bearer token saved for a connection host, preferring
 // the active profile when it matches (so two profiles on the same host don't
 // race). It is the no-env-token default behind the connection path: an explicit
@@ -260,6 +302,10 @@ func configPath() (string, error) {
 	}
 	return filepath.Join(root, "client.json"), nil
 }
+
+// Path returns the client config file location (~/.dejima/client.json) without
+// creating it — for a client uninstall that removes it.
+func Path() (string, error) { return configPath() }
 
 // Load reads the client config. A missing file yields a zero Config, no error.
 func Load() (Config, error) {

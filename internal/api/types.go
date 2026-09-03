@@ -21,6 +21,13 @@ type IslandInfo struct {
 	// Cmd is the user-supplied entrypoint for headless islands; empty for
 	// the built-in CLI agents.
 	Cmd string `json:"cmd,omitempty"`
+	// NoRepo marks an island created with a deliberately empty /workspace and no
+	// origin. Callers need this to tell "empty on purpose" from "the clone
+	// failed" — the two look identical from outside, and the whole reason
+	// no_repo is an explicit opt-in is that they must not be confused. It also
+	// changes what deleting the island costs: with no remote, nothing inside has
+	// a copy anywhere else.
+	NoRepo bool `json:"no_repo,omitempty"`
 	// Role is "" (work island) or "home" (a Home Island hosting an assistant brain).
 	Role  string            `json:"role,omitempty"`
 	Owner string            `json:"owner,omitempty"`
@@ -30,9 +37,18 @@ type IslandInfo struct {
 	// owner-scoping rules) — so clone/push will fail. A health surface so the
 	// operator/member can re-connect (docs/github-identities.md), not a silent
 	// break. Not set for islands that name no identity.
-	GitHubCredMissing bool   `json:"github_cred_missing,omitempty"`
-	State             string `json:"state"`     // desired state from config
-	Container         string `json:"container"` // observed status from runtime
+	GitHubCredMissing bool `json:"github_cred_missing,omitempty"`
+	// GitHubHostCredential reports whether this island may use the HOST
+	// operator's own gh login (account-wide read). Nil on list responses that
+	// don't compute it. Grandfathered marks an island still carrying the grant
+	// the deny-by-default migration wrote, i.e. one nobody has decided about.
+	GitHubHostCredential *HostGitHubCredentialView `json:"github_host_credential,omitempty"`
+	// SecretsCount is how many secrets the island has. Read from the per-island
+	// metadata only — never the keychain — so listing stays cheap enough for the
+	// dashboard's poll. A count, never the names' values.
+	SecretsCount int    `json:"secrets_count,omitempty"`
+	State        string `json:"state"`     // desired state from config
+	Container    string `json:"container"` // observed status from runtime
 	// NoHibernate is true when the island is pinned awake (exempt from idle
 	// auto-hibernate). Set via PATCH /v1/islands/{name} (dejima pin/unpin).
 	NoHibernate bool            `json:"no_hibernate,omitempty"`
@@ -52,6 +68,24 @@ type IslandInfo struct {
 	// Agents is the island's agents. For islands created before multi-agent
 	// support it carries a single synthesized entry mirroring Agent.
 	Agents []AgentInfo `json:"agents,omitempty"`
+	// GitHubIdentity names which daemon GitHub identity this island clones and
+	// pushes as. Empty means the daemon default (or the host's ~/.config/gh when
+	// no identities are configured), so an empty value is a real answer and not a
+	// missing one.
+	//
+	// Surfaced because it was not: an operator could see the identity LIST and
+	// could not see which island used which, so "what breaks if I remove this
+	// credential" had no answer from any client. `dejima github rm` asks this.
+	GitHubIdentity string `json:"github_identity,omitempty"`
+	// ReapsOrphans reports whether this container has an init as PID 1 to reap
+	// processes whose parent exited first. Detail endpoint only.
+	//
+	// THREE-STATE ON PURPOSE. nil means the runtime couldn't be asked, which is
+	// not the same as false and must never render as "fine": a container created
+	// before the daemon passed --init leaks a zombie per orphaned process for its
+	// whole life, and the daemon's own source says it passes --init, so the
+	// record cannot answer this. Only the runtime can.
+	ReapsOrphans *bool `json:"reaps_orphans,omitempty"`
 	// BuiltVersion / UpgradedVersion are the version-skew stamp: the daemon build
 	// the island's container was first created against, and the build of its most
 	// recent `dejima upgrade` recreate. A stamp behind the running daemon means the
@@ -80,15 +114,152 @@ type IslandIdentity struct {
 	Glyph string `json:"glyph"`
 }
 
+// ContainmentLevel says whether Dejima GATES an agent or merely watches it.
+//
+// It exists because those two states are indistinguishable from the outside and
+// the difference is the entire product. An agent Dejima observes but does not
+// gate has no Port scopes, no MCP grants, no links and no capabilities — not
+// because everything is denied, but because nothing is asked. The grants pane
+// cannot tell those apart: at total == 0 with credentials confirmed it renders
+// "✓ fully contained" in green (tui_grants.go:201). It is not being lied to; it
+// is being asked a question it has no way to answer.
+//
+// THE ZERO VALUE IS "" AND IS NOT A LEVEL. That is the load-bearing decision. If
+// the zero value were a valid level, every record that forgot to set it would
+// silently CLAIM that level — and the claim that matters is the reassuring one,
+// so the failure would always land in the dangerous direction. "" means nobody
+// said, it is distinguishable from every real answer, and every reader must
+// treat it as NOT CONTAINED. The least reassuring answer is the safe default;
+// the most reassuring one never is.
+//
+// Go cannot make a struct field required, so this is not a compile-time
+// guarantee and should not be described as one. What holds it up: a zero that
+// names no level, a server that stamps the level at the boundary, readers that
+// fail safe, and a test that no path emits "".
+type ContainmentLevel string
+
+const (
+	// ContainmentContained is an agent inside an island: gated by the Port broker,
+	// its crossings ledgered.
+	ContainmentContained ContainmentLevel = "contained"
+	// ContainmentObserved is an agent Dejima can SEE and cannot STOP. It runs
+	// outside any island, reads whatever its user can read, and holds whatever
+	// credentials its user holds. Dejima records what it reports about itself;
+	// nothing gates it.
+	//
+	// NAMED "observed", NOT "adopted", and that was a decision rather than a
+	// preference. `dejima adopt` already ships and means the OPPOSITE — migrating
+	// a local project INTO an island, i.e. maximum containment. One verb for both
+	// ends of the only axis this product has would put a false-containment claim
+	// in the vocabulary itself, where every future surface is built out of it.
+	//
+	// The asymmetry is what settles it: guess wrong about `dejima adopt` and you
+	// get an island nobody needed. Guess wrong about this one and you believe a
+	// loose agent is contained.
+	ContainmentObserved ContainmentLevel = "observed"
+)
+
+// Contained reports whether this level is a positive containment claim. Anything
+// else — including the empty zero value — is not. Written as a method so the
+// fail-safe reading is in ONE place: `if a.Containment == ContainmentContained`
+// scattered across call sites is how one of them ends up written the other way
+// round and defaults an unset record to gated.
+func (c ContainmentLevel) Contained() bool { return c == ContainmentContained }
+
+// ObservedAgent is an agent Dejima can SEE and cannot STOP: running outside any
+// island, reading whatever its user reads, holding whatever credentials its user
+// holds. Dejima records what it reports about itself; nothing gates it.
+//
+// ITS OWN TYPE, NOT AgentInfo, and that is d2's argument rather than mine — I
+// shipped it as a shared type first and they were right. AgentInfo carries Tmux,
+// Branch, Worktree and Attachable, which for an observed agent are meaningless
+// or actively misleading. Attachable is the sharp one: attaching is something
+// Dejima can do to an agent it LAUNCHED and cannot do to one it merely watched,
+// and that field drives real affordances in five call sites. A field that does
+// not exist cannot be set by a later refactor or read by a hopeful renderer.
+//
+// My counter-argument was that two types make every list and count grow a second
+// path, and the ones that forget it silently show only contained agents. It does
+// not hold here: merging the two lists is the exact failure the design forbids,
+// so sharing a type to make merging easy optimises for the thing nobody wants.
+// Separate types make "these are different kinds of thing" true at the type
+// level, which is the same reasoning as the containment field itself, one layer
+// up.
+type ObservedAgent struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	// Containment is carried ON THE RECORD, deliberately, and is NOT omitempty.
+	//
+	// A consumer must be able to read containment off the entry rather than infer
+	// it from which endpoint the entry arrived on. Inferring re-hides the
+	// guarantee one layer up from where the field fixed it: a surface that
+	// reasons "this came from the observed list, so it is observed" is one
+	// refactor away from being handed a merged list.
+	//
+	// Not omitempty because a record that failed to get stamped should appear on
+	// the wire as "" rather than vanish. An absent field and an unset one both
+	// decode to "" and both read as NOT contained, so the ambiguity already
+	// resolves safely — but visible is better than absent when the thing you are
+	// debugging is a missing stamp. (d2 checked this on AgentInfo and correctly
+	// found no bug; recording it here so it is not re-reported.)
+	Containment ContainmentLevel `json:"containment"`
+	// Alive, LastActive and Working are the read-only state — what the agent
+	// reports about ITSELF. Dejima does not verify any of it, which is the whole
+	// difference between observing and gating.
+	Alive      bool      `json:"alive"`
+	LastActive time.Time `json:"last_active,omitempty"`
+	Working    string    `json:"working,omitempty"`
+	// Source records how this agent was discovered, so an operator can answer
+	// "why does Dejima know about this" without guessing.
+	Source string `json:"source,omitempty"`
+}
+
+// ObservedAgentsResponse is the enumeration seam for observed agents.
+//
+// A SEPARATE COLLECTION, NOT A FLAG ON THE ISLAND LIST. An observed agent has no
+// island, so it cannot appear in IslandInfo.Agents — there is nothing to nest it
+// under. The consequence is the useful part: every island-keyed surface is
+// UNREACHABLE from an observed agent by construction, not by anyone remembering
+// a rule.
+//
+// The grants pane is the case that matters. It takes an island name and renders
+// "✓ fully contained" when nothing is granted — which an observed agent
+// satisfies by construction, having no grants because nothing gates it. Because
+// observed agents are never enumerated under an island, that pane has no call
+// site to reach them from.
+type ObservedAgentsResponse struct {
+	// Agents are the observed agents, each stamped ContainmentObserved by the
+	// server. Never contained: this collection is the source of that fact, the
+	// same way an island's agent list is the source of the contained one.
+	Agents []ObservedAgent `json:"agents"`
+	// Registered reports whether any mechanism for registering an observed agent
+	// exists yet. FALSE TODAY, and stated rather than left to be inferred from an
+	// empty list: "none registered" and "registration is not built" are different
+	// answers, and a client that renders an empty section for the second one is
+	// claiming Dejima looked and found nothing.
+	Registered bool `json:"registered"`
+}
+
 // AgentInfo is the public view of one agent within an island.
 type AgentInfo struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Label      string `json:"label,omitempty"`
-	Tmux       string `json:"tmux,omitempty"`
-	Branch     string `json:"branch,omitempty"`
-	Worktree   string `json:"worktree,omitempty"`
-	Attachable bool   `json:"attachable"`
+	ID string `json:"id"`
+	// Containment is stamped by the SERVER at the boundary, from the source of
+	// truth — never carried up from a stored record. An agent enumerated as part
+	// of an island is contained BECAUSE it is in an island; that is what toInfo
+	// knows and the record does not.
+	//
+	// Both a field and a location encode containment, so they can disagree.
+	// Stamping at the boundary is what stops them: the field restates what the
+	// collection already implies, for clients that merge the two lists, rather
+	// than making an independent claim that can drift from where the agent
+	// actually lives.
+	Containment ContainmentLevel `json:"containment,omitempty"`
+	Type        string           `json:"type"`
+	Label       string           `json:"label,omitempty"`
+	Tmux        string           `json:"tmux,omitempty"`
+	Branch      string           `json:"branch,omitempty"`
+	Worktree    string           `json:"worktree,omitempty"`
+	Attachable  bool             `json:"attachable"`
 	// CreatedAt is when the agent was added to the island — the basis for its
 	// displayed uptime/age. Zero for legacy agents persisted before this field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
@@ -212,6 +383,12 @@ type OverviewResponse struct {
 	// connection target and generate an ssh config entry. The bind host may be
 	// wildcard/empty (":2222"); clients resolve a reachable host themselves.
 	SSHAddr string `json:"ssh_addr,omitempty"`
+	// SSHHostKey is the façade's host public key (OpenSSH "ssh-ed25519 AAAA…"
+	// line), served with SSHAddr so a client pins it in a known_hosts file it
+	// manages — so `dejima agent open`'s tunnel verifies the key over the trusted
+	// API rather than TOFU, and a rotated key self-heals instead of failing with
+	// "REMOTE HOST IDENTIFICATION HAS CHANGED". Empty on daemons predating this.
+	SSHHostKey string `json:"ssh_host_key,omitempty"`
 	// DaemonVersion / APIVersion let a client detect skew against the daemon.
 	// APIVersion is 0 from daemons predating version reporting.
 	DaemonVersion string `json:"daemon_version,omitempty"`
@@ -314,6 +491,41 @@ type CreateIslandRequest struct {
 	// source (see reposrc local-copy mode). Only valid against a local daemon;
 	// Repo then holds the upstream URL to set as origin, or "" for no remote.
 	SeedPath string `json:"seed_path,omitempty"`
+	// NoRepo creates an island with no checkout at all: an empty /workspace and
+	// no origin. For the things that genuinely have no repo — assistant brains
+	// (OpenClaw, Letta, Hermes, Goose), headless task runners, scratch sandboxes,
+	// evaluating a tool before it's a project — rather than making the operator
+	// invent an empty repo to satisfy a check.
+	//
+	// It is an EXPLICIT opt-in, never inferred from an empty Repo. A repo URL
+	// eaten by the shell, or a variable that expanded to nothing, must fail
+	// loudly rather than silently produce an empty island that looks exactly
+	// like a clone that didn't happen. Name is required in this mode — there is
+	// no repo to derive one from.
+	NoRepo bool `json:"no_repo,omitempty"`
+	// FromDir seeds /workspace from a host DIRECTORY that is not a git repo —
+	// the most common thing a person actually has: scratch analysis, a folder of
+	// documents, a project started before anyone ran `git init`.
+	//
+	// A thin wrapper over the brokered recursive intake, NOT a second way to move
+	// host files in: the daemon grants a Port scope for the directory, runs the
+	// same per-file ledgered crossing, then drops the scope. The grant IS the
+	// audit trail for how those files got there. A create-time copy that bypassed
+	// Port would reintroduce the unaudited door folder import exists to close.
+	//
+	// A folder-sourced island is repo-less but NOT empty, which is why it sets
+	// NoRepo without the caller passing no_repo.
+	FromDir string `json:"from_dir,omitempty"`
+	// KeepScope leaves the Port scope granted after seeding. Off by default: the
+	// grant is needed to COPY, not to keep, and a scope nobody asked to retain is
+	// standing host-file access the operator never decided to give.
+	KeepScope bool `json:"keep_scope,omitempty"`
+	// GitInit runs `git init` in the seeded workspace. EXPLICIT, never implied.
+	// A fabricated repo makes the agent commit into something nobody can push,
+	// hands purge's unpushed-work guard a remote-less repo to have opinions about,
+	// and makes `agent rm`'s `git status` reasoning meaningless. Defaulting it on
+	// creates a state whose surface implies something untrue.
+	GitInit bool `json:"git_init,omitempty"`
 	// Cmd is the entrypoint command for agent="headless" islands (e.g.
 	// "python my_loop.py"). Required when Agent is "headless"; ignored
 	// otherwise. The container runs the command via /bin/sh -c, so shell
@@ -494,10 +706,69 @@ type ClaudeCredentialsStatus struct {
 	HostSource string `json:"host_source,omitempty"`
 }
 
+// UpdateAgentRequest is the body of POST /v1/islands/:name/agents/:id/update.
+type UpdateAgentRequest struct {
+	// Resume continues the previous conversation on the relaunch, where the
+	// framework supports it.
+	Resume bool `json:"resume,omitempty"`
+}
+
+// UpdateAgentResponse reports what ran and whether the agent came back on the
+// new version. Restarted is false when the update SUCCEEDED and the relaunch did
+// not — a state worth naming, because the new version is on disk and the old one
+// is still the process.
+type UpdateAgentResponse struct {
+	Agent     string `json:"agent"`
+	Command   string `json:"command"`
+	Output    string `json:"output,omitempty"`
+	Restarted bool   `json:"restarted"`
+}
+
 // GitHubIdentitiesResponse is the body of GET /v1/credentials/github: the
 // daemon's GitHub identities without their tokens.
 type GitHubIdentitiesResponse struct {
-	Identities []githubid.Meta `json:"identities"`
+	Identities []GitHubIdentityView `json:"identities"`
+	// Dangling lists islands pinned to an identity the store does not have. Kept
+	// OUT of Identities because there is no identity to hang them on — that is
+	// the whole problem with those islands.
+	Dangling []DanglingIdentityPin `json:"dangling,omitempty"`
+}
+
+// GitHubIdentityView is an identity plus the islands that resolve to it. The
+// embedded Meta flattens in JSON, so a client reading identities[].name is
+// unaffected by the added field.
+type GitHubIdentityView struct {
+	githubid.Meta
+	// Islands are the islands whose credential the daemon materializes from this
+	// identity — including those that reach it by being the DEFAULT rather than
+	// naming it. Empty means nothing uses it, which for a default identity is the
+	// signal that refreshing it will change nothing.
+	Islands []string `json:"islands"`
+}
+
+// DanglingIdentityPin is an island naming a GitHub identity that does not exist.
+// It materializes no credential at all, which from inside the island is
+// indistinguishable from an expired token and has a different fix.
+type DanglingIdentityPin struct {
+	Island   string `json:"island"`
+	Identity string `json:"identity"`
+}
+
+// SetIslandGitHubIdentityRequest is the body of
+// PUT /v1/islands/:name/github-identity — repointing which stored identity an
+// island clones and pushes as. An empty Identity means "follow the default".
+type SetIslandGitHubIdentityRequest struct {
+	Identity string `json:"identity"`
+}
+
+// SetIslandGitHubIdentityResponse reports the pin that was written and the
+// identity it now RESOLVES to. Those differ whenever the pin is empty, and
+// reporting only the pin would hide which credential the island actually got.
+type SetIslandGitHubIdentityResponse struct {
+	Island   string `json:"island"`
+	Identity string `json:"identity"`
+	Resolved string `json:"resolved"`
+	Login    string `json:"login"`
 }
 
 // WorkspaceReadyResponse reports whether an island's repo clone has landed in
@@ -526,6 +797,9 @@ type PutGitHubIdentityRequest struct {
 	Token   string `json:"token"`
 	Default bool   `json:"default,omitempty"` // make this the default identity (host owner only)
 	Shared  bool   `json:"shared,omitempty"`  // host owner only: mark a host identity usable by every tenant's islands
+	// Scopes is what the token may do (X-OAuth-Scopes at verification time).
+	// Empty means a fine-grained token, which reports none — not that it has none.
+	Scopes string `json:"scopes,omitempty"`
 }
 
 // GitHubDeviceStartResponse is the body of POST /v1/credentials/github/device-flow/start.
@@ -617,6 +891,18 @@ type AgentTypeCapability struct {
 	SupportedProviders  []string `json:"supported_providers,omitempty"`
 	SuggestedModels     []string `json:"suggested_models,omitempty"`
 	GatewayPort         int      `json:"gateway_port,omitempty"` // 0 = no localhost UI to open
+	// DashboardTokenCmd, run in the container, prints the framework's gateway auth
+	// token; `dejima agent open` appends DashboardTokenSuffix (with "{token}"
+	// substituted) to the console URL so the browser auto-authenticates. E.g. suffix
+	// "#token={token}" (OpenClaw reads the token from the URL fragment). Both empty =
+	// open the gateway root.
+	DashboardTokenCmd    string `json:"dashboard_token_cmd,omitempty"`
+	DashboardTokenSuffix string `json:"dashboard_token_suffix,omitempty"`
+	// Bundled marks a tier-1 agent preinstalled in the image; tier-2 agents
+	// (Bundled=false) self-install on first launch. InstallCmd is the informational
+	// install command a picker can surface as "installs on first use".
+	Bundled    bool     `json:"bundled,omitempty"`
+	InstallCmd []string `json:"install_cmd,omitempty"`
 }
 
 // AgentTypesResponse is the body of GET /v1/agent-types.
@@ -692,15 +978,63 @@ type PortIntakeRequest struct {
 	Scope  string `json:"scope"`          // scope name to read from
 	SrcRel string `json:"src_rel"`        // path relative to the scope's host root
 	Dest   string `json:"dest,omitempty"` // container path; default /intake/<scope>/<src_rel>
+	// Recursive imports a DIRECTORY, one brokered crossing per file. Opt-in
+	// because the blast radius differs by orders of magnitude: the same command
+	// that copies one file copies a tree, and "I meant that directory" and "I
+	// mistyped a directory" look identical without the flag.
+	Recursive bool `json:"recursive,omitempty"`
+	// MaxFiles / MaxBytes bound a recursive import and are checked BEFORE the
+	// first byte moves. Zero means the server default. The point is that
+	// "import my home directory" fails in a second with a number in the message
+	// rather than half-copying for ten minutes.
+	MaxFiles int   `json:"max_files,omitempty"`
+	MaxBytes int64 `json:"max_bytes,omitempty"`
 }
 
 // PortIntakeResponse reports a completed intake.
+//
+// The single-file fields stay populated for a single-file intake, so existing
+// callers are unaffected. A recursive intake fills Files/Skipped/Failed and
+// reports totals; Src/Dest then name the directory rather than a file.
 type PortIntakeResponse struct {
 	Scope  string `json:"scope"`
 	Src    string `json:"src"`  // resolved host path
 	Dest   string `json:"dest"` // container path
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
+
+	// Recursive results. BatchID groups this import's Ledger entries, which stay
+	// one-per-file: --verify walks a hash chain of crossings, and a single batch
+	// entry would have no hash for the things that actually crossed.
+	Recursive bool               `json:"recursive,omitempty"`
+	BatchID   string             `json:"batch_id,omitempty"`
+	Files     []PortIntakeFile   `json:"files,omitempty"`
+	Skipped   []PortIntakeSkip   `json:"skipped,omitempty"`
+	Failed    []PortIntakeFailed `json:"failed,omitempty"`
+}
+
+// PortIntakeFile is one file that crossed.
+type PortIntakeFile struct {
+	Rel    string `json:"rel"` // path relative to the imported directory
+	Dest   string `json:"dest"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// PortIntakeSkip is one entry deliberately not imported. Reported rather than
+// silently dropped: an import that quietly omits files is its own bug, and the
+// caller cannot tell a skipped symlink from a file that was never there.
+type PortIntakeSkip struct {
+	Rel    string `json:"rel"`
+	Reason string `json:"reason"`
+}
+
+// PortIntakeFailed is one file that was attempted and did not cross. Files
+// listed here did NOT arrive; everything in Files did. There is no rollback —
+// un-copying files is a destructive operation invented to tidy up a failure.
+type PortIntakeFailed struct {
+	Rel   string `json:"rel"`
+	Error string `json:"error"`
 }
 
 // PortExportRequest is the body of POST /v1/islands/:name/port/export — a

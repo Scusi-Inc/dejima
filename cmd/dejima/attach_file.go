@@ -17,8 +17,14 @@ import (
 
 // Attach-file keybind. Inside an attached island session this chord (default
 // Ctrl-], 0x1d) is intercepted CLIENT-side — before forwarding to the agent's
-// PTY — to open a local path prompt (the attach minibuffer). Terminal drag-drop
-// is unreliable over tmux+SSH, so typing/pasting a path is the robust path.
+// PTY — to open a local path prompt (the attach minibuffer).
+//
+// Drag-drop is handled separately (pasteScanner → islandPaste.drop) and works
+// when the `dejima` client runs on the machine you're dragging FROM. This
+// minibuffer stays the robust path for the case drag-drop cannot serve: when you
+// SSH to a host and run the client THERE, a dropped path names a file on your
+// local machine, which the client — running on the far side — can't open. Typing
+// a path names a file where the client actually is.
 //
 // The default is Ctrl-] (which sits next to the Ctrl-\ summon chord), NOT Ctrl-O:
 // Ctrl-O is a live Claude Code binding (expand/verbose), and the dominant

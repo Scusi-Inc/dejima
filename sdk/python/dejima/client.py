@@ -98,8 +98,9 @@ class Client:
 
     def create_island(
         self,
-        repo: str,
+        repo: str = "",
         *,
+        no_repo: bool = False,
         agent: Optional[str] = None,
         name: Optional[str] = None,
         image: Optional[str] = None,
@@ -118,10 +119,18 @@ class Client:
         ``agent="headless"``. ``agents`` seeds a multi-agent island (element 0 is
         the primary). On a token-authenticated (Home-Island) create the response
         carries the child island's ``token``.
+
+        ``no_repo=True`` provisions an island with an empty ``/workspace`` and no
+        origin — for the things that genuinely have no repo (assistant brains,
+        headless task runners, scratch sandboxes). It requires ``name`` and
+        refuses ``repo``/``seed_path``: the daemon never infers the mode from an
+        empty ``repo``, so a URL eaten by the shell fails loudly instead of
+        quietly producing an island indistinguishable from a failed clone.
         """
         body = _clean(
             dict(
                 repo=repo,
+                no_repo=no_repo or None,
                 agent=agent,
                 name=name,
                 image=image,
@@ -220,10 +229,28 @@ class Client:
             "PATCH", f"{self._island(name)}/agents/{self._seg(agent_id)}", json={"label": label}
         )
 
-    def remove_agent(self, name: str, agent_id: str) -> None:
-        """Remove a non-primary agent (kills its session, prunes its worktree;
-        the branch is kept). The primary and last agent cannot be removed."""
-        self._req("DELETE", f"{self._island(name)}/agents/{self._seg(agent_id)}")
+    def remove_agent(self, name: str, agent_id: str, *, force: bool = False) -> None:
+        """Remove an agent (kills its session, prunes its worktree; the branch and
+        its commits are kept). Islands may have zero agents; the one agent that
+        can't be removed is a headless first agent, which is the container's PID 1.
+
+        The daemon refuses with a 409 when the agent's worktree holds uncommitted
+        changes — pruning it discards them permanently — or when it can't check
+        (island hibernated, container wedged). ``force=True`` removes anyway.
+        """
+        self._req(
+            "DELETE",
+            f"{self._island(name)}/agents/{self._seg(agent_id)}",
+            params={"force": "true"} if force else None,
+        )
+
+    def restart_agent(self, name: str, agent_id: str, *, resume: bool = False) -> Dict[str, Any]:
+        """Relaunch an agent in place so it picks up a changed environment (e.g. a
+        newly added secret). ``resume`` continues its previous conversation when the
+        framework supports it (claude-code)."""
+        return self._json(
+            "POST", f"{self._island(name)}/agents/{self._seg(agent_id)}/restart", json={"resume": resume}
+        )
 
     def configure_agent(
         self,
@@ -406,6 +433,31 @@ class Client:
     def delete_provider(self, provider: str) -> Dict[str, Any]:
         """Remove a provider credential; reports islands that still reference it."""
         return self._json("DELETE", f"/v1/credentials/providers/{self._seg(provider)}")
+
+    # ----- local models (owner-only) -----------------------------------
+    def local_status(self) -> Dict[str, Any]:
+        """Managed local-model backend status (backend, endpoint, models, host RAM + recommendation)."""
+        return self._json("GET", "/v1/local")
+
+    def list_local_models(self) -> Dict[str, Any]:
+        """Pulled local models plus the host-aware recommendation."""
+        return self._json("GET", "/v1/local/models")
+
+    def local_install(self) -> str:
+        """Install the inference backend on the daemon host; returns the progress text."""
+        return self._req("POST", "/v1/local/install").text
+
+    def pull_local_model(self, name: str) -> str:
+        """Pull a model — a curated alias (e.g. "qwen-coder") or a raw backend ref; returns progress text."""
+        return self._req("POST", f"/v1/local/models/{self._seg(name)}/pull").text
+
+    def remove_local_model(self, name: str) -> None:
+        """Remove a pulled model."""
+        self._req("DELETE", f"/v1/local/models/{self._seg(name)}")
+
+    def local_off(self) -> None:
+        """Deregister the `local` provider (the backend + pulled models stay)."""
+        self._req("POST", "/v1/local/off")
 
     # ===== operator tokens (owner-only) ----------------------------------
     def list_tokens(self) -> Dict[str, Any]:
@@ -669,7 +721,9 @@ class Session:
 
         Skips the initial ``hello`` and any control envelopes, returning the next
         ``data`` payload. Raises :class:`DejimaError` on a server ``error``
-        envelope. Returns ``None`` when the connection closes.
+        envelope. Returns ``None`` when the connection closes, and on the
+        daemon's ``exit`` envelope — the application-level signal that the
+        bridged terminal itself ended, as opposed to the link dropping.
         """
         import websocket  # type: ignore
 
@@ -690,6 +744,12 @@ class Session:
                 # The daemon puts the plaintext error string in the b64 field for
                 # error envelopes (it is not base64-encoded there).
                 raise DejimaError(0, str(env.get("b64", "")))
+            if kind == "exit":
+                # The terminal ended (a detach, an `exit`, a tmux that died on
+                # start). Distinct from a transport drop on purpose: a caller that
+                # treats it as one reconnects forever, respawning a shell nobody
+                # can escape.
+                return None
             # "hello" and anything unknown: keep reading.
 
     def close(self) -> None:

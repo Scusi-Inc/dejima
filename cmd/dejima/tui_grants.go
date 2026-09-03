@@ -23,6 +23,12 @@ type grantsView struct {
 	loadErr string
 	resp    *api.IslandGrantsResponse
 	scroll  int
+	// pending is "grant" or "revoke" while the host-GitHub action awaits
+	// confirmation, "" otherwise. The host operator's login reads their whole
+	// account, so granting it is not a single-keystroke action.
+	pending string
+	// notice reports the outcome of the last action.
+	notice string
 }
 
 // openGrantsView opens the trust surface for the given island (the selected
@@ -50,6 +56,40 @@ func (m tuiModel) loadGrantsCmd(island string) tea.Cmd {
 	}
 }
 
+// hostGHActionMsg carries the outcome of a grant/revoke back to the pane.
+type hostGHActionMsg struct {
+	action string
+	err    error
+}
+
+// hostGHActionCmd performs the grant or revoke, then the caller reloads so the
+// pane shows daemon state rather than what it assumed the daemon did.
+func (m tuiModel) hostGHActionCmd(island, action string) tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var err error
+		if action == "grant" {
+			_, err = c.GrantHostGitHubCredential(ctx, island)
+		} else {
+			err = c.RevokeHostGitHubCredential(ctx, island)
+		}
+		return hostGHActionMsg{action: action, err: err}
+	}
+}
+
+func (v *grantsView) applyHostGHAction(msg hostGHActionMsg) {
+	if msg.err != nil {
+		v.notice = msg.action + " failed: " + msg.err.Error()
+		return
+	}
+	// The credential is a bind mount, so it is fixed at container create. Saying
+	// so here avoids the "I granted it and nothing changed" loop.
+	v.notice = msg.action + "ed — takes effect when the container is next created (dejima upgrade " + v.island + ")"
+	v.loading = true
+}
+
 func (v *grantsView) applyLoaded(msg grantsLoadedMsg) {
 	v.loading = false
 	if msg.err != nil {
@@ -65,13 +105,43 @@ func (v *grantsView) applyLoaded(msg grantsLoadedMsg) {
 // page keys scroll. The pane owns every key while open.
 func (m tuiModel) grantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.grants
+	// A pending host-GitHub action owns the next keystroke: y/enter confirms,
+	// anything else cancels. Granting the host operator's login is account-wide
+	// read access, so it does not happen on a stray keypress.
+	if v.pending != "" {
+		action := v.pending
+		v.pending = ""
+		switch msg.String() {
+		case "y", "Y", "enter":
+			v.notice = ""
+			return m, m.hostGHActionCmd(v.island, action)
+		default:
+			v.notice = "cancelled"
+			return m, nil
+		}
+	}
 	switch msg.String() {
-	case "esc", "q", "T":
+	case "esc", "ctrl+[", "q", "T":
 		m.grants = nil
+		return m, nil
+	case "G":
+		// Only offered where it applies: a tenant island can't hold the host
+		// login at all, and the API refuses it, so offering the key there would
+		// promise something that cannot happen.
+		if v.resp == nil || !v.resp.HostGitHub.Eligible {
+			v.notice = "not applicable — this island uses its own GitHub identity"
+			return m, nil
+		}
+		if v.resp.HostGitHub.Granted {
+			v.pending = "revoke"
+		} else {
+			v.pending = "grant"
+		}
 		return m, nil
 	case "r":
 		v.loading = true
 		v.loadErr = ""
+		v.notice = ""
 		return m, m.loadGrantsCmd(v.island)
 	case "j", "down":
 		v.scroll++
@@ -111,11 +181,31 @@ func (m tuiModel) renderGrantsView() string {
 	}
 
 	r := v.resp
-	total := len(r.Port) + len(r.MCP) + len(r.Links) + len(r.Capability)
-	if total == 0 {
-		// The locked-down default — make it unmistakable and reassuring.
+	// One list, consulted by everything that summarises. Both the containment
+	// claim below and the tally in the footer read from it, so a sixth grant kind
+	// is added in ONE place instead of being silently omitted from whichever
+	// summary its author didn't think to look at. That omission has already
+	// happened twice with the fifth kind (the host GitHub credential): once in
+	// the containment claim, and once — in the very commit that fixed it — in the
+	// footer tally ten lines below.
+	kinds := grantKinds(r)
+	total := 0
+	for _, k := range kinds {
+		total += k.n
+	}
+	// "Fully contained" is the strongest claim this pane makes, so it requires
+	// the strongest evidence: nothing granted AND the running container
+	// confirmed to match. A revoked-but-still-mounted credential must not reach
+	// this branch, and neither must an island we couldn't inspect — an unasked
+	// question is not a clean answer.
+	if total == 0 && r.Credentials.Known && len(r.Credentials.Drift()) == 0 {
+		// The locked-down default — make it unmistakable and reassuring. The
+		// GitHub clause is stated positively rather than omitted: a deliberate
+		// deny is a fact worth showing, not an absence to infer.
 		b.WriteString(styleRunning.Render("✓ fully contained — no host files, MCP servers, links, or capabilities granted"))
-		b.WriteString("\n\n" + styleMuted.Render("[r] refresh   [esc] close"))
+		b.WriteString("\n")
+		b.WriteString(styleRunning.Render("  and no GitHub credential beyond its own identity"))
+		b.WriteString(m.renderHostGHFooter())
 		return b.String()
 	}
 
@@ -164,6 +254,12 @@ func (m tuiModel) renderGrantsView() string {
 	}
 	section("Capabilities", caps)
 
+	section("GitHub credential", hostGHRows(r.HostGitHub))
+
+	if rows := credentialDriftRows(r.Credentials); len(rows) > 0 {
+		section("Live container", rows)
+	}
+
 	// Window the body to the pane height; the cursor scrolls it.
 	const chrome = 6 // title, subtitle, two blanks, footer hint, pane border
 	visible := m.height - chrome
@@ -178,11 +274,151 @@ func (m tuiModel) renderGrantsView() string {
 		b.WriteString(ln + "\n")
 	}
 
-	hint := fmt.Sprintf("Port %d · MCP %d · Links %d · Capabilities %d   ·   [r] refresh   [esc] close",
-		len(r.Port), len(r.MCP), len(r.Links), len(r.Capability))
+	parts := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		parts = append(parts, fmt.Sprintf("%s %d", k.label, k.n))
+	}
+	hint := strings.Join(parts, " · ")
 	if len(lines) > visible {
 		hint = fmt.Sprintf("↕ %d/%d   ·   ", v.scroll+1, len(lines)) + hint
 	}
 	b.WriteString("\n" + styleMuted.Render(hint))
+	b.WriteString(m.renderHostGHFooter())
+	return b.String()
+}
+
+// grantKind is one category of thing an island can reach, with how many of it
+// this island holds.
+type grantKind struct {
+	label string
+	n     int
+}
+
+// grantKinds enumerates every grant category, and is the ONLY place that does.
+// Anything that summarises — "is this island contained", the footer tally —
+// derives from this, so adding a category means editing one function rather
+// than remembering every arithmetic site that should have counted it.
+//
+// The host GitHub credential is a yes/no rather than a list, so it contributes
+// 0 or 1. It belongs here regardless: it is the widest-reaching of the kinds
+// (account-wide read), and leaving it out of the sum is precisely how an island
+// holding the operator's entire account came to be reported "fully contained".
+func grantKinds(r *api.IslandGrantsResponse) []grantKind {
+	hostGH := 0
+	if r.HostGitHub.Granted {
+		hostGH = 1
+	}
+	return []grantKind{
+		{"Port", len(r.Port)},
+		{"MCP", len(r.MCP)},
+		{"Links", len(r.Links)},
+		{"Capabilities", len(r.Capability)},
+		{"GitHub", hostGH},
+	}
+}
+
+// credentialDriftRows reports where the running container disagrees with the
+// record, and returns nothing when they agree.
+//
+// Credential mounts are fixed at container create, so a grant or revoke is a
+// statement of intent until the container is recreated. Everything else in this
+// pane answers from the record; without this section the pane would say
+// "denied" about a credential every agent in the island can still use — which
+// is the reassuring direction to be wrong in, on the surface built for checking
+// containment.
+//
+// The unknown case gets its own row rather than silence. An unasked question
+// rendered as agreement is the same defect as a doctor check that vanishes when
+// its tool is missing: it reads as a clean bill of health nobody issued.
+func credentialDriftRows(rep api.CredentialMountReport) []string {
+	if !rep.Known {
+		reason := rep.Reason
+		if reason == "" {
+			reason = "the container couldn't be inspected"
+		}
+		return []string{
+			"  " + styleMuted.Render("not determined — "+reason),
+			"  " + styleMuted.Render("the rows above describe the configuration, not the running container"),
+		}
+	}
+	var rows []string
+	for _, d := range rep.Drift() {
+		if d.Configured {
+			// Over-reports access: wrong, but fails toward caution.
+			rows = append(rows,
+				"  "+styleMuted.Render(d.Label+": granted, but NOT yet mounted — takes effect on recreate"))
+			continue
+		}
+		// Under-reports access: the dangerous direction, so it is flagged.
+		rows = append(rows,
+			"  "+styleWaiting.Render("⚠ "+d.Label+": revoked, but STILL mounted in the running container"))
+	}
+	return rows
+}
+
+// hostGHRows renders the GitHub-credential section. The three states have to be
+// told apart on sight: granted deliberately, granted by the migration and never
+// since decided, and denied. Denied is the DEFAULT and is rendered as a normal
+// fact — not amber, not an error — because a contained island is the intended
+// resting state, not a problem to fix.
+func hostGHRows(v api.HostGitHubCredentialView) []string {
+	switch {
+	case !v.Eligible:
+		// A tenant island: the host login is not on offer here at all, and
+		// saying "denied" would imply a grant is the missing piece.
+		return []string{"  " + styleMuted.Render("n/a — this island clones and pushes as its own GitHub identity")}
+	case v.Grandfathered:
+		return []string{
+			"  " + styleWaiting.Render("⚠ the host operator's login — reads EVERY private repo on that account"),
+			"  " + styleMuted.Render("grandfathered "+v.GrantedAt.Format("2006-01-02")+" — carried over by the migration, not yet decided"),
+		}
+	case v.Granted:
+		by := v.GrantedBy
+		if by == "" {
+			by = "the host operator"
+		}
+		return []string{
+			"  " + styleWaiting.Render("the host operator's login — reads EVERY private repo on that account"),
+			"  " + styleMuted.Render("granted by "+by+" on "+v.GrantedAt.Format("2006-01-02")),
+		}
+	default:
+		return []string{
+			"  " + styleMuted.Render("none — this island has no GitHub credential of its own"),
+			"  " + styleMuted.Render("clone/push of a private repo will fail until it gets one"),
+		}
+	}
+}
+
+// renderHostGHFooter renders the action line, including the confirmation
+// prompt. Split out so the fully-contained early return offers the same keys as
+// the full pane — an island with nothing granted is exactly where an operator
+// goes looking for how to grant something.
+func (m tuiModel) renderHostGHFooter() string {
+	v := m.grants
+	var b strings.Builder
+	if v.pending != "" {
+		q := "Grant this island the host operator's GitHub login? It reads every private repo on that account."
+		if v.pending == "revoke" {
+			q = "Revoke the host GitHub credential from this island?"
+		}
+		b.WriteString("\n" + styleWaiting.Render("  "+q+"  [y] confirm · any other key cancels"))
+		return b.String()
+	}
+	if v.notice != "" {
+		b.WriteString("\n" + styleRunning.Render("  "+truncate(v.notice, max(20, m.width-6))))
+	}
+	keys := "[r] refresh   [esc] close"
+	if v.resp != nil && v.resp.HostGitHub.Eligible {
+		if v.resp.HostGitHub.Granted {
+			keys = "[G] revoke host GitHub credential   " + keys
+		} else {
+			keys = "[G] grant host GitHub credential   " + keys
+		}
+	} else if v.resp != nil {
+		// Tenant island: name the remedy that IS available, so "no credential"
+		// doesn't dead-end. A grant here would be refused by the daemon.
+		keys = styleMuted.Render("give it an identity: dejima github connect") + "   " + keys
+	}
+	b.WriteString("\n" + styleMuted.Render(keys))
 	return b.String()
 }

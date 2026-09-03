@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"runtime"
+
 	"github.com/aoos/dejima/internal/voicein"
 )
 
@@ -27,8 +29,15 @@ func newVoiceCmd() *cobra.Command {
 	var noInject bool
 
 	cmd := &cobra.Command{
-		Use:   "voice <island>[/<agent>]",
-		Short: "Dictate into an island's agent with your voice (local, on-device transcription).",
+		Use: "voice <island>[/<agent>]",
+		// Hidden: voice dictation is roadmapped, not shipped — the Windows
+		// install path isn't automated and there's no in-session hotkey yet (see
+		// docs/roadmap.md). The engine (internal/voicein) and these commands are
+		// kept intact and callable so the rebuild starts from working code, but
+		// they're off the help/completion surface so operators don't hit a
+		// half-wired flow.
+		Hidden: true,
+		Short:  "Dictate into an island's agent with your voice (local, on-device transcription).",
 		Long: "Capture the HOST microphone, transcribe it locally with whisper.cpp (no cloud, no " +
 			"subscription — audio never leaves this machine), and inject the transcript into the " +
 			"target agent's prompt. Push-to-talk: run it, speak, press Enter to stop.\n\n" +
@@ -43,7 +52,7 @@ func newVoiceCmd() *cobra.Command {
 
 			st := voicein.Check()
 			if !st.Supported {
-				return fmt.Errorf("voice dictation isn't supported on this host platform yet")
+				return errUnsupportedPlatform()
 			}
 			if !st.Ready() {
 				return fmt.Errorf("voice dictation isn't set up (missing: %s) — run `dejima voice install`",
@@ -90,7 +99,7 @@ func newVoiceCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&agentID, "agent", "", "target agent id (default: the island's first interactive agent)")
 	cmd.Flags().BoolVar(&noInject, "no-inject", false, "transcribe and print, but don't inject into the agent's prompt")
-	cmd.AddCommand(newVoiceInstallCmd(), newVoiceStatusCmd())
+	cmd.AddCommand(newVoiceInstallCmd(), newVoiceStatusCmd(), newVoiceDeviceCmd())
 	return cmd
 }
 
@@ -136,16 +145,32 @@ func newVoiceInstallCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !voicein.Supported() {
-				return fmt.Errorf("voice dictation isn't supported on this host platform yet")
+				return errUnsupportedPlatform()
 			}
 			st := voicein.Check()
 			plan := voicein.PlanInstall(st)
-			if plan.Empty() {
+			manual := voicein.ManualSteps(st)
+			if plan.Empty() && len(manual) == 0 {
 				fmt.Println("Voice dictation is already set up. ✓")
 				return nil
 			}
-			if err := voicein.Install(cmd.Context(), plan, os.Stdout); err != nil {
-				return err
+			if !plan.Empty() {
+				if err := voicein.Install(cmd.Context(), plan, os.Stdout); err != nil {
+					return err
+				}
+			}
+			// Platforms with no package-manager path get told exactly what to
+			// install, rather than a refusal — the model (the large, fiddly
+			// part) is already downloaded above.
+			if len(manual) > 0 {
+				fmt.Println()
+				fmt.Println("Two tools still need installing by hand on this platform:")
+				for i, step := range manual {
+					fmt.Printf("  %d. %s\n", i+1, step)
+				}
+				fmt.Println()
+				fmt.Println("Then re-run `dejima voice install` to confirm, and `dejima voice device` to pick a mic.")
+				return nil
 			}
 			if voicein.Check().Ready() {
 				fmt.Println("\n✓ Voice dictation ready — try: dejima voice <island>")
@@ -170,7 +195,8 @@ func newVoiceStatusCmd() *cobra.Command {
 				return nil
 			}
 			if !st.Supported {
-				fmt.Println("Voice dictation: unsupported on this host platform")
+				fmt.Printf("Voice dictation: not available on %s yet\n", runtime.GOOS)
+				fmt.Println("  Voice records the microphone of the machine running this CLI (not the daemon host).")
 				return nil
 			}
 			fmt.Printf("Voice dictation: not set up\n  missing: %s\n  run: dejima voice install\n",
@@ -197,4 +223,63 @@ func joinAnd(items []string) string {
 		out += h
 	}
 	return out + " and " + tail
+}
+
+// errUnsupportedPlatform explains where voice dictation runs, instead of a bare
+// "not supported". Voice captures the microphone of the machine running this
+// CLI — not the daemon host — so an operator driving a remote daemon needs to
+// set it up locally. The old message said none of that and read as a dead end.
+func errUnsupportedPlatform() error {
+	return fmt.Errorf("voice dictation isn't available on %s yet.\n\n"+
+		"  Voice runs on the machine with the microphone — this one — and transcribes locally;\n"+
+		"  audio never leaves it. Only the finished transcript is sent to the island's agent,\n"+
+		"  so it works fine against a remote daemon.\n\n"+
+		"  Supported: macOS, Linux, Windows", runtime.GOOS)
+}
+
+// newVoiceDeviceCmd lists the microphones this host can capture from and saves
+// the chosen one. Only meaningful where capture needs a named device (Windows
+// dshow); elsewhere the system default is used and this reports that.
+func newVoiceDeviceCmd() *cobra.Command {
+	var pick string
+	cmd := &cobra.Command{
+		Use:   "device",
+		Short: "Choose which microphone voice dictation records from.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			devices, err := voicein.ListDevices(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if len(devices) == 0 {
+				fmt.Println("This platform records from the system default microphone — nothing to choose.")
+				fmt.Println("Change it in your OS sound settings.")
+				return nil
+			}
+			if pick != "" {
+				if err := voicein.SaveDevice(pick); err != nil {
+					return err
+				}
+				fmt.Printf("voice dictation will record from %q\n", pick)
+				return nil
+			}
+			current := voicein.SavedDevice()
+			fmt.Println("Microphones available:")
+			for i, d := range devices {
+				marker := " "
+				if d == current {
+					marker = "*"
+				}
+				fmt.Printf("  %s %d) %s\n", marker, i+1, d)
+			}
+			fmt.Println()
+			if current == "" {
+				fmt.Printf("None chosen yet — %q would be used.\n", devices[0])
+			}
+			fmt.Println("Choose one with:  dejima voice device --set \"<name>\"")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&pick, "set", "", "save this microphone as the capture device (exact name from the list)")
+	return cmd
 }

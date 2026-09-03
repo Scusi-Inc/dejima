@@ -1,5 +1,9 @@
 # Lane 0 — install/uninstall verification harness (launch gate)
 
+> **Note (2026-08-16):** the `dejimaqa` runner referenced here was **torn down** for
+> crashing the operator's real `dejimad`. The design below still stands; it just has no
+> host. See `docs/testing/test-coverage-matrix.md` §19 before rebuilding one.
+
 You are the **Verify-harness** agent for Dejima. The P0 launch gate (install #86,
 uninstall `--keep-islands` #89, grants #85) is code-complete but **UNVERIFIED on a real
 clean Mac** — the single biggest remaining launch risk. Build the harness that proves it

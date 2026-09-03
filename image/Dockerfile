@@ -21,10 +21,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         less \
         openssh-client \
         openssh-sftp-server \
+        pipx \
+        python3 \
         sudo \
         tmux \
         unzip \
         vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# bubblewrap: codex's sandbox. Without it codex warns on every start —
+#
+#   ⚠ Codex could not find bubblewrap on PATH. … Codex will use the bundled
+#     bubblewrap in the meantime
+#
+# — and falls back to a bundled copy. The fallback works, so this is not a
+# failure; it is a warning an operator sees on first contact with a bundled
+# agent, about a dependency the IMAGE is supposed to provide. Installing it from
+# the distro is also the version the OS patches, which the bundled one is not.
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI (gh) for credential helper + `gh pr create`-style affordances.
@@ -106,12 +120,36 @@ COPY image/write-primer.sh /opt/dejima/write-primer.sh
 COPY image/island-primer.md /opt/dejima/island-primer.md
 RUN chmod +x /opt/dejima/write-primer.sh
 
+# Dejima-managed per-island secrets. The daemon bind-mounts a KEY=VALUE file at
+# /opt/host/secrets.env; this script PARSES it and emits `export` lines, and the
+# profile.d hook evals that output. Sourcing the file directly would make bash
+# EXECUTE it, so a token containing a backtick or $(...) would run as a command
+# in every new shell — the parser is what keeps values as data.
+#
+# profile.d (not a per-agent shim) because every interactive agent launches with
+# `bash -l`: one hook covers claude-code, codex, shell and anything added later.
+COPY image/load-secrets.sh /opt/dejima/load-secrets.sh
+RUN chmod +x /opt/dejima/load-secrets.sh && \
+    printf '%s\n' \
+      '# Dejima: export per-island secrets (see /opt/dejima/load-secrets.sh).' \
+      '# Eval OUR quoted output, never the mounted file itself.' \
+      'if [ -r /opt/host/secrets.env ]; then' \
+      '  eval "$(/opt/dejima/load-secrets.sh)" || true' \
+      'fi' \
+      > /etc/profile.d/10-dejima-secrets.sh && \
+    chmod 0644 /etc/profile.d/10-dejima-secrets.sh
+
 # The npm global prefix lives OUTSIDE /home/dejima so it is NOT captured by the
 # per-island home volume. That keeps bundled-agent binaries image-managed
 # (refreshed on `dejima upgrade`) while the home volume persists only auth/state
 # (~/.npmrc, ~/.claude, ~/.codex, ~/.config, …). Owned by dejima so the agents'
 # auto-updaters can still write to it.
 RUN mkdir -p /opt/dejima/npm-global && chown -R dejima:dejima /opt/dejima/npm-global
+# Writable pipx prefix for tier-2 Python agents (aider) that self-install on
+# first launch. Under /opt (not the home volume) so it isn't shadowed per island;
+# Ubuntu 24.04's system pip is PEP-668 "externally managed", so pipx — not
+# `pip install` — is the sanctioned path for CLI tools.
+RUN mkdir -p /opt/dejima/pipx/bin && chown -R dejima:dejima /opt/dejima/pipx
 
 # Entrypoint.
 COPY image/start.sh /usr/local/bin/dejima-start.sh
@@ -128,14 +166,39 @@ WORKDIR /workspace
 ENV HOME=/home/dejima \
     GH_CONFIG_DIR=/opt/host/gh-config \
     NPM_CONFIG_PREFIX=/opt/dejima/npm-global \
-    PATH=/opt/dejima/npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PIPX_HOME=/opt/dejima/pipx \
+    PIPX_BIN_DIR=/opt/dejima/pipx/bin \
+    PATH=/opt/dejima/npm-global/bin:/opt/dejima/pipx/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Bundled agents. Both are npm-distributed CLI agents that talk to their
 # respective vendor APIs. Installed as the dejima user into NPM_CONFIG_PREFIX
 # so on-disk paths are user-owned; auto-updates write to the same prefix.
 # Other agents (Aider, Goose, etc.) are supported via a custom image — see
 # docs/custom-agents.md.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
+# claude-code is floored at ^2.1.200 — the release that enables synchronized
+# terminal output (DECSET 2026) under tmux 3.4+, fixing the scroll-time render
+# corruption its Ink renderer otherwise produces over tmux + Windows Terminal
+# (pairs with the `sync` terminal-feature in image/tmux.conf). ^ still tracks
+# latest patches; it only guarantees a floor with the fix.
+#
+# VERIFY THE AGENTS RUN, do not just install them. `npm install -g` SUCCEEDS
+# EVEN WHEN A PLATFORM BINARY FAILS TO INSTALL: codex ships its executable as an
+# OPTIONAL dependency per platform (@openai/codex-linux-arm64 and friends), and
+# npm treats a failed optional dependency as non-fatal by design. The image then
+# builds green with an agent that dies on first run:
+#
+#   Error: Missing optional dependency @openai/codex-linux-arm64.
+#   Reinstall Codex: npm install -g @openai/codex@latest
+#
+# An operator hit that after creating a codex agent — the island came up, the
+# agent was "installed", and the binary was not there. Creating the agent cannot
+# fix it, because the agent uses this image rather than installing anything.
+#
+# So assert the end state: if either CLI cannot report its own version, the build
+# fails here rather than shipping an island that looks complete.
+RUN npm install -g @anthropic-ai/claude-code@^2.1.200 @openai/codex \
+ && claude --version \
+ && codex --version
 
 # Containers stay alive via dejima-start.sh, which manages tmux + agent process.
 ENTRYPOINT ["/usr/local/bin/dejima-start.sh"]

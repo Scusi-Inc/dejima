@@ -83,8 +83,8 @@ Effort: most of this is *instructional* — the wizard prints the menu path and 
 | Tool | Install | Already-installed check |
 |---|---|---|
 | Homebrew | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` | `command -v brew` |
-| Tailscale | `brew install --cask tailscale` → prompt to launch + sign in | `tailscale status` returns connected |
-| Docker (Desktop) | `brew install --cask docker` → prompt to launch + grant permissions | `docker version` reaches a server |
+| Tailscale | `brew install --cask tailscale-app` → prompt to launch + sign in | `tailscale status` returns connected |
+| Docker (Desktop) | `brew install --cask docker-desktop` → prompt to launch + grant permissions | `docker version` reaches a server |
 | GitHub CLI (`gh`) | `brew install gh` then `gh auth login` | `gh auth status` returns logged in |
 
 Effort: shell out to brew. The Tailscale + Docker first-launches are the only GUI pauses.
@@ -116,11 +116,11 @@ Reuses the existing `make setup` / `dejima onboard` flow. The provision wizard h
   ```
   ✅ Setup complete.
 
-  This host's Tailscale FQDN: minion.tail2f808e.ts.net
+  This host's Tailscale FQDN: minion.tailnet1234.ts.net
 
   From your laptop:
     go install github.com/aoos/dejima/cmd/dejima@latest
-    export DEJIMA_HOST=minion.tail2f808e.ts.net:7273
+    export DEJIMA_HOST=minion.tailnet1234.ts.net:7273
     dejima ls
   ```
 - Optionally: write a one-page printable cheatsheet to `~/Desktop/dejima-quick-reference.txt`.

@@ -145,8 +145,53 @@ func (s *Server) restartDaemon(meta selfupdate.InstallMeta) {
 	if err := selfupdate.ExecRunner(out)(context.Background(), "", "dejima", args...); err != nil {
 		// The new binary is already installed; a failed restart just means the old
 		// process keeps running until the next restart/boot picks it up.
-		s.log.Error("daemon self-update: restart failed — new binary installed, restart manually (e.g. sudo launchctl kickstart -k system/<label>)", "err", err)
+		s.log.Error("daemon self-update: restart failed — the NEW BINARY IS INSTALLED and this "+
+			"older process keeps serving until something restarts it. "+restartFailureHint(), "err", err)
 	}
+}
+
+// restartFailureHint names the remedy for THIS host.
+//
+// It used to say "e.g. sudo launchctl kickstart -k system/<label>" everywhere,
+// including on Linux, where launchctl does not exist. An operator running the
+// daemon inside WSL saw that line after `systemctl restart` failed with exit 5,
+// and neither command applied to their machine.
+//
+// WSL is the case that actually needs its own answer. It has no systemd by
+// default, so there IS no service manager to restart into: `systemctl restart`
+// cannot work, and the daemon is started from the Windows side instead. Telling
+// someone there to run a systemctl command sends them in a circle.
+func restartFailureHint() string { return restartHintFor(runtime.GOOS, hasSystemd()) }
+
+// restartHintFor is the decision, separated from the host so every branch can be
+// tested on any machine. Left inline, the no-systemd branch was only exercised
+// on a host that happened to lack systemd — so a mutation breaking hasSystemd
+// passed, because the test simply skipped the case it was meant to cover.
+func restartHintFor(goos string, systemd bool) string {
+	switch goos {
+	case "darwin":
+		return "Restart it with: sudo launchctl kickstart -k system/tech.dejima.dejimad"
+	case "linux":
+		if systemd {
+			return "Restart it with: sudo systemctl restart dejimad"
+		}
+		// No systemd: almost certainly WSL, or a container. The daemon here is
+		// launched from outside, so the remedy lives outside too.
+		return "This host has no systemd, so there is no service to restart into — " +
+			"if this daemon runs in WSL, restart it from Windows with `dejima wsl start`"
+	}
+	return "Restart the daemon to pick up the new binary."
+}
+
+// hasSystemd reports whether this Linux host actually runs systemd, rather than
+// merely having systemctl on PATH — WSL images ship the binary and no init.
+var osStat = os.Stat
+
+func hasSystemd() bool {
+	if _, err := osStat("/run/systemd/system"); err == nil {
+		return true
+	}
+	return false
 }
 
 // preflightPrivileged fails fast when a privileged (system) self-update can't

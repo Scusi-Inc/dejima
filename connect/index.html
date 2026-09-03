@@ -24,13 +24,13 @@
 {"@type":"BreadcrumbList","itemListElement":[
 {"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
 {"@type":"ListItem","position":2,"name":"Connect to a server","item":"https://dejima.tech/connect/"}]},
-{"@type":"TechArticle","headline":"Connect to a Dejima server","description":"How to connect another computer to a Dejima server: invite a teammate or point your own laptop at a remote box. Share the server over Tailscale, install the client, and run dejima join.","image":"https://dejima.tech/assets/og-card.png","datePublished":"2026-07-03","dateModified":"2026-07-09","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/connect/"},
+{"@type":"TechArticle","headline":"Connect to a Dejima server","description":"How to connect another computer to a Dejima server: invite a teammate or point your own laptop at a remote box. Share the server over Tailscale, install the client, and run dejima join.","image":"https://dejima.tech/assets/og-card.png","datePublished":"2026-07-03","dateModified":"2026-09-02","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/connect/"},
 {"@type":"HowTo","name":"Connect a computer to a Dejima server","description":"Accept an invite to a Dejima server: get on Tailscale, install the client, and join.","step":[
 {"@type":"HowToStep","name":"Get on Tailscale","text":"Install Tailscale and click the share link the operator sent, then follow the prompts. Your computer can now reach that one server."},
 {"@type":"HowToStep","name":"Install the Dejima client","text":"Install the CLI with npm i -g dejima, or curl -fsSL https://dejima.tech/install-client.sh | bash (which also captures the server's address)."},
 {"@type":"HowToStep","name":"Join","text":"Run dejima join <invite> to save the connection, then run dejima to open the dashboard."}]},
 {"@type":"FAQPage","mainEntity":[
-{"@type":"Question","name":"What is Tailscale and why do I need it?","acceptedAnswer":{"@type":"Answer","text":"Tailscale is a private network that links your machines directly. A Dejima server's address (like 100.84.12.7) only exists inside that network, so the computer you're connecting needs Tailscale and access to that one server. There is no public port to expose."}},
+{"@type":"Question","name":"What is Tailscale and why do I need it?","acceptedAnswer":{"@type":"Answer","text":"Tailscale is a private network that links your machines directly. A Dejima server's address (like 100.101.102.103) only exists inside that network, so the computer you're connecting needs Tailscale and access to that one server. There is no public port to expose."}},
 {"@type":"Question","name":"Does my teammate see my other projects or machines?","acceptedAnswer":{"@type":"Answer","text":"No, if you share only the server node. Sharing one machine in Tailscale gives them that machine and nothing else. Mint their Dejima invite with --owner so they get their own private fleet on the server, separate from yours."}},
 {"@type":"Question","name":"Can I connect my own laptop to a remote server the same way?","acceptedAnswer":{"@type":"Answer","text":"Yes. It is the same flow whether the second computer is a teammate's or your own. Get on Tailscale with the server, install the Dejima client, and run dejima join, or point the client at the server with dejima profile add."}}
 ]}
@@ -51,8 +51,8 @@
   <a href="../guides/">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <article class="post">
@@ -65,7 +65,7 @@
   </div>
 
   <h2>The idea in one line</h2>
-  <p>A Dejima server's address, something like <code>100.84.12.7</code>, only exists inside <strong>Tailscale</strong>, a private network that links your machines directly. So the computer you're connecting needs two things: Tailscale (with access to that one server) and the Dejima client. There's no public port to open. Once the computer can reach the server, <code>dejima join</code> does the rest.</p>
+  <p>A Dejima server's address, something like <code>100.101.102.103</code>, only exists inside <strong>Tailscale</strong>, a private network that links your machines directly. So the computer you're connecting needs two things: Tailscale (with access to that one server) and the Dejima client. There's no public port to open. Once the computer can reach the server, <code>dejima join</code> does the rest.</p>
 
   <h2 id="operator">Adding someone (on the server side)</h2>
   <p>Do this as the operator, the person who runs the server. You'll send the teammate two things: a way onto the network, and a Dejima invite.</p>
@@ -74,7 +74,7 @@
     <p class="step-label"><span class="step-n">1</span>Mint an invite</p>
     <div class="cmd">
       <pre><code>dejima token invite --role operator --owner amanda</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">This prints a paste-safe invite blob (it carries a secret, so treat it like a password). <code>--owner amanda</code> gives the teammate their <strong>own private fleet</strong> on the server, separate from yours; leave it off only if you want them acting in your islands. Use <code>--role viewer</code> for read-only, or scope to one island with <code>--island foo</code>. Revoke anytime with <code>dejima token revoke</code>.</p>
     <p class="small">The invite auto-fills the address a teammate dials — preferring the server's <strong>MagicDNS name</strong> (like <code>minion.tailXXXX.ts.net</code>) over its raw tailnet IP. This works whether you mint on the server or from a laptop connected to it. It matters because a <em>shared</em> node can show up under a different <code>100.x</code> IP in the teammate's Tailscale, so an invite baked with a raw IP may not connect — the name resolves from both sides. This needs <strong>MagicDNS turned on</strong> (next step); without it the invite falls back to the raw IP and warns you. Pass <code>--host name:7273</code> to override.</p>
@@ -106,26 +106,33 @@
     <p class="step-label"><span class="step-n">2</span>Install the Dejima client</p>
     <div class="cmd">
       <pre><code>npm i -g dejima</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">Or the guided installer, which also captures the server's address for you:</p>
     <div class="cmd">
       <pre><code>curl -fsSL https://dejima.tech/install-client.sh | bash</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
-    <p class="small">On Windows, use <code>npm i -g dejima</code>, or the PowerShell installer <code>irm https://dejima.tech/install-client.ps1 | iex</code>. The client is just the CLI; it doesn't run a server of its own.</p>
+    <p class="small">On a fresh Mac it installs to <code>~/.local/bin</code> and adds it to your PATH, so
+      <strong>open a new terminal</strong> before you run <code>dejima</code>. To stay in this one:
+      <code>export PATH="$HOME/.local/bin:$PATH"</code>.</p>
+    <p class="small">That line is bash &mdash; macOS or Linux. On Windows, open <strong>PowerShell</strong> (not Command
+      Prompt) and run <code>irm https://dejima.tech/install-client.ps1 | iex</code>, or use <code>npm i -g dejima</code>
+      which works from either. The PowerShell installer asks where your islands run: answer <strong>[2] on another machine</strong>, because the server is the one that was shared with you. If you get <code>'irm' is not recognized&hellip;</code> you are in <code>cmd.exe</code>;
+      <code>powershell -NoProfile -Command "irm https://dejima.tech/install-client.ps1 | iex"</code> works there. The
+      client is just the CLI; it doesn't run a server of its own.</p>
   </div>
 
   <div class="step">
     <p class="step-label"><span class="step-n">3</span>Join, and open it</p>
     <div class="cmd">
       <pre><code>dejima join &lt;invite&gt;</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">Paste the invite blob the operator sent. That saves the server and your token as your active connection. Then open the dashboard:</p>
     <div class="cmd">
       <pre><code>dejima</code></pre>
-      <button type="button" class="cmd-copy" aria-label="Copy command">Copy</button>
+      <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     </div>
     <p class="small">You're in your own fleet on that server. Launch an island and you're working.</p>
   </div>
@@ -143,7 +150,7 @@
   <div class="faq">
     <div class="faq-item">
       <h3>What is Tailscale and why do I need it?</h3>
-      <p>Tailscale is a private network that links your machines directly. A Dejima server's address (like <code>100.84.12.7</code>) only exists inside that network, so the computer you're connecting needs Tailscale and access to that one server. There's no public port to expose.</p>
+      <p>Tailscale is a private network that links your machines directly. A Dejima server's address (like <code>100.101.102.103</code>) only exists inside that network, so the computer you're connecting needs Tailscale and access to that one server. There's no public port to expose.</p>
     </div>
     <div class="faq-item">
       <h3>Does my teammate see my other projects or machines?</h3>
@@ -155,7 +162,7 @@
     </div>
     <div class="faq-item">
       <h3>The server has to be macOS or Linux, right?</h3>
-      <p>Yes. The Dejima server (the daemon) runs on macOS or Linux, since it needs Docker. Windows is fine as a client: it can connect to and drive a server, it just can't host one.</p>
+      <p>Natively, yes: the daemon needs Docker on a Unix host, so it runs on macOS or Linux. But Windows can host too, through WSL2. <code>dejima wsl setup</code> installs Docker and the daemon into a WSL2 distro and points your native Windows client at it. Windows is also fine as a plain client driving a server elsewhere, if that's what you want. See the <a href="../quickstart.html#run-local">quickstart</a>.</p>
     </div>
     <div class="faq-item">
       <h3>Copying a login URL out of an agent doesn't work (or new agents open in separate windows)?</h3>
@@ -175,21 +182,25 @@
   <a href="../guides/">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>
 <script>
 // Copy buttons on the command boxes: copy the sibling <code>.
 (function () {
+  var CHECK = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
   document.querySelectorAll('.cmd-copy').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var code = btn.closest('.cmd').querySelector('code');
       if (!code) return;
       function done() {
-        var was = btn.textContent;
-        btn.textContent = 'Copied';
-        setTimeout(function () { btn.textContent = was; }, 1400);
+        var was = btn.innerHTML;
+        btn.innerHTML = CHECK;
+        btn.classList.add('is-copied');
+        setTimeout(function () {
+          btn.innerHTML = was; btn.classList.remove('is-copied');
+        }, 1400);
       }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(code.textContent).then(done, done);

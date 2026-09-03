@@ -26,9 +26,12 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/egress"
 	"github.com/aoos/dejima/internal/events"
+	"github.com/aoos/dejima/internal/fdlimit"
+	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/sshfacade"
 	"github.com/aoos/dejima/internal/version"
 )
@@ -144,6 +147,18 @@ const defaultTokenAddr = "127.0.0.1:7274"
 const defaultEgressProxy = "127.0.0.1:7280"
 
 func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressDial string, egressExplicit bool, sshAddr string, hostTerminals, requireToken bool, audit auditConfig, idleHibernate time.Duration, wakeNotify bool, wakeFlush time.Duration) error {
+	// Headroom before any listener exists. Under launchd the inherited soft
+	// limit is 256, which a handful of concurrent egress tunnels exhausts; the
+	// failure mode is silent (hung accepts, not an error), so raise first and
+	// say so in the log. Best-effort — less headroom still beats not starting.
+	if res, lerr := fdlimit.Raise(); lerr != nil {
+		log.Warn("could not raise open-file limit; egress may stall under load", "limit", res, "err", lerr)
+	} else if res.Raised {
+		log.Info("raised open-file limit", "limit", res)
+	} else {
+		log.Debug("open-file limit already sufficient", "limit", res)
+	}
+
 	socketPath, err := paths.SocketPath()
 	if err != nil {
 		return err
@@ -188,6 +203,21 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 		log.Info("ledger HMAC keying enabled", "key_file", audit.hmacKeyFile)
 	}
 
+	// Authenticate release-update checks with the connected GitHub identity when
+	// present, so the daemon isn't stuck on the anonymous 60/hr-per-IP GitHub limit
+	// (which a burst of releases + checks exhausts). Best-effort: no identity → the
+	// checks stay anonymous, exactly as before.
+	selfupdate.TokenFallback = func() string {
+		store, lerr := githubid.Load()
+		if lerr != nil {
+			return ""
+		}
+		if id, ok := store.ResolveForIsland("", ""); ok {
+			return id.Token
+		}
+		return ""
+	}
+
 	server := api.NewServer(rt, log, em)
 	if hostTerminals {
 		server.EnableHostTerminals()
@@ -220,9 +250,14 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	if tokenAddr == "" {
 		tokenAddr = defaultTokenAddr
 	}
+	// Before assertHostInternalBind, not after: the guard must see the address we
+	// will actually listen on. A relocation that happened afterwards would be
+	// unguarded, which is how a wildcard eventually slips past a check that only
+	// ever inspected the default.
+	tokenAddr = hostInternalBind(context.Background(), log, tokenAddr, tokenExplicit)
 	var tokenSrv *http.Server
 	var tokenLn net.Listener
-	if err := assertHostInternalBind(log, tokenAddr); err != nil {
+	if err := assertHostInternalBind(log, "token listener", "--token-tcp", tokenAddr); err != nil {
 		return err
 	}
 	dial := autonomyDial
@@ -256,6 +291,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	var egressSrv *http.Server
 	var egressLn net.Listener
 	if egressAddr != "" {
+		egressAddr = hostInternalBind(context.Background(), log, egressAddr, egressExplicit)
 		// A bind problem is fatal only when the operator explicitly asked for the
 		// proxy; the default-on proxy degrades gracefully (warn + run without it)
 		// so a busy port or a non-host-internal default can never block startup.
@@ -269,7 +305,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 			log.Warn("island egress proxy off — `dejima egress allow/deny` unavailable until resolved (set --egress-proxy to a free host-internal addr, or --no-egress-proxy to silence)", "addr", egressAddr, "err", err)
 			return nil
 		}
-		if err := assertHostInternalBind(log, egressAddr); err != nil {
+		if err := assertHostInternalBind(log, "egress proxy", "--egress-proxy", egressAddr); err != nil {
 			if ferr := fatal(err); ferr != nil {
 				return ferr
 			}
@@ -280,6 +316,10 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 			egressLn = nil
 		} else {
 			defer egressLn.Close()
+			// The proxy is the heaviest fd consumer (two per tunnel), so it's
+			// where exhaustion shows up first — and where a silent hang is
+			// least acceptable.
+			egressLn = fdlimit.Guard(egressLn, log.Error)
 			eDial := egressDial
 			if eDial == "" {
 				_, port, splitErr := net.SplitHostPort(egressAddr)
@@ -320,7 +360,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 			return fmt.Errorf("ssh listen %s: %w", sshAddr, err)
 		}
 		defer sshLn.Close()
-		server.EnableSSH(sshAddr)
+		server.EnableSSH(sshAddr, sshSrv.HostPublicKey())
 		log.Info("ssh façade enabled", "addr", sshAddr, "host_key", sshSrv.HostKeyFingerprint())
 	}
 
@@ -349,21 +389,39 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	}()
 
 	// Optional Tailscale-pinned TCP listener.
+	//
+	// A tailnet that isn't up YET is a transient state, not a misconfiguration.
+	// `dejima onboard --provision-host` installs the daemon with --tcp :7273
+	// before the operator has signed in to Tailscale, and on a headless Mac that
+	// sign-in can land minutes or days later. Treating it as fatal took the unix
+	// socket down with it — every local command failed with "is dejimad
+	// running?", and launchd's KeepAlive turned it into a silent crash loop. So
+	// the remote listener degrades the same way the egress proxy does: warn, keep
+	// serving locally, and bring the tailnet up on its own once it answers.
 	var tcpLn net.Listener
+	tcpUp := false
 	if tcpAddr != "" {
 		tnet, err := loadTailscaleIPs(log)
-		if err != nil {
-			return fmt.Errorf("tailscale lookup: %w (install tailscale or run without --tcp)", err)
+		switch {
+		case err != nil:
+			log.Warn("remote access not up yet — Tailscale isn't answering. serving the local "+
+				"unix socket and retrying in the background; `sudo tailscale up --ssh` is all this needs",
+				"addr", tcpAddr, "err", err)
+			go serveTailnetWhenReady(ctx, log, tcpAddr, httpServer, errCh)
+		default:
+			raw, lerr := net.Listen("tcp", tcpAddr)
+			if lerr != nil {
+				// A busy port is a real conflict (usually a second daemon), not
+				// something waiting to resolve itself — say so and stop.
+				return fmt.Errorf("tcp listen %s: %w", tcpAddr, lerr)
+			}
+			tcpLn = &tailscaleListener{Listener: raw, tailnet: tnet, log: log}
+			tcpUp = true
+			go func() {
+				log.Info("dejimad listening (tcp)", "addr", tcpAddr, "tailnet_size", len(tnet))
+				errCh <- httpServer.Serve(tcpLn)
+			}()
 		}
-		raw, err := net.Listen("tcp", tcpAddr)
-		if err != nil {
-			return fmt.Errorf("tcp listen %s: %w", tcpAddr, err)
-		}
-		tcpLn = &tailscaleListener{Listener: raw, tailnet: tnet, log: log}
-		go func() {
-			log.Info("dejimad listening (tcp)", "addr", tcpAddr, "tailnet_size", len(tnet))
-			errCh <- httpServer.Serve(tcpLn)
-		}()
 	}
 
 	// Optional host-internal, token-authenticated listener (autonomy path).
@@ -393,7 +451,10 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	// Announce the daemon is up (push signal for headless hosts) and start the
 	// container watchdog that emits container.crashed on unexpected exits.
 	listenModes := []string{"unix"}
-	if tcpAddr != "" {
+	if tcpUp {
+		// Only what's actually serving — announcing "tcp" while the tailnet
+		// listener is still waiting on Tailscale tells clients to dial a port
+		// nothing is on.
 		listenModes = append(listenModes, "tcp")
 	}
 	if tokenSrv != nil {
@@ -445,29 +506,40 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	}
 }
 
-// assertHostInternalBind refuses to bind the token listener to a wildcard/LAN
-// address. The token is the authorization; the bind is the blast-radius limiter.
-// A 0.0.0.0/:: bind would expose the autonomy API to the whole LAN, where only
-// the bearer token stands between an attacker and the host. Loopback is ideal
-// (reachable from containers via host.docker.internal on Docker Desktop); a
+// assertHostInternalBind refuses to bind a host-internal listener to a
+// wildcard/LAN address. The token is the authorization; the bind is the
+// blast-radius limiter. A 0.0.0.0/:: bind would expose the API to the whole LAN,
+// where only the bearer token stands between an attacker and the host. Loopback
+// is ideal on a VM engine (Docker Desktop / colima special-case
+// host.docker.internal to reach the host's loopback through the VM); a
 // non-loopback host-internal address (e.g. a docker bridge gateway) is allowed
 // but warned, since the operator must ensure it isn't LAN-routable.
-func assertHostInternalBind(log *slog.Logger, addr string) error {
+//
+// `what` and `flag` name the CALLER. This function serves two listeners — the
+// token-TCP autonomy path and the egress proxy — and every message in it used to
+// say "token listener" and "--token-tcp" regardless. A real operator log showed
+//
+//	WARN "token listener bound to a non-loopback address" addr=172.17.0.1:7280
+//
+// where 7280 is the EGRESS PROXY. Harmless there, but the same wrong name is in
+// the wildcard ERROR, which would have sent someone to fix a flag they had not
+// set while the one they did set stayed broken.
+func assertHostInternalBind(log *slog.Logger, what, flag, addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("parse --token-tcp %q: %w", addr, err)
+		return fmt.Errorf("parse %s %q: %w", flag, addr, err)
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" {
-		return fmt.Errorf("--token-tcp %q binds a wildcard address; the autonomy listener must bind a host-internal address (e.g. 127.0.0.1:<port>), never all interfaces", addr)
+		return fmt.Errorf("%s %q binds a wildcard address; the %s must bind a host-internal address (e.g. 127.0.0.1:<port>), never all interfaces", flag, addr, what)
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
 		// A hostname rather than a literal IP — can't statically verify it; warn.
-		log.Warn("token listener bind is not a literal IP; ensure it resolves to a host-internal address only", "addr", addr)
+		log.Warn("bind is not a literal IP; ensure it resolves to a host-internal address only", "listener", what, "flag", flag, "addr", addr)
 		return nil
 	}
 	if !ip.IsLoopback() {
-		log.Warn("token listener bound to a non-loopback address; ensure it is not routable from the LAN", "addr", addr)
+		log.Warn("bound to a non-loopback address; ensure it is not routable from the LAN", "listener", what, "flag", flag, "addr", addr)
 	}
 	return nil
 }
@@ -555,6 +627,39 @@ func addrOnTailnet(a netip.Addr, prefixes []netip.Prefix) bool {
 		}
 	}
 	return false
+}
+
+// tailnetRetryInterval paces the wait for Tailscale to come up. A var so tests
+// don't have to sit through it.
+var tailnetRetryInterval = 30 * time.Second
+
+// serveTailnetWhenReady brings the Tailscale-pinned listener up once Tailscale
+// starts answering, for a daemon that booted before the operator signed in.
+// Until then the unix socket carries every local command, so this failing
+// forever is a degraded daemon, never a dead one.
+func serveTailnetWhenReady(ctx context.Context, log *slog.Logger, addr string, srv *http.Server, errCh chan<- error) {
+	t := time.NewTicker(tailnetRetryInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		tnet, err := loadTailscaleIPs(log)
+		if err != nil {
+			continue // still logged out; say nothing, this is the expected state
+		}
+		raw, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Warn("Tailscale is up but the remote-access port is taken — retrying",
+				"addr", addr, "err", err)
+			continue
+		}
+		log.Info("remote access is up — Tailscale came online", "addr", addr, "tailnet_size", len(tnet))
+		errCh <- srv.Serve(&tailscaleListener{Listener: raw, tailnet: tnet, log: log})
+		return
+	}
 }
 
 // loadTailscaleIPs invokes `tailscale status --json` to enumerate peers and

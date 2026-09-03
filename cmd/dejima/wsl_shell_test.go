@@ -1,0 +1,245 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// Every script `dejima wsl setup` runs inside the distro must parse under DASH.
+//
+// wsl.Run executes them through `sh -c`, and /bin/sh on Ubuntu is dash, not
+// bash. A bashism there fails on the operator's machine and not on ours, which
+// is the worst place for the difference to live.
+//
+// It already happened: a wait loop written as a seq expansion produced
+//
+//	sh: 11: Syntax error: word unexpected (expecting "do")
+//
+// on a distro with no coreutils — the expansion is empty, leaving an empty
+// for-list. It fired AFTER everything else in the install had worked, so a
+// clean path had one last landmine at the end, and the message names a shell
+// nobody knew they were using.
+//
+// Parsing is not execution, so this cannot catch a missing binary. It catches
+// the class that actually bit: syntax the author's shell accepts and the
+// distro's does not.
+func TestWSLScriptsParseUnderDash(t *testing.T) {
+	if _, err := exec.LookPath("dash"); err != nil {
+		t.Skip("dash not installed here; CI covers it")
+	}
+	src := readSource(t, "wsl.go")
+
+	// The scripts are Go raw-string literals passed to wsl.Run. Raw strings are
+	// used precisely because these contain quotes and $, so a backtick inside one
+	// terminates the literal early — which broke the build once while writing the
+	// very comment explaining the dash bug.
+	// EVERY shell raw-string in the file, not just the ones written inline at the
+	// wsl.Run call. A script assembled into a variable first — which any script
+	// needing interpolation must be — was invisible to the call-site pattern, so
+	// the two largest scripts in this file went unchecked the moment they were
+	// added. The extractor must follow the shell, not the call shape.
+	//
+	// Keyed on "set -e" because every in-distro script here begins with it and Go
+	// raw strings are used for plenty of non-shell things.
+	re := regexp.MustCompile("(?s)`([^`]*set -e[^`]*)`")
+	found := re.FindAllStringSubmatch(src, -1)
+	// A floor, not just non-emptiness: the pattern silently matching FEWER
+	// scripts than the file contains is the failure that just happened, and
+	// "found at least one" would not have caught it.
+	// Four, deliberately lowered from five: startDaemonInWSL's script no longer
+	// exists — its wait loop moved into Go, because a shell counter was the third
+	// thing this channel ate. The floor tracks reality; lowering it BECAUSE THE
+	// TEST FAILED would be loosening a ratchet, so it moves only alongside a
+	// script actually being removed.
+	const minScripts = 4
+	if len(found) < minScripts {
+		t.Fatalf("found %d in-distro scripts, expected at least %d — the extraction "+
+			"pattern is missing some, so this guard is checking a subset while "+
+			"reporting on the whole file", len(found), minScripts)
+	}
+	for i, m := range found {
+		// Fill any %s placeholders before parsing: an unformatted script is not
+		// what runs, so checking it would check the wrong text.
+		script := strings.ReplaceAll(m[1], "%s", "'https://example.invalid/x'")
+		cmd := exec.Command("dash", "-n", "-c", script)
+		var errOut strings.Builder
+		cmd.Stderr = &errOut
+		if err := cmd.Run(); err != nil {
+			t.Errorf("in-distro script %d is not valid dash: %v\n%s\n--- script ---\n%s",
+				i+1, err, errOut.String(), script)
+		}
+	}
+	t.Logf("checked %d in-distro script(s) under dash", len(found))
+
+	// NO SHELL VARIABLES IN ANY IN-DISTRO SCRIPT. Not a style rule — the class
+	// that kept coming back.
+	//
+	// Something between Go's exec and the distro's sh expands `$` in the script
+	// text. It cost three separate failures on the operator's machine, each
+	// looking unrelated to the last and each on a different function:
+	//
+	//	unsupported architecture:                     ($arch, empty)
+	//	mkdir: cannot create directory ''             ($work, empty)
+	//	sh: 18: [: Illegal number:                    ($i, empty)
+	//
+	// Twice I fixed one function and left the variables in the next. The value
+	// always exists on the Go side; interpolate it there, where it can be tested,
+	// and the shell never has to carry it.
+	//
+	// A silently-swallowed one is worse than any of the above: `usermod -aG
+	// docker "$(id -un)" || true` would expand to an empty target, fail, and be
+	// swallowed by the `|| true`, leaving the user out of the docker group with
+	// nothing to see.
+	for i, m := range found {
+		if strings.Contains(m[1], "$") {
+			var lines []string
+			for _, l := range strings.Split(m[1], "\n") {
+				if strings.Contains(l, "$") {
+					lines = append(lines, strings.TrimSpace(l))
+				}
+			}
+			t.Errorf("in-distro script %d uses a shell variable: %v\n"+
+				"This channel eats `$`. Resolve the value in Go and interpolate it.",
+				i+1, lines)
+		}
+	}
+
+	// PARSING IS NOT ENOUGH, and the bug that prompted this file proves it:
+	// `for i in $(seq 1 60); do` is VALID dash and fails only at runtime, when
+	// seq is absent and the expansion is empty. `dash -n` accepts it happily —
+	// a mutation restoring the original bug passed this test until this check
+	// existed.
+	//
+	// So ban the constructs whose failure is a missing binary rather than bad
+	// syntax. A minimal distro is the target: WSL images ship without much, and
+	// "it worked on mine" is how the original landed.
+	for i, m := range found {
+		for _, banned := range []struct{ tok, why string }{
+			{"$(seq ", "seq is coreutils; on a minimal distro it expands to nothing, " +
+				"leaving an empty for-list that dash rejects at runtime. Use a POSIX " +
+				"counter: i=0; while [ \"$i\" -lt N ]; do … i=$((i + 1)); done"},
+			{"`seq ", "same as $(seq …)"},
+		} {
+			if strings.Contains(m[1], banned.tok) {
+				t.Errorf("in-distro script %d uses %q: %s", i+1, banned.tok, banned.why)
+			}
+		}
+	}
+}
+
+// install.sh must never stop and ask a question inside `dejima wsl setup`.
+//
+// The installer asks SERVER or CLIENT on /dev/tty, and it asks there because a
+// `curl … | bash` pipe is not evidence that nobody is watching. This call is a
+// non-interactive child: if a terminal is reachable from inside the distro, the
+// install would wait for an answer nobody is there to give, and `wsl setup`
+// would hang with no output explaining why.
+func TestWSLInstallAnswersTheInstallerQuestion(t *testing.T) {
+	src := readSource(t, "wsl.go")
+	i := strings.Index(src, "func installDejimad")
+	if i < 0 {
+		t.Fatal("installDejimad not found — renamed, and this guard now checks nothing")
+	}
+	body := src[i:]
+	if j := strings.Index(body, "\n}"); j > 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, "install.sh") {
+		t.Skip("installDejimad no longer shells out to install.sh")
+	}
+	// The LINE that runs the installer, not the function body. The body contains
+	// a comment explaining why DEJIMA_ROLE is set, and that comment satisfied a
+	// body-wide Contains check even with the variable deleted from the command —
+	// prose passing as code, for the third time in one day.
+	var invocation string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if strings.Contains(trimmed, "install.sh") {
+			invocation = trimmed
+		}
+	}
+	if invocation == "" {
+		t.Fatal("found no non-comment line invoking install.sh — the guard cannot " +
+			"see the command it is meant to check")
+	}
+	if !strings.Contains(invocation, "DEJIMA_ROLE") {
+		t.Error("installDejimad runs install.sh without pinning DEJIMA_ROLE. That "+
+			"installer asks SERVER-or-CLIENT on /dev/tty; if one is reachable from "+
+			"inside the distro, `dejima wsl setup` hangs waiting for an answer nobody "+
+			"is there to give, with nothing on screen saying so.", invocation)
+	}
+}
+
+// readSource returns a file from this package. Reading SOURCE rather than
+// exercising the function is deliberate: these scripts only run inside a WSL
+// distro on Windows, which no test host has — so the choice is a source-level
+// guard or no guard at all, and the failures being caught are textual.
+func readSource(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(b)
+}
+
+// The install script must carry no LOGIC — no command substitution, no case
+// matching, no URL assembly. Only a finished URL and the commands that use it.
+//
+// The first version resolved the architecture in the shell with `arch=$(uname
+// -m)` and a case statement, and failed on a real machine with
+//
+//	unsupported architecture:
+//
+// and nothing after the colon: the substitution came back empty, or the case
+// never matched a value carrying a stray CR. Which layer mangled it — Windows
+// argument quoting, wsl.exe's own re-parsing, a line ending — was never
+// determined, because the fix for all of them is the same. Anything the Go side
+// can decide, the Go side decides; the shell gets values, not decisions.
+//
+// This guards the principle rather than the incident, because the next person to
+// need a variable in there will reach for $( ) exactly as I did.
+func TestInstallScriptCarriesNoLogic(t *testing.T) {
+	for _, banned := range []struct{ tok, why string }{
+		{"$(", "command substitution — resolve it in Go and pass the value in"},
+		{"`", "backtick substitution — same reason, and it also breaks the Go raw string"},
+		{"case ", "branching on a value the Go side already knows"},
+		{"uname", "architecture detection belongs in Go, where the result can be trimmed and named"},
+		{"releases/download", "URL assembly — build the finished URL in Go and pass it"},
+		{"$", "a shell VARIABLE. Something between Go's exec and the distro's sh " +
+			"expands `$` in this script: on a real machine `$work` came through empty, " +
+			"the quotes survived, and mkdir received '' — while the same script ran " +
+			"correctly under dash locally with HOME confirmed set. Inline the value " +
+			"from Go instead; there is nothing here worth a variable"},
+	} {
+		if strings.Contains(dejimadInstallScript, banned.tok) {
+			t.Errorf("the install script contains %q: %s", banned.tok, banned.why)
+		}
+	}
+	// And it must still be given values from Go, or the bans above are satisfied
+	// by a script that does nothing at all.
+	//
+	// A FLOOR, NOT AN EXACT COUNT, and the change is deliberate. This was `!= 2`,
+	// which read as a ceiling on interpolation — but interpolating a Go-computed
+	// value is the ENDORSED pattern here; it is what every ban above tells you to
+	// do instead. Pinning the count therefore blocked the remedy while the bans
+	// demanded it: adding checksum verification (a sums URL and an asset name,
+	// both resolved in Go) tripped this guard for doing exactly the right thing.
+	//
+	// The stated purpose in the old comment was "must still be given a URL" —
+	// a floor. The implementation was stricter than its own rationale, and the
+	// strictness was the part with no argument behind it.
+	if n := strings.Count(dejimadInstallScript, "%s"); n < 2 {
+		t.Errorf("the install script has %d %%s placeholders, want at least 2 (the echo "+
+			"and the curl) — it has been emptied rather than simplified", n)
+	}
+	if !strings.Contains(dejimadInstallScript, "curl") {
+		t.Error("the install script no longer downloads anything")
+	}
+}

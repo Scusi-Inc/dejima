@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -47,13 +48,19 @@ func TestPaneWindows(t *testing.T) {
 // otherwise dials :80 and is refused (the connection bug operators hit).
 func TestNormalizeHost(t *testing.T) {
 	cases := map[string]string{
-		"100.77.85.107":      "100.77.85.107:7273",
-		"100.77.85.107:7273": "100.77.85.107:7273",
-		"minion":             "minion:7273",
-		"minion:7273":        "minion:7273",
-		"  100.77.85.107  ":  "100.77.85.107:7273",
-		"minion:9999":        "minion:9999", // a non-default port is preserved
-		"":                   "",
+		"100.101.102.103":      "100.101.102.103:7273",
+		"100.101.102.103:7273": "100.101.102.103:7273",
+		"minion":               "minion:7273",
+		"minion:7273":          "minion:7273",
+		"  100.101.102.103  ":  "100.101.102.103:7273",
+		"minion:9999":          "minion:9999", // a non-default port is preserved
+		"":                     "",
+		// A WSL distro is a name, not an address. Appending :7273 to it would
+		// produce a target the wsl:// dialer can't resolve.
+		"wsl://dejima":  "wsl://dejima",
+		"wsl://Ubuntu":  "wsl://Ubuntu",
+		"  wsl://dev  ": "wsl://dev",
+		"wsl://":        "wsl://dejima", // shorthand fills in the default distro
 	}
 	for in, want := range cases {
 		if got := normalizeHost(in); got != want {
@@ -126,6 +133,68 @@ func TestAnnouncementLifecycle(t *testing.T) {
 	}
 }
 
+// TestImageBuildAnnouncement locks in the image-build feedback loop. Both halves
+// regressed silently before: the in-flight state was a lone footer glyph that a
+// stale error hid outright, and a SUCCESSFUL build rendered nothing anywhere — so
+// a finished build looked identical to one that never started.
+func TestImageBuildAnnouncement(t *testing.T) {
+	sameStyle := func(a, b lipgloss.Style) bool { return a.Render("x") == b.Render("x") }
+
+	// In flight: an announcement, not just a footer glyph.
+	full, _, st, ok := tuiModel{building: true}.announcement()
+	if !ok {
+		t.Fatal("a build in flight must broadcast something")
+	}
+	if !strings.Contains(full, "building the island image") || !sameStyle(st, styleWarnBroadcast) {
+		t.Errorf("in-flight build should be an orange progress banner: %q", full)
+	}
+
+	// Starting a build clears a stale lastError, which renderFooterLeft would
+	// otherwise early-return on — swallowing the footer's ⏳ for the whole build.
+	out, _ := tuiModel{lastError: "some earlier op blew up"}.
+		runConfirmed(confirmPrompt{verb: "build-image", answer: "y"})
+	started := out.(tuiModel)
+	if !started.building {
+		t.Fatal("confirming build-image must set building")
+	}
+	if started.lastError != "" {
+		t.Errorf("starting a build must clear a stale error, got %q", started.lastError)
+	}
+
+	// Success: banner names the SECOND step, since building alone moves no island.
+	out, _ = started.Update(imageBuildDoneMsg{})
+	done := out.(tuiModel)
+	if done.building {
+		t.Error("a finished build must clear building")
+	}
+	// Asserted against the label the menu ACTUALLY carries, not a copy of it: the
+	// banner tells the operator to go find a named item, so a rename that doesn't
+	// update both leaves an instruction pointing at something that isn't there.
+	if want := upgradeMenuLabel(t); !strings.Contains(done.imageBuiltPending, want) {
+		t.Errorf("success banner must name the upgrade item verbatim (%q), got %q", want, done.imageBuiltPending)
+	}
+	full, _, st, ok = done.announcement()
+	if !ok || !strings.Contains(full, "[esc] dismiss") || !sameStyle(st, styleWarnBroadcast) {
+		t.Errorf("built-image notice should be a sticky orange banner: %q", full)
+	}
+
+	// ...and [esc] dismisses it, like the other sticky banners.
+	out, _ = done.handleKey(key("esc"))
+	if got := out.(tuiModel).imageBuiltPending; got != "" {
+		t.Errorf("esc must dismiss the built-image notice, got %q", got)
+	}
+
+	// A failed build reports the error and claims no success.
+	out, _ = started.Update(imageBuildDoneMsg{err: errors.New("boom")})
+	failed := out.(tuiModel)
+	if !strings.Contains(failed.lastError, "boom") {
+		t.Errorf("a failed build must surface the error, got %q", failed.lastError)
+	}
+	if failed.imageBuiltPending != "" {
+		t.Errorf("a failed build must not claim the image was built, got %q", failed.imageBuiltPending)
+	}
+}
+
 // TestUpdateNoticeFade: the green banner clears only when the fade tick matches
 // the token that armed it — a newer banner set in between must survive.
 func TestUpdateNoticeFade(t *testing.T) {
@@ -150,7 +219,7 @@ func TestUpdateNoticeFade(t *testing.T) {
 func TestResolveTargetPrecedence(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // redirect ~/.dejima for clientcfg
 	if err := clientcfg.Save(clientcfg.Config{
-		Profiles:      []clientcfg.Profile{{Name: "minion", Host: "100.77.85.107:7273"}},
+		Profiles:      []clientcfg.Profile{{Name: "minion", Host: "100.101.102.103:7273"}},
 		ActiveProfile: "minion",
 	}); err != nil {
 		t.Fatal(err)
@@ -167,8 +236,8 @@ func TestResolveTargetPrecedence(t *testing.T) {
 	t.Run("saved active profile when env unset", func(t *testing.T) {
 		t.Setenv("DEJIMA_HOST", "")
 		host, label, source := resolveTarget()
-		if host != "100.77.85.107:7273" || label != "minion" || source != "profile" {
-			t.Fatalf("want (100.77.85.107:7273, minion, profile), got (%q, %q, %q)", host, label, source)
+		if host != "100.101.102.103:7273" || label != "minion" || source != "profile" {
+			t.Fatalf("want (100.101.102.103:7273, minion, profile), got (%q, %q, %q)", host, label, source)
 		}
 	})
 }
@@ -303,4 +372,108 @@ func TestClientForHostRejectsControlChars(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "control character") {
 		t.Fatalf("error should name the cause, got: %v", err)
 	}
+}
+
+// [d] used to delete a saved connection instantly. It now stages a confirmation,
+// because the list's own Enter means "connect" — so a d-then-Enter reflex was one
+// keystroke away from removing a profile the user meant to switch to. The rules
+// under test: d stages (never deletes), only y commits, Enter is inert while the
+// prompt is up, and the synthetic "local" row stays undeletable.
+func TestSwitcherDeleteConfirmation(t *testing.T) {
+	setup := func(t *testing.T) tuiModel {
+		t.Helper()
+		t.Setenv("HOME", t.TempDir())
+		cfg, _ := clientcfg.Load()
+		cfg.Profiles = []clientcfg.Profile{{Name: "minion", Host: "10.0.0.1:7273"}}
+		if err := clientcfg.Save(cfg); err != nil {
+			t.Fatalf("seed config: %v", err)
+		}
+		return tuiModel{switcher: &switcherModel{
+			profiles: []clientcfg.Profile{{Name: "local"}, {Name: "minion", Host: "10.0.0.1:7273"}},
+			cursor:   1,
+		}}
+	}
+	press := func(m tuiModel, key string) tuiModel {
+		var msg tea.KeyMsg
+		switch key {
+		case "esc":
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+		}
+		out, _ := m.switcherKey(msg)
+		return out.(tuiModel)
+	}
+	saved := func(t *testing.T) int {
+		t.Helper()
+		cfg, _ := clientcfg.Load()
+		return len(cfg.Profiles)
+	}
+
+	t.Run("d stages the prompt without deleting", func(t *testing.T) {
+		m := press(setup(t), "d")
+		if m.switcher.step != swConfirmDelete {
+			t.Fatalf("step = %d, want swConfirmDelete", m.switcher.step)
+		}
+		if n := saved(t); n != 1 {
+			t.Fatalf("profile removed before confirming (%d left)", n)
+		}
+	})
+
+	t.Run("enter does not confirm", func(t *testing.T) {
+		m := press(press(setup(t), "d"), "enter")
+		if m.switcher.step != swConfirmDelete {
+			t.Errorf("Enter should leave the prompt up, got step %d", m.switcher.step)
+		}
+		if n := saved(t); n != 1 {
+			t.Errorf("Enter deleted the profile (%d left)", n)
+		}
+	})
+
+	for _, key := range []string{"n", "esc"} {
+		t.Run(key+" cancels", func(t *testing.T) {
+			m := press(press(setup(t), "d"), key)
+			if m.switcher.step != swList {
+				t.Errorf("%q should return to the list, got step %d", key, m.switcher.step)
+			}
+			if n := saved(t); n != 1 {
+				t.Errorf("%q deleted the profile (%d left)", key, n)
+			}
+		})
+	}
+
+	t.Run("y commits and returns to the list", func(t *testing.T) {
+		m := press(press(setup(t), "d"), "y")
+		if m.switcher.step != swList {
+			t.Errorf("after deleting, step = %d, want swList", m.switcher.step)
+		}
+		if n := saved(t); n != 0 {
+			t.Errorf("y should have removed the profile, %d left", n)
+		}
+	})
+
+	t.Run("local is undeletable", func(t *testing.T) {
+		m := setup(t)
+		m.switcher.cursor = 0
+		if got := press(m, "d"); got.switcher.step != swList {
+			t.Errorf("d on synthetic local should do nothing, got step %d", got.switcher.step)
+		}
+	})
+
+	t.Run("prompt names the profile and warns when it is active", func(t *testing.T) {
+		m := setup(t)
+		m.activeHost = "10.0.0.1:7273" // connected through the row under the cursor
+		m = press(m, "d")
+		if !m.switcher.delActive {
+			t.Error("delActive should be set when deleting the active connection")
+		}
+		v := m.switcher.view()
+		for _, want := range []string{"minion", "10.0.0.1:7273", "active connection", "[y] delete"} {
+			if !strings.Contains(v, want) {
+				t.Errorf("confirm view missing %q:\n%s", want, v)
+			}
+		}
+	})
 }

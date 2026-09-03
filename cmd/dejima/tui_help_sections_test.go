@@ -30,8 +30,11 @@ func TestHelpSectionsAndKeys(t *testing.T) {
 		"O":          "owner lens",                       // multi-tenant
 		"%":          "host utilization",                 // aggregate
 	}
+	// Case-insensitive: help descriptions lead with a capital for skimming, but
+	// these assertions care that a key is DOCUMENTED, not how it's cased.
+	lowHelp := strings.ToLower(help)
 	for key, phrase := range wants {
-		if !strings.Contains(help, phrase) {
+		if !strings.Contains(lowHelp, strings.ToLower(phrase)) {
 			t.Errorf("help missing the [%s] entry (expected phrase %q)", key, phrase)
 		}
 	}

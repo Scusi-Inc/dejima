@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	goruntime "runtime"
 	"strings"
+	"testing"
 )
 
 // canOpenNewWindow reports whether openInNewWindow has a backend it can use
@@ -17,6 +18,27 @@ import (
 // deterministically regardless of GOOS (darwin/windows would otherwise always
 // be true, and macOS would try to script Terminal).
 var canOpenNewWindow = func() bool {
+	// A TEST BINARY NEVER OPENS A WINDOW ON SOMEBODY'S SCREEN.
+	//
+	// This is not defensive; it is a bug caught in the act. TMUX is always set
+	// inside an agent's pane, so this returned true under `go test` and any test
+	// reaching an opener ran a REAL `tmux new-window` against the operator's live
+	// session. Found as three stray windows in another agent's session:
+	//
+	//     agent-d3:2  github-connect  (dejima.test)
+	//     agent-d3:3  github-connect  (dejima.test)
+	//     agent-d3:4  github-connect  (dejima.test)
+	//
+	// dejima.test is the test binary. The operator had been reporting "a script
+	// took over my terminal" for a week; this is one of the scripts.
+	//
+	// Individual tests do stub this to false, and that is exactly the problem —
+	// it relies on every test remembering, and the ones that reached an opener
+	// through a key handler did not know they were about to. Tests that WANT the
+	// window path can still stub this true; the var is unchanged.
+	if testing.Testing() {
+		return false
+	}
 	return os.Getenv("TMUX") != "" || goruntime.GOOS == "darwin" || goruntime.GOOS == "windows"
 }
 
@@ -111,6 +133,81 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 	}
 }
 
+// tmuxWindowIndex finds the window with exactly this name in `tmux list-windows`
+// output, formatted as "<index>\t<name>" per line.
+//
+// Exact match, deliberately: tmux's own `-t <name>` targeting falls back to
+// prefix and fnmatch searching, so selecting "host/api" could land on
+// "host/api-staging" — picking the wrong window is worse than opening a new one.
+func tmuxWindowIndex(listOutput, name string) (string, bool) {
+	for _, line := range strings.Split(listOutput, "\n") {
+		idx, wname, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
+		if ok && wname == name {
+			return idx, true
+		}
+	}
+	return "", false
+}
+
+// tmuxFocusWindow switches to an existing window by name, reporting whether it
+// found one.
+//
+// Each opener below ran `tmux new-window` unconditionally, so a second press
+// produced a second window instead of returning to the first. For a flow that is
+// a singleton by nature — one GitHub sign-in, one WSL setup, one attachment to a
+// given host terminal — that is a leak the operator has to clean up by hand.
+// Reported from a real session as tmux "adding layers of github-connect": every
+// layer an abandoned device-flow poll, none of them distinguishable from the one
+// that is actually live.
+func tmuxFocusWindow(name string) bool {
+	if os.Getenv("TMUX") == "" {
+		return false
+	}
+	out, err := exec.Command("tmux", "list-windows", "-F", "#{window_index}\t#{window_name}").Output()
+	if err != nil {
+		return false
+	}
+	idx, ok := tmuxWindowIndex(string(out), name)
+	if !ok {
+		return false
+	}
+	return exec.Command("tmux", "select-window", "-t", idx).Run() == nil
+}
+
+// openAgentGatewayWindow opens `dejima agent open <island> <agentID>` in a new
+// window — the forward-and-open-browser flow for a gateway agent (OpenClaw,
+// Letta, Goose). Its own window because it holds an SSH tunnel until closed.
+// NOT exec: on failure (SSH façade off, etc.) the window stays so the operator
+// reads the error instead of a flash.
+func (m tuiModel) openAgentGatewayWindow(island, agentID string) error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "ui-" + island
+	// agent id is a POSITIONAL arg to `agent open`, not --agent.
+	arg := shquote(island)
+	if agentID != "" {
+		arg += " " + shquote(agentID)
+	}
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s %s agent open %s; printf '\n[gateway tunnel closed — press Enter]'; read _",
+		shquote(m.activeHost), shquote(title), shquote(exe), arg)
+	switch {
+	case os.Getenv("TMUX") != "":
+		// Return to the existing one rather than stacking another.
+		if tmuxFocusWindow(title) {
+			return nil
+		}
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "agent open", island, agentID, title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima agent open %s` in another terminal", island)
+	}
+}
+
 // openHostTermWindow attaches to a host terminal (`dejima term attach <id>`) in a
 // separate window/tab, so the dashboard stays up — the same "don't hijack the
 // current view" behavior island shells and agent sessions already get. The tab is
@@ -130,6 +227,10 @@ func (m tuiModel) openHostTermWindow(id, label string) error {
 		shquote(m.activeHost), shquote(title), shquote(exe), shquote(id))
 	switch {
 	case os.Getenv("TMUX") != "":
+		// Return to the existing one rather than stacking another.
+		if tmuxFocusWindow(title) {
+			return nil
+		}
 		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
 	case goruntime.GOOS == "darwin":
 		return openMacTerminal(inner)
@@ -141,53 +242,98 @@ func (m tuiModel) openHostTermWindow(id, label string) error {
 	}
 }
 
-// openGithubConnectWindow launches the guided `dejima github connect` device-flow
-// sign-in in a new window/tab (it opens a browser + polls, so it belongs in its
-// own window, not the dashboard). It talks to the daemon, so it inherits the
-// TUI's DEJIMA_HOST. Returns an error the caller turns into a "run it in a
-// terminal" hint when a new window isn't possible.
-func (m tuiModel) openGithubConnectWindow() error {
+// openWSLSetupWindow launches `dejima wsl setup` in a separate window/tab — the
+// guided "make this Windows box a real Dejima host" flow, offered from the
+// connection switcher when picking `local` fails on Windows.
+//
+// Its own window for the same reasons `github connect` gets one: it is long
+// (an Ubuntu download plus an image build), it PROMPTS before creating the
+// distro and before installing Docker, and it must not be driven from inside a
+// Bubble Tea render loop that owns the terminal. Deliberately NOT `exec`-ed and
+// not run in-place: the TUI keeps running, so a user who changes their mind
+// still has their dashboard and their existing connection untouched.
+//
+// No DEJIMA_HOST is pinned. Every other spawned window inherits the TUI's active
+// target so it talks to the same daemon; this one is *creating* a target, and
+// setup writes and activates its own profile when it succeeds.
+func (m tuiModel) openWSLSetupWindow() error {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
 		exe = "dejima"
 	}
-	title := "github-connect"
-	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s github connect",
-		shquote(m.activeHost), shquote(title), shquote(exe))
+	title := "wsl-setup"
+	inner := fmt.Sprintf("DEJIMA_TAB_TITLE=%s %s wsl setup", shquote(title), shquote(exe))
 	switch {
 	case os.Getenv("TMUX") != "":
+		// Return to the existing one rather than stacking another.
+		if tmuxFocusWindow(title) {
+			return nil
+		}
 		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
-	case goruntime.GOOS == "darwin":
-		return openMacTerminal(inner)
 	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, "github connect", "", "", title, nil, m.activeHost)
+		// verb "wsl setup" is two trusted words, like "term attach".
+		return openWindowsTerminal(exe, "wsl setup", "", "", title, nil, "")
 	default:
-		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima github connect` in another terminal")
+		// macOS/Linux can host dejimad directly, so there is no WSL flow to open;
+		// the switcher only offers this on Windows. Named rather than silent in
+		// case a future caller forgets that gate.
+		return fmt.Errorf("`dejima wsl setup` applies to Windows only — on %s run `dejima onboard`", goruntime.GOOS)
 	}
 }
 
-// openVoiceInstallWindow launches `dejima voice install` in a new window/tab so
-// the TUI stays up while the (interactive brew + model-download) install runs.
-// It's host-local — no island/target — so no DEJIMA_HOST is needed. Returns an
-// error the caller turns into a "run it in a terminal" hint when a new window
-// isn't possible (plain non-tmux Linux/macOS).
-func (m tuiModel) openVoiceInstallWindow() error {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "dejima"
+// windowsRunCommand builds the `dejima <verb> …` command line for a spawned
+// Windows tab. The agent id's placement is verb-specific: `agent open` takes it
+// POSITIONALLY (`agent open <island> <id>`), while connect/logs take `--agent
+// <id>`. Getting this wrong is why opening an OpenClaw console on Windows failed
+// with "unknown flag: --agent".
+func windowsRunCommand(exe, verb, name, agentID string, extra []string) string {
+	run := `"` + exe + `" ` + verb + ` ` + name
+	if agentID != "" {
+		if verb == "agent open" {
+			run += " " + agentID // positional, not a flag
+		} else {
+			run += " --agent " + agentID
+		}
 	}
-	title := "voice-install"
-	inner := fmt.Sprintf("DEJIMA_TAB_TITLE=%s exec %s voice install", shquote(title), shquote(exe))
-	switch {
-	case os.Getenv("TMUX") != "":
-		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
-	case goruntime.GOOS == "darwin":
-		return openMacTerminal(inner)
-	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, "voice install", "", "", title, nil, "")
-	default:
-		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima voice install` in another terminal")
+	for _, e := range extra {
+		run += " " + e
 	}
+	return run
+}
+
+// windowsInnerCommand builds the cmd.exe command line the spawned window runs.
+//
+// Split out so the SHAPE of it is testable: there is no cmd.exe on the machines
+// that run these tests, and the property that matters — that the window survives
+// the command exiting — is a property of this string.
+func windowsInnerCommand(exe, verb, name, agentID string, extra []string, host, title string) string {
+	run := windowsRunCommand(exe, verb, name, agentID, extra)
+	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
+	// title matches the tab name. Strip cmd.exe-special chars from the title
+	// before interpolating it (it's a user label, unlike name/agentID/host,
+	// which are refused outright above).
+	safeTitle := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`"&|<>^%!`, r) {
+			return -1
+		}
+		return r
+	}, title)
+	// KEEP THE WINDOW OPEN AFTER THE COMMAND EXITS.
+	//
+	// `cmd /c` closes the window the instant its command returns, so anything
+	// that finishes — successfully or not — vanishes before it can be read. The
+	// operator saw this twice: `github connect` "pulled up a terminal briefly
+	// then snapped back", and the gateway UI window did the same. Both were
+	// reported by the TUI as opened, which they were; what they were not was
+	// READABLE.
+	//
+	// The unix branches already do this (`printf …; read _`). `&` rather than
+	// `&&` so it runs on failure too — failure is precisely the case worth
+	// reading. Long-lived commands (attaching to an agent or a host terminal)
+	// reach the pause only when the operator detaches, matching unix.
+	return fmt.Sprintf(
+		`set "DEJIMA_HOST=%s"&& set "DEJIMA_TAB_TITLE=%s"&& %s& echo.& echo [this window stays open so you can read the output - press any key to close]& pause >nul`,
+		host, safeTitle, run)
 }
 
 // openWindowsTerminal opens `dejima <verb>` in a new Windows Terminal tab
@@ -204,23 +350,23 @@ func openWindowsTerminal(exe, verb, name, agentID, title string, extra []string,
 			return fmt.Errorf("can't open a window for %q — run `dejima %s %s` manually", s, verb, name)
 		}
 	}
-	run := `"` + exe + `" ` + verb + ` ` + name
-	if agentID != "" {
-		run += " --agent " + agentID
-	}
-	for _, e := range extra {
-		run += " " + e
-	}
-	// Pass the resolved tab title (label, not id) so the spawned dejima's OSC
-	// title matches the tab name. Strip cmd.exe-special chars from the title
-	// before interpolating it (it's a user label, unlike name/agentID/host above).
-	safeTitle := strings.Map(func(r rune) rune {
-		if strings.ContainsRune(`"&|<>^%!`, r) {
-			return -1
-		}
-		return r
-	}, title)
-	inner := fmt.Sprintf(`set "DEJIMA_HOST=%s"&& set "DEJIMA_TAB_TITLE=%s"&& %s`, host, safeTitle, run)
+	// KEEP THE WINDOW OPEN AFTER THE COMMAND EXITS.
+	//
+	// `cmd /c` closes the window the instant its command returns, so anything
+	// that finishes — successfully or not — vanishes before it can be read. The
+	// operator saw this twice: `github connect` "pulled up a terminal briefly
+	// then snapped back", and the gateway UI window did the same. Both were
+	// reported by the TUI as opened, which they were; what they were not was
+	// READABLE.
+	//
+	// The unix branches already do this (`printf …; read _`). This is the
+	// Windows equivalent, and `&` rather than `&&` so it runs on failure too —
+	// failure is precisely the case worth reading.
+	//
+	// Long-lived commands (attaching to an agent or a host terminal) reach the
+	// pause only when the operator detaches, which is the same behaviour their
+	// unix counterparts already have.
+	inner := windowsInnerCommand(exe, verb, name, agentID, extra, host, title)
 	if wt, err := exec.LookPath("wt.exe"); err == nil {
 		// -w 0 targets the CURRENT Windows Terminal window (a new tab in it).
 		// -w -1 / "new" would force a separate window every time — which is the
@@ -326,4 +472,32 @@ func appleStr(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	return `"` + s + `"`
+}
+
+// openAuthPushWindow runs `dejima auth push` in its own window.
+//
+// Its own window because it may prompt, and because on a machine where the
+// Claude login lives in a keychain the OS asks for permission — which cannot
+// happen inside the dashboard's alternate screen.
+func (m tuiModel) openAuthPushWindow() error {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	title := "auth-push"
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s auth push",
+		shquote(m.activeHost), shquote(title), shquote(exe))
+	switch {
+	case os.Getenv("TMUX") != "":
+		if tmuxFocusWindow(title) {
+			return nil
+		}
+		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
+	case goruntime.GOOS == "darwin":
+		return openMacTerminal(inner)
+	case goruntime.GOOS == "windows":
+		return openWindowsTerminal(exe, "auth push", "", "", title, nil, m.activeHost)
+	default:
+		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima auth push` in another terminal")
+	}
 }

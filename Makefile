@@ -18,7 +18,7 @@ IMAGE_PLATFORMS  ?= linux/amd64,linux/arm64
 PREFIX        ?= /usr/local
 INSTALL_BIN   ?= $(PREFIX)/bin
 
-.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-integration test-tier3-safe test-tier3-system test-tier3-action-gate test-tier3-reconnect test-tier3-tui-claude test-tier3-onboard-selftest test-tier4 lint fmt vet tidy clean
+.PHONY: all build dejima dejimad image image-multiarch install uninstall setup client-binaries release-binaries test test-installer test-integration test-tier3-safe test-tier3-system test-tier3-action-gate test-tier3-reconnect test-tier3-tui-claude test-tier3-onboard-selftest test-tier4 lint fmt vet tidy clean
 
 # One-shot bootstrap: checks Docker, builds binaries, installs, builds image, registers service.
 setup:
@@ -117,8 +117,42 @@ dejima:
 dejimad:
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/dejimad ./cmd/dejimad
 
+# `setsid` gives the suite NO CONTROLLING TERMINAL, deliberately.
+#
+# Test code that opens /dev/tty writes to the terminal itself, not to stdout — so
+# it slips past every redirect and every pipe, and lands on whatever screen the
+# process happens to be attached to. In an agent island that is a human's pane:
+# an operator watching an agent work had `[sudo] password for dejima:` appear
+# mid-suite, from a test, with nothing naming which one was asking (fba7bfe).
+#
+# Redirecting output does not fix that, because the writer never used stdout.
+# Removing the terminal does: /dev/tty then fails with ENXIO, which every caller
+# here already treats as "nobody to ask". Same reason CI never saw the bug — a
+# GitHub runner has no controlling terminal either.
+#
+# `--wait` matters: without it setsid forks and returns immediately, and you get
+# an empty log and an exit code that means nothing.
+#
+# macOS has no setsid, so the fallback runs the suite the ordinary way. That is a
+# real gap and not a papered-over one: on a Mac the guard is the `testing.Testing()`
+# check in openTTY, and this target is the belt for Linux and CI. Stated so nobody
+# reads a green `make test` on a laptop as proof the terminal was untouchable.
 test:
-	$(GO) test ./...
+	@command -v setsid >/dev/null 2>&1 \
+		&& setsid --wait $(GO) test ./... </dev/null \
+		|| $(GO) test ./...
+
+# The installer's terminal detection, driven under a real pty (needs python3 for
+# pty allocation; skips cleanly without it). Cheap and hermetic — it installs
+# nothing — so it runs in CI alongside the Go tests rather than with the live
+# suites below. Covers #341: `curl … | bash` leaves stdin a pipe, which the
+# installer read as "nobody is here" and used to skip every prompt and the sudo
+# pre-authorization.
+test-installer:
+	./scripts/lib/tty_test.sh
+	./scripts/lib/transcript_test.sh
+	./scripts/lib/installfork_test.sh
+	./scripts/lib/dockerwait_test.sh
 
 # test-integration runs the DETERMINISTIC FULL-FEATURE Tier-2 suite against a
 # LIVE Docker host — one dispatch exercises every feature once with per-feature

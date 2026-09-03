@@ -26,15 +26,31 @@ func driveKeys(t *testing.T, m tuiModel, keys ...string) tuiModel {
 	return m
 }
 
-// TestTUIResetConfirm: 'r' on an island arms a reset confirm (y/Enter to apply,
-// workspace preserved).
+// TestTUIResetConfirm: 'r' on an island arms a reset confirm, and that confirm
+// has to say what it DESTROYS. It used to read "Clear agent state (workspace
+// preserved)" — which names the survivor and not the casualty, so it reassured.
+// An operator pressed r meaning "restart it so it picks up my new secret" and
+// lost the session. The prompt must name the loss and point at the restart they
+// actually wanted; the id gate lives in TestUnmatchedConfirmReportsWhatWasExpected.
 func TestTUIResetConfirm(t *testing.T) {
 	m := driveKeys(t, seededModel(t, island("alpha")), "r")
 	if m.confirm == nil || m.confirm.verb != "reset" || m.confirm.island != "alpha" {
 		t.Fatalf("r should arm a reset confirm on alpha, got %+v", m.confirm)
 	}
-	if !strings.Contains(m.renderConfirm(), "Clear agent state") {
-		t.Errorf("reset confirm prompt: %q", m.renderConfirm())
+	got := m.renderConfirm()
+	for _, want := range []string{
+		"ERASE",           // the loss, in the operator's words
+		"conversation",    // ...specifically their history
+		"logins",          // ...and their tool auth
+		"Restart",         // the thing they probably meant
+		"the island name", // typing it, not a single keystroke
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reset confirm must mention %q; got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Clear agent state") {
+		t.Errorf("reset confirm still uses the reassuring old wording: %q", got)
 	}
 }
 
@@ -64,8 +80,18 @@ func TestTUIUpgradeViaActionMenu(t *testing.T) {
 	if m.confirm == nil || m.confirm.verb != "upgrade" || m.confirm.island != "alpha" {
 		t.Fatalf("selecting Upgrade should arm an upgrade confirm on alpha, got %+v", m.confirm)
 	}
-	if !strings.Contains(m.renderConfirm(), "current island image") {
-		t.Errorf("upgrade confirm prompt: %q", m.renderConfirm())
+	// The confirm has to say what upgrade does NOT do. It recreates against the
+	// image that is already on the host and then stamps the island with the
+	// daemon's version regardless of how old that image is — so "the current
+	// island image", the old wording, was the one claim nothing here can check.
+	prompt := confirmText(m)
+	for _, want := range []string{"already on the host", "does NOT rebuild", "Rebuild the island image"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("upgrade confirm must mention %q; got %q", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "current island image") {
+		t.Errorf("upgrade confirm still claims the host's image is current: %q", prompt)
 	}
 }
 
@@ -118,17 +144,34 @@ func TestTUIForcePurgeOnUnpushedWork(t *testing.T) {
 	}
 }
 
-// TestTUISettingsKeysBoth: both 's' and 'S' open Settings (S used to be SSH
-// setup — that moved into the Server menu [H] / actions menu [m]).
-func TestTUISettingsKeysBoth(t *testing.T) {
-	for _, k := range []string{"s", "S"} {
+// TestTUISettingsKeys: S and , open the global Dejima settings overlay directly;
+// s on an island row opens that island's contextual settings menu (with a
+// Dejima-settings nav button) instead.
+func TestTUISettingsKeys(t *testing.T) {
+	for _, k := range []string{"S", ","} {
 		m := driveKeys(t, seededModel(t, island("alpha")), k)
 		if m.settings == nil {
-			t.Errorf("%q should open Settings, got settings=nil", k)
+			t.Errorf("%q should open Dejima settings, got settings=nil", k)
 		}
 		if m.confirm != nil {
 			t.Errorf("%q should not arm a confirm, got %+v", k, m.confirm)
 		}
+	}
+	m := driveKeys(t, seededModel(t, island("alpha")), "s")
+	if m.menu == nil {
+		t.Fatalf("s on an island should open the contextual settings menu, got menu=nil")
+	}
+	if m.settings != nil {
+		t.Errorf("s on a row should open the row menu, not the global overlay directly")
+	}
+	hasNav := false
+	for _, it := range m.menu.items {
+		if it.nav && strings.Contains(it.label, "Dejima settings") {
+			hasNav = true
+		}
+	}
+	if !hasNav {
+		t.Errorf("island menu should carry a Dejima settings nav button; items=%+v", m.menu.items)
 	}
 }
 
@@ -254,9 +297,11 @@ func TestTUIActionMenuFullVerbs(t *testing.T) {
 	tm := runModel(t, seededModel(t, island("alpha")))
 	waitForAll(t, tm, "alpha")
 
-	tm.Send(key("m"))
-	// A running island offers hibernate; reset/upgrade/rename/purge are always there.
-	waitForAll(t, tm, "Hibernate", "Reset agent state", "Upgrade", "Rename", "Purge island")
+	tm.Send(key("s")) // contextual settings menu
+	// A running island offers hibernate; reset/upgrade/rename/purge are always
+	// there. The reset line is named for what it erases, not for the state it
+	// "resets" — the old label read like a restart and sat next to one.
+	waitForAll(t, tm, "Hibernate", "Erase all agent memory", "Upgrade", "Rename", "Purge island")
 
 	tm.Send(key("esc"))
 	tm.Send(key("q"))
@@ -270,7 +315,7 @@ func TestTUIActionMenuWakeOnHibernated(t *testing.T) {
 	tm := runModel(t, seededModel(t, isl))
 	waitForAll(t, tm, "sleepy")
 
-	tm.Send(key("m"))
+	tm.Send(key("s")) // contextual settings menu
 	waitForAll(t, tm, "Wake")
 
 	tm.Send(key("esc"))
@@ -303,5 +348,26 @@ func TestWindowLabelManualNames(t *testing.T) {
 	// Unknown island → the raw name is used as the island part.
 	if got := m.windowLabel("ghost", "", ""); got != "ghost" {
 		t.Errorf("unknown island: got %q, want %q", got, "ghost")
+	}
+}
+
+// TestTUISettingsLocalModelsPage: the Settings overlay's "Local models" row
+// (index 7) opens the status sub-page, and esc returns to the top page. What
+// the page can DO once the status lands is TestTUILocalPageRunsAction.
+func TestTUISettingsLocalModelsPage(t *testing.T) {
+	// Open global Dejima settings (`,` — `s` on a row is now the contextual menu),
+	// move to the "Local models" row (8th, index 7), and select it.
+	m := driveKeys(t, seededModel(t, island("alpha")),
+		",", "j", "j", "j", "j", "j", "j", "j", "enter")
+	if m.settings == nil || m.settings.page != settingsLocal {
+		t.Fatalf("expected the Local models sub-page, got settings=%+v", m.settings)
+	}
+	if view := m.renderSettings(); !strings.Contains(view, "local models") {
+		t.Errorf("Local models sub-page should render its header; got:\n%s", view)
+	}
+	// esc returns to the top settings page rather than closing the overlay.
+	m = driveKeys(t, m, "esc")
+	if m.settings == nil || m.settings.page != settingsTop {
+		t.Errorf("esc from Local models should return to the top settings page, got %+v", m.settings)
 	}
 }

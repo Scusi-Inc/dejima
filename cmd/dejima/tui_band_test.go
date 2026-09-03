@@ -40,7 +40,11 @@ func TestBandCollapsed(t *testing.T) {
 		t.Errorf("collapsed band height = %d, want 1", h)
 	}
 	bare := plain(s)
-	for _, want := range []string{"Host", "2 terminal", "[/] expand"} {
+	// "[/]" and "expand" separately, not the concatenation. The guard exists so
+	// the band always NAMES ITS KEY; asserting one exact string also pinned the
+	// layout, so moving the key next to the arrow (where it reads as the
+	// affordance rather than an afterthought) failed a test about naming.
+	for _, want := range []string{"Host", "2 terminal", "[/]", "expand"} {
 		if !strings.Contains(bare, want) {
 			t.Errorf("collapsed band missing %q: %q", want, bare)
 		}
@@ -57,7 +61,7 @@ func TestBandExpanded(t *testing.T) {
 		t.Errorf("expanded band height = %d, want %d", h, want)
 	}
 	bare := plain(s)
-	for _, want := range []string{"build", "t2", "+ new terminal", "[/] collapse"} {
+	for _, want := range []string{"build", "t2", "+ new terminal", "[/]", "collapse"} {
 		if !strings.Contains(bare, want) {
 			t.Errorf("expanded band missing %q: %q", want, bare)
 		}
@@ -82,7 +86,7 @@ func TestBandFooterAndHelpUseSlash(t *testing.T) {
 		t.Errorf("footer should advertise [/] host terminal when enabled:\n%s", got)
 	}
 	help := plain((tuiModel{width: 100}).renderHelp())
-	if !strings.Contains(help, "host terminals") {
+	if !strings.Contains(strings.ToLower(help), "host terminals") {
 		t.Errorf("help should document the host-terminals key")
 	}
 	if strings.Contains(help, "new host terminal — an uncontained shell") {

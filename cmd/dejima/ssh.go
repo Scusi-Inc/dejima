@@ -75,9 +75,15 @@ func newSSHEnrollCmd() *cobra.Command {
 			fmt.Printf("enrolled this device (%s) — authorized for every island\n", fp)
 
 			// Write local ssh config for all islands so the editor list is ready.
-			host, port, enabled, rerr := resolveSSHEndpoint(cmd.Context())
+			host, port, _, enabled, rerr := resolveSSHEndpoint(cmd.Context())
 			if rerr != nil || !enabled {
-				fmt.Println("key authorized; SSH façade not enabled on the daemon yet (dejimad --ssh <addr>) — config skipped")
+				fmt.Println("key authorized — but the SSH façade isn't enabled on the daemon, so editor")
+				fmt.Println("config was skipped. Enable it on the daemon HOST (needs sudo):")
+				fmt.Println()
+				enable, _ := enableFacadeCommand()
+				fmt.Println("  " + enable)
+				fmt.Println()
+				fmt.Println("then re-run `dejima ssh enroll` here.")
 				return nil
 			}
 			islands, lerr := c.ListIslands(cmd.Context())
@@ -114,9 +120,9 @@ func ensureLocalKey() (string, error) {
 		return "", err
 	}
 	priv := filepath.Join(dir, "id_ed25519")
-	fmt.Println("no SSH key on this machine — generating an ed25519 keypair…")
+	fmt.Fprintln(cliOut, "no SSH key on this machine — generating an ed25519 keypair…")
 	gen := exec.Command("ssh-keygen", "-t", "ed25519", "-f", priv, "-N", "", "-q")
-	gen.Stdout, gen.Stderr = os.Stdout, os.Stderr
+	gen.Stdout, gen.Stderr = cliOut, cliOut
 	if err := gen.Run(); err != nil {
 		return "", fmt.Errorf("ssh-keygen: %w", err)
 	}
@@ -311,7 +317,7 @@ func newSSHInfoCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			host, port, enabled, _ := resolveSSHEndpoint(cmd.Context())
+			host, port, _, enabled, _ := resolveSSHEndpoint(cmd.Context())
 			fmt.Printf("island:        %s\n", island)
 			if enabled {
 				fmt.Printf("connect:       ssh %s@%s -p %s\n", island, host, port)
@@ -345,13 +351,12 @@ func newSSHConfigCmd() *cobra.Command {
 			"  dejima ssh config --all --install",
 		Args: cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			host, port, enabled, err := resolveSSHEndpoint(cmd.Context())
+			host, port, _, enabled, err := resolveSSHEndpoint(cmd.Context())
 			if err != nil {
 				return err
 			}
 			if !enabled {
-				return fmt.Errorf("the SSH façade is not enabled on the daemon; start it with " +
-					"`dejimad --ssh <addr>` (or `dejima service install --ssh :2222`)")
+				return fmt.Errorf("%s", sshFacadeSetupSteps())
 			}
 
 			// Resolve the target island list: --all = every island; else the one arg.
@@ -423,15 +428,15 @@ func installSSHConfig(island, block string) error {
 		return err
 	}
 	if status == "exists" {
-		fmt.Printf("~/.ssh/config already has Host dejima-%s (left unchanged)\n", island)
+		fmt.Fprintf(cliOut, "~/.ssh/config already has Host dejima-%s (left unchanged)\n", island)
 	} else {
-		fmt.Printf("added Host dejima-%s to %s\n", island, path)
+		fmt.Fprintf(cliOut, "added Host dejima-%s to %s\n", island, path)
 	}
-	fmt.Printf("VS Code / Cursor → Remote-SSH: Connect to Host… → dejima-%s\n", island)
+	fmt.Fprintf(cliOut, "VS Code / Cursor → Remote-SSH: Connect to Host… → dejima-%s\n", island)
 	// The dead-simple path: open straight into the repo, no folder-browsing (the
 	// SSH home is /home/<island>, which only holds dotfiles — the working tree is
 	// /workspace). VS Code remembers the folder per host after the first open.
-	fmt.Printf("   or open the repo directly:  code --remote ssh-remote+dejima-%s /workspace\n", island)
+	fmt.Fprintf(cliOut, "   or open the repo directly:  code --remote ssh-remote+dejima-%s /workspace\n", island)
 	return nil
 }
 
@@ -475,20 +480,20 @@ func writeSSHConfigEntry(island, block string) (status, path string, err error) 
 // reachable host:port. enabled is false when the daemon has no --ssh listener.
 // When the listener binds a wildcard/empty host (":2222"), we substitute a
 // reachable host — the tailnet FQDN if Tailscale is up, else localhost.
-func resolveSSHEndpoint(ctx context.Context) (host, port string, enabled bool, err error) {
+func resolveSSHEndpoint(ctx context.Context) (host, port, hostKey string, enabled bool, err error) {
 	c, err := client()
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	o, err := c.Overview(ctx)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	if o.SSHAddr == "" {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
 	h, p, addrErr := endpointFromAddr(o.SSHAddr, c.DaemonHost())
-	return h, p, true, addrErr
+	return h, p, o.SSHHostKey, true, addrErr
 }
 
 // endpointFromAddr resolves a daemon-reported ssh listen addr into a reachable
@@ -560,7 +565,7 @@ func sshTailnetFQDN() string {
 // address when the listener is up and falling back to a placeholder + how to
 // enable it otherwise.
 func printConnectHint(ctx context.Context, island string) {
-	host, port, enabled, err := resolveSSHEndpoint(ctx)
+	host, port, _, enabled, err := resolveSSHEndpoint(ctx)
 	if err == nil && enabled {
 		fmt.Printf("connect:  ssh %s@%s -p %s\n", island, host, port)
 		fmt.Printf("VS Code / Cursor:  dejima ssh config %s --install\n", island)

@@ -30,12 +30,13 @@ func cliEnvFull(t *testing.T) (*httptest.Server, *api.Client) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DEJIMA_TOKEN", "")
+	isolateSecretsBackend(t)
 	ledger.ResetDefault()
 	em, err := events.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("events.New: %v", err)
 	}
-	srv := api.NewServer(runtimetest.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), em)
+	srv := joinBackground(t, api.NewServer(runtimetest.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), em))
 	srv.EnableHostTerminals()
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -451,6 +452,37 @@ func TestCLIReset(t *testing.T) {
 	}
 	if !strings.Contains(out, "reset proj") {
 		t.Errorf("reset output: %q", out)
+	}
+}
+
+// Unforced, `dejima reset` has to say what it destroys before it asks, and ask
+// for the island name rather than a keystroke. The old prompt said "chat history,
+// scratch files… Workspace will be preserved. Continue? [y/N]" — which named the
+// survivor, undersold the loss (tool logins go too), and cost one letter. An
+// operator meaning "restart it so it picks up my new secret" read that as safe.
+// Stdin is empty under `go test`, so the read returns nothing and this also
+// proves the gate defaults to abort.
+func TestCLIResetWarnsBeforeItAsks(t *testing.T) {
+	_, c := cliEnv(t)
+	seedIsland(t, c, "proj")
+	out, err := runCLI(t, "reset", "proj")
+	if err == nil {
+		t.Fatal("an unanswered reset prompt must abort, not proceed")
+	}
+	for _, want := range []string{
+		"ERASES",               // the loss, up front
+		"conversation history", // ...their memory
+		"tool logins",          // ...and their auth
+		"cannot be undone",     // ...irreversibly
+		"dejima agent restart", // the thing they probably meant
+		"Type the island name", // and it costs more than one key
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("reset prompt must mention %q; got %q", want, out)
+		}
+	}
+	if strings.Contains(out, "[y/N]") {
+		t.Errorf("reset should no longer ride on a single keystroke; got %q", out)
 	}
 }
 

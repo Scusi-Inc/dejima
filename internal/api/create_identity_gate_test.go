@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/aoos/dejima/internal/githubid"
 )
 
 // TestBlockDoomedClone covers the gate decision without network: the probe is
@@ -38,10 +40,46 @@ func TestBlockDoomedClone(t *testing.T) {
 			if probed != c.wantProbed {
 				t.Errorf("probe called = %v, want %v", probed, c.wantProbed)
 			}
-			if err != nil && !strings.Contains(err.Error(), "auth push --github") {
-				t.Errorf("gate error should carry the remedy; got %q", err.Error())
+			// The gate is the first wall a new operator hits, so the message must
+			// carry a runnable remedy — and the client matches the leading phrase
+			// to upgrade it into the guided TUI step.
+			if err != nil {
+				if !strings.Contains(err.Error(), "github connect") {
+					t.Errorf("gate error should carry the remedy; got %q", err.Error())
+				}
+				if !strings.Contains(err.Error(), "needs a GitHub identity to clone") {
+					t.Errorf("gate error lost the phrase the TUI matches on; got %q", err.Error())
+				}
 			}
 		})
+	}
+}
+
+// TestGatePassesWithConfiguredIdentity is the regression guard for the bug where
+// the gate read the legacy store.Identities map (always nil after Load migrates
+// it into Idents), so it demanded a token even on daemons WITH a connected
+// identity. A default identity must let a private-repo create through untouched.
+func TestGatePassesWithConfiguredIdentity(t *testing.T) {
+	srv, _, _ := wakeServer(t)                                            // temp HOME → empty store to start
+	srv.anonCloneFn = func(context.Context, string) bool { return false } // not anon-reachable
+
+	// With no identity, the private clone is gated.
+	if err := srv.blockDoomedClone(context.Background(),
+		CreateIslandRequest{Repo: "https://github.com/acme/private"}); err == nil {
+		t.Fatal("expected a gate with no identity configured")
+	}
+
+	// Connect a host identity and make it the default — exactly what
+	// `dejima github connect` does. The gate must now pass without a token prompt.
+	if _, err := githubid.Update(func(s *githubid.Store) error {
+		s.Put(githubid.Identity{Name: "github", Login: "octocat", Token: "tok"})
+		return s.SetDefault("github")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.blockDoomedClone(context.Background(),
+		CreateIslandRequest{Repo: "https://github.com/acme/private"}); err != nil {
+		t.Errorf("a configured default identity should clear the gate, got: %v", err)
 	}
 }
 
@@ -97,7 +135,7 @@ func TestCreateIslandIdentityGate(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("gated create = %d, want 400", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "auth push --github") {
+	if !strings.Contains(rr.Body.String(), "github connect") {
 		t.Errorf("gate response missing the remedy: %s", rr.Body.String())
 	}
 
@@ -106,5 +144,38 @@ func TestCreateIslandIdentityGate(t *testing.T) {
 		`{"repo":"https://github.com/acme/private","name":"forced","agent":"claude-code","allow_no_identity":true}`)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("forced create = %d, want 201 (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
+// The deny-by-default gate must not read as a dead end for the host operator:
+// after #334 there are two routes forward, and naming only the identity one
+// leaves "why can't I clone" unanswered for anyone who deliberately wants their
+// own login in the island.
+func TestGateOffersHostCredentialToHostOperator(t *testing.T) {
+	s := &Server{anonCloneFn: func(context.Context, string) bool { return false }}
+	err := s.blockDoomedClone(context.Background(), CreateIslandRequest{
+		Repo: "https://github.com/aoos/private.git", Name: "proj",
+	})
+	if err == nil {
+		t.Fatal("an unreachable private repo with no identity must still be gated")
+	}
+	msg := err.Error()
+	// The client keys the guided TUI step off this substring.
+	if !strings.Contains(msg, "needs a GitHub identity to clone") {
+		t.Errorf("the client's match substring must survive: %q", msg)
+	}
+	// Identity stays the primary remedy, listed first.
+	if !strings.Contains(msg, "dejima github connect") {
+		t.Errorf("the identity path must remain the headline remedy: %q", msg)
+	}
+	if !strings.Contains(msg, "dejima github host-credential grant proj") {
+		t.Errorf("the host operator should be told the second route, named for this island: %q", msg)
+	}
+	// And told what it costs, so it isn't a casual choice.
+	if !strings.Contains(msg, "every\nprivate repo") {
+		t.Errorf("the wider route must state its cost: %q", msg)
+	}
+	if strings.Index(msg, "dejima github connect") > strings.Index(msg, "host-credential") {
+		t.Error("the narrower remedy must come first")
 	}
 }

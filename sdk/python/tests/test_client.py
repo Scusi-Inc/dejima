@@ -132,6 +132,37 @@ def test_delete_island_no_force(server):
     assert rec.path == "/v1/islands/foo"
 
 
+def test_create_island_no_repo(server):
+    rec, dj = server
+    _set(rec, body={"name": "brain"})
+    dj.create_island(no_repo=True, name="brain", agent="headless", cmd="python loop.py")
+    sent = json.loads(rec.body)
+    assert sent["no_repo"] is True
+    assert sent["repo"] == ""
+
+
+def test_create_island_omits_no_repo_when_false(server):
+    rec, dj = server
+    _set(rec, body={"name": "a"})
+    dj.create_island("git@github.com:you/foo.git")
+    assert "no_repo" not in json.loads(rec.body)
+
+
+def test_remove_agent_force(server):
+    rec, dj = server
+    _set(rec, status=204)
+    dj.remove_agent("foo", "p2", force=True)
+    assert rec.method == "DELETE"
+    assert rec.path == "/v1/islands/foo/agents/p2?force=true"
+
+
+def test_remove_agent_no_force(server):
+    rec, dj = server
+    _set(rec, status=204)
+    dj.remove_agent("foo", "p2")
+    assert rec.path == "/v1/islands/foo/agents/p2"
+
+
 def test_set_resources(server):
     rec, dj = server
     _set(rec, body={"resources": {}, "restart_required": True})

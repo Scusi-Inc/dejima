@@ -72,7 +72,7 @@ func (s *Server) handleGrantPortScope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "port.grant", Island: name, Scope: scope.Name,
 		Path: scope.HostPath, Mode: scope.Mode, Decision: "allowed",
 	})
@@ -97,7 +97,7 @@ func (s *Server) handleRevokePortScope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "port.revoke", Island: name, Scope: removed.Name,
 		Path: removed.HostPath, Mode: removed.Mode, Decision: "allowed",
 	})
@@ -107,7 +107,26 @@ func (s *Server) handleRevokePortScope(w http.ResponseWriter, r *http.Request) {
 // ledgerAppend writes one entry to the process-wide ledger. Returns the error
 // so callers that must fail-closed (file Trades) can abort when the audit
 // record can't be written; scope grant/revoke treat it as best-effort.
-func (s *Server) ledgerAppend(e ledger.Entry) error {
+// ledgerAppend writes one entry, with its PROVENANCE AS A REQUIRED ARGUMENT.
+//
+// Required deliberately, and it is the strongest form of the guarantee available
+// anywhere in this design. For ContainmentLevel I had to say plainly that Go
+// cannot make a struct field required, so an unstamped record is caught by a
+// test rather than a compiler. Here the stamp is a PARAMETER, so a writer that
+// forgets it does not compile. Take the stronger mechanism wherever the shape
+// allows it.
+//
+// The rule for choosing:
+//
+//	brokered   the daemon DECIDED — a grant, a revoke, a deny, a brokered
+//	           crossing. Anything the daemon allowed or refused.
+//	witnessed  the daemon NOTICED — lifecycle, request traffic. It happened and
+//	           Dejima saw it, but Dejima was not the gate.
+//
+// Never self-reported from here: that provenance belongs to rows tailed from
+// something an agent wrote about itself, and nothing in the daemon does that yet.
+func (s *Server) ledgerAppend(prov ledger.Provenance, e ledger.Entry) error {
+	e.Provenance = prov
 	lg, err := ledger.Default()
 	if err != nil {
 		s.log.Error("ledger unavailable", "err", err)

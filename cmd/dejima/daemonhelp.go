@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"runtime"
 	"strings"
 
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/service"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // daemonDiagnosis is an actionable read of *why* the local dejimad can't be
@@ -21,6 +23,10 @@ type daemonDiagnosis struct {
 	Cause  string   // one-line "what's actually wrong"
 	Steps  []string // ordered remediation, most-likely fix first
 	Remote bool     // target is a remote host (changes the render's closing line)
+	// Closing overrides the render's trailing hint. The default assumes the fix
+	// is run "on the host shell", which is wrong on Windows — there is no host
+	// shell there, the commands run right where the client is.
+	Closing string
 }
 
 // diagnoseRemoteDaemon builds calm, numbered recovery guidance for when the
@@ -46,12 +52,48 @@ func diagnoseRemoteDaemon(host string) daemonDiagnosis {
 		Cause: "can't reach " + shown + " right now — your islands and agents are safe on the server; " +
 			"this is just the connection between here and there.",
 		Steps: compactSteps([]string{
+			nonDefaultPortHint(host),
 			"it's often a brief blip (the server can restart after an update) — this retries automatically, so give it ~15s.",
 			"check you're on the tailnet:  tailscale status   (the server should be listed) · tailscale ping " + pingTarget(host),
 			"refresh this client if it won't recover:  " + reinstall,
 			"still stuck? the server may be down — ask the operator, or check the host.",
 		}),
 	}
+}
+
+// nonDefaultPortHint fires when the configured port is not the daemon's, which
+// in practice means a typo.
+//
+// An operator spent a stretch of an evening on a host that "wasn't answering"
+// because their saved profile read :7373 rather than :7273 — a transposition,
+// invisible in a line they had read a dozen times, and indistinguishable from a
+// down server in every message we showed them. Their other machine worked, which
+// made it look like the SERVER was refusing this one.
+//
+// The check is deliberately narrow: it fires only on a port that is not the
+// default, and it does not claim the port is wrong — a deliberate non-default
+// port is legitimate. It just puts the two numbers next to each other, which is
+// all it takes to see a transposition.
+//
+// Empty when the port IS the default, and compactSteps drops empty entries, so
+// the common case is unchanged.
+func nonDefaultPortHint(host string) string {
+	_, port, err := net.SplitHostPort(hostPortOf(host))
+	if err != nil || port == "" || port == defaultDaemonTCPPort {
+		return ""
+	}
+	return "this profile uses port " + port + " — the daemon's default is " +
+		defaultDaemonTCPPort + ". If you did not choose " + port + " deliberately, that is the likeliest cause."
+}
+
+// hostPortOf normalises a host for SplitHostPort: a bare host with no port has
+// none to compare, and a URL form needs its scheme removed first.
+func hostPortOf(host string) string {
+	h := strings.TrimSpace(host)
+	if i := strings.Index(h, "://"); i >= 0 {
+		h = h[i+3:]
+	}
+	return strings.TrimSuffix(h, "/")
 }
 
 // pingTarget renders the bare host (no :port) for a `tailscale ping` hint,
@@ -68,6 +110,15 @@ func pingTarget(host string) string {
 // steps. It is read-only but does shell out (service.Detect), so callers should
 // compute it once when the error occurs — never on every render frame.
 func diagnoseLocalDaemon() daemonDiagnosis {
+	// Windows can't host dejimad at all — the generic advice below ("run
+	// dejimad --foreground", "dejima service install") names binaries and
+	// service managers that don't exist there, sending the user to fix
+	// something unfixable. Answer the real question instead: where should the
+	// daemon live?
+	if runtime.GOOS == "windows" {
+		return diagnosisWindowsClient()
+	}
+
 	sockPath := "~/.dejima/dejimad.sock"
 	sockMissing, permDenied := false, false
 	if p, err := paths.SocketPath(); err == nil {
@@ -100,6 +151,39 @@ func diagnoseLocalDaemon() daemonDiagnosis {
 		// Socket present (or unknowable) but the dial still failed: connection
 		// refused / timeout / a stale socket → dejimad stopped or crashed.
 		return diagnosisStopped(sup)
+	}
+}
+
+// diagnosisWindowsClient is the local-target diagnosis on Windows, where
+// "local" can never work: dejimad needs a Unix host with Docker (scripts/setup.sh
+// refuses anything but Darwin/Linux, and internal/service only implements
+// launchd + systemd), so the socket this client is looking for will never appear.
+//
+// The steps are ordered by what most users actually want. WSL2 comes first
+// because it is a genuinely local answer — a real Linux kernel with a real
+// Docker on this same machine — and `dejima wsl setup` provisions it end to
+// end. Pointing at an existing server is second; both beat "install a daemon
+// here," which is impossible.
+func diagnosisWindowsClient() daemonDiagnosis {
+	cause := "Windows can't run the Dejima daemon — dejimad needs a Unix host with Docker, so there's no local socket to connect to. " +
+		"You want either a daemon in WSL2 (local, on this machine) or a server to point at."
+	steps := []string{
+		"set up a local host in WSL2:  dejima wsl setup   (installs Docker + dejimad in a WSL2 distro and connects to it)",
+	}
+	if wsl.Available() {
+		// WSL is already installed, so the setup step is a much shorter trip —
+		// say so, since "set up WSL2" otherwise reads as a big-ticket detour.
+		steps[0] = "set up a local host in WSL2 (WSL is already installed here):  dejima wsl setup"
+	}
+	steps = append(steps,
+		"or point at an existing server:  dejima profile add <name> <host>:7273   (then `dejima profile switch <name>`)",
+		"or, in the TUI:  press [s] → Connection target",
+		"joining someone else's server? paste their invite:  dejima join <invite>",
+	)
+	return daemonDiagnosis{
+		Cause:   cause,
+		Steps:   compactSteps(steps),
+		Closing: "press q to quit, then run one of the above in PowerShell",
 	}
 }
 
@@ -240,6 +324,23 @@ func reportSetupIncomplete() {
 
 // renderDaemonHelp formats the diagnosis for the TUI's island pane — shown in
 // place of the bare "(daemon unreachable?)" line when the local daemon is down.
+// offerWSLSetup reports whether the daemon-help panel should offer the one-key
+// WSL setup action, given the diagnosis and whether this platform has WSL.
+//
+// Split out from both callers (renderDaemonHelp and handleKey's `w`) so the
+// decision is testable off Windows. Every Windows path in this tree has to be
+// reasoned about from a Linux box — `docs/roadmap.md` records that voice already
+// shipped broken on Windows for exactly that reason — so the rule is: keep the
+// platform check at the edge and make the logic a pure function.
+//
+// Remote is excluded because a client pointed at someone else's server has no
+// business being nudged to build a local host; its diagnosis is about reaching
+// that server. The offer belongs only to the local target, which on Windows is
+// otherwise a dead end.
+func offerWSLSetup(d daemonDiagnosis, hasWSL bool) bool {
+	return hasWSL && !d.Remote
+}
+
 func renderDaemonHelp(d daemonDiagnosis) string {
 	var b strings.Builder
 	if d.Remote {
@@ -257,9 +358,21 @@ func renderDaemonHelp(d daemonDiagnosis) string {
 			b.WriteString("  • " + s + "\n")
 		}
 	}
-	if d.Remote {
+	// On Windows the first step is `dejima wsl setup`, and there is no host shell
+	// to go run it in — the client IS on the machine that needs setting up. So
+	// offer it as a keystroke rather than something to retype in PowerShell. The
+	// key is handled in handleKey's `w`, which is otherwise "wake an island" and
+	// is free here because this panel only renders when there are none.
+	if offerWSLSetup(d, wsl.Supported()) {
+		b.WriteString("\n" + styleAccent.Render("[w]") +
+			styleMuted.Render(" set up WSL2 now — opens `dejima wsl setup` in a new window"))
+	}
+	switch {
+	case d.Closing != "":
+		b.WriteString("\n" + styleMuted.Render(d.Closing))
+	case d.Remote:
 		b.WriteString("\n" + styleMuted.Render("this keeps retrying on its own — press q to quit if you'd rather stop"))
-	} else {
+	default:
 		b.WriteString("\n" + styleMuted.Render("press q to quit, then run one of the above on the host shell"))
 	}
 	return b.String()

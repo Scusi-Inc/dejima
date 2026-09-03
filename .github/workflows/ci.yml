@@ -28,14 +28,48 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # The race detector, on ubuntu only and only where it can find anything.
+      #
+      # Nothing has EVER run `-race` against this codebase, in a daemon full of
+      # goroutines, mutexes, a per-project lock and a mailbox with detached
+      # arrival hooks. The one race we found (a hook outliving the test that
+      # started it, #347/#349) surfaced as a TempDir cleanup failure and was
+      # diagnosed by hand-instrumenting Root() — which is the slow, lucky way.
+      #
+      # Scoped to the concurrent packages rather than ./... because -race is
+      # 2-10x slower and most of this tree is sequential; a whole-suite run would
+      # be paid on every PR to cover code that cannot race. Per-PR rather than
+      # nightly ON PURPOSE: a nightly fails at 3am, nobody is watching, and it
+      # becomes wallpaper within a fortnight — this repo has a torn-down QA
+      # runner as evidence. A check that fails where someone is already looking
+      # is worth more than a thorough one nobody reads.
+      #
+      # Islands cannot run this themselves (no C toolchain, so CGO_ENABLED=1
+      # will not build), so it is CI's job or it does not happen.
+      - name: race detector (concurrent packages)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./internal/api/... ./internal/bridge/... ./internal/events/... ./internal/mailbox/...
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # PINNED to go.mod's toolchain, NOT "stable" — this one is coupled to the
+      # linter below. golangci-lint typechecks with the Go it was built against,
+      # so when Go 1.27 shipped and `stable` moved to it, the pinned v2.12.2
+      # (built with 1.26) panicked on the 1.27 stdlib: "file requires newer Go
+      # version go1.27 (application built with go1.26)". Lint went red on master
+      # and on every open PR, for a change nobody made.
+      #
+      # The version below was pinned for exactly this class of problem and the
+      # floating half was left next to it. Bump the two together.
+      #
+      # The cost, stated: lint typechecks against 1.26 while the build jobs use
+      # the latest Go. A 1.27-only construct would build and go unlinted — which
+      # go.mod's `go 1.26.3` already disallows, so the window is narrow.
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version: "1.26.x"
       # action v7 drives golangci-lint v2 (v6 drove v1). The version is PINNED, not
       # "latest": a floating latest silently jumped to v2 while the config was still
       # v1-format, failing every CI run since May 2026. Bump deliberately alongside
@@ -48,15 +82,37 @@ jobs:
   # Tier-3/Tier-4 scripts run on the Mac-mini runner) lint-clean on every PR even
   # though CI can't execute them — a broken edit is caught here, not later on the
   # runner. The tier3/tier4 scripts `source` lib.sh, so point shellcheck at it.
+  #
+  # install.sh and scripts/setup.sh are here because they were NOT, and they are
+  # the two scripts every new user runs. The first lint of setup.sh found three
+  # error-path messages using backticks inside double quotes — one of which ran
+  # `colima delete` on the user's VM as a side effect of printing advice about
+  # it. -x so the setup.sh → lib/tty.sh source is followed.
   shellcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: shellcheck the live test suites
+      - name: shellcheck the installer and the live test suites
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
-          shellcheck scripts/integration.sh \
+          shellcheck -x install.sh \
+            install-client.sh \
+            image/agents/claude-code/hooks/notify.sh \
+            image/agents/codex/hooks/notify.sh \
+            scripts/lib/clientinstall_test.sh \
+            scripts/lib/codexheal_test.sh \
+            scripts/setup.sh \
+            scripts/lib/tty.sh \
+            scripts/lib/transcript.sh \
+            scripts/lib/tty_test.sh \
+            scripts/lib/transcript_test.sh \
+            scripts/lib/installfork_test.sh \
+            scripts/lib/dockerwait.sh \
+            scripts/lib/dockerwait_test.sh \
+            scripts/verify-secrets-propagation.sh \
+            scripts/verify-ssh-forward-semantics.sh \
+            scripts/integration.sh \
             scripts/install-channels-check.sh \
             scripts/metrics/install-totals.sh \
             scripts/lib/report.sh \
@@ -70,3 +126,89 @@ jobs:
             scripts/clean-mac/lib.sh \
             scripts/clean-mac/proof-loop.sh \
             scripts/clean-mac/teardown.sh
+
+  # The website and the binary must not tell a Windows operator two different
+  # ways to install WSL. scripts/site-wsl-hint-check.py compares the page's
+  # install block against wsl.InstallHint, read out of the Go source, in BOTH
+  # directions.
+  #
+  # It lands here because it was written and then run by hand. A guard nobody
+  # runs is decoration — and this one guards a comment in internal/wsl/wsl.go
+  # that ASSERTS the check exists, so an unrun check would leave the source
+  # claiming a guarantee nothing was providing. Cheap (no deps, no network), so
+  # it runs on every push rather than nightly.
+  #
+  # NO `paths:` FILTER, DELIBERATELY. The obvious tidy-up is to skip this unless
+  # Go or HTML changed. Don't: the commit most likely to break it is a page-only
+  # edit, which is exactly what a `paths: ['**.go']` filter would skip — and a
+  # skipped job reports green. The whole job is one python3 invocation with no
+  # dependencies; there is nothing here worth optimising away. (d5 checked this
+  # after the job landed, which is the only reason it is written down.)
+  site-wsl-hint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: WSL install hint (website ↔ internal/wsl.InstallHint)
+        run: python3 scripts/site-wsl-hint-check.py
+
+  # Dejima's containment boundary is the ISLAND, which is per PROJECT — an island
+  # holds several agents sharing it. "Every agent is walled off from the other
+  # agents" is false, and it is a SECURITY claim, so a reader notices.
+  #
+  # It has been fixed on the site three times by hand. Each time a person found
+  # it; no check ever did. site-claim-check.py pins the claim-bearing sentences
+  # so a rewording fails until someone looks — including the mirrored JSON-LD
+  # and visible copies of the same answer, whose counts are pinned because a
+  # half-fix left the claim live in structured data for days.
+  #
+  # Same no-`paths:`-filter reasoning as the job above, and it matters more here:
+  # this guard's whole subject is page copy, so a filter that skipped HTML-only
+  # commits would skip every commit that can break it.
+  site-claims:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Containment claims on the website are unchanged
+        run: python3 scripts/site-claim-check.py
+
+  # The installer's "is anyone home?" logic, exercised under a real pty. This is
+  # the only automated coverage the fresh-install path has: the clean-Mac runner
+  # was torn down, so nothing else executes any of it. Runs anywhere — it stubs
+  # nothing and installs nothing, it just drives the terminal decisions.
+  installer-tty:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: installer terminal detection (#341)
+        run: ./scripts/lib/tty_test.sh
+
+      # Where install-client.sh puts the binary decides whether that install can
+      # EVER update itself: the updater renames a staged file into place, which
+      # needs write permission on the directory, and the sudo fallback needs a
+      # NOPASSWD rule only a daemon install writes. Installing into a root-owned
+      # /usr/local/bin therefore breaks self-update permanently — which was the
+      # default on a fresh Apple Silicon Mac, and is what a real client-only Mac
+      # hit on 2026-09-01.
+      #
+      # It drives the real installer with curl and tailscale shimmed, so it
+      # exercises the actual chooser rather than a restatement of it. Runs here
+      # because the clean-Mac runner was torn down and nothing else executes any
+      # of the fresh-install path.
+      - name: installer picks a self-updatable location
+        run: ./scripts/lib/clientinstall_test.sh
+
+      # codex ships its executable as an OPTIONAL per-platform npm dependency,
+      # and `npm install -g` succeeds when an optional dependency fails. An
+      # image can therefore build green with an agent that dies on first use,
+      # which is what an operator hit. The agent repairs itself at start; this
+      # exercises both branches with stubs, since the failure needs no registry.
+      - name: codex agent repairs a missing platform binary
+        run: ./scripts/lib/codexheal_test.sh
+
+      # What the installer SAYS while it waits for Docker Desktop's first
+      # launch. On a Mac mini install `open -a Docker` returned success without
+      # bringing the app up, and the loop spent five minutes telling the
+      # operator to accept a licence prompt on a screen that had nothing on it.
+      # The loop runs here with the world stubbed — no Docker, no launching.
+      - name: docker first-launch wait says what is actually wrong
+        run: ./scripts/lib/dockerwait_test.sh

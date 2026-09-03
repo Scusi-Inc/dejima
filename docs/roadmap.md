@@ -47,6 +47,23 @@ after the **Release testing & verification** checklist passes on a live host (Mi
 
 The things only you can do (on Minion / as owner), in priority order:
 
+> **The 1.0 tag will refuse to build until `fit.txt` is re-verified.**
+> `scripts/fit-freshness-check.py` runs in `release.yml` before anything is
+> built. Under 1.0 it allows ten releases of drift; at 1.0+ it demands the
+> `last revised … against vX.Y.Z` line match the tag exactly.
+>
+> This is deliberate and it is not a formality. `fit.txt` is public, is linked
+> from `llms.txt`, and is what a model reads when someone asks whether Dejima
+> suits them. In one week it was wrong in both directions — it claimed the
+> Windows path worked after that path regressed, and it nearly shipped "has
+> never worked end to end" the day after it started working. Both lines were
+> true when written. That is the failure mode: a verdict rots while the file
+> goes on looking maintained, and no other check in the pipeline reads prose.
+>
+> So at launch, re-walk what it claims rather than re-reading it. Confirm the
+> unproven list is still the real unproven list, then restamp the line.
+
+
 1. **Inter-island live-verify (catch-up — it's already shipping).** Follow
    [`operator-tests/inter-island-wave.md`](operator-tests/inter-island-wave.md): deny-all →
    grant → cross-island message → action approve/deny → fail-closed → **wake-on-message (does
@@ -58,10 +75,15 @@ The things only you can do (on Minion / as owner), in priority order:
    `macos-mini` runner with defaults → expect Tier-2 + Tier-3-safe green, Tier-4 green-or-skip.
    Add input `run_system_tests=true` for the service-install/onboard checks; `run_reboot_test=true`
    (recovery access only) for reboot survival. See [`lanes/lane-6-phase-b.md`](lanes/lane-6-phase-b.md).
-3. **Runner boot-persistence** (next week / physical access). FileVault is off, so enable
-   auto-login for `dejimaqa` (fix the `sysadminctl` error-22 via the manual `kcpassword` method)
-   + `svc.sh install`; until then the runner survives disconnects via `run.sh`-in-tmux (not
-   reboots). See [`testing/dejimaqa-runner-setup.md`](testing/dejimaqa-runner-setup.md).
+3. ~~**Runner boot-persistence**~~ — **MOOT 2026-08-16: the `dejimaqa` runner was TORN DOWN**
+   for crashing the operator's real `dejimad`. Nothing runs on it, so items 2 and 4 below no
+   longer have a host either. Rebuilding is blocked on a diagnosis, not on setup: a
+   co-residency guard already landed (`443324e`) and the crash happened anyway, so the guard
+   is insufficient or the mechanism is different. Prefer a disposable macOS VM or a spare Mac
+   over a second account on the live Minion — the "own daemon, own Docker, never touches
+   `aoos`" isolation claim in [`testing/dejimaqa-runner-setup.md`](testing/dejimaqa-runner-setup.md)
+   is exactly what failed. Until then **every Tier-3/Tier-4 and clean-Mac row is manual**, and
+   fresh-Mac install — known to be failing in the field — has no automation behind it at all.
 4. **Clear the standing Minion backlog** (onboarding wizard, terminal auto-reconnect, Keychain
    secrets, idle auto-hibernate, viewer-token scope) — see the Release-testing checklist below +
    the Operator verification queue. **Phase-B automates most of these once it's been run.**
@@ -95,6 +117,9 @@ The things only you can do (on Minion / as owner), in priority order:
    down. Further hardening still open: per-run port/`DEJIMA_HOME` isolation + teardown-on-failure.
    The operating rule is unchanged regardless: **run only on a throwaway box** (the guard is a
    backstop, not a licence to run it on a live host).
+
+*(⚠️ SUPERSEDED 2026-08-16 — the `dejimaqa` host described here was torn down; see item 3.
+Kept for the record of what was built, not as current state.)*
 
 *(✅ Done this session — the test-harness operator setup: a dedicated macOS `dejimaqa` user,
 a caged self-hosted runner, its own colima Docker, the bot GitHub account +
@@ -151,6 +176,8 @@ home is here.
 2. **Team rung** — token auth + 3 built-in roles + per-island scope + an activity feed (who, and which agent, did what). The solo→team conversion bridge. (~3 weeks total)
 3. **Audited MCP brokering** — deny-by-default grants of MCP servers into an island, every call ledgered. Table stakes (MCP is the default agent tool layer) *and* a differentiator (nobody audits it). (weeks)
 4. **Language SDKs (Python + TS) + OpenAPI spec** — `pip install dejima-sdk` / npm. Thin clients over the existing API; generate the request/response client from an OpenAPI spec (API changes = a regen, not hand-edits), hand-write only the PTY-stream ergonomics. Ship now with a "0.x — may change" note; drops example snippets into the API docs for free. (week+ each)
+
+5. **Per-island secrets manager** — managed storage for the access tokens agents' tools need (EAS, npm, API keys), so they stop living in repos, shell profiles, and chat messages. Per-island scope, values never leave the daemon, injected via a parsed (never sourced) read-only mount that rotates live, a deny-list covering loader/interpreter/git execution vectors **and dejima's own `HTTPS_PROXY`** (a secret by that name would silently switch off egress containment), values never displayed after entry, and log masking. Explicitly does NOT hide values from agents in the island — same property as Vault/Doppler/`gh` — and the copy says so. Full design: [`secrets-manager-spec.md`](secrets-manager-spec.md). (days)
 
 Correctly deferred (NOT in this queue): microVM, multi-tenant SaaS, cross-host orchestration, in-Dejima agent orchestration.
 
@@ -219,6 +246,208 @@ Becomes **Lane 5** once the design + the `positioning.md` update are settled.
 
 Roadmapped but deliberately *not* gating the launch or beta — post-core tracks.
 
+- **A from-nothing Windows acceptance script** *(pre-1.0, not gating)* — walks
+  the whole path unattended: `wsl --unregister`, install the client,
+  `dejima wsl setup`, `wsl --terminate` and back, `dejima init` producing a
+  RUNNING ISLAND that clones, then a Windows reboot. Capturing on every failure:
+  `dejima logs`, `systemctl status dejimad`, `journalctl -u dejimad`, the daemon
+  log tail.
+
+  **Deliberately second to setup-proving-its-own-durability**, which d3 owns.
+  That check runs on EVERY machine on EVERY install and reports to the person
+  who can act on it — a user's first install *is* the from-nothing walk. This
+  script needs a real Windows box, is destructive by design (unregistering the
+  distro is the point — re-running setup on a healthy distro passes today, on a
+  machine that was broken for hours), and therefore runs occasionally, on one
+  box, when the operator chooses.
+
+  **It would also have found nothing during the 2026-09 Windows work.** Fifteen
+  defects, and the ones that mattered were in the daemon, the client and the
+  image rather than in the WSL script — see `docs/wsl-windows-postmortem.md`.
+  Its value is as a REGRESSION guard on a path that now works and that we will
+  keep touching, not as a discovery tool.
+
+  What it covers that setup cannot: a Windows reboot, and starting from an
+  unregistered distro. Those are the least likely regressions, which is why this
+  is roadmapped rather than queued.
+
+- **A situational island primer** *(the static half is fixed and guarded; see
+  `image/island-primer.md`)* — agents get told what is possible IN GENERAL, and
+  cannot tell "not granted yet" from "does not work". The static primer said an
+  island token "CANNOT reach other islands" while `tokenauth.go` grants
+  `/link/send`, so every agent in every island believed cross-island messaging
+  was impossible **by design** — and never saw the refusal that names
+  `dejima link grant`, because nobody got that far. A second instance: four Port
+  routes are granted and Port appeared only in a "don't reach host files"
+  paragraph. Both corrected, and a test now fails if a granted capability goes
+  unnamed. **What remains is that the primer is static.** The daemon knows this
+  island's actual link grants, Port scopes, secret names and co-residents at
+  launch; rendering them below the primer turns "I believe this is impossible"
+  into "this isn't granted yet, and here is the ask" — the same
+  absence-rendered-as-absence distinction the grants pane needed. Mechanism
+  decided: the primer, because it is the only agent-agnostic surface (a Claude
+  Code skill would leave codex/openclaw/letta/goose uncovered). MCP is better for
+  discoverability and duplicates the CLI, so it is an addition to revisit later,
+  not a replacement.
+
+- **Adopting agents Dejima didn't launch** *(design written; **DISCOVERY
+  DEFERRED TO POST-1.0**, 2026-09-01 — see
+  [`agent-adoption.md`](agent-adoption.md))* — changes the pitch from
+  "run your agents in containers" (a migration, which asks for a decision before
+  giving anything back) to "whatever you're already running, Dejima can see it,
+  ledger it, and gradually pull it into containment" (an adoption ramp). Someone
+  with six agents loose in terminals gets value on day one without moving
+  anything. Matters here specifically because install is our worst friction.
+  **The risk is the defect this codebase demonstrably produces**: containment
+  becomes a spectrum while every claim we make about it is binary — the same
+  shape as the grants pane, `secret rm`, and "every agent is walled off from the
+  other agents" sitting live on six pages including the homepage. So the
+  structural distinction is built FIRST: containment level as a non-optional
+  data field (never a property of which source answered), a separate section
+  rather than a badge, a grants view that says "observed, not gated" instead of
+  four empty arrays that read as sealed, and ledger entries marked
+  **self-reported** — an adopted agent's ledger is its own account of itself and
+  omission is trivial. Phase 2 (graduation into an island) is specified but not
+  started; it depends on a preflight diff of what the agent will lose and on the
+  dirty-worktree guard, since a graduation that clones fresh destroys uncommitted
+  work exactly the way `agent rm` did.
+
+  **DEFERRED POST-1.0 (operator, 2026-09-01): DISCOVERY.** The piece that finds
+  agents Dejima did not launch — transcript directories and running processes,
+  explicit and operator-initiated. Everything else in Phase 1 is either shipped
+  or in flight; discovery is what would make it *do* something, and it is the
+  part that should wait.
+
+  Why it waits, and the reasoning matters more than the decision because it will
+  be re-argued:
+
+  - **Nobody who uses Dejima today has agents to discover.** Its value is for
+    someone already running Claude Code loose who installs Dejima and wants their
+    existing work reflected rather than starting over. That is an ACQUISITION
+    argument, and acquisition is not where 1.0 is.
+  - **It is the only feature that needs host access with no grant.** Every other
+    host-file path goes through Port — scoped, brokered, ledgered. A discovery
+    scan is a filesystem walk outside that machinery, in a product whose claim is
+    that host access is audited. Defensible (read-only, operator-initiated) and
+    still the first exception, which is expensive to explain.
+  - **It is permanent maintenance on other vendors' internals.** Transcript
+    layouts and process signatures belong to Anthropic, OpenAI and Block, change
+    without notice, and differ per framework.
+
+  The spec argues Phase 1 is worth shipping alone because *observing is easy and
+  gating is hard*. That is true about COST and does not establish VALUE, which is
+  where it fails today.
+
+  **What is already banked, and is not wasted** — this is what makes deferring
+  cheap rather than a write-off. All of it is the expensive-to-retrofit half:
+
+  - the containment level as a non-optional field whose zero value cannot
+    reassure (retrofitting a level onto a shipped model, after surfaces read it,
+    is precisely how the bugs we spent two weeks removing were made);
+  - the naming, which caught two collisions before they shipped — `observed` vs
+    the existing `adopt` verb, and `witnessed` vs `observed` a second time in the
+    ledger, reached independently three days apart by the identical route;
+  - ledger provenance with `omitempty`, which found a real bug: a field
+    serialising on every row rewrites the hash of every historical row, so
+    `dejima audit --verify` fails on a ledger nobody touched — a failure that
+    reads as TAMPERING.
+
+  **STATUS OF WHAT DID SHIP: DESIGNED AND UNPROVEN, NOT DONE.** d3's flag, and it
+  belongs here because "shipped" will otherwise be read as "working". The
+  containment field, the `GET /v1/agents/observed` collection and the provenance
+  levels are all landed, all correct as far as unit tests and mutation checks can
+  establish, and ALL UNEXERCISED BY REAL DATA — no observed agent has ever
+  existed. That is not a criticism of the deferral; the model landing first is
+  exactly what the spec asked for. It means the first real observed agent is the
+  thing that tests this half, and until then it should be described as designed.
+
+  A consequence for the surfaces: `registered:false` distinguishes "none are
+  registered" from "Dejima has no way to learn about one", and with discovery
+  deferred indefinitely the second is the permanent state. A section rendering
+  "no observed agents" would be claiming Dejima looked. It must either not render
+  while `registered` is false, or say that Dejima cannot yet see agents outside
+  islands.
+
+  **The condition for picking it up again is not a date.** Discovery is the
+  prerequisite for Phase 2 (graduation), and graduation is the half with an
+  obvious story: *you are already running agents unprotected, here is the
+  one-click way to fix that*. If graduation becomes the bet, build discovery
+  first and this deferral ends. If it stays a maybe, discovery is scaffolding for
+  a building nobody has decided to put up.
+
+- **Dejima running locally on Windows** *(research done, see
+  [`windows-native-daemon.md`](windows-native-daemon.md))* — today `local` in the
+  connection switcher dead-ends on Windows: `dejimad` ships for darwin/linux only
+  (`Makefile`), so a Windows user can only be a client of someone else's daemon.
+  There is a real audience for isolated islands on the Windows box itself.
+  Research finding: the daemon is far closer than "Unix-only" implies — it
+  already **cross-compiles and `go vet`s clean for windows/amd64** — and there is
+  exactly ONE functional blocker, `startPTY` in `internal/bridge/session.go`,
+  because `creack/pty`'s Windows build is a stub returning `ErrUnsupported`. Two
+  callers, one of them the optional `--host-terminals` feature. Three paths:
+  (A) a ConPTY `startPTY` on Windows — smallest, but puts ConPTY on both ends,
+  which is the class of bug behind the left-column smearing; (B) drop the host
+  PTY entirely and use the Docker Engine API's exec+attach hijacked stream — a
+  real `internal/bridge` refactor, but removes creack/pty from the session path
+  on *every* OS and is the only option that leaves Unix better than it found it;
+  (C) WSL2, already built on `agent/d4` (`35f929c`). Sequencing note: Docker
+  Desktop runs Linux containers in a VM regardless, so a native daemon is a
+  packaging/UX win, **not** an isolation win — C already delivers the capability,
+  so ship it, learn from real Windows users, then decide whether B earns the
+  refactor. Carries an unresolved design question either way: the local socket's
+  "filesystem-trusted, acts as OWNER" model (`clientForHost("")` ignores
+  `DEJIMA_TOKEN`) has no Windows equivalent and must be settled before a Windows
+  daemon is safe to expose. Motivated 2026-08-12. Owner: daemon. (weeks)
+
+- **Voice dictation — rebuild (currently DISABLED)** *(engine built, surface stashed)* —
+  the local-transcription engine (`internal/voicein`: mic capture → whisper.cpp →
+  transcript inject) is built and works **on macOS/Linux**, and the CLI
+  (`dejima voice`, `voice install`, `voice status`, `voice device`) is intact but
+  `Hidden`, off the help/settings surface. Disabled 2026-07-23 because the flow
+  is half-wired for the primary user (Windows), where it misleads more than it
+  helps. Re-enabling means, IN THIS ORDER (verifiable-first, since the Windows
+  paths can't be tested from a macOS dev box):
+
+  1. **In-session voice chord** — a client-side key intercept in `dejima connect`,
+     exactly like the Ctrl-V image-paste chord: press a chord (default TBD,
+     configurable via `DEJIMA_VOICE_KEY`, disable-able) → record on the client
+     mic → whisper transcribes locally → inject the transcript into the agent's
+     prompt as text. Press-to-start / press-to-stop (a pty has no reliable
+     key-release). Build + prove on macOS/Linux FIRST. **Recording indicator:**
+     can't draw over an agent's alt-screen (same reason `sessionNotice` is
+     suppressed) — use the terminal TITLE bar via OSC ("🎙 recording…" →
+     "transcribing…" → clear), which survives alt-screen. **Chord collision:**
+     every Ctrl-key risks shadowing an agent binding; pick a safe default, make
+     it configurable and disable-able.
+  2. **Windows voice install automation** — the actual blocker for the Windows
+     user. Today `voice install` on Windows only PRINTS manual steps. Automate:
+     `winget install Gyan.FFmpeg` + download a whisper.cpp Windows release
+     (same machinery as the model download). Known hazards, all real: whisper.cpp
+     has **no stable winget package** — versioned release zips with inconsistent
+     asset names, CPU-variant selection (wrong AVX build CRASHES), possibly
+     missing DLLs, and SmartScreen/AV quarantine; **PATH doesn't refresh** in the
+     running process after winget (the gh-in-tmux trap again — installed tools
+     stay invisible until a shell restart, so say so loudly); winget may need
+     **UAC**. Pair with the `dejima voice device` picker (dshow needs a NAMED mic
+     — headset vs webcam array — no default).
+
+  Meta-risk to plan around: the entire Windows path is UNTESTABLE from the dev
+  box, and voice already shipped broken on Windows once for exactly this reason.
+  Expect several test round-trips with the operator; build the verifiable core
+  (#1 on macOS) solid before touching the blind part (#2).
+
+- **Brokered secret access — per-use logging + approval gating** *(post secrets-manager v1)* —
+  these are ONE feature, not two. With environment injection there is no read event to observe:
+  a tool reads `EXPO_TOKEN` from its own process memory and nothing crosses the daemon, so
+  "agent X used this secret at 15:42" is unobtainable by construction. Both per-use audit and
+  per-use approval become possible only if the agent must *ask* (`dejima secret get NAME` over
+  the island token API), which also unlocks rate limiting and reuses the pending-actions
+  machinery in [`action-gate-spec.md`](action-gate-spec.md). The `require_approval` field is
+  stored from secrets-manager v1 so this lands without a migration. Cost: tools don't fetch
+  natively, so the agent wires it by hand and the value re-enters that shell's environment —
+  brokering removes *ambient* exposure and buys the audit trail; it does not make a value
+  unreadable. See [`secrets-manager-spec.md`](secrets-manager-spec.md) § Deferred.
+
 - **Native multi-agent tiled/split live view in the TUI** *(post-v1, consider)* — today,
   seeing several agents' *live* terminals at once needs either a terminal with a "new-window
   backend" (iTerm2 / Windows Terminal, which `openAgents` drives) or manually splitting your
@@ -275,6 +504,33 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   entrypoint/logs), so it wants live verification. Migration is lazy-on-recreate (interactive
   islands convert for free; headless-first need a recreate to avoid double-launch). Full
   design + migration plan: [`island-pid1-unification.md`](island-pid1-unification.md).
+
+  **Status 2026-08-13: code is written and parked, waiting on a host window, not on
+  a decision.** PR #143 implements it (5 files, +106/−108) and is green on
+  build/test/vet/lint/openapi-parity — but it is DRAFT/do-not-merge because CI only
+  compiles Go and never spins a container, so every lifecycle claim in it is reasoned
+  rather than observed. Six acceptance steps are listed on the PR and none are done;
+  they need real island create/destroy on a real host and cannot be run from inside
+  an island. Three things to settle when it's picked up, in this order:
+  1. **Rebase and reconcile with a0bd706.** Both edit the same regions of
+     `internal/api/server.go`. The PR deletes `DEJIMA_LAUNCH`, which is exactly what
+     a0bd706's resume threads through — so `createContainerForProject`'s
+     `LaunchFor(resume)` becomes dead code and `reconcileAgents(…, resume)` becomes
+     the whole mechanism. That is a better end state, not a conflict to paper over.
+  2. **Repoint `dejima logs <island>`** (no agent id) — the PR flags, and does not
+     fix, that a headless-first island's output moves to `headlessLogPath(id)`. It is
+     a knowing regression until done.
+  3. **Rebuild the image + fleet upgrade**, since `image/start.sh` changes.
+
+  Doing this also closes **#333** (wake can't resume an agent's conversation) for free
+  and in the right way: #333 is blocked because `DEJIMA_LAUNCH` is frozen into
+  container env at creation and wake reuses the container, and Path B removes that env
+  entirely — resume becomes a launch-time parameter, so the problem stops existing
+  rather than being worked around. Note the priority shifted on 2026-08-12: a0bd706
+  made `dejima upgrade` relaunch *and* resume every agent, so the only remaining gap
+  is wake, which fires far less often than upgrade. This went from "fixes what's
+  biting us" to "deletes a special case and closes a corner" — still worth doing,
+  no longer urgent.
 - **Multi-host / distributed (discuss later)** — running agents across *multiple* hosts
   (several Mac minis / servers / cloud). Today Dejima manages one host, so a fleet-of-hosts
   is a wrapper-app concern. Open question worth a deliberate decision: should the substrate
@@ -298,6 +554,33 @@ Roadmapped but deliberately *not* gating the launch or beta — post-core tracks
   a **separate host/VM**, not a second daemon (which collides on `:7273`/`:7274`). Per-user-port
   daemons are buildable but arguably off-thesis (containment favors separate hosts for separate
   operators) — park unless demand is real. Relates to the multi-host question above.
+
+---
+
+## 🌐 Website + docs backlog
+
+The site and README lag the shipped feature set — found 2026-07-22 while adding
+the secrets manager to the feature list. Both of these are user-facing, on by
+default (egress) or fully built (voice), and appear in **neither** `README.md`
+nor `index.html`:
+
+- [x] **README `What you get`** — added the egress gate + voice dictation entries.
+- [ ] **`index.html` `#features`** — same two, plus the site has no mention of
+      egress control at all, which is one of the stronger containment claims
+      (see every destination an island reaches; allow/deny by host, no restart).
+- [ ] **Secrets manager** — announce on the site once built. Copy must state
+      plainly that it does NOT hide values from agents in the island; the
+      feature is repo/chat hygiene, central rotation, and audit, not a boundary.
+      Overclaiming here would be worse than shipping nothing, because operators
+      would put things in it they shouldn't. See
+      [`secrets-manager-spec.md`](secrets-manager-spec.md).
+- [ ] **Voice: platform table** — the site should say voice runs on the machine
+      with the microphone (not the daemon host), and that macOS/Linux install
+      via `dejima voice install` while Windows needs ffmpeg + whisper.cpp by hand.
+      This confused an operator driving a Mac mini from a Windows client.
+- [ ] **Audit ledger + SSH façade** — also shipped, also absent from the site.
+      Worth a sweep of `README.md` § `What you get` against the actual CLI verbs
+      rather than fixing these one at a time as they're noticed.
 
 ---
 
@@ -499,6 +782,9 @@ Targeted fixes and quality-of-life additions. Sized in hours unless noted.
 - [x] **Adaptive first-run prompt** — Detect server vs client context (Docker + dejimad binary present? DEJIMA_HOST set? daemon reachable?) and ask a context-specific y/n/N question instead of the generic "first time?" — shipped: `detectFirstRunContext` branches the no-args prompt into configured (→ straight to TUI), client-unreachable (→ troubleshooter), fresh-macOS-host (→ offer `--provision-host`), or generic. Same marker / never semantics.
 - [x] **Connection-failure offer** — When the CLI hits a "daemon unreachable" error for the first time on a host that has `DEJIMA_HOST` set, surface a one-shot *"Want help troubleshooting the connection?"* prompt. Shipped: `maybeOfferConnectionHelp` at the `main()` error choke point + `runConnectionTroubleshooter` (Tailscale / host-TCP checks); one-shot via a `~/.dejima/conn-help-offered` marker.
 - [ ] **Webhook security hardening** — the URL itself is a secret today. Improvements: (a) require a strong HMAC secret by default rather than as opt-in, (b) optional bearer-token auth on the receiver, (c) generate a high-entropy ntfy topic suffix automatically when user types a bare topic name, (d) interactive secret prompt during `dejima service install`. Already partially shipped (HMAC + interactive secret prompt); the rest is roadmap. (1-2 days)
+- [ ] **Notification routing — per-island subscriptions (tenancy)** — *designed 2026-08-18 (d3 + d1), not built. Build before the content tier below; they are separate bugs.* `events.Subscription` (`internal/events/manager.go:24`) is `{ID, URL, Secret, Events, CreatedAt}` — **no island field**, and `Emit` filters on event *type* only, so **every subscription receives every island's events**. That breaks the work/personal and freelance-client cases: register a webhook for client A and one for client B and both see everything. **Bounded, not a containment break:** `POST /v1/events/subscribe` is `capOwner` and `accessDeny` is the token-auth zero value (`subscri` appears nowhere in `tokenauth.go`), so a contained agent *cannot* create a subscription — this is operator-to-operator between their own webhooks. Design: **exact match**, target stored as an **opaque selector string** from day one so `group:acme` lands later with no migration. **Name-prefix matching is ruled out permanently** — a rename silently re-routes and a new `acme-internal-audit` joins that client's Slack by existing, which makes the convenient action and the tenancy-breaking action the same action; membership must be *declared*, never inferred from a display string. **Migration is the dangerous part:** existing subs must become an *explicit* all-islands selector, surfaced as "this webhook receives EVERY island" — `empty = all` preserves the leak invisibly, `empty = none` silently stops every existing webhook, and a notifier gone quiet is indistinguishable from nothing having happened. An **unrouted-islands surface is part of the feature**, not a follow-up: exact match without it fails closed *silently*. (2-3 days)
+- [ ] **Notification content tiers — what crosses, per subscription** — *designed 2026-08-18; depends on the routing item above.* A notification reading "Claude wants to run `rm -rf` in /workspace/acme-client" ships a client name and file paths to a third party, voiding "your code never leaves your box" in the one feature whose job is to be helpful. Tiers: `full` (event + island + agent + question text) · `minimal` (event + island + agent *label* + deep link, **no content**) ← **default** · `opaque` (count only). **`minimal` means DROP `Event.Payload` wholesale and rebuild from the daemon-authored typed fields** (Type/Island/Agent/AgentLabel/Timestamp) — *not* redact it: `Payload` is `map[string]any` with no schema, so any denylist is a list of what we happened to think of and is wrong the first time a shim adds a field. Precedent already in-tree: `TypeMailboxArrival` carries flags "never the message body". **Second, independent reason `minimal` must be the default:** the payload is not merely sensitive, it is **untrusted** — `POST /v1/internal/agent-event` is `accessTokenOwn` (`tokenauth.go:67`) and the payload passes through verbatim, so a prompt-injected agent can emit attacker-chosen text that lands in the operator's Slack looking like it came from Dejima. That is an injection channel *into* the trusted notification surface, riding a subscription the operator legitimately created; the owner-only bound on *creating* subscriptions does not cover payload *content*. Transport classification: **vendor list, unknown = external**, and derivation may only *restrict* — never upgrade a transport to "may send content" (a tailnet host is a public relay one config change later, and a URL cannot tell you that). Only an explicit per-subscription human choice permits `full`, and it should name which event types it applies to rather than being one forever-switch. Also wanted alongside: filter by agent and event type, quiet hours. (2-3 days)
+- [ ] **Webhook URL is readable by any viewer** — *found 2026-08-18 while designing the above.* `GET /v1/events/subscriptions` is `capRead` (`roleauth.go:90`) and `Manager.List()` (`manager.go:190`) blanks `Secret` but returns `URL` in full. A Slack/Discord incoming-webhook URL **is a bearer credential** — anyone holding it can post to that channel from anywhere with no further auth — so a *viewer*-role member can lift the owner's webhook and post as it. Defensible while URLs are generic endpoints; **a precondition once Slack ships**, because then the URL is guaranteed to be a credential rather than possibly benign. Fix: mask for `capRead` (host + path prefix, e.g. `hooks.slack.com/services/T00…/***`), full value owner-only. Related to the HMAC work in *Webhook security hardening* above, but distinct — that hardens the *secret*, this exposes the *URL*. (hours)
 - [x] **Headless-Mac service install via LaunchDaemon** — shipped in two tiers: `dejima service install` now falls back from the missing gui domain to `launchctl bootstrap user/<uid>` (supervised — KeepAlive crash restarts — for the current boot, no sudo, works over plain SSH), and `dejima service install --system` writes `/Library/LaunchDaemons/dev.dejima.dejimad.plist` (runs as the installing user via `UserName`; sudo for the privileged steps) which loads at boot with **no desktop login ever**. `restart`/`uninstall`/`status` honor `--system`. (done)
 - [ ] **Headless boot vs locked login keychain** — a `--system` LaunchDaemon starts dejimad at boot *before any login*, when the user's login keychain is still locked, so keychain-sourced Claude creds can fail until someone SSHes/logs in once per boot. Fix: (a) make the daemon's creds probe detect the locked-keychain case and report it distinctly (doctor fix hint: "log in once, or seed file-based creds" — today it would misleadingly FAIL with "run `dejima auth push`" as if never logged in), (b) on `--system` installs, recommend/offer the file-based seed path (`dejima auth push`), which doesn't depend on the keychain. (half day)
 - [ ] **Auto-login detection + recommendation** — during host provisioning, detect whether auto-login is enabled and recommend turning it on for headless Mac mini setups (so LaunchAgents survive reboots without needing a LaunchDaemon). (hours)

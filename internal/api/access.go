@@ -11,9 +11,12 @@ import (
 	"strconv"
 	"strings"
 
+	"bufio"
+
 	"github.com/aoos/dejima/internal/handlers"
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/secrets"
 	"github.com/aoos/dejima/internal/version"
 	"github.com/aoos/dejima/internal/vmmem"
 )
@@ -168,11 +171,21 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	flusher, _ := w.(http.Flusher)
-	buf := make([]byte, 4096)
+
+	// Mask the island's own secrets on the way out. A tool echoing its
+	// configuration is the likeliest way one of these actually leaks, and logs
+	// get pasted into issues and chats far more casually than credentials do.
+	//
+	// Line-oriented, NOT per-read-chunk: a fixed-size read can split a value
+	// across two buffers, and a substring replace would then miss both halves
+	// while looking like it worked. Splitting on newlines means a value is only
+	// missed if it contains one, which the format already escapes.
+	redact := secretRedactor(name)
+	br := bufio.NewReader(rc)
 	for {
-		n, readErr := rc.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+		line, readErr := br.ReadString('\n')
+		if line != "" {
+			if _, writeErr := io.WriteString(w, redact(line)); writeErr != nil {
 				return
 			}
 			if flusher != nil {
@@ -183,6 +196,24 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// secretRedactor returns a function masking island's stored secret values.
+//
+// The store is read ONCE per stream rather than per line: a follow stream can
+// run for hours, and re-reading the keychain for every line would be both slow
+// and a stream of keychain access prompts. A secret set mid-stream therefore
+// isn't masked until the next `dejima logs` — acceptable, since the value
+// wasn't in the process's environment when those lines were written either.
+//
+// Returns identity when the island has no secrets, so the common case costs
+// nothing.
+func secretRedactor(island string) func(string) string {
+	store, err := secrets.OpenIsland()
+	if err != nil {
+		return func(s string) string { return s }
+	}
+	return store.Redactor(island)
 }
 
 // handleRevokeSessions drops every active client websocket.
@@ -220,6 +251,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		IslandImage:          DefaultImage,
 		HostTerminalsEnabled: s.hostTerminals,
 		SSHAddr:              s.sshAddr,
+		SSHHostKey:           s.sshHostKey,
 		DaemonVersion:        version.Version,
 		APIVersion:           version.APIVersion,
 		Panicked:             panicEngaged(),
@@ -323,22 +355,31 @@ func (s *Server) handleIslandEvents(w http.ResponseWriter, r *http.Request) {
 // guard. Returns nil on any failure or if the workspace isn't a git repo
 // (best-effort).
 func (s *Server) gitStatusOf(ctx context.Context, containerName string) *GitInfo {
+	return s.gitStatusIn(ctx, containerName, "/workspace")
+}
+
+// gitStatusIn is gitStatusOf for an arbitrary directory in the container —
+// an agent's worktree as well as the island's /workspace. Split out for the
+// agent-removal guard: removing an agent runs `git worktree remove --force` on
+// ITS directory, so the question "is there work here to lose" has to be asked
+// about that directory and not about the island's.
+func (s *Server) gitStatusIn(ctx context.Context, containerName, dir string) *GitInfo {
 	if status, _ := s.rt.Status(ctx, containerName); status != runtime.StatusRunning {
 		return nil
 	}
-	// Quick check: is /workspace a git repo at all?
+	// Quick check: is dir a git repo at all?
 	if _, _, code, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "rev-parse", "--git-dir"}); code != 0 {
+		[]string{"git", "-C", dir, "rev-parse", "--git-dir"}); code != 0 {
 		return nil
 	}
 	info := &GitInfo{}
 
 	if out, _, _, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "rev-parse", "--abbrev-ref", "HEAD"}); out != "" {
+		[]string{"git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD"}); out != "" {
 		info.Branch = strings.TrimSpace(out)
 	}
 	if out, _, code, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "status", "--porcelain"}); code == 0 {
+		[]string{"git", "-C", dir, "status", "--porcelain"}); code == 0 {
 		out = strings.TrimSpace(out)
 		if out == "" {
 			info.Clean = true
@@ -347,13 +388,13 @@ func (s *Server) gitStatusOf(ctx context.Context, containerName string) *GitInfo
 		}
 	}
 	if out, _, code, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "rev-list", "--count", "@{u}..HEAD"}); code == 0 {
+		[]string{"git", "-C", dir, "rev-list", "--count", "@{u}..HEAD"}); code == 0 {
 		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
 			info.Ahead = n
 		}
 	}
 	if out, _, code, _ := s.rt.Exec(ctx, containerName,
-		[]string{"git", "-C", "/workspace", "rev-list", "--count", "HEAD..@{u}"}); code == 0 {
+		[]string{"git", "-C", dir, "rev-list", "--count", "HEAD..@{u}"}); code == 0 {
 		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
 			info.Behind = n
 		}

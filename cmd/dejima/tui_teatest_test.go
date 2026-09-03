@@ -156,7 +156,7 @@ func TestTUIActionMenu(t *testing.T) {
 	tm := runModel(t, seededModel(t, island("alpha")))
 	waitForAll(t, tm, "alpha")
 
-	tm.Send(key("m"))
+	tm.Send(key("s")) // contextual settings menu
 	waitForAll(t, tm, "Hibernate", "Purge")
 
 	tm.Send(key("esc"))

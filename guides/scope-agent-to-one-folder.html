@@ -25,7 +25,7 @@
 {"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
 {"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
 {"@type":"ListItem","position":3,"name":"Scope an agent to one folder","item":"https://dejima.tech/guides/scope-agent-to-one-folder.html"}]},
-{"@type":"TechArticle","headline":"Give an AI agent scoped access to one folder","description":"By default a Dejima island can't see any host files. Grant an agent read-only access to a single folder through a broker that logs every crossing, and revoke it when done.","image":"https://dejima.tech/assets/og-scope-folder.png","datePublished":"2026-06-28","dateModified":"2026-06-28","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/scope-agent-to-one-folder.html"},
+{"@type":"TechArticle","headline":"Give an AI agent scoped access to one folder","description":"By default a Dejima island can't see any host files. Grant an agent read-only access to a single folder through a broker that logs every crossing, and revoke it when done.","image":"https://dejima.tech/assets/og-scope-folder.png","datePublished":"2026-06-28","dateModified":"2026-08-18","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/scope-agent-to-one-folder.html"},
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"How do I give an AI agent access to just one folder?","acceptedAnswer":{"@type":"Answer","text":"Dejima islands are deny-all by default. Grant a single folder with dejima port grant <island> <path>:ro. The agent reaches only that folder, read-only, through a broker, and you revoke it with dejima port revoke when you're done."}},
 {"@type":"Question","name":"Can the agent see the rest of my files?","acceptedAnswer":{"@type":"Answer","text":"No. Host-file access is deny-all until you grant a specific path. The agent sees only the folders you have granted; it cannot widen its own access or reach anything else on your machine."}},
@@ -48,8 +48,8 @@
   <a href="index.html" aria-current="page">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <article class="post">
@@ -142,7 +142,7 @@ Goal: an agent that can read one folder I chose, read-only, with every crossing 
   <a href="index.html">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>

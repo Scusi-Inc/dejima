@@ -34,6 +34,7 @@ import (
 	"github.com/aoos/dejima/internal/selfupdate"
 	"github.com/aoos/dejima/internal/service"
 	"github.com/aoos/dejima/internal/version"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // execLookPath is a small indirection so resolveDaemonBinary stays testable.
@@ -48,8 +49,26 @@ func main() {
 		// Cobra already printed the error. If it's a can't-reach-the-daemon
 		// failure on a machine pointed at a host, offer a one-shot troubleshooter.
 		maybeOfferConnectionHelp(err)
+		pauseAfterRun()
 		os.Exit(1)
 	}
+	pauseAfterRun()
+}
+
+// pauseAfterRun holds the terminal until Enter when DEJIMA_PAUSE_AFTER is set.
+// The TUI sets it for the commands it hands the terminal to (tea.ExecProcess,
+// e.g. the Local models page running `dejima local install`): the dashboard
+// repaints the whole screen the instant the child exits, so without this the
+// installer's summary — or the error explaining why it stopped — is wiped
+// before it can be read. It lives here, after Execute, because cobra prints a
+// RunE error only once RunE has returned. A no-op for anyone running the CLI
+// by hand, and for a non-interactive stdin (EOF returns straight away).
+func pauseAfterRun() {
+	if os.Getenv("DEJIMA_PAUSE_AFTER") == "" {
+		return
+	}
+	fmt.Fprint(os.Stderr, "\npress Enter to return to the dashboard… ")
+	stdinReader.ReadString('\n')
 }
 
 // maybeOfferConnectionHelp surfaces help when a command can't reach the daemon.
@@ -159,10 +178,25 @@ func runConnectionTroubleshooter(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "  Target: %s  (DEJIMA_HOST)\n", host)
 	}
 
+	// A wsl:// target is a LOCAL socket tunnel through wsl.exe. None of the
+	// network checks below apply to it, and running them produces a confident
+	// wrong diagnosis: an operator whose distro was simply missing socat was told
+	// "Tailscale is up" (true and irrelevant) and then to run
+	// `dejima service install --tcp :7273` ON THE HOST — which for a WSL host is
+	// neither necessary nor correct, and sends them to configure a TCP listener
+	// for a transport that does not use one.
+	//
+	// Reported from a real first install. The daemon's own error already named
+	// the actual cause; the troubleshooter talked over it.
+	if wsl.Distro(host) != "" || strings.HasPrefix(host, wsl.Scheme) {
+		troubleshootWSL(ctx, host)
+		return
+	}
+
 	// 1. Is Tailscale present and up here? The host accepts only tailnet peers.
 	if _, err := exec.LookPath("tailscale"); err != nil {
 		fmt.Fprintln(os.Stderr, "  ✗ Tailscale isn't installed here — the host accepts only tailnet peers.")
-		fmt.Fprintln(os.Stderr, "      macOS: brew install --cask tailscale   ·   Linux: https://tailscale.com/download")
+		fmt.Fprintln(os.Stderr, "      macOS: brew install --cask tailscale-app   ·   Linux: https://tailscale.com/download")
 		fmt.Fprintln(os.Stderr, "      then: tailscale up   (log into the SAME account that owns the host)")
 	} else if st := tailscaleStatus(); st.BackendState != "Running" {
 		fmt.Fprintf(os.Stderr, "  ✗ Tailscale isn't up here (state: %s) — run: tailscale up\n", st.BackendState)
@@ -188,6 +222,22 @@ func runConnectionTroubleshooter(ctx context.Context) {
 	}
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "  More: dejima doctor   ·   dejima onboard")
+}
+
+// newVersionCmd exists because `dejima version` is what people type first, and
+// cobra only wires `--version`. The bare word returned `unknown command
+// "version"` and pointed at --help, which does not itself mention the flag — so
+// the obvious guess failed and the remedy it offered did not contain the answer.
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the dejima version.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Printf("dejima version %s\n", version.Version)
+			return nil
+		},
+	}
 }
 
 func newRootCmd() *cobra.Command {
@@ -259,6 +309,7 @@ func newRootCmd() *cobra.Command {
 		newLinkCmd(),
 		newPolicyCmd(),
 		newEgressCmd(),
+		newSecretCmd(),
 		newSpawnCmd(),
 		newMCPCmd(),
 		newAuditCmd(),
@@ -273,10 +324,13 @@ func newRootCmd() *cobra.Command {
 		newJoinCmd(),
 		newGithubCmd(),
 		newProviderCmd(),
+		newLocalCmd(),
+		newWSLCmd(),
 		newLogoutAllCmd(),
 		newClientsCmd(),
 		newOverviewCmd(),
 		newDoctorCmd(),
+		newVersionCmd(),
 		newOnboardCmd(),
 		newAdoptCmd(),
 		newUpdateCmd(),
@@ -395,11 +449,19 @@ func newExecCmd() *cobra.Command {
 // --- cp -------------------------------------------------------------------
 
 func newCpCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "cp <src> <dst>",
-		Short: "Copy a file in or out of an island.",
+	var recursive bool
+	cmd := &cobra.Command{
+		Use:   "cp [-r] <src> <dst>",
+		Short: "Copy a file or folder in or out of an island (not ledgered).",
 		Long: "Either source or destination must take the form <island>:<path>. " +
-			"Examples:\n  dejima cp foo:/workspace/README.md ./\n  dejima cp ./patch.diff foo:/intake/",
+			"With -r, copies a directory; symlinks are never followed and skipped " +
+			"entries are reported.\n\n" +
+			"NOT LEDGERED. This is the convenient path and it writes no audit record. " +
+			"For a scoped, ledgered transfer — one Ledger entry per file — use " +
+			"`dejima port intake -r` instead.\n\n" +
+			"Examples:\n  dejima cp foo:/workspace/README.md ./\n" +
+			"  dejima cp ./patch.diff foo:/intake/\n" +
+			"  dejima cp -r ./notes foo:/home/dejima/notes",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			src, dst := args[0], args[1]
@@ -409,6 +471,16 @@ func newCpCmd() *cobra.Command {
 			}
 			srcIsland, srcPath, srcIsRemote := splitIslandPath(src)
 			dstIsland, dstPath, dstIsRemote := splitIslandPath(dst)
+			if recursive {
+				switch {
+				case srcIsRemote && !dstIsRemote:
+					return cpFromIslandRecursive(cmd.Context(), c, srcIsland, srcPath, dst)
+				case !srcIsRemote && dstIsRemote:
+					return cpToIslandRecursive(cmd.Context(), c, src, dstIsland, dstPath)
+				default:
+					return fmt.Errorf("exactly one of src/dst must be an island path (e.g. foo:/workspace/dir)")
+				}
+			}
 			switch {
 			case srcIsRemote && !dstIsRemote:
 				rc, err := c.ReadFile(cmd.Context(), srcIsland, srcPath)
@@ -435,6 +507,9 @@ func newCpCmd() *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false,
+		"copy a directory (symlinks skipped and reported; still NOT ledgered — see `dejima port intake -r`)")
+	return cmd
 }
 
 func splitIslandPath(s string) (island, path string, isRemote bool) {
@@ -504,6 +579,7 @@ func newServiceCmd() *cobra.Command {
 	var skipTCPPrompt bool
 	var tokenTCPAddr, sshAddr, autonomyDial string
 	var auditOn, auditReads bool
+	var noEgressProxy bool
 	var auditHMACKeyFile string
 	installCmd := &cobra.Command{
 		Use:   "install",
@@ -555,6 +631,14 @@ func newServiceCmd() *cobra.Command {
 			if autonomyDial != "" {
 				svcArgs = append(svcArgs, "--autonomy-dial", autonomyDial)
 			}
+			// Same reasoning as --audit below: the egress proxy is default-ON, so
+			// turning it off is only possible by baking the flag into the
+			// supervised daemon's args. Without this there is no supported way to
+			// persist the bypass — a hand-run `dejimad --no-egress-proxy` is
+			// replaced by the service manager on the next restart or reboot.
+			if noEgressProxy {
+				svcArgs = append(svcArgs, "--no-egress-proxy")
+			}
 			// Audit must be baked into the supervised daemon's args — a flag on a
 			// hand-run dejimad doesn't reach the launchd/systemd-managed process,
 			// so without this the operational audit log can't be enabled in a
@@ -599,13 +683,23 @@ func newServiceCmd() *cobra.Command {
 			// Record install context so the daemon can later update + restart
 			// itself (TUI 'U' / dejima update): the source checkout for a source
 			// install, and whether it's a system service (restart domain).
-			meta := selfupdate.InstallMeta{System: systemSvc}
-			if selfupdate.DetectMode() == selfupdate.ModeSource {
-				if cwd, werr := os.Getwd(); werr == nil {
-					if dir, ferr := selfupdate.FindCheckout(cwd); ferr == nil {
-						meta.SourceDir = dir
-					}
-				}
+			// Record the checkout whenever we can actually find one, WITHOUT
+			// gating on DetectMode. DetectMode reads the version string, and a
+			// source build sitting exactly on a release tag looks identical to a
+			// packaged release — so gating here meant a build from a tagged
+			// checkout skipped recording, left SourceDir empty, and the daemon
+			// then chose the release path: download and overwrite its own binary
+			// in a root-owned /usr/local/bin, which it has no permission to do.
+			// A real checkout is better evidence of a source install than the
+			// version string, and the daemon already treats SourceDir as
+			// authoritative over DetectMode.
+			meta := selfupdate.InstallMeta{System: systemSvc, SourceDir: selfupdate.ResolveSourceDir()}
+			if meta.SourceDir == "" && selfupdate.DetectMode() == selfupdate.ModeSource {
+				// Say so. Silently recording nothing is what left operators with
+				// a daemon that refuses to self-update, discovered only much
+				// later when the TUI's [U] failed.
+				fmt.Fprintln(os.Stderr, "warning: couldn't locate your dejima checkout, so daemon self-update isn't wired up.")
+				fmt.Fprintln(os.Stderr, "         re-run this from inside your checkout to record it.")
 			}
 			if err := selfupdate.SaveInstallMeta(meta); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: could not record install metadata for self-update: %v\n", err)
@@ -644,6 +738,7 @@ func newServiceCmd() *cobra.Command {
 	installCmd.Flags().BoolVar(&skipTCPPrompt, "no-tcp-prompt", false, "skip the interactive remote-access prompt")
 	installCmd.Flags().StringVar(&tokenTCPAddr, "token-tcp", "", "host-internal addr for the in-island autonomy path (#8), e.g. 127.0.0.1:7274; empty disables")
 	installCmd.Flags().StringVar(&sshAddr, "ssh", "", "SSH-façade listen addr (#9), e.g. :2222 or a tailnet IP; empty disables")
+	installCmd.Flags().BoolVar(&noEgressProxy, "no-egress-proxy", false, "bake --no-egress-proxy into the service: disable the always-on island egress proxy, so island outbound traffic does not route through a host-loopback proxy (unobserved; `dejima egress allow/deny` unavailable)")
 	installCmd.Flags().StringVar(&autonomyDial, "autonomy-dial", "", "host:port an in-island brain dials to reach --token-tcp (default host.docker.internal:<token-tcp port>)")
 	installCmd.Flags().StringVar(&notifyURL, "notify", "", "auto-subscribe this webhook URL after install")
 	installCmd.Flags().StringVar(&notifySecret, "notify-secret", "", "HMAC secret for the auto-subscribed webhook")
@@ -1010,19 +1105,32 @@ func newResetCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "reset <name>",
-		Short: "Clear agent state. Preserves workspace.",
-		Long: "Wipes the agent's on-disk state volume (chat history, scratch files) but " +
-			"leaves the workspace untouched. The container is recreated; credentials are " +
-			"re-mounted on next start. Useful for \"fresh conversation, same code.\"",
+		Short: "Erase every agent's memory in an island. Keeps the workspace.",
+		// Say what dies before saying what survives. The old wording ("clear agent
+		// state… credentials are re-mounted on next start") named only the survivor
+		// and implied logins came back; the home volume holds tool auth the agent
+		// did itself (gh, npm), and that does not come back. To pick up a new
+		// secret you want `dejima agent restart --resume`, not this.
+		Long: "Destroys the island's home volume: EVERY agent's conversation history, " +
+			"their scratch files, and any tool logins made inside the island (gh, npm, …). " +
+			"Agents come back blank. The workspace volume — your code and git history — is " +
+			"untouched, and daemon-managed credentials are re-seeded on the next start; " +
+			"anything an agent authenticated itself is not. Cannot be undone.\n\n" +
+			"If you want an agent to pick up a new secret or setting, you want " +
+			"`dejima agent restart <island> <agent> --resume`, which keeps the conversation.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if !force {
-				fmt.Printf("This will clear agent state for island %q (chat history, scratch files).\n", name)
-				fmt.Printf("Workspace will be preserved. Continue? [y/N]: ")
+				fmt.Printf("This ERASES agent memory for every agent in island %q:\n", name)
+				fmt.Printf("  · all conversation history\n")
+				fmt.Printf("  · any tool logins made inside the island (gh, npm, …)\n")
+				fmt.Printf("The workspace (code + git history) is preserved. This cannot be undone.\n")
+				fmt.Printf("To pick up a new secret instead, use: dejima agent restart %s <agent> --resume\n", name)
+				fmt.Printf("Type the island name (%s) to confirm: ", name)
 				var confirm string
 				_, _ = fmt.Scanln(&confirm)
-				if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+				if strings.TrimSpace(confirm) != name {
 					return fmt.Errorf("aborted")
 				}
 			}
@@ -1143,6 +1251,12 @@ func clientForHost(host string) (*api.Client, error) {
 			fmt.Fprintln(os.Stderr, "warning: DEJIMA_TOKEN is ignored over the local socket — you act as the trusted owner. A token applies only to a remote/in-island target (set DEJIMA_HOST).")
 		}
 		return api.NewUnixClient()
+	}
+	// `wsl://<distro>` — a dejimad inside WSL2, reached by tunnelling its Unix
+	// socket through wsl.exe. Like the local socket it is filesystem-trusted and
+	// carries no bearer token, so this branch sits ahead of the token lookup.
+	if wsl.IsHost(host) {
+		return api.NewWSLClient(wsl.Distro(host))
 	}
 	// Guard the choke point: a host carrying a control character (e.g. a stray
 	// NUL that slipped through an input field) would otherwise be spliced into a
@@ -1281,6 +1395,10 @@ func resolveDaemonBinary() (string, error) {
 func newInitCmd() *cobra.Command {
 	var (
 		repo       string
+		noRepo     bool
+		fromDir    string
+		keepScope  bool
+		gitInit    bool
 		name       string
 		agents     []string
 		image      string
@@ -1301,8 +1419,20 @@ func newInitCmd() *cobra.Command {
 			"persistent volume inside the island; the agent runs in a tmux session " +
 			"(claude-code, codex) or directly (headless, with --cmd).",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if repo == "" {
-				return fmt.Errorf("--repo is required")
+			// --no-repo is deliberate; an empty --repo is not. Requiring the flag
+			// means a URL the shell ate can't quietly become an empty island.
+			switch {
+			case fromDir != "" && (repo != "" || noRepo):
+				return fmt.Errorf("--from is its own workspace source — it can't be combined with --repo or --no-repo")
+			case fromDir != "" && name == "":
+				return fmt.Errorf("--name is required with --from (a folder name is not a good island name)\n"+
+					"  dejima init --name <island> --from %s", fromDir)
+			case noRepo && repo != "":
+				return fmt.Errorf("--no-repo can't be combined with --repo — pick one")
+			case noRepo && name == "":
+				return fmt.Errorf("--name is required with --no-repo (there's no repo to derive it from)")
+			case !noRepo && fromDir == "" && repo == "":
+				return fmt.Errorf("--repo is required — or --from <folder> to seed from a directory, or --no-repo for an empty workspace")
 			}
 			multi := len(agents) > 1
 			if multi && strings.TrimSpace(cmdStr) != "" {
@@ -1323,12 +1453,26 @@ func newInitCmd() *cobra.Command {
 			// Resolve the repo client-side: a URL clones directly; a local path
 			// clones from its origin by default, or seeds a read-only local copy
 			// (--local-copy, or when there's no remote) against a local daemon.
-			res, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
-			if err != nil {
-				return err
+			// --no-repo has nothing to resolve: no URL, no local path, no seed.
+			// Skip the resolver rather than feed it "" and rely on it declining.
+			res := reposrc.Resolution{Note: "no repo — /workspace starts empty"}
+			if fromDir != "" {
+				abs, err := filepath.Abs(fromDir)
+				if err != nil {
+					return fmt.Errorf("resolving %q: %w", fromDir, err)
+				}
+				fromDir = abs
+				res = reposrc.Resolution{Note: "seeding /workspace from " + abs + " (brokered through Port, one Ledger entry per file)"}
 			}
-			if name == "" {
-				name = project.DeriveNameFromRepo(repo)
+			if !noRepo && fromDir == "" {
+				resolved, err := reposrc.Resolve(repo, resolveHost() == "", localCopy)
+				if err != nil {
+					return err
+				}
+				res = resolved
+				if name == "" {
+					name = project.DeriveNameFromRepo(repo)
+				}
 			}
 			c, err := client()
 			if err != nil {
@@ -1362,6 +1506,10 @@ func newInitCmd() *cobra.Command {
 				Name:            name,
 				Repo:            res.Repo,
 				SeedPath:        res.SeedPath,
+				NoRepo:          noRepo,
+				FromDir:         fromDir,
+				KeepScope:       keepScope,
+				GitInit:         gitInit,
 				Agent:           agent,
 				Agents:          reqAgents,
 				Image:           image,
@@ -1397,7 +1545,11 @@ func newInitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL, or a local path (cloned from its origin by default) (required)")
+	cmd.Flags().StringVar(&repo, "repo", "", "git repo URL, or a local path (cloned from its origin by default) (required, unless --no-repo)")
+	cmd.Flags().StringVar(&fromDir, "from", "", "seed /workspace from a local FOLDER that isn't a git repo (brokered through Port; one Ledger entry per file) (requires --name)")
+	cmd.Flags().BoolVar(&keepScope, "keep-scope", false, "with --from: keep the Port scope after seeding (default: it's dropped — the grant was needed to copy, not to keep)")
+	cmd.Flags().BoolVar(&gitInit, "git-init", false, "with --from: run `git init` in the seeded workspace. Off by default because a repo with no remote makes the agent commit where nothing can be pushed, and gives the purge and agent-rm guards a repo they can't reason about")
+	cmd.Flags().BoolVar(&noRepo, "no-repo", false, "create with an empty /workspace and no origin — for assistant brains, task runners and scratch sandboxes that have no repo (requires --name)")
 	cmd.Flags().BoolVar(&localCopy, "local-copy", false, "for a local path: seed from the working copy on disk (captures unpushed commits) instead of cloning from origin; requires a local daemon")
 	cmd.Flags().StringVar(&name, "name", "", "island name (default: derived from repo)")
 	cmd.Flags().StringArrayVar(&agents, "agent", nil, "agent to run: claude-code (default), codex, or headless (with --cmd); repeat to seed multiple agents")
@@ -1647,18 +1799,29 @@ func defaultLabel() string {
 // caller can surface it and stop instead of waiting the full window then dropping
 // the operator into a repo-less island.
 func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) (cloneFailed bool, reason string) {
-	deadline := time.Now().Add(2 * time.Minute)
+	const budget = 2 * time.Minute
+	start := time.Now()
+	deadline := start.Add(budget)
 	notified := false
 	for {
 		st, err := c.WorkspaceReady(ctx, name)
-		if err != nil || st.Ready || time.Now().After(deadline) {
+		if err != nil || st.Ready {
 			return false, ""
 		}
 		if st.CloneFailed {
 			return true, st.CloneReason
 		}
+		if time.Now().After(deadline) {
+			// Out of patience with nothing to show for it: no /workspace/.git and
+			// no recorded failure. Attaching now would drop the caller into a tmux
+			// session the entrypoint never got far enough to create, which reads as
+			// a silent hang. Report the stall instead — the whole cost of this bug
+			// was that nothing ever said anything.
+			return true, "stalled"
+		}
 		if !notified {
 			fmt.Printf("waiting for workspace to finish provisioning (cloning)…\n")
+			fmt.Printf("  (giving it up to %s; `dejima logs %s` shows the clone as it runs)\n", budget, name)
 			notified = true
 		}
 		select {
@@ -1676,11 +1839,29 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) (clo
 func cloneFailureHint(name, reason string) string {
 	switch reason {
 	case "auth":
+		// `dejima github connect` and NOT the token-push path. Both work; they
+		// have different prerequisites, and this message is read by someone who
+		// has just discovered they have no identity at all.
+		//
+		// connect is a guided device flow: it prints a code, the operator
+		// approves it in a browser, and the daemon captures the token. auth push
+		// requires an ALREADY-CONFIGURED `gh` on the client to push from — so
+		// pointing a new operator at it names the path with more prerequisites,
+		// exactly when they have fewest. An operator hit this after
+		// `github connect` had already succeeded elsewhere.
 		return fmt.Sprintf("clone failed (auth) — this island can't authenticate to the git remote. "+
-			"Push a GitHub token (`dejima auth push --github`), then `dejima upgrade %s` to re-clone.", name)
+			"Connect a GitHub identity (`dejima github connect`), then `dejima upgrade %s` to re-clone.", name)
 	case "not-found":
 		return fmt.Sprintf("clone failed (not-found) — the repo couldn't be reached or found. "+
 			"Check the URL and that the island's identity can see it (private repos need a token with access), then `dejima upgrade %s`.", name)
+	case "timeout":
+		return fmt.Sprintf("clone timed out — the repo made no progress and was stopped. The remote may be unreachable, "+
+			"or it asked for credentials this island doesn't have. Check `dejima auth status`, then `dejima upgrade %s` to retry.", name)
+	case "stalled":
+		return fmt.Sprintf("the workspace never finished provisioning — no repo appeared and no clone error was recorded.\n"+
+			"  See what the container is doing:  dejima logs %s\n"+
+			"  Open a shell to look around:      dejima shell %s\n"+
+			"  If the repo is private, the clone may be waiting on credentials: dejima auth status", name, name)
 	case "error":
 		return fmt.Sprintf("clone failed — git couldn't clone the repo. See `dejima logs %s` for the full output.", name)
 	default:
@@ -1917,6 +2098,14 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 			return fmt.Errorf("raw mode: %w", rerr)
 		}
 		defer func() { _ = term.Restore(stdinFd, oldState) }()
+		// MakeRaw only configures stdin. On Windows the OUTPUT handle needs its own
+		// mode — above all DISABLE_NEWLINE_AUTO_RETURN, for the deferred end-of-line
+		// wrap that tmux and every curses app assume; without it a full-width line
+		// smears its leading characters down the left column. No-op off Windows.
+		// Best-effort: a redirected (non-console) stdout has no mode to set, and
+		// failing to tune the console is never a reason to refuse to attach.
+		restoreConsole, _ := prepareConsoleOutput()
+		defer restoreConsole()
 		// Title the local tab to what we're attached to. Emitted to the local
 		// terminal (not into the websocket), so it sits above any inner tmux and
 		// works regardless of the container's tmux config. Cleared on detach.
@@ -2069,8 +2258,18 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 	}
 
 	// Re-send the size on (re)attach so tmux opens/resumes at the right dimensions.
+	// The FIRST resize also carries this terminal's identity: the island otherwise
+	// sees only the daemon's TERM (docker exec propagates the docker CLI's env, not
+	// ours), which is the same for every client and describes none of them. With a
+	// real TERM the in-island tmux can gate RGB/sync/extkeys on what this terminal
+	// actually supports instead of advertising them to everything — see
+	// image/tmux.conf. Later resizes omit it; the terminal doesn't change mid-session.
 	if rows, cols, err := terminalSize(stdinFd); err == nil {
-		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
+		clientTerm, clientColorTerm := clientTerminal()
+		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{
+			Type: "resize", Rows: rows, Cols: cols,
+			Term: clientTerm, ColorTerm: clientColorTerm,
+		})
 	}
 	watchTerminalResize(connCtx, stdinFd, func(rows, cols uint16) {
 		_ = writeEnvelope(connCtx, conn, api.SessionEnvelope{Type: "resize", Rows: rows, Cols: cols})
@@ -2261,9 +2460,22 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 					func(localPath string, bracketed []byte) bool { // pasted/dropped file path
 						switch pasteDropPolicy(altScreen.active.Load()) {
 						case pasteAsText:
-							// Disabled, or a full-screen TUI is attached: never silently
-							// upload — forward the path to the agent as plain text.
+							// Auto-upload disabled: forward the path to the agent as
+							// plain text; explicit upload stays on Ctrl-].
 							return false
+						case pasteUpload:
+							// A file dropped into an agent's TUI: upload and inject the
+							// in-island path, same as a clipboard image. No confirm —
+							// the alt-screen can't draw one, and a real-file drop is
+							// deliberate.
+							islandPath, err := bridge.drop(localPath)
+							if err != nil {
+								sessionNotice("\r\n[dejima] upload failed: %v\r\n", err)
+								return false // fall back to forwarding the path as text
+							}
+							inject(islandPath)
+							sessionNotice("\r\n[dejima] uploaded %s → %s\r\n", filepath.Base(localPath), islandPath)
+							return true
 						default: // pasteConfirm (plain shell): ask before ingesting.
 							pendingUp = &pendingUpload{path: localPath, bracketed: bracketed}
 							fmt.Fprintf(os.Stderr, "\r\n📎 %s is a file on your computer — [u] upload it to the agent · any other key = paste the path as text\r\n",
@@ -2353,8 +2565,16 @@ func newLsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Observed agents are enumerated here too, in their own section below the
+			// table — "the same treatment wherever islands are enumerated". Loaded
+			// before the no-islands early return on purpose: that message is a claim
+			// about the whole fleet, and printing it alone while an ungated agent is
+			// running would be a completed-search claim with a counter-example on the
+			// same machine.
+			observed := fetchObserved(cmd.Context(), c)
 			if len(items) == 0 {
 				fmt.Println("no islands yet — `dejima init --repo <url>` to create one")
+				printObservedSection(os.Stdout, observed)
 				return nil
 			}
 			// The daemon's version is the reference for the per-island skew note.
@@ -2410,7 +2630,11 @@ func newLsCmd() *cobra.Command {
 						writeRow(i)
 					}
 				}
-				return tw.Flush()
+				if err := tw.Flush(); err != nil {
+					return err
+				}
+				printObservedSection(os.Stdout, observed)
+				return nil
 			}
 
 			header := "NAME\tAGENT\tREPO\tSTATE\tCONTAINER"
@@ -2421,7 +2645,11 @@ func newLsCmd() *cobra.Command {
 			for _, i := range items {
 				writeRow(i)
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			printObservedSection(os.Stdout, observed)
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&showAgents, "agents", "a", false, "expand each island's agents")
@@ -2492,7 +2720,90 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Manage the agents within an island.",
 	}
-	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRenameCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd())
+	cmd.AddCommand(newAgentLsCmd(), newAgentAddCmd(), newAgentRenameCmd(), newAgentRmCmd(), newAgentConfigCmd(), newAgentTypesCmd(), newAgentOpenCmd(), newAgentRestartCmd(),
+		newAgentUpdateCmd())
+	return cmd
+}
+
+// newAgentRestartCmd relaunches an agent in place so it picks up a changed
+// environment (e.g. a newly added secret). --resume continues its previous
+// conversation when the framework supports it (claude-code).
+// newAgentUpdateCmd upgrades an agent's framework inside a running island.
+//
+// It exists because every self-installing agent launches with
+// `command -v X || install X` — install-if-missing, never update — so an island
+// pins whatever version it first installed. The agent's own updater cannot fill
+// the gap either: OpenClaw's hands off to a service supervisor to restart the
+// process, and Dejima launches agents directly in tmux, so it reports
+// "managed-service-handoff-unavailable" and skips. Until now the answer was to
+// hand-type `npm install -g` through `dejima exec`.
+func newAgentUpdateCmd() *cobra.Command {
+	var resume bool
+	cmd := &cobra.Command{
+		Use:   "update <island> <agent-id>",
+		Short: "Update an agent's framework in place, then relaunch it on the new version.",
+		Long: "Runs the agent framework's own upgrade inside the island (npm/pipx/pip, per\n" +
+			"agent type) and RELAUNCHES the agent, because updating the package while the\n" +
+			"old process keeps running changes the version on disk and not the one in\n" +
+			"memory.\n\n" +
+			"Agents that ship in the island image (claude-code) are updated by rebuilding\n" +
+			"the image — `dejima upgrade <island>` — and this command says so rather than\n" +
+			"failing vaguely.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			island, id := args[0], args[1]
+			fmt.Printf("updating %s in %s — this can take a few minutes…\n", id, island)
+			out, err := c.UpdateAgent(cmd.Context(), island, id, resume)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("ran: %s\n", out.Command)
+			if strings.TrimSpace(out.Output) != "" {
+				fmt.Println(out.Output)
+			}
+			if out.Restarted {
+				fmt.Printf("\n%s updated and relaunched on the new version.\n", id)
+				return nil
+			}
+			// Naming this state matters: the new version is installed and the OLD
+			// one is still the running process, so every version display would
+			// disagree with reality until someone restarts it.
+			fmt.Printf("\n⚠ %s was UPDATED but did not relaunch — the new version is on disk and\n"+
+				"  the old one is still running. Restart it:  dejima agent restart %s %s\n", id, island, id)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&resume, "resume", false, "continue the previous conversation on relaunch (where the framework supports it)")
+	return cmd
+}
+
+func newAgentRestartCmd() *cobra.Command {
+	var resume bool
+	cmd := &cobra.Command{
+		Use:   "restart <island> <agent-id>",
+		Short: "Relaunch an agent in place (picks up new secrets; --resume continues the convo).",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.RestartAgent(cmd.Context(), args[0], args[1], resume); err != nil {
+				return err
+			}
+			msg := "restarted " + args[0] + "/" + args[1]
+			if resume {
+				msg += " (resuming its conversation where supported)"
+			}
+			fmt.Println(msg)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&resume, "resume", false, "continue the agent's previous conversation instead of a cold start")
 	return cmd
 }
 
@@ -2739,10 +3050,22 @@ func newAgentRenameCmd() *cobra.Command {
 }
 
 func newAgentRmCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "rm <island> <agent-id>",
-		Short: "Remove an agent from an island (keeps its branch).",
-		Args:  cobra.ExactArgs(2),
+	var force bool
+	cmd := &cobra.Command{
+		Use: "rm <island> <agent-id>",
+		// "(keeps its branch)" was the whole of the old summary. It is TRUE — the
+		// branch and its commits survive — which is exactly what made it dangerous:
+		// it named the survivor, so an operator read it as "my work is safe" and
+		// the sentence was not even wrong. The worktree is deleted with
+		// `git worktree remove --force`, and uncommitted work goes with it.
+		Short: "Remove an agent (keeps its branch; DISCARDS uncommitted work in its worktree).",
+		Long: "Removes the agent from the island: kills its session and deletes its git " +
+			"worktree. Its BRANCH and every commit on it are kept — you can check the branch " +
+			"out again. Anything uncommitted or untracked in that worktree is destroyed and " +
+			"cannot be recovered.\n\n" +
+			"The daemon refuses if the worktree has uncommitted changes; commit them, or pass " +
+			"--force to remove the agent and discard them.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
 			if err != nil {
@@ -2752,13 +3075,16 @@ func newAgentRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.RemoveAgent(cmd.Context(), args[0], id); err != nil {
+			if err := c.RemoveAgent(cmd.Context(), args[0], id, force); err != nil {
 				return err
 			}
 			fmt.Printf("removed agent %s from %s\n", id, args[0])
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false,
+		"remove even if the worktree has uncommitted work (discards it)")
+	return cmd
 }
 
 // --- status ---------------------------------------------------------------
@@ -3097,4 +3423,46 @@ func shortenRepo(repo string) string {
 		return repo
 	}
 	return "..." + repo[len(repo)-47:]
+}
+
+// troubleshootWSL diagnoses a wsl:// target, where the daemon is a local process
+// inside a distro and the transport is wsl.exe + socat rather than the network.
+//
+// The generic path's advice is not merely unhelpful here, it is misleading: it
+// reports on Tailscale (irrelevant) and recommends exposing TCP (wrong). The
+// failures that actually happen are all local and all nameable.
+func troubleshootWSL(ctx context.Context, host string) {
+	distro := wsl.Distro(host)
+	fmt.Fprintf(os.Stderr, "  This is a LOCAL WSL host (distro %q). Tailscale and TCP are not involved.\n\n", distro)
+
+	rep, err := wsl.Probe(ctx, distro)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ couldn't inspect the distro: %v\n", err)
+		fmt.Fprintln(os.Stderr, "      dejima wsl setup   (idempotent — safe to re-run)")
+		return
+	}
+	switch {
+	case !rep.Exists:
+		fmt.Fprintf(os.Stderr, "  ✗ distro %q does not exist. Create it:\n", distro)
+		fmt.Fprintln(os.Stderr, "      dejima wsl setup")
+	case !rep.HasSocat:
+		// The exact state the operator hit. socat is the tunnel; without it the
+		// client cannot reach a daemon that may be running perfectly well.
+		fmt.Fprintln(os.Stderr, "  ✗ socat is missing in the distro — that IS the tunnel, so nothing can")
+		fmt.Fprintln(os.Stderr, "    reach the daemon even if it is running. Re-run setup:")
+		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
+		fmt.Fprintln(os.Stderr, "    It is idempotent and will install what is missing.")
+	case !rep.HasDejima:
+		fmt.Fprintln(os.Stderr, "  ✗ dejimad is not installed in the distro:")
+		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
+	case !rep.HasDocker:
+		fmt.Fprintln(os.Stderr, "  ✗ Docker is not usable in the distro (islands cannot start without it):")
+		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
+	default:
+		fmt.Fprintln(os.Stderr, "  ✓ the distro has socat, dejimad and Docker — the daemon is likely just")
+		fmt.Fprintln(os.Stderr, "    not running. Start it:")
+		fmt.Fprintln(os.Stderr, "        dejima wsl start")
+		fmt.Fprintf(os.Stderr, "    If that fails, its log is inside the distro:\n")
+		fmt.Fprintf(os.Stderr, "        wsl -d %s -- tail -40 ~/.dejima/dejimad.log\n", distro)
+	}
 }

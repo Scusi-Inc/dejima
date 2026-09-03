@@ -43,7 +43,21 @@ def go_routes(api_dir: str) -> set[tuple[str, str]]:
         if not entry.endswith(".go") or entry.endswith("_test.go"):
             continue
         with open(os.path.join(api_dir, entry), encoding="utf-8") as fh:
-            for verb, path in ROUTE_RE.findall(fh.read()):
+            # Skip comment lines. A doc comment that QUOTES the pattern — which
+            # any explanation of this gate naturally does — otherwise injects a
+            # phantom route into the report. That is not hypothetical: it was
+            # reported by one agent and then done, within the hour, by the
+            # person fixing the thing they reported. The comment explaining the
+            # blind spot created a fake route named `VERB /path`.
+            #
+            # Line-based rather than a Go parser: this file is deliberately
+            # dependency-light, and a leading `//` is the only case that has
+            # ever produced a false route here.
+            body = "\n".join(
+                line for line in fh.read().splitlines()
+                if not line.lstrip().startswith("//")
+            )
+            for verb, path in ROUTE_RE.findall(body):
                 routes.add((verb.upper(), canon(path)))
     return routes
 

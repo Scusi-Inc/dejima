@@ -70,8 +70,8 @@ func TestProvConfirmNonInteractive(t *testing.T) {
 
 func TestProvAddManual(t *testing.T) {
 	pc := &provCtx{}
-	pc.addManual("do a thing")
-	pc.addManual("do another")
+	pc.addManual("do a thing", "the command")
+	pc.addManualFor(whyRemote, "do another", "another command")
 	if len(pc.manual) != 2 {
 		t.Fatalf("addManual: %v", pc.manual)
 	}

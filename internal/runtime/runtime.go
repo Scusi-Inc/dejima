@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"io"
+	"net"
 )
 
 // ContainerStatus is a coarse-grained state from the runtime's perspective.
@@ -126,6 +127,41 @@ type Runtime interface {
 	// Status returns the container's current status.
 	Status(ctx context.Context, name string) (ContainerStatus, error)
 
+	// ContainerMounts returns the container paths currently mounted into the
+	// named container (bind mounts and volumes alike, by destination).
+	//
+	// Unlike Inspect, a failure here is deliberately NOT swallowed into a zero
+	// value. Callers use this to answer "is this credential actually mounted",
+	// and an empty list is the answer "nothing is mounted" — a very different
+	// statement from "I could not look". Collapsing the second into the first is
+	// how a surface comes to report containment it never verified.
+	ContainerMounts(ctx context.Context, name string) ([]string, error)
+
+	// ContainerReapsOrphans reports whether the container was created with an
+	// init process as PID 1 — the thing that reaps a process whose parent exited
+	// before it did.
+	//
+	// This is a create-time property and cannot be changed on a running
+	// container, so an island created before --init was passed keeps leaking
+	// zombies for its whole life while the daemon's code says it passes --init.
+	// That divergence is invisible from anywhere except the container itself,
+	// which is why it is asked of the runtime rather than inferred from the
+	// record.
+	//
+	// Like ContainerMounts and unlike Inspect, a failure is returned rather than
+	// flattened to false: "no init" and "couldn't look" are different answers and
+	// only one of them is a problem to report.
+	ContainerReapsOrphans(ctx context.Context, name string) (bool, error)
+
+	// DialContainerPort opens a connection to host:port INSIDE the named
+	// container. A framework gateway binds the container's loopback, which is
+	// unreachable from the host by any ordinary dial — not 127.0.0.1 (that is the
+	// host's own), and not the bridge address (nothing is bound there).
+	//
+	// ctx bounds the dial, not the connection: an http.Transport pools a conn past
+	// the request that opened it, and a websocket outlives every request context.
+	DialContainerPort(ctx context.Context, name, host string, port int) (net.Conn, error)
+
 	// Inspect returns crash-relevant health facts (OOM, restarts, exit code).
 	// Returns a zero Health if the container is missing or unavailable.
 	Inspect(ctx context.Context, name string) (Health, error)
@@ -144,7 +180,12 @@ type Runtime interface {
 	// BuildImage builds tag from the build context at contextDir (dockerfile
 	// is relative to it), streaming combined build output. A failed build
 	// surfaces as a non-EOF error from the stream's final Read.
-	BuildImage(ctx context.Context, contextDir, dockerfile, tag string) (io.ReadCloser, error)
+	//
+	// buildArgs (may be nil) become --build-arg flags. They are not merely
+	// configuration: an ARG whose value changes invalidates the layer that
+	// consumes it, which is the only thing that makes a rebuild pick up new
+	// content for a step whose inputs the Dockerfile resolves at build time.
+	BuildImage(ctx context.Context, contextDir, dockerfile, tag string, buildArgs map[string]string) (io.ReadCloser, error)
 
 	// CopyToContainer copies a file or directory from host to container path.
 	CopyToContainer(ctx context.Context, name, hostPath, containerPath string) error

@@ -11,9 +11,9 @@ macOS-host (Mac mini) · `T4` real-agent smoke.
 **Now (current coverage, conservative — Lane 6 reconciles):** `A` automated (unit or
 `integration.sh`) · `A*` **wired** in the Tier-3/Tier-4 suite, awaiting its first live
 Mac-mini run (`scripts/tier3/*.sh`, `scripts/tier4/agent-smoke.sh` via the nightly
-`workflow_dispatch`) · `A†` **wired** in the Lane 0 clean-Mac launch gate
-(`scripts/clean-mac/proof-loop.sh` via the `nightly-live` `workflow_dispatch`), awaiting
-its first virgin-Mac run on Minion — proves it on a REAL clean Mac, not in-island · `M`
+`workflow_dispatch`) · `A†` **RETIRED 2026-08-16** — meant "wired in the Lane 0 clean-Mac
+gate, awaiting its first virgin-Mac run"; the `dejimaqa` runner was torn down for crashing
+the operator's `dejimad`, so nothing bearing this marker is proven or runnable (see §19) · `M`
 manual verify today · `▢` none yet.
 
 ---
@@ -35,7 +35,7 @@ manual verify today · `▢` none yet.
 - [ ] `recreate-island` (TUI) — recreate after OOM/resource change · T3 · M
 - [ ] `relabel`/`rename-island` — change title · CLI(PATCH)/TUI · T1/T2 · M
 - [ ] `resources` (PUT) — set per-island memory/CPU/OOM-priority · T2/T3 · M
-- [ ] island survives daemon restart (state persists) · T2 · A (integration.sh re-adopt) / A† (clean-mac gate: survives a real uninstall→reinstall)
+- [ ] island survives daemon restart (state persists) · T2 · A (integration.sh re-adopt) / M (uninstall→reinstall survival was the clean-mac gate; no runner)
 
 ## 2. Agents
 - [x] `agent add <island>` — add an agent (own git worktree/branch) · CLI/API/TUI · T2 · A
@@ -202,34 +202,189 @@ manual verify today · `▢` none yet.
 ## 18. SDK & clients
 - [ ] Python SDK tests (pytest) · T1 · A
 - [ ] TS SDK tests · T1 · A
-- [ ] OpenAPI route-parity (server ↔ openapi, 88 ops) · T1 · A
+- [ ] OpenAPI route-parity (server ↔ openapi, 122 routes) · T1 · A
+- [ ] OpenAPI field-parity (json tags + query params ↔ openapi, 149 comparisons) · T1 · A
+      — with its mutation control, `openapi_field_parity.py --self-test`
 - [ ] PTY JSON-envelope+base64 protocol · T1/T2 · A
 - [ ] PyPI/npm publish (tag-driven) · T1 · ▢ (needs secrets)
 
 ## 19. Install / uninstall on a clean Mac (Lane 0 launch gate)
 The single biggest launch risk — install + uninstall + re-adopt on a REAL virgin Mac.
-Driven by `scripts/clean-mac/proof-loop.sh` via the `nightly-live` `workflow_dispatch`
-on the Minion `dejimaqa` runner. `A†` = wired + CI-runnable, **awaiting its first virgin-Mac
-run on Minion** (we cannot self-verify off a clean macOS host — the live run is the operator's).
-The in-island consistency + Docker re-adopt halves are already `A` (reused, not rebuilt).
+**STATUS 2026-08-16 — NO RUNNER. The `dejimaqa` host was torn down: it was crashing the
+operator's real `dejimad`.** `nightly-live.yml` therefore has nowhere to run, and every `A†`
+row below is **unproven and currently unrunnable** — the gate never earned its first
+virgin-Mac run. These are MANUAL until a QA host exists again, and fresh-Mac install is
+known to be having problems in the field, so treat them as live risk rather than paperwork.
+
+A co-residency guard for this exact failure DID land (`443324e`, `scripts/clean-mac/lib.sh`
+— refuse to run with a live daemon). The runner was torn down after it, so the guard is
+either insufficient or the crash has another mechanism: **diagnose that before rebuilding
+any QA host**, or the next one takes the operator's daemon down too.
+
+The harness itself (`scripts/clean-mac/proof-loop.sh`, `teardown.sh`) is kept — it is the
+starting point whenever a disposable macOS VM or spare Mac is available. The in-island
+consistency + Docker re-adopt halves remain `A` (reused, not rebuilt).
 - [ ] install-channel consistency (curl|sh / brew / npm asset+path coherence) · T1 · A (`install-channels-check.sh`, also in CI + integration.sh)
-- [ ] `curl \| sh` full-host install on a virgin Mac (daemon + island image + binaries) · T3 · A† (clean-mac gate)
-- [ ] `brew install --HEAD` builds dejima + dejimad from source on a virgin Mac · T3 · A† (clean-mac gate; pinned-binary path smoked separately)
-- [ ] `npm install -g dejima` client installs + drives a running daemon · T3 · A† (clean-mac gate; client-only by design)
-- [ ] bare `uninstall` refuses (no destructive default; names both choices) · T2/T3 · A (integration.sh) / A† (clean-mac gate, real channel)
-- [ ] `uninstall --keep-islands` keeps the named volume + `~/.dejima` config · T2/T3 · A (integration.sh) / A† (clean-mac gate, real channel)
-- [ ] workspace marker readable from the kept volume with no daemon · T2/T3 · A (integration.sh) / A† (clean-mac gate)
-- [ ] reinstall re-adopts the island by name; marker survives the round-trip · T2/T3 · A (integration.sh) / A† (clean-mac gate, real channel)
-- [ ] teardown→provision driver leaves a virgin env (no Docker/colima/brew/`~/.dejima` history) · T3 · A† (`scripts/clean-mac/teardown.sh` + `assert_virgin`)
+- [ ] `curl \| sh` full-host install on a virgin Mac (daemon + island image + binaries) · T3 · M (was clean-mac gate; no runner)
+- [ ] `brew install --HEAD` builds dejima + dejimad from source on a virgin Mac · T3 · M (was clean-mac gate; no runner)
+- [ ] `npm install -g dejima` client installs + drives a running daemon · T3 · M (was clean-mac gate; no runner)
+- [ ] bare `uninstall` refuses (no destructive default; names both choices) · T2/T3 · A (integration.sh) / M (was clean-mac gate; no runner)
+- [ ] `uninstall --keep-islands` keeps the named volume + `~/.dejima` config · T2/T3 · A (integration.sh) / M (was clean-mac gate; no runner)
+- [ ] workspace marker readable from the kept volume with no daemon · T2/T3 · A (integration.sh) / M (was clean-mac gate; no runner)
+- [ ] reinstall re-adopts the island by name; marker survives the round-trip · T2/T3 · A (integration.sh) / M (was clean-mac gate; no runner)
+- [ ] teardown→provision driver leaves a virgin env (no Docker/colima/brew/`~/.dejima` history) · T3 · M (harness kept: `scripts/clean-mac/teardown.sh` + `assert_virgin`)
+
+**The one automated row this section has (added 2026-08-18, #341).** Everything
+above needs a Mac. The installer's *terminal* decisions do not, and they are what
+actually broke in the field: `curl … | bash` leaves stdin a pipe, the installer
+read that as "nobody is here", and it skipped every prompt and the sudo priming.
+`scripts/lib/tty_test.sh` drives all three stdin/terminal shapes under a real pty
+(`scripts/lib/ptyrun.py`) and runs anywhere — it installs nothing.
+- [x] `curl \| bash` is recognised as interactive; prompts are asked and answers honored · T1 · A (`tty_test.sh`, CI job `installer-tty`)
+- [x] genuinely headless (no controlling terminal) still takes the defaults without blocking · T1 · A (`tty_test.sh`)
+- [x] sudo pre-authorization is attempted under `curl \| bash`, skipped when headless · T1 · A (`tty_test.sh`)
+- [x] `install.sh` + `scripts/setup.sh` are shellcheck-clean · T1 · A (CI `shellcheck` job; first lint found a live command-substitution bug that ran `colima delete`)
+- [ ] the *rest* of the install — daemon, image, launchd, PATH, reboot survival — still needs a Mac · T3 · M
+
+## 20. Per-island secrets (`dejima secret`)
+Distinct from §11, which covers *credentials the daemon holds* (Claude, GitHub,
+provider keys). This is the per-island token store agents read from their own
+environment — EXPO_TOKEN, NPM_TOKEN, API keys. Added 2026-08-16: it had **no**
+coverage row at all, so a green rollup said nothing about it.
+- [ ] `secret set` — prompts, never echoes the value, rotates in place · CLI/API · T2 · M
+- [ ] `secret ls` — names only; values never returned over the API · CLI/API · T2 · M
+- [ ] `secret rm` — removed from the island's environment on next launch · T2 · M
+- [ ] value reaches the agent AND its tool subprocesses (non-login shell path) · T3 · M
+- [ ] a secret added after a shell started is absent until a new shell — documented behaviour · T3 · M
+- [ ] restarting the agent picks up a newly-set secret · T3 · M
+- [ ] stored in the OS keychain where available, never plaintext in config · T3 · M
+- [ ] deleted with the island · T2 · M
+
+## 21. Windows client + WSL2 host
+Added 2026-08-16: Windows returned **zero** hits across this matrix, while being
+the primary user's daily driver. Nothing here is exercisable from CI (compiles
+only) or from a Linux island — see `operator-tests/verify-v0.8.65.md` Lane A.
+- [ ] Windows client drives a remote daemon (attach, resize, detach) · T3 · M
+- [ ] `TERM`/`COLORTERM` inference from WT_SESSION; doctor's Terminal section reports it · T1/T3 · A (T1 `describeTerminal`) / M (live)
+- [ ] bare `xterm` (conhost) is correctly excluded from RGB/sync/extkeys · T1/T3 · A / M
+- [ ] doctor on a client reports docker/island-image as daemon-host facts and exits 0 · T1/T3 · A (`daemonElsewhere`) / M
+- [ ] `dejima wsl setup` — creates a dedicated distro, installs Docker + dejimad, activates a profile · T3 · M
+- [ ] `dejima wsl status` / `start` / `stop` · T3 · M
+- [ ] attach through a `wsl://` target over the socat tunnel · T3 · M
+- [ ] `[w]` from the daemon-help panel opens setup in a new window · T3 · M
+- [ ] console character bleed does not return (the 2026-08 regression) · T3 · M
+
+## 22. Cloud / Linux host
+Added 2026-08-16: also **zero** prior hits. §13 and §19 are macOS-only, yet the
+daemon ships for linux/amd64+arm64 and is being run that way in production.
+- [ ] `install.sh` on a clean Linux VPS (daemon + image + systemd user unit) · T3 · M
+- [ ] `service install` with `--tcp` / `--token-tcp`; survives reboot with linger · T3 · M
+- [ ] token auth over TCP from a laptop client; anonymous access refused · T2/T3 · M
+- [ ] Tailscale-reachable and non-Tailscale (bare IP + firewall) both work · T3 · M
+- [ ] a tailnet that isn't up yet doesn't kill dejimad (regression, `69a8e89`) · T3 · M
+- [ ] listener exposure warnings are accurate on a public host · T2 · M
+
+---
+
+## Standing rule: no test stays red
+
+**A failing test gets a fix or an issue with a named owner before the next merge. Never a
+third state.**
+
+This is written down because it already cost us. `TestHostSocketPressureReportsZero` failed
+continuously for days across roughly eight merges. It was explained early as "a doctor check
+that can't see host socket state from inside an island — environmental, unrelated", that
+explanation was repeated in commit message after commit message, and everyone inherited it.
+
+It was wrong. `checkHostSocketPressure` does `if !ok { return }` and emits **no row at all**
+when it can't read the socket table. The test comment says exactly why that's a bug:
+
+> hiding the line at zero makes a healthy host look identical to a check that never ran, and
+> this is the metric an operator watches over days to catch churn coming back.
+
+The test was correct, deliberate, and doing its job the whole time. A security-adjacent check
+that silently vanishes reads as a clean bill of health, which is the dangerous direction.
+
+The failure mode is not carelessness. It is that **one plausible explanation, written down
+early and repeated, is enough to stop everyone looking** — and note which explanations do the
+most damage. "Environmental — can't see host socket state from inside an island" is *specific*,
+so it sounds like it came from someone who looked, and it forecloses the second opinion a vague
+"flaky, ignore" would have invited. **The rule should bite hardest on well-explained red tests,
+not just unexplained ones** (observation: d4). The corollary for reviewers: an inherited
+explanation is not evidence, and "I verified the failure isn't mine" is a narrower question
+than "is the test right"** — and a test that has been red for
+weeks can no longer tell you anything, including when it is right. Detecting that is far more
+expensive than preventing it, hence the rule.
+
+Corollary for the checks themselves: **"couldn't determine" must render differently from
+"determined, and it's fine."** Both are non-failures, so the temptation is to collapse them.
+An `INFO` row saying the probe was unavailable is honest; an `OK` row reporting a healthy
+number nobody measured manufactures a clean bill of health, which is worse than emitting
+nothing. Tracked in #337.
+
+## Standing rule: prove the check can see a failure
+
+**Before trusting a check's negative, establish that the check can observe its subject at
+all.** Feed it a known positive and confirm it flinches.
+
+A clean result and a check that never ran produce the same output — silence. So "no output"
+is only evidence once you have shown the instrument was pointed at the right thing and could
+have spoken. Eight instances in one week, five different tools, one failure:
+
+| The check | What it could not see |
+|---|---|
+| `checkHostSocketPressure` | emitted no row when netstat was missing — indistinguishable from a healthy host |
+| a mutation regex | did not match a string spanning two lines, so a green suite ran against an unmutated file |
+| a `grep -E '^--- FAIL'` | could not match `FAIL … [build failed]`, so a compile error read as a pass |
+| `git log @{u}..HEAD` | compared against the wrong upstream; and errored "no upstream" where a silent `0` was equally possible |
+| a `$REPO` regex | `$` read as an end-anchor, so the pattern could never match |
+| a mailbox poll | directed messages never appear in the sender's own poll |
+| a malformed-body write probe | returned `422` from body validation on an endpoint where validation precedes authorization, so it answered a question about the body while appearing to answer one about permission |
+| `gh run list --workflow=ci.yml` | could not see the `sdk` workflow, which had been red for three merges |
+
+Two corollaries worth keeping:
+
+- **A right answer held for a weak reason is not safe, it is unfalsified** (d5). Reaching the
+  correct conclusion by an argument that would fold under pressure leaves you exposed the
+  moment the pressure arrives. When you find yourself right, check *why*.
+- **A bad instrument you keep is a bug; a bad instrument you distribute is a standard** (d5).
+  The write probe above was validated on two endpoints and handed to four agents as a rule
+  before anyone tested the third. Distributing a check raises the bar on validating it.
+
+**Why it recurs is habituation, not incompetence** (d5). These checks fail toward the exact
+output we are trained to read as good news, so a blind check and a clean run feel identical
+at the moment you most want to move on. The author of the rule above hit a sixth instance
+ten seconds after writing it — a case-sensitive grep against a line they had typed in
+capitals — and nearly let it pass, because by then a `0` from that check *felt like the
+normal shape of a clean run*. Assume you are habituated; the discipline has to be mechanical,
+not attentive.
+
+The practical form is one extra step: run the check against a state you know is bad, before
+you trust it against a state you hope is good.
+
+For what that looks like in code — the three shapes a blind guard takes, the control each
+one needs, and when a control is *not* worth writing — see
+[**guards-need-controls.md**](guards-need-controls.md).
 
 ---
 
 ## Rollup
-~160 line items across 19 areas. **T1** (CI, every PR) and **T2** (Docker) cover the bulk;
+~190 line items across 22 areas. **T1** (CI, every PR) and **T2** (Docker) cover the bulk;
 **T3** (Mac-mini runner) owns the macOS-host + live-session items currently marked `M`/`▢`;
-**T4** is the small real-agent smoke; **§19** is the Lane 0 clean-Mac launch gate (`A†` —
-wired + CI-runnable, awaiting its first virgin-Mac run on Minion). The biggest gaps today
+**T4** is the small real-agent smoke; **§19** is the Lane 0 clean-Mac launch gate, which as of
+2026-08-16 has **no host** — the `dejimaqa` runner was torn down for crashing the operator's
+daemon, so those rows are manual and unproven, not pending. The biggest gaps today
 (`▢`) are the **TUI** (no `teatest` yet), **wake-on-message** (P3.5, just built),
 **Keychain/idle-hibernate**, and the **framework adapters** — these are the priority for
-Lane 6 + the first Mac-mini nightly. The launch-gate (`A†`) rows are the **operator's first
-run on Minion**: the harness + the button are delivered; the green tick is theirs to earn.
+Lane 6. The launch-gate rows are **not** merely awaiting a button any more: there is no runner
+to press it on, fresh-Mac install is known to be failing in the field, and rebuilding a QA host
+is blocked on diagnosing why the harness crashed the operator's daemon despite the co-residency
+guard in `443324e`.
+
+**Added 2026-08-16 — §20 secrets, §21 Windows/WSL2, §22 cloud/Linux.** Each returned ZERO
+hits before that date, so the rollup above was silent about them rather than reporting them
+as untested. Two are shipping surfaces (Windows is the primary user's daily driver; the
+daemon ships for linux and is run that way in production) and one is a feature with no test
+row at all. Treat the three new sections as unknown, not as low-priority: nothing in them
+has been exercised, and §21 in particular cannot be — not by CI, which only compiles, and
+not from a Linux island. See `operator-tests/verify-v0.8.65.md` for the ordered queue.

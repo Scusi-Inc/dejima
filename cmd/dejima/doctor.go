@@ -46,6 +46,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&fix, "fix", false, "apply the safe, local repairs doctor knows how to make")
+	cmd.AddCommand(newDoctorTmuxSizeCmd())
 	return cmd
 }
 
@@ -147,7 +148,8 @@ func checkSSHFacade(r *doctorReport) {
 	}
 	if _, err := os.Stat(p); err != nil {
 		r.add("System", "ssh façade", "INFO",
-			"no host key yet — enable with `dejimad --ssh <addr>`, then `dejima ssh authorize <island>`", "")
+			"off — needed to open a gateway agent's UI (OpenClaw/Letta/Goose)",
+			"enable on the host with `sudo dejima service install --system --ssh <addr>:2222` (keep your flags), then `dejima ssh enroll`")
 		return
 	}
 	signer, err := sshfacade.HostSigner()
@@ -168,15 +170,24 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkDocker(ctx, r)
 	checkVMMemory(ctx, r)
 	checkIslandImage(ctx, r)
+	checkUnattendedHost(ctx, r)
 	checkTailscale(ctx, r)
 	checkClaudeCreds(ctx, r)
 	checkSSHFacade(r)
 
+	// --- Terminal --------------------------------------------------------
+	// Client-side and instant: no island, no attach, no tmux. It answers "will my
+	// session render in full colour, and why" — otherwise a three-hop question
+	// (client env → docker exec -e → the island's tmux gate) with no visible answer.
+	checkTerminal(r)
+
 	// --- Connection & self-heal -----------------------------------------
+	checkWSLHost(ctx, r)
 	checkConnection(r)
 	checkInstallMeta(r)
 	checkStateOwnership(r)
 	checkListenerExposure(r)
+	checkEgressProxy(r)
 
 	// --- Projects -------------------------------------------------------
 	c, err := client()
@@ -218,6 +229,9 @@ func runDoctor(ctx context.Context) *doctorReport {
 					// running islands so a dead agent in a live container is flagged.
 					if info.Container == "running" {
 						if d, err := c.GetIsland(ctx, info.Name); err == nil {
+							if f := diagnoseOrphanReaping(d.ReapsOrphans, info.Name); f.status != "" {
+								r.add("Projects", info.Name, f.status, f.detail, f.fix)
+							}
 							for _, a := range d.Agents {
 								if a.State == "exited" {
 									r.add("Projects", info.Name+"/"+a.ID, "WARN",
@@ -276,6 +290,26 @@ func checkDaemon(ctx context.Context, r *doctorReport) {
 				"`dejima panic --clear` to resume")
 		}
 	}
+
+	// Local models (optional): surface the managed backend's health when present.
+	if st, err := c.LocalStatus(ctx); err == nil {
+		switch {
+		case !st.Installed:
+			r.add("System", "local models", "INFO",
+				fmt.Sprintf("%s backend not installed (optional)", st.Backend),
+				"`dejima local install` to run open-weights models on this host")
+		case !st.Running:
+			r.add("System", "local models", "WARN",
+				fmt.Sprintf("%s installed but not responding", st.Backend),
+				"start it (e.g. `ollama serve`), or reinstall with `dejima local install`")
+		case len(st.Models) == 0:
+			r.add("System", "local models", "INFO",
+				fmt.Sprintf("%s running, no models pulled", st.Backend), "`dejima local pull <model>`")
+		default:
+			r.add("System", "local models", "OK",
+				fmt.Sprintf("%s running · %d model(s) · %s", st.Backend, len(st.Models), st.Endpoint), "")
+		}
+	}
 }
 
 // checkSupervision answers "how is the daemon running, and will it survive a
@@ -312,6 +346,36 @@ func checkDocker(ctx context.Context, r *doctorReport) {
 	// docker CLI itself is fine — which lets us tell "not installed" from "not
 	// started" from "can't reach the socket", and give the right fix for each
 	// instead of always "go install Docker".
+	if where, remote := daemonElsewhere(); remote {
+		// ASK THE DAEMON rather than giving up. "Docker runs elsewhere" is a
+		// fact about geography, not an answer to "is Docker working" — and
+		// doctor is what someone runs precisely when something is wrong.
+		//
+		// A real case: a client Mac drove a Mac mini whose Docker had been dead
+		// for two weeks. Island creation failed with a socket path from the
+		// mini, and `dejima doctor` on the laptop reported docker as INFO,
+		// declining to comment on the one component that was broken. The daemon
+		// had the answer the whole time and reports it in the overview.
+		c, cErr := client()
+		if cErr != nil {
+			r.add("System", "docker", "INFO", "runs on the daemon host ("+where+"), not here", "")
+			return
+		}
+		o, oErr := c.Overview(ctx)
+		if oErr != nil {
+			r.add("System", "docker", "INFO",
+				"runs on "+where+"; couldn't ask the daemon about it", "")
+			return
+		}
+		if o.DockerReachable {
+			r.add("System", "docker", "OK", "reachable on the daemon host ("+where+")", "")
+			return
+		}
+		r.add("System", "docker", "FAIL",
+			"the daemon on "+where+" cannot reach Docker — no island can be built or started",
+			remoteDockerRemedy(where))
+		return
+	}
 	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Output()
 	if err == nil {
 		r.add("System", "docker", "OK", "server "+strings.TrimSpace(string(out)), "")
@@ -360,7 +424,7 @@ func checkDocker(ctx context.Context, r *doctorReport) {
 func dockerInstallHint() string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "install one: `brew install --cask docker` — or colima: `brew install colima docker && colima start`"
+		return "install one: `brew install --cask docker-desktop` — or colima: `brew install colima docker && colima start`"
 	case "linux":
 		return "install Docker engine (Debian/Ubuntu: `sudo apt install docker.io`; Fedora: `sudo dnf install docker`; Arch: `sudo pacman -S docker`), then `sudo systemctl enable --now docker`"
 	default:
@@ -434,7 +498,63 @@ func checkVMMemory(ctx context.Context, r *doctorReport) {
 		fmt.Sprintf("Docker Desktop → Settings → Resources → Memory → %dGB → Apply & Restart", recGB))
 }
 
+// daemonElsewhere reports whether dejimad — and therefore Docker and the island
+// image — lives on a machine other than this one, naming it when so.
+//
+// Docker and the image are DAEMON-HOST facts. Probing them locally is only
+// meaningful when the daemon is local; a client pointed at a server was being
+// told "the docker CLI isn't installed — islands run on it" about a machine that
+// never runs islands, with a fix (`make image`) it has no source tree for. On
+// Windows that also made `dejima doctor` exit non-zero on a perfectly healthy
+// client, since there is no docker there by definition.
+//
+// A `wsl://` target counts as elsewhere too: the daemon and Docker are inside
+// the WSL2 distro, not on the Windows side where this client runs.
+// remoteDockerRemedy is the fix for a daemon host whose Docker is down. It is
+// written for someone who is NOT sitting at that machine, because by
+// construction they are not: this only fires when the daemon is remote.
+//
+// The ordering is from the incident it came from. "Already running" was the
+// misleading answer there — a Docker process had been hung since the host last
+// restarted, so the app refused to launch again and the CLI reported it as up
+// while the engine had never started.
+func remoteDockerRemedy(where string) string {
+	return "on " + where + ": `docker desktop start`, or open Docker Desktop. " +
+		"If it claims to be running already, a hung process from a previous boot is " +
+		"holding it: `pgrep -fl -i docker`, quit it, then relaunch. " +
+		"To stop it recurring, enable Docker's start-at-login AND automatic login on that machine — " +
+		"a headless host that reboots to a login screen never starts Docker at all."
+}
+
+func daemonElsewhere() (string, bool) {
+	host, label, source := resolveTarget()
+	if strings.TrimSpace(host) == "" {
+		return "", false
+	}
+	if source == "profile" && label != "" && label != host {
+		return fmt.Sprintf("%s (profile %q)", host, label), true
+	}
+	return host, true
+}
+
 func checkIslandImage(ctx context.Context, r *doctorReport) {
+	if where, remote := daemonElsewhere(); remote {
+		// Same reasoning as checkDocker: the daemon knows, so ask it.
+		if c, cErr := client(); cErr == nil {
+			if o, oErr := c.Overview(ctx); oErr == nil {
+				if o.IslandImagePresent {
+					r.add("System", "island image", "OK", "present on the daemon host ("+where+")", "")
+				} else {
+					r.add("System", "island image", "WARN",
+						"missing on the daemon host ("+where+")",
+						"it builds itself on the first island, or press b in the dashboard")
+				}
+				return
+			}
+		}
+		r.add("System", "island image", "INFO", "lives on the daemon host ("+where+"), not here", "")
+		return
+	}
 	out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "dejima/island:latest",
 		"--format", "{{.Id}}").Output()
 	if err != nil {

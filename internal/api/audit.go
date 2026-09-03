@@ -137,7 +137,7 @@ func isReadMethod(m string) bool {
 // inside ledgerAppend).
 func (s *Server) recordRequest(r *http.Request, status int) {
 	actor, role := s.resolveActor(r)
-	_ = s.ledgerAppend(ledger.Entry{
+	_ = s.ledgerAppend(ledger.ProvenanceWitnessed, ledger.Entry{
 		Type:     auditTypeAPIRequest,
 		Island:   auditIslandFromPath(r.URL.Path),
 		Method:   r.Method,
@@ -258,7 +258,7 @@ func (s *Server) auditLifecycle(e events.Event) {
 	if !s.auditEnabled || !auditableLifecycle[e.Type] {
 		return
 	}
-	_ = s.ledgerAppend(ledger.Entry{
+	_ = s.ledgerAppend(ledger.ProvenanceWitnessed, ledger.Entry{
 		Type:       string(e.Type),
 		Island:     e.Island,
 		Agent:      e.Agent, // id stays the lookup handle
@@ -305,7 +305,7 @@ func lifecycleDetail(e events.Event) string {
 // RegisterAudit registers the audit read/filter/export/verify route on mux. It's
 // the single seam server.go wires in (one line), keeping the route table change
 // per-lane to a one-liner.
-func (s *Server) RegisterAudit(mux *http.ServeMux) {
+func (s *Server) RegisterAudit(mux routeMux) {
 	mux.HandleFunc("GET /v1/audit", s.handleAudit)
 }
 

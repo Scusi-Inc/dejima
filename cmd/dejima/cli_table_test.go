@@ -13,6 +13,7 @@ import (
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/runtime/runtimetest"
+	"github.com/aoos/dejima/internal/secrets"
 )
 
 // CLI table tests: invoke the real cobra commands (via newRootCmd) against an
@@ -27,8 +28,9 @@ func cliEnv(t *testing.T) (*httptest.Server, *api.Client) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DEJIMA_TOKEN", "")
+	isolateSecretsBackend(t)
 	ledger.ResetDefault()
-	srv := api.NewServer(runtimetest.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, api.NewServer(runtimetest.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	t.Setenv("DEJIMA_HOST", ts.URL) // CLI client() reads this; ts.URL carries http://
@@ -37,6 +39,28 @@ func cliEnv(t *testing.T) (*httptest.Server, *api.Client) {
 		t.Fatalf("client: %v", err)
 	}
 	return ts, c
+}
+
+// isolateSecretsBackend keeps the in-proc daemon off the machine's real
+// keychain.
+//
+// A CLI table test that touches secrets otherwise drives the platform store for
+// real: `security` on macOS, `secret-tool` on Linux. On a developer's Mac that
+// pops an access-authorization dialog; on a CI runner the login keychain can be
+// locked, and the `security` call then blocks rather than failing. It blocks
+// inside an HTTP handler, so the request never returns, the client sits there,
+// and the httptest server can't Close because the connection is still active —
+// the test hangs until the 10-minute panic. That is exactly how
+// TestSecretSetWarnsOnGitHubTokenPrecedence took down a macOS CI run: the same
+// test had passed on the same commit range minutes earlier, because whether the
+// keychain answers is a property of the runner, not of the code.
+//
+// internal/api's secret tests already do this per-test. Doing it in the shared
+// helper means a CLI test can't acquire the dependency by accident — which is
+// how this one acquired it.
+func isolateSecretsBackend(t *testing.T) {
+	t.Helper()
+	t.Setenv(secrets.BackendEnvVar, "file")
 }
 
 // runCLI executes a dejima command with the given args, capturing stdout. It

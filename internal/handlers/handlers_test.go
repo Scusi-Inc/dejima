@@ -44,15 +44,17 @@ func TestHeadlessLaunchIsUserSupplied(t *testing.T) {
 	}
 }
 
-// TestFrameworkAdapters covers the first-class headless framework adapters
-// (Letta / Hermes / Goose): each is headless, key-requiring, self-installing, and
-// sources the materialized provider key in its launch. Hermes is a messaging
-// bridge with no localhost UI (GatewayPort 0); the other two expose web UIs.
+// TestFrameworkAdapters covers the headless framework adapters (OpenClaw / Letta
+// / Hermes / Goose): each is headless, key-requiring, self-installing, and MUST
+// source the materialized provider key in its launch — OpenClaw was omitted here
+// once and shipped without it, so every task failed "No API key found". Hermes is
+// a messaging bridge with no localhost UI (GatewayPort 0); the rest expose web UIs.
 func TestFrameworkAdapters(t *testing.T) {
 	cases := []struct {
 		agent       string
 		wantGateway int
 	}{
+		{"openclaw", 18789},
 		{"letta", 8283},
 		{"hermes", 0},
 		{"goose", 3000},

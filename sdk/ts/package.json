@@ -21,8 +21,8 @@
   },
   "keywords": ["dejima", "ai-agents", "claude-code", "codex", "sandbox", "self-hosted"],
   "homepage": "https://dejima.tech/",
-  "repository": { "type": "git", "url": "git+https://github.com/aoos/dejima.git", "directory": "sdk/ts" },
-  "bugs": { "url": "https://github.com/aoos/dejima/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/Scusi-Inc/dejima.git", "directory": "sdk/ts" },
+  "bugs": { "url": "https://github.com/Scusi-Inc/dejima/issues" },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/ws": "^8.5.0",

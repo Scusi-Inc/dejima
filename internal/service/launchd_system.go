@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 )
 
@@ -93,9 +92,8 @@ func (m *launchdSystemManager) Install(binaryPath string, args []string) error {
 		_ = os.Chown(logDir, uid, gid)
 	}
 
-	tmpl := template.Must(template.New("plist").Parse(launchdTemplate))
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, map[string]any{
+	if err := renderPlist(&buf, map[string]any{
 		"Label":            launchdLabel,
 		"ProgramArguments": append([]string{binaryPath}, args...),
 		"WorkingDir":       u.HomeDir,
@@ -177,9 +175,13 @@ func (m *launchdSystemManager) Install(binaryPath string, args []string) error {
 }
 
 func (m *launchdSystemManager) Uninstall() error {
-	_ = exec.Command("sudo", "launchctl", "bootout", "system/"+launchdLabel).Run()
+	// Bounded: an unbounded bootout deadlocks when the caller is inside the job
+	// being torn down (see runTeardown).
+	if err := runTeardown("sudo", "launchctl", "bootout", "system/"+launchdLabel); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
 	// Retire the passwordless self-update rule alongside the daemon (best-effort).
-	_ = exec.Command("sudo", "rm", "-f", launchdSystemSudoers).Run()
+	_ = runTeardown("sudo", "rm", "-f", launchdSystemSudoers)
 	if stderr, err := runCaptureStderr("sudo", "rm", "-f", launchdSystemPlist); err != nil {
 		return fmt.Errorf("sudo rm %s: %w: %s", launchdSystemPlist, err, strings.TrimSpace(stderr))
 	}

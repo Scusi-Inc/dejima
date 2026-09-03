@@ -112,10 +112,18 @@ export class Client {
     return this.json("GET", "/v1/islands");
   }
 
-  /** Provision an island. `repo` is a git URL or local path. */
+  /** Provision an island. `repo` is a git URL or local path.
+   *
+   * `noRepo` instead provisions an island with an empty `/workspace` and no
+   * origin — for the things that genuinely have no repo (assistant brains,
+   * headless task runners, scratch sandboxes). It requires `name` and refuses
+   * `repo`/`seedPath`: the daemon never infers the mode from an empty `repo`, so
+   * a URL eaten by the shell fails loudly instead of quietly producing an island
+   * indistinguishable from a failed clone. */
   createIsland(
-    repo: string,
+    repo: string = "",
     opts: {
+      noRepo?: boolean;
       agent?: string;
       name?: string;
       image?: string;
@@ -131,6 +139,7 @@ export class Client {
   ): Promise<any> {
     const body = clean({
       repo,
+      no_repo: opts.noRepo || undefined,
       agent: opts.agent,
       name: opts.name,
       image: opts.image,
@@ -227,9 +236,22 @@ export class Client {
     return this.json("PATCH", `${this.island(name)}/agents/${this.seg(agentId)}`, { json: { label } });
   }
 
-  /** Remove a non-primary agent (kills its session, prunes its worktree). */
-  async removeAgent(name: string, agentId: string): Promise<void> {
-    await this.request("DELETE", `${this.island(name)}/agents/${this.seg(agentId)}`);
+  /** Remove an agent (kills its session, prunes its worktree; the branch and its
+   * commits are kept). The daemon refuses with a 409 when that worktree holds
+   * uncommitted changes — pruning it discards them permanently — or when it
+   * can't check (island hibernated, container wedged); `force` removes anyway. */
+  async removeAgent(name: string, agentId: string, force = false): Promise<void> {
+    await this.request("DELETE", `${this.island(name)}/agents/${this.seg(agentId)}`, {
+      query: force ? { force: true } : undefined,
+    });
+  }
+
+  /** Relaunch an agent in place so it picks up a changed environment (e.g. a new
+   * secret). `resume` continues its previous conversation where supported. */
+  restartAgent(name: string, agentId: string, opts: { resume?: boolean } = {}): Promise<any> {
+    return this.json("POST", `${this.island(name)}/agents/${this.seg(agentId)}/restart`, {
+      json: { resume: opts.resume || false },
+    });
   }
 
   /** Set an agent's LLM provider/model (key-requiring frameworks only). */
@@ -310,6 +332,41 @@ export class Client {
     return this.json("POST", "/v1/capabilities/execute", { json: clean({ target, island: opts.island, args: opts.args }) });
   }
 
+  // ===== Secrets --------------------------------------------------------
+  //
+  // Per-island storage for the tokens an agent's tools read from the
+  // environment. Values go in and are NEVER returned — no method here can
+  // retrieve one, because no endpoint serves one.
+  //
+  // Not a boundary against agents: everything in an island runs as one user, so
+  // any agent there can read these from its own environment. What it buys is
+  // that they're out of the repo, centrally rotatable, island-scoped, and
+  // deleted with the island. See docs/secrets-manager-spec.md.
+
+  /** List an island's secrets — names, timestamps and fingerprints only. */
+  listSecrets(name: string): Promise<any> {
+    return this.json("GET", `${this.island(name)}/secrets`);
+  }
+
+  /**
+   * Set or rotate a secret. Returns metadata, never the value.
+   *
+   * Rotating keeps the original creation date. Reserved names are rejected
+   * (400): several environment variables are interpreted by the loader, the
+   * shell, or a language runtime before any program logic runs, and
+   * HTTP(S)_PROXY would disable the island's egress gate.
+   *
+   * A change reaches NEW shells immediately; a process already running keeps
+   * the environment it started with, so restart the agent to apply it.
+   */
+  putSecret(name: string, key: string, value: string): Promise<any> {
+    return this.json("PUT", `${this.island(name)}/secrets/${this.seg(key)}`, { json: { value } });
+  }
+
+  async deleteSecret(name: string, key: string): Promise<void> {
+    await this.request("DELETE", `${this.island(name)}/secrets/${this.seg(key)}`);
+  }
+
   // ===== MCP broker -----------------------------------------------------
   listMcpGrants(name: string): Promise<any> {
     return this.json("GET", `${this.island(name)}/mcp/grants`);
@@ -375,6 +432,37 @@ export class Client {
 
   deleteProvider(provider: string): Promise<any> {
     return this.json("DELETE", `/v1/credentials/providers/${this.seg(provider)}`);
+  }
+
+  // ===== local models (owner-only) ------------------------------------
+  /** Managed local-model backend status (backend, endpoint, pulled models, host RAM + recommendation). */
+  localStatus(): Promise<any> {
+    return this.json("GET", "/v1/local");
+  }
+
+  /** Pulled local models plus the host-aware recommendation. */
+  listLocalModels(): Promise<any> {
+    return this.json("GET", "/v1/local/models");
+  }
+
+  /** Install the inference backend on the daemon host; resolves to the progress text. */
+  async localInstall(): Promise<string> {
+    return (await this.request("POST", "/v1/local/install")).text();
+  }
+
+  /** Pull a model — a curated alias (e.g. "qwen-coder") or a raw backend ref; resolves to progress text. */
+  async pullLocalModel(name: string): Promise<string> {
+    return (await this.request("POST", `/v1/local/models/${this.seg(name)}/pull`)).text();
+  }
+
+  /** Remove a pulled model. */
+  async removeLocalModel(name: string): Promise<void> {
+    await this.request("DELETE", `/v1/local/models/${this.seg(name)}`);
+  }
+
+  /** Deregister the `local` provider (the backend + pulled models stay). */
+  async localOff(): Promise<void> {
+    await this.request("POST", "/v1/local/off");
   }
 
   // ===== operator tokens (owner-only) ----------------------------------

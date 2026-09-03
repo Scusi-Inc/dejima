@@ -99,6 +99,14 @@ type Project struct {
 	// addressed by the CLI); Title is what the user reads. Empty → show Name.
 	Title   string `toml:"title,omitempty"`
 	RepoURL string `toml:"repo"`
+	// NoRepo records that this island was created deliberately WITHOUT a repo:
+	// an empty /workspace and no origin. It exists so every surface that assumes
+	// a checkout can tell "there is no repo, by design" apart from "the clone
+	// hasn't finished, or failed" — an empty RepoURL alone cannot, and reading it
+	// as a failure is what makes a working island look broken (a workspace-ready
+	// poll that never succeeds, a git pane that reports an error, a purge guard
+	// that can't verify work it was never given).
+	NoRepo bool `toml:"no_repo,omitempty"`
 	// Agent and Cmd are the pre-multi-agent scalar fields. They are retained for
 	// backward compatibility (older daemons read them) and mirror Agents[0]. New
 	// code should read Agents; PrimaryAgent() is the accessor.
@@ -164,6 +172,16 @@ type Project struct {
 	// then falls back to its deterministic per-name default. Set/cleared by the
 	// operator via PUT/DELETE /v1/islands/{name}/identity. Cosmetic only.
 	Identity Identity `toml:"identity,omitempty"`
+	// HostGitHubGrant, when set, lets this island mount the HOST operator's own
+	// ~/.config/gh — a credential whose read scope is the operator's entire
+	// account. Nil means denied, which is the default for every island created
+	// under the grant model. See github_host.go.
+	HostGitHubGrant *HostGitHubGrant `toml:"host_github_grant,omitempty"`
+	// HostGitHubReviewed records that the deny-by-default decision has been made
+	// for this island — by creation under the grant model, by an operator
+	// grant/revoke, or by the one-time migration. It is what stops a revoke from
+	// being undone by re-grandfathering on the next Load.
+	HostGitHubReviewed bool `toml:"host_github_reviewed,omitempty"`
 }
 
 // Identity is a per-island visual override: a hex color (#rgb or #rrggbb) and a
@@ -571,7 +589,7 @@ func Load(name string) (*Project, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, fmt.Errorf("invalid island name %q: %w", name, err)
 	}
-	path, err := paths.ProjectConfigPath(name)
+	path, err := paths.ProjectConfigPathRead(name)
 	if err != nil {
 		return nil, err
 	}
@@ -596,6 +614,12 @@ func Load(name string) (*Project, error) {
 	// the operator and private from teammates.
 	if strings.TrimSpace(p.Owner) == "" {
 		p.Owner = HostOwner()
+		changed = true
+	}
+	// Deny-by-default cutover for the host operator's gh credential. Runs AFTER
+	// the ownership backfill above, which it depends on to tell a host island
+	// from a tenant one.
+	if p.migrateHostGitHub() {
 		changed = true
 	}
 	if changed {
@@ -653,7 +677,7 @@ func List() ([]*Project, error) {
 
 // Exists reports whether a project with this name has a config on disk.
 func Exists(name string) bool {
-	path, err := paths.ProjectConfigPath(name)
+	path, err := paths.ProjectConfigPathRead(name)
 	if err != nil {
 		return false
 	}

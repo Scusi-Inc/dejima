@@ -77,7 +77,7 @@ func (v *auditView) applyLoaded(msg auditLoadedMsg) {
 func (m tuiModel) auditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.audit
 	switch msg.String() {
-	case "esc", "q", "A":
+	case "esc", "ctrl+[", "q", "A":
 		m.audit = nil
 		return m, nil
 	case "r":
@@ -131,6 +131,13 @@ func (m tuiModel) renderAuditView() string {
 	// Chain-verification banner — the whole point of the pane.
 	if v.verified {
 		b.WriteString(styleRunning.Render(fmt.Sprintf("✓ hash chain intact — %d entries", v.total)))
+		// ...qualified the moment a row on screen is one Dejima cannot vouch for.
+		// The banner is true of the CHAIN and says nothing about whether a row was
+		// true when written; read together without this line, the chain's assurance
+		// gets attached to the row's claim.
+		if note := chainNote(v.entries); note != "" {
+			b.WriteString("\n" + styleMuted.Render("  "+note))
+		}
 	} else {
 		b.WriteString(styleErrored.Render("⚠ CHAIN TAMPERED — " + v.verErr))
 	}
@@ -143,14 +150,18 @@ func (m tuiModel) renderAuditView() string {
 	}
 
 	// Reserve lines for the title, banner, blanks, and footer hint.
-	const chrome = 7
+	const chrome = 9 // title, banner (+ its qualifier), blanks, provenance legend, footer hint
 	visible := m.height - chrome
 	if visible < 3 {
 		visible = 3
 	}
 
-	hdr := fmt.Sprintf("%-5s  %-19s  %-22s  %-14s  %-12s  %s",
-		"SEQ", "WHEN", "TYPE", "ISLAND", "ACTOR", "DETAIL")
+	// The provenance column carries a mark only for rows Dejima cannot vouch for,
+	// so the ordinary all-brokered ledger looks exactly as it did — the marks are
+	// here to be rare, and a column that always says the same thing stops being
+	// read. It is FIRST, before SEQ, because it qualifies everything after it.
+	hdr := fmt.Sprintf("%-2s %-5s  %-19s  %-22s  %-14s  %-12s  %s",
+		"", "SEQ", "WHEN", "TYPE", "ISLAND", "ACTOR", "DETAIL")
 	b.WriteString(styleHeader.Render(hdr))
 	b.WriteString("\n")
 
@@ -159,21 +170,33 @@ func (m tuiModel) renderAuditView() string {
 		end = len(v.entries)
 	}
 	for _, e := range v.entries[v.scroll:end] {
-		row := fmt.Sprintf("%-5d  %-19s  %-22s  %-14s  %-12s  %s",
+		row := fmt.Sprintf("%-2s %-5d  %-19s  %-22s  %-14s  %-12s  %s",
+			provenanceMark(e.Provenance),
 			e.Seq,
 			e.Time.Local().Format("2006-01-02 15:04:05"),
 			truncate(e.Type, 22),
 			truncate(e.Island, 14),
 			truncate(e.Actor, 12),
-			truncate(auditDetail(e), max(10, m.width-90)))
+			truncate(auditDetail(e), max(10, m.width-93)))
 		line := row
-		if e.Decision == "denied" {
+		switch {
+		case e.Decision == "denied":
 			line = styleErrored.Render(row)
+		case e.Provenance == ledger.ProvenanceSelfReported:
+			// Dimmed rather than alarmed: a self-reported row is not a failure, it is
+			// a weaker claim, and colouring it like a denial would teach people to
+			// dismiss it. The mark says what it is; the dimming says how much of the
+			// pane's assurance reaches it.
+			line = styleMuted.Render(row)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
+	if note := provenanceNote(v.entries); note != "" {
+		b.WriteString(styleMuted.Render(note))
+		b.WriteString("\n")
+	}
 	b.WriteString(m.auditFooterHint())
 	return b.String()
 }

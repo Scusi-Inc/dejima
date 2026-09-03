@@ -180,7 +180,10 @@ func TestRenderListGlyphs(t *testing.T) {
 		"◉",                     // a1 has an attached viewer → presence badge
 		"needs you",             // a1's waiting-for-input normalized to the call-to-action word
 		"stopped",               // a2 session is stopped
-		"├ ", "└ + add agent",   // tree connectors group the island's children
+		// Tree connectors group the agents (├) and the add-agent affordance (└).
+		// Secrets is a sibling island-level action, left-aligned with "+ add agent"
+		// and WITHOUT a connector (not a child of it).
+		"├ ", "└ + add agent", glyphSecrets + " secrets",
 		"+ new island",
 	} {
 		if !strings.Contains(bare, want) {
@@ -195,5 +198,34 @@ func TestRenderListGlyphs(t *testing.T) {
 	// Unlabeled agents lead with the id, not the type name.
 	if strings.Contains(bare, glyphAgent+" claude-code") {
 		t.Errorf("unlabeled agent should lead with its id, not its type\n%s", bare)
+	}
+}
+
+// Tree glyphs MUST measure as one cell, and lipgloss's count must match what a
+// terminal draws. An emoji breaks this: it is East Asian Wide (two cells drawn)
+// while the text-presentation form measures as one — the mismatch wraps the row,
+// and Bubble Tea's newline-counting diff renderer then duplicates the whole view
+// on every repaint. That shipped once (the VS-15 padlock in v0.8.30); this keeps
+// it from shipping again.
+func TestTreeGlyphsAreSingleCellAndNotEmoji(t *testing.T) {
+	for name, g := range map[string]string{
+		"glyphSecrets":  glyphSecrets,
+		"glyphAgent":    glyphAgent,
+		"glyphTerminal": glyphTerminal,
+		"glyphHeadless": glyphHeadless,
+	} {
+		if w := lipgloss.Width(g); w != 1 {
+			t.Errorf("%s (%q) lipgloss.Width=%d, want 1 — a wider glyph wraps the row and duplicates the view", name, g, w)
+		}
+		for _, r := range g {
+			// Variation selectors and any codepoint at/above the emoji planes are
+			// the danger: lipgloss and the terminal disagree on their width.
+			if r == 0xFE0F || r == 0xFE0E {
+				t.Errorf("%s carries a variation selector (%U) — that's the exact width trap", name, r)
+			}
+			if r >= 0x1F000 {
+				t.Errorf("%s uses an emoji-plane rune (%U); use a text-default symbol", name, r)
+			}
+		}
 	}
 }

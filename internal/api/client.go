@@ -22,10 +22,13 @@ import (
 	"github.com/aoos/dejima/internal/githubid"
 	"github.com/aoos/dejima/internal/hostterm"
 	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/localmodel"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/providercreds"
+	"github.com/aoos/dejima/internal/secrets"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // Client is a thin HTTP client for the Dejima API.
@@ -37,6 +40,38 @@ type Client struct {
 	// the brain to the host-internal dejimad listener. Empty for the unix
 	// socket and tailnet paths, which are trusted by other means.
 	token string
+	// dialSem caps CONCURRENT requests on transports where a dial is expensive.
+	//
+	// On WSL every connection is a wsl.exe + socat subprocess. Go's transport
+	// pools MaxIdleConnsPerHost of them; anything ABOVE that in a concurrent
+	// burst is dialled fresh and then CLOSED IMMEDIATELY on return, because the
+	// pool is already full. The dashboard polls several endpoints on one tick,
+	// so a burst wider than the pool churns a subprocess per excess request,
+	// every tick, no matter how perfectly the bodies are drained.
+	//
+	// Raising the pool is the wrong lever: each idle connection HOLDS a live
+	// subprocess, and the exhaustion we are chasing (WSAENOBUFS from
+	// wslservice.exe) is about handles and kernel pool, not ephemeral ports. So
+	// cap the CONCURRENCY at the pool size instead — then the pool always has a
+	// connection to give, and the excess dials never happen.
+	//
+	// nil on transports where a dial is cheap (unix socket, TCP): serialising
+	// there would cost latency to solve a problem they do not have.
+	dialSem chan struct{}
+}
+
+// acquire bounds concurrency on transports with expensive dials. Returns a
+// release func that is always safe to call.
+func (c *Client) acquire(ctx context.Context) (func(), error) {
+	if c.dialSem == nil {
+		return func() {}, nil
+	}
+	select {
+	case c.dialSem <- struct{}{}:
+		return func() { <-c.dialSem }, nil
+	case <-ctx.Done():
+		return func() {}, ctx.Err()
+	}
 }
 
 // NewUnixClient returns a Client that talks to dejimad over its Unix socket.
@@ -59,6 +94,47 @@ func NewUnixClient() (*Client, error) {
 		base: "http://dejimad",
 	}, nil
 }
+
+// NewWSLClient returns a Client that talks to a dejimad running inside a WSL2
+// distro, tunnelling its Unix socket through `wsl.exe … socat`. This is the
+// "local host on Windows" path: Windows itself can't run dejimad, but WSL2 can,
+// and this reaches it without giving the daemon a TCP listener.
+//
+// No token: the transport inherits the Unix socket's trust (whoever can run
+// commands in the distro as that user could open the socket directly anyway),
+// exactly like NewUnixClient.
+func NewWSLClient(distro string) (*Client, error) {
+	if !wsl.Supported() {
+		return nil, wsl.ErrUnsupported
+	}
+	distro = wsl.Distro(wsl.Host(distro))
+	return &Client{
+		httpc: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return wsl.Dial(ctx, distro)
+				},
+				// Each pooled conn holds a live wsl.exe + socat pair, so don't let
+				// idle ones accumulate across a long TUI session.
+				MaxIdleConns:        wslMaxConns,
+				MaxIdleConnsPerHost: wslMaxConns,
+				IdleConnTimeout:     60 * time.Second,
+			},
+		},
+		// Ignored by the dialer, but http.Client requires a host in the URL.
+		base: "http://dejimad",
+		// Same bound as the pool: a burst wider than the pool dials subprocesses
+		// it will immediately discard. See Client.dialSem.
+		dialSem: make(chan struct{}, wslMaxConns),
+	}, nil
+}
+
+// wslMaxConns bounds both the idle pool and in-flight requests on the WSL
+// transport. They must be the same number: the pool decides how many
+// connections survive, and the concurrency cap decides how many are ever asked
+// for. If the cap were higher, the excess would be dialled and thrown away.
+const wslMaxConns = 4
 
 // NewTCPClient returns a Client that talks to a remote dejimad over TCP.
 // The host argument may be a bare "host:port" or a full URL.
@@ -144,11 +220,33 @@ func (c *Client) doVia(ctx context.Context, hc *http.Client, method, path string
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	release, err := c.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	resp, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("daemon unreachable: %w (is dejimad running?)", err)
 	}
-	defer resp.Body.Close()
+	// DRAIN BEFORE CLOSING. Go's transport only returns a connection to the pool
+	// when the body has been read to EOF; closing an unread body discards the
+	// connection instead. On the WSL transport a discarded connection is a killed
+	// wsl.exe + socat PAIR, and the next request forks another — so an undrained
+	// body silently downgrades keep-alive to a subprocess per request.
+	//
+	// The no-output path was the leak: nothing reads the body because nothing
+	// wants it. A test counting dials showed ten such requests opening ten
+	// connections. The operator hit WSAENOBUFS (Wsl/Service/0x80072747) three
+	// times in one evening on a fresh distro, twice wedging the WSL service.
+	//
+	// Bounded, because draining is a courtesy to the pool and not an obligation:
+	// past this size, dropping the connection is cheaper than reading the rest.
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 400 {
 		var er ErrorResponse
@@ -182,13 +280,54 @@ func (c *Client) ClaudeCredentialsStatus(ctx context.Context) (*ClaudeCredential
 	return &st, nil
 }
 
+// metasOf drops the island decoration, so the callers that only ever wanted the
+// identity itself (the TUI pickers, `auth status`, adopt) keep their type. Only
+// the surfaces that DIAGNOSE take the full view.
+func metasOf(views []GitHubIdentityView) []githubid.Meta {
+	out := make([]githubid.Meta, 0, len(views))
+	for _, v := range views {
+		out = append(out, v.Meta)
+	}
+	return out
+}
+
+// UpdateAgent upgrades an agent's framework inside a running island and
+// relaunches it on the new version.
+func (c *Client) UpdateAgent(ctx context.Context, island, agentID string, resume bool) (UpdateAgentResponse, error) {
+	var out UpdateAgentResponse
+	err := c.do(ctx, http.MethodPost,
+		"/v1/islands/"+url.PathEscape(island)+"/agents/"+url.PathEscape(agentID)+"/update",
+		UpdateAgentRequest{Resume: resume}, &out)
+	return out, err
+}
+
+// ListGitHubIdentitiesFull returns the identities AND the dangling pins — the
+// islands naming an identity the store does not have. Use this where the result
+// is shown to a person: a dangling pin is invisible in the identity list by
+// construction (there is no row to attach it to) and it is the state that makes
+// an island fail with no credential at all.
+func (c *Client) ListGitHubIdentitiesFull(ctx context.Context) (GitHubIdentitiesResponse, error) {
+	var out GitHubIdentitiesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/credentials/github", nil, &out)
+	return out, err
+}
+
+// SetIslandGitHubIdentity repoints one island at a stored identity ("" = follow
+// the default).
+func (c *Client) SetIslandGitHubIdentity(ctx context.Context, island, identity string) (SetIslandGitHubIdentityResponse, error) {
+	var out SetIslandGitHubIdentityResponse
+	err := c.do(ctx, http.MethodPut, "/v1/islands/"+url.PathEscape(island)+"/github-identity",
+		SetIslandGitHubIdentityRequest{Identity: identity}, &out)
+	return out, err
+}
+
 // ListGitHubIdentities returns the daemon's GitHub identities (no tokens).
 func (c *Client) ListGitHubIdentities(ctx context.Context) ([]githubid.Meta, error) {
 	var out GitHubIdentitiesResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/credentials/github", nil, &out); err != nil {
 		return nil, err
 	}
-	return out.Identities, nil
+	return metasOf(out.Identities), nil
 }
 
 // PutGitHubIdentity seeds or updates a named GitHub identity on the daemon.
@@ -197,7 +336,19 @@ func (c *Client) PutGitHubIdentity(ctx context.Context, name string, req PutGitH
 	if err := c.do(ctx, http.MethodPut, "/v1/credentials/github/"+url.PathEscape(name), req, &out); err != nil {
 		return nil, err
 	}
-	return out.Identities, nil
+	return metasOf(out.Identities), nil
+}
+
+// SetGitHubDefaultIdentity points the caller's default at an identity that
+// already exists. Separate from PutGitHubIdentity because that one requires a
+// token: choosing among credentials you already hold should not mean supplying
+// one again.
+func (c *Client) SetGitHubDefaultIdentity(ctx context.Context, name string) ([]githubid.Meta, error) {
+	var out GitHubIdentitiesResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/credentials/github/"+url.PathEscape(name)+"/default", nil, &out); err != nil {
+		return nil, err
+	}
+	return metasOf(out.Identities), nil
 }
 
 // GitHubDeviceStart begins a guided device-flow GitHub sign-in (no PAT paste).
@@ -559,9 +710,30 @@ func (c *Client) RevokeCapability(ctx context.Context, name, target string) erro
 
 // PortIntake brokers a host file (within a granted scope) into the island.
 func (c *Client) PortIntake(ctx context.Context, name, scope, srcRel, dest string) (*PortIntakeResponse, error) {
+	return c.PortIntakeRecursive(ctx, name, scope, srcRel, dest, false)
+}
+
+// PortIntakeRecursive brokers a file, or a whole directory when recursive is set
+// — one ledgered crossing per file. A partial result comes back as 207 with the
+// per-file lists populated, which is below the client's error threshold on
+// purpose: the caller needs the body to see what actually crossed.
+func (c *Client) PortIntakeRecursive(ctx context.Context, name, scope, srcRel, dest string, recursive bool) (*PortIntakeResponse, error) {
 	var out PortIntakeResponse
-	req := PortIntakeRequest{Scope: scope, SrcRel: srcRel, Dest: dest}
+	req := PortIntakeRequest{Scope: scope, SrcRel: srcRel, Dest: dest, Recursive: recursive}
 	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/port/intake", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListObservedAgents returns the agents Dejima watches but does not gate.
+//
+// Deliberately its own call rather than a filter over ListIslands: an observed
+// agent has no island to be listed under, and keeping the collections separate
+// is what stops an island-keyed surface being reachable from one.
+func (c *Client) ListObservedAgents(ctx context.Context) (*ObservedAgentsResponse, error) {
+	var out ObservedAgentsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/agents/observed", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -868,6 +1040,81 @@ func (c *Client) BuildImage(ctx context.Context, out io.Writer) error {
 		return errors.New(strings.TrimPrefix(last, "ERROR: "))
 	}
 	return errors.New("build stream ended without a result (daemon restarted?)")
+}
+
+// consumeProgress drains a daemon progress stream to out, returning nil on the
+// okMarker line and a trailing "ERROR: …" line as an error. Shared by the local
+// backend install/pull streams (same in-band success/error convention as build).
+func consumeProgress(body io.Reader, okMarker string, out io.Writer) error {
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	last := ""
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.TrimSpace(line) == okMarker {
+			return nil
+		}
+		if strings.TrimSpace(line) != "" {
+			last = line
+		}
+		fmt.Fprintln(out, line)
+	}
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("stream interrupted: %w", err)
+	}
+	if strings.HasPrefix(last, "ERROR: ") {
+		return errors.New(strings.TrimPrefix(last, "ERROR: "))
+	}
+	return errors.New("stream ended without a result (daemon restarted?)")
+}
+
+// LocalStatus fetches the managed local-model backend status (backend, endpoint,
+// pulled models, host RAM + recommendation).
+func (c *Client) LocalStatus(ctx context.Context) (*localmodel.Status, error) {
+	var out localmodel.Status
+	if err := c.do(ctx, http.MethodGet, "/v1/local", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListLocalModels returns pulled models plus the host-aware recommendation.
+func (c *Client) ListLocalModels(ctx context.Context) (*LocalModelsResponse, error) {
+	var out LocalModelsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/local/models", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// LocalInstall streams a best-effort backend install to out.
+func (c *Client) LocalInstall(ctx context.Context, out io.Writer) error {
+	body, err := c.stream(ctx, http.MethodPost, "/v1/local/install")
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	return consumeProgress(body, localInstallOKMarker, out)
+}
+
+// PullLocalModel streams a model pull; name may be a curated alias or a raw ref.
+func (c *Client) PullLocalModel(ctx context.Context, name string, out io.Writer) error {
+	body, err := c.stream(ctx, http.MethodPost, "/v1/local/models/"+url.PathEscape(name)+"/pull")
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	return consumeProgress(body, localPullOKMarker, out)
+}
+
+// RemoveLocalModel deletes a pulled model from the host backend.
+func (c *Client) RemoveLocalModel(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/local/models/"+url.PathEscape(name), nil, nil)
+}
+
+// LocalOff deregisters the `local` provider; the backend + pulled models stay.
+func (c *Client) LocalOff(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/v1/local/off", nil, nil)
 }
 
 // stream issues a request whose response body may outlive the standard client
@@ -1310,6 +1557,16 @@ func (c *Client) MoveAgent(ctx context.Context, name, id string, delta int) erro
 	return c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(name)+"/agents/"+url.PathEscape(id)+"/move", MoveAgentRequest{Delta: delta}, nil)
 }
 
+// RestartAgent relaunches one agent in place (kill + re-create its tmux session)
+// so it starts in a fresh login shell and picks up a changed environment, e.g. a
+// newly added secret. resume continues the agent's prior conversation when the
+// framework supports it (claude-code).
+func (c *Client) RestartAgent(ctx context.Context, name, id string, resume bool) error {
+	return c.do(ctx, http.MethodPost,
+		"/v1/islands/"+url.PathEscape(name)+"/agents/"+url.PathEscape(id)+"/restart",
+		map[string]bool{"resume": resume}, nil)
+}
+
 // AddAgent adds an agent to an island.
 func (c *Client) AddAgent(ctx context.Context, name string, req AgentSpecRequest) (*AgentInfo, error) {
 	var out AgentInfo
@@ -1320,8 +1577,14 @@ func (c *Client) AddAgent(ctx context.Context, name string, req AgentSpecRequest
 }
 
 // RemoveAgent removes an agent from an island by id.
-func (c *Client) RemoveAgent(ctx context.Context, name, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/islands/"+name+"/agents/"+id, nil, nil)
+// force skips the worktree guard, which otherwise refuses when the agent has
+// uncommitted work that removal would discard.
+func (c *Client) RemoveAgent(ctx context.Context, name, id string, force bool) error {
+	path := "/v1/islands/" + name + "/agents/" + id
+	if force {
+		path += "?force=true"
+	}
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // RelabelAgent sets an agent's cosmetic label (its id and type are immutable).
@@ -1356,4 +1619,27 @@ func (c *Client) ListTokens(ctx context.Context) ([]TokenView, error) {
 // RevokeToken deletes an operator token by id.
 func (c *Client) RevokeToken(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/tokens/"+url.PathEscape(id), nil, nil)
+}
+
+// ListSecrets returns an island's secret names + metadata. Values are never
+// included — the response type has no field for one.
+func (c *Client) ListSecrets(ctx context.Context, island string) ([]secrets.Meta, error) {
+	var out SecretsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/islands/"+island+"/secrets", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Secrets, nil
+}
+
+// PutSecret sets or rotates a secret and returns its metadata.
+func (c *Client) PutSecret(ctx context.Context, island, key, value string) (secrets.Meta, error) {
+	var out secrets.Meta
+	err := c.do(ctx, http.MethodPut, "/v1/islands/"+island+"/secrets/"+key,
+		PutSecretRequest{Value: value}, &out)
+	return out, err
+}
+
+// DeleteSecret removes a secret from an island.
+func (c *Client) DeleteSecret(ctx context.Context, island, key string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/islands/"+island+"/secrets/"+key, nil, nil)
 }

@@ -8,7 +8,13 @@
 #
 # Knobs:
 #   DEJIMA_VERSION   release tag to install (default: latest, e.g. v0.1.0)
-#   PREFIX           install prefix (default: /usr/local) → $PREFIX/bin
+#   PREFIX           install prefix → $PREFIX/bin. Setting this is taken as a
+#                    deliberate choice and is honoured even if it needs sudo.
+#                    Unset, the installer picks a writable location itself.
+#   DEJIMA_SYSTEM_PREFIX
+#                    what counts as the system prefix (default: /usr/local).
+#                    Used when it is ALREADY writable; also lets the test suite
+#                    exercise both branches without needing root.
 #
 # NOTE: until the darwin binaries are notarized, macOS quarantines downloads;
 # this script strips the quarantine attribute from the installed binary.
@@ -16,8 +22,34 @@
 set -euo pipefail
 
 REPO="aoos/dejima"
-PREFIX="${PREFIX:-/usr/local}"
+
+# --- where the binary goes, and why it is not simply /usr/local/bin -------
+# A client installed into a ROOT-OWNED directory can never update itself.
+# The updater stages the download and then RENAMES it into place, and a rename
+# needs write permission on the DIRECTORY, not on the file — so a root-owned
+# /usr/local/bin breaks `dejima update` and the TUI's [U] permanently. The
+# elevated fallback does not save it either: `sudo -n` needs the NOPASSWD rule
+# that only `dejima service install --system` writes, and a client machine runs
+# no daemon and should never install that service.
+#
+# That was the DEFAULT outcome on a fresh Apple Silicon Mac, where
+# /usr/local/bin does not exist until this script sudo-creates it. Reported
+# from a real client-only Mac on 2026-09-01, where every update failed with
+# "replace /usr/local/bin/dejima: rename ...".
+#
+# So install where the user can already write. In order:
+#   1. PREFIX, if the caller set it. Their machine, their call — and the one
+#      case that may still need sudo, because it was asked for.
+#   2. /usr/local/bin IF ALREADY WRITABLE — Homebrew-on-Intel and every
+#      install working today. Nothing changes for them.
+#   3. ~/.local/bin, created here and owned by the user.
+PREFIX_EXPLICIT=0
+[[ -n "${PREFIX:-}" ]] && PREFIX_EXPLICIT=1
+PREFIX="${PREFIX:-${DEJIMA_SYSTEM_PREFIX:-/usr/local}}"
 BIN_DIR="$PREFIX/bin"
+if [[ "$PREFIX_EXPLICIT" -eq 0 && ! -w "$BIN_DIR" ]]; then
+  BIN_DIR="$HOME/.local/bin"
+fi
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
@@ -59,13 +91,59 @@ base="https://github.com/${REPO}/releases/download/${ver}"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 info "downloading $asset"
+# An ~9 MB asset over a flaky link is where this installer is most likely to
+# fail, and it's the first thing a new user runs. A real report: five straight
+# `curl: (56) Connection died` on a Mac, while the asset itself was fine
+# (checksum verified, 3s from elsewhere). So don't take one failure as final.
+#
+#   --retry/--retry-all-errors  ride out transient drops (56 is a mid-transfer
+#                               death, not a bad URL — a 404 still fails fast
+#                               because -f makes it a hard error curl won't retry)
+#   -C -                        resume rather than restart from zero
+#   pass 2: -4                  a broken IPv6 path to the CDN is the most common
+#                               cause of a repeatedly-dying transfer
+#   pass 3: --http1.1           HTTP/2 stream resets are the next most common
+#
 # Show a progress bar (-#) instead of the silent -s: a multi-MB download over a
 # slow link is the longest single step, and a blank terminal reads as a hang.
 # Fall back to a quiet download if this isn't a terminal (piped/CI logs).
 if [[ -t 2 ]]; then
-  curl -fL --progress-bar "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
+  curl_out=(--progress-bar)
 else
-  curl -fsSL "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
+  curl_out=(-sS)
+fi
+
+# --retry-all-errors landed in curl 7.71 (2020). An unknown option makes curl
+# exit immediately, which would turn a hardening measure into a hard failure on
+# an older box — so probe for it once instead of assuming.
+retry_all=()
+if curl --help all 2>/dev/null | grep -q -- --retry-all-errors; then
+  retry_all=(--retry-all-errors)
+fi
+
+fetch_asset() {
+  # $@ = extra curl args for this attempt
+  curl -fL "${curl_out[@]}" --retry 3 --retry-delay 2 "${retry_all[@]}" \
+       --connect-timeout 20 -C - "$@" "$base/$asset" -o "$tmp/$asset"
+}
+
+if ! fetch_asset; then
+  info "download died mid-transfer — retrying over IPv4 only…"
+  # A partial file from the failed attempt confuses `-C -` if the next attempt
+  # negotiates differently; start each fallback clean.
+  rm -f "$tmp/$asset"
+  if ! fetch_asset -4; then
+    info "still failing — retrying with HTTP/1.1…"
+    rm -f "$tmp/$asset"
+    if ! fetch_asset -4 --http1.1; then
+      fail "download failed after 3 attempts (plain, IPv4, HTTP/1.1): $base/$asset
+  The release asset is almost certainly fine — this is the network path to
+  GitHub's CDN. Check whether you're on a VPN or exit node, then either re-run
+  this installer or grab it by hand:
+    curl -4 -fL -o /tmp/$asset $base/$asset
+    tar -xzf /tmp/$asset -C /tmp && sudo install -m 0755 /tmp/dejima /usr/local/bin/dejima"
+    fi
+  fi
 fi
 
 if curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" 2>/dev/null; then
@@ -88,15 +166,18 @@ tar -xzf "$tmp/$asset" -C "$tmp" || fail "couldn't unpack $asset (corrupt downlo
 
 # --- install (client only) ------------------------------------------------
 install_bin() {
+  mkdir -p "$BIN_DIR" 2>/dev/null || true
   if [[ -w "$BIN_DIR" ]]; then
     install -m 0755 "$tmp/dejima" "$BIN_DIR/dejima"
-  elif mkdir -p "$BIN_DIR" 2>/dev/null && [[ -w "$BIN_DIR" ]]; then
-    install -m 0755 "$tmp/dejima" "$BIN_DIR/dejima"
-  else
-    info "writing to $BIN_DIR needs sudo"
-    sudo install -d -m 0755 "$BIN_DIR"
-    sudo install -m 0755 "$tmp/dejima" "$BIN_DIR/dejima"
+    return
   fi
+  # Only reachable when PREFIX was set explicitly — the chooser above never
+  # lands on an unwritable directory on its own. Honour it, but say plainly
+  # what it costs, because the bill arrives later at the first update.
+  printf '  \033[33m!\033[0m %s\n' "writing to $BIN_DIR needs sudo, so dejima will be root-owned"
+  printf '  \033[33m!\033[0m %s\n' "self-update will need 'sudo dejima update'; unset PREFIX to avoid this"
+  sudo install -d -m 0755 "$BIN_DIR"
+  sudo install -m 0755 "$tmp/dejima" "$BIN_DIR/dejima"
 }
 install_bin
 
@@ -125,6 +206,88 @@ ts_prompt_yn() {
     [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
+# ---------------------------------------------------------------------------
+# PATH, and the older binary that would otherwise keep winning.
+#
+# Installing into ~/.local/bin only helps if that directory is on PATH and if
+# nothing earlier on PATH answers to `dejima` first. Both halves matter: an
+# upgrade that silently keeps running the OLD binary is worse than one that
+# fails, because it looks like it worked and reports the old version forever.
+# ---------------------------------------------------------------------------
+PATH_RC=""
+
+ensure_on_path() {
+    case ":${PATH}:" in
+        *":$BIN_DIR:"*) return 0 ;;
+    esac
+
+    local rc=""
+    case "$(basename "${SHELL:-sh}")" in
+        zsh) rc="$HOME/.zshrc" ;;
+        # macOS Terminal opens LOGIN shells, which read .bash_profile and never
+        # .bashrc. Writing to .bashrc there is the classic "I added it to PATH
+        # and nothing happened" trap.
+        bash) if [[ "$os" == "darwin" ]]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi ;;
+    esac
+
+    if [[ -z "$rc" ]]; then
+        warn "$BIN_DIR is not on your PATH, and I don't recognise your shell (${SHELL:-unknown})"
+        info "Add this to your shell's startup file, then open a new terminal:"
+        info "  export PATH=\"$BIN_DIR:\$PATH\""
+        return 0
+    fi
+
+    # PREPEND, not append: a stale /usr/local/bin/dejima sits in a directory
+    # that comes earlier in the default PATH, so appending would install a new
+    # binary that never runs.
+    if ! grep -q 'added by the dejima installer' "$rc" 2>/dev/null; then
+        # SC2016 is the POINT here: $PATH must reach the rc file UNEXPANDED, so
+        # it re-evaluates in each new shell. Expanding it would freeze today's
+        # PATH into the file forever.
+        # shellcheck disable=SC2016
+        printf '\n# added by the dejima installer\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$rc"
+        ok "added $BIN_DIR to your PATH in $rc"
+    else
+        ok "$BIN_DIR already on your PATH via $rc"
+    fi
+    PATH_RC="$rc"
+}
+
+# A previous install may have left a root-owned binary somewhere earlier on
+# PATH. Prepending beats it for new shells, but leaving it behind means `sudo
+# dejima`, cron, and any shell that does not read the rc file still run the old
+# one — and it reports an old version with no hint why.
+remove_stale_binary() {
+    local other
+    other="$(command -v dejima 2>/dev/null || true)"
+    [[ -z "$other" || "$other" == "$BIN_DIR/dejima" ]] && return 0
+
+    printf '\n'
+    warn "an older dejima is still installed at: $other"
+    info "New shells will use $BIN_DIR/dejima, but that one stays visible to"
+    info "sudo, cron, and shells that don't read your rc file."
+    if ts_prompt_yn "Remove the old one at $other?"; then
+        if rm -f "$other" 2>/dev/null || sudo rm -f "$other"; then
+            ok "removed $other"
+        else
+            warn "couldn't remove it — do it by hand: sudo rm $other"
+        fi
+    else
+        warn "left in place; if 'dejima --version' looks stale, that file is why"
+    fi
+}
+
+ensure_on_path
+remove_stale_binary
+
+if [[ -n "$PATH_RC" ]]; then
+    printf '\n'
+    bold "Open a new terminal before running dejima"
+    info "This shell's PATH was set before the install, so 'dejima' won't be"
+    info "found here yet. A new terminal picks it up from $PATH_RC."
+    info "Or, in this shell right now:  export PATH=\"$BIN_DIR:\$PATH\""
+fi
+
 printf '\n'
 bold "Tailscale"
 if command -v tailscale >/dev/null 2>&1; then
@@ -136,13 +299,30 @@ else
         if [[ "$os" == "darwin" ]]; then
             if command -v brew >/dev/null 2>&1; then
                 info "Running: brew install tailscale"
-                brew install tailscale && ok "Tailscale installed" || warn "brew install tailscale failed"
+                if brew install tailscale; then
+                    ok "Tailscale installed"
+                    # The formula ships tailscaled but never starts it, so
+                    # `tailscale up` would fail with "is Tailscale running?" —
+                    # installed, and useless, with nothing saying why.
+                    info "Starting the Tailscale service (needs your password)…"
+                    if sudo brew services start tailscale >/dev/null 2>&1; then
+                        ok "Tailscale service started"
+                    else
+                        warn "couldn't start it — run: sudo brew services start tailscale"
+                    fi
+                else
+                    warn "brew install tailscale failed"
+                fi
             else
                 warn "Homebrew not found — install from https://brew.sh, then 'brew install tailscale'"
             fi
         else
             info "Running: curl -fsSL https://tailscale.com/install.sh | sh"
-            curl -fsSL https://tailscale.com/install.sh | sh && ok "Tailscale installed" || warn "Tailscale install failed"
+            if curl -fsSL https://tailscale.com/install.sh | sh; then
+                ok "Tailscale installed"
+            else
+                warn "Tailscale install failed"
+            fi
         fi
     fi
 fi
@@ -154,6 +334,7 @@ if command -v tailscale >/dev/null 2>&1; then
             info "▸ Next: 'sudo tailscale up' — this may ask for your password, then opens a"
             info "  browser tab for sign-in. Sign in to the SAME tailnet as your Dejima server."
             info "  (Ctrl-C to skip; sign in later with 'sudo tailscale up'.)"
+            # shellcheck disable=SC2024  # the tty must be opened as the invoking user, which is the intent
             sudo tailscale up </dev/tty 2>/dev/tty || warn "'tailscale up' didn't complete"
         else
             info "Non-interactive run — sign in later with: sudo tailscale up"
@@ -169,31 +350,94 @@ fi
 # ---------------------------------------------------------------------------
 printf '\n'
 bold "Server address"
-info "If a teammate sent you a 'dejima-invite:' code, you can SKIP this — just press"
-info "Enter, then run 'dejima join <invite>' afterwards (it carries the address + token)."
-info "Otherwise: on the SERVER (mac mini / linux box), run 'tailscale ip -4' for its address."
-info "Example: 100.84.12.7"
+
+# probe_host: does something answer the daemon's port on this address?
+probe_host() {
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w2 "$1" 7273 >/dev/null 2>&1
+    else
+        # Fallback: bash's /dev/tcp (works on macOS bash too)
+        (exec 3<>/dev/tcp/"$1"/7273) 2>/dev/null || return 1
+        exec 3<&- 2>/dev/null || true
+        exec 3>&- 2>/dev/null || true
+    fi
+}
+
+# Tailscale already knows every machine on this tailnet. Sending the user to a
+# DIFFERENT computer to run `tailscale ip -4`, write the number down, and carry
+# it back is asking them to perform a lookup we can do from here — and it was
+# the step where the answer to "wait, what am I supposed to enter?" was not
+# obvious. Ask the tailnet, and offer whatever is running a Dejima daemon.
+discovered=""
+if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+    info "Looking for your Dejima server on your Tailscale network…"
+    for ts_ip in $(tailscale status 2>/dev/null | awk '$1 ~ /^100\./ {print $1}'); do
+        if probe_host "$ts_ip"; then
+            discovered="$discovered $ts_ip"
+        fi
+    done
+    discovered="${discovered# }"
+fi
+
+# Lead with the common case. This used to open with the invite escape hatch,
+# which reads as a question you have to answer ("am I using an invite?") — and
+# for the solo operator, who set the server up themselves and has no teammate to
+# get a code from, the answer is always no. The invite line stays, demoted to
+# what it is: the exception.
+default_host=""
+if [[ -n "$discovered" && "$discovered" != *" "* ]]; then
+    default_host="$discovered"
+    ok "Found a Dejima server at $default_host"
+    info "Press Enter to use it, or type a different address."
+elif [[ -n "$discovered" ]]; then
+    info "Found more than one Dejima server on your network:"
+    for ts_ip in $discovered; do info "  $ts_ip"; done
+    info "Type the one you want below."
+else
+    info "TYPE THE ADDRESS of the Mac you installed Dejima on — its Tailscale IP,"
+    info "which looks like 100.101.102.103. To find it, run this ON THAT MAC:"
+    info "    tailscale ip -4"
+    info "(If Tailscale isn't signed in on this Mac yet, press Enter to skip — you"
+    info " can set the address later with: dejima profile add <name> <ip>:7273)"
+fi
+info "(Joining someone else's server from a 'dejima-invite:' code? Press Enter to"
+info " skip this, then run 'dejima join <invite>' — it carries the address + token.)"
 
 server_host=""
 if [[ -e /dev/tty && -z "${DEJIMA_HOST_PREFILL:-}" ]]; then
     # Default port assumed below; user types IP or hostname only. The '▸' marks
     # this as an input prompt so it doesn't read as a blank/hung line.
-    read -r -p "▸ Enter your server's tailnet IP or hostname (or press Enter to skip): " server_host </dev/tty 2>/dev/null || true
+    if [[ -n "$default_host" ]]; then
+        read -r -p "▸ Server address [$default_host]: " server_host </dev/tty 2>/dev/null || true
+        server_host="${server_host:-$default_host}"
+    else
+        read -r -p "▸ Type your server's Tailscale IP, e.g. 100.101.102.103 (or press Enter to skip): " server_host </dev/tty 2>/dev/null || true
+    fi
 elif [[ -n "${DEJIMA_HOST_PREFILL:-}" ]]; then
     server_host="$DEJIMA_HOST_PREFILL"
+elif [[ -n "$default_host" ]]; then
+    # Non-interactive, but the tailnet answered — take it rather than finishing
+    # the install with no server configured at all.
+    server_host="$default_host"
 fi
 
 if [[ -n "$server_host" ]]; then
     # Strip a user-supplied port, then re-attach the canonical 7273.
     server_host="${server_host%:*}"
     candidate_host="${server_host}:7273"
-    info "Probing $candidate_host…"
+    # BRACES ARE LOAD-BEARING. `$candidate_host…` — a variable abutting a
+    # multibyte character with no delimiter — is read by macOS's bash 3.2 as one
+    # long undefined NAME, and `set -u` then kills the installer at the last
+    # step with "candidate_host?: unbound variable". Bash 5 parses it correctly,
+    # which is why it survived: it fails only on the platform most users run it
+    # on, and only for the users who actually answered the prompt.
+    info "Probing ${candidate_host}…"
     probe_ok=0
     if command -v nc >/dev/null 2>&1; then
         if nc -z -w3 "$server_host" 7273 >/dev/null 2>&1; then probe_ok=1; fi
     else
         # Fallback: bash's /dev/tcp (works on macOS bash too)
-        if (exec 3<>/dev/tcp/$server_host/7273) 2>/dev/null; then
+        if (exec 3<>"/dev/tcp/$server_host/7273") 2>/dev/null; then
             probe_ok=1
             exec 3<&-
             exec 3>&-
@@ -217,11 +461,27 @@ if [[ -n "$server_host" ]]; then
         ok "saved a durable connection profile ($server_host → $candidate_host)"
     fi
 
-    # Pick the most appropriate rc file: zsh on macOS, bash on Linux.
+    # Pick the rc file by the user's SHELL, not by the OS.
+    #
+    # Choosing by OS assumes macOS means zsh and Linux means bash. Both halves
+    # are wrong often enough to matter: zsh on Linux got DEJIMA_HOST written to
+    # .bashrc, and bash on macOS got it written to .zshenv. Either way the file
+    # is never read, the variable is never set, and nothing reports a problem —
+    # the install looks clean and the client cannot find the server.
+    #
+    # .zshenv rather than .zshrc for zsh, deliberately: it is read by EVERY zsh,
+    # including non-interactive ones, which is what an environment variable
+    # wants. (The PATH entry above goes to .zshrc for the opposite reason — on
+    # macOS, /etc/zprofile runs path_helper AFTER .zshenv and reorders PATH, so
+    # a PATH set there can be silently overridden.)
     rc=""
-    case "$os" in
-        darwin) rc="$HOME/.zshenv" ;;
-        linux)  rc="$HOME/.bashrc" ;;
+    case "$(basename "${SHELL:-}")" in
+        zsh)  rc="$HOME/.zshenv" ;;
+        bash) if [[ "$os" == "darwin" ]]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi ;;
+        *)    case "$os" in
+                  darwin) rc="$HOME/.zshenv" ;;
+                  *)      rc="$HOME/.bashrc" ;;
+              esac ;;
     esac
     line="export DEJIMA_HOST=$candidate_host"
     if [[ -n "$rc" ]] && ! grep -qxF "$line" "$rc" 2>/dev/null; then

@@ -48,6 +48,28 @@ headless macOS **system** install the privileged steps go through a scoped
 `/etc/sudoers.d/dejima` drop-in installed by `dejima service install --system`,
 so the restart needs no TTY.
 
+## Update blurb — "what's in this update"
+
+The update confirm pop-up (TUI, `u`/`U` and the Settings/Server update actions)
+shows a short **blurb of the release** plus a link to the full notes, so applying
+an update is an informed choice rather than a blind version bump. The blurb is
+not a separate artifact to maintain: it is derived from the **GitHub release
+body** — the notes we curate on every tag (`gh release edit <tag> --notes-file`).
+
+- The client fetches tag + body + page URL in one call
+  (`selfupdate.LatestReleaseInfo`, from `/releases/latest`).
+- `releaseBlurb()` (`cmd/dejima/tui.go`) distills the **first prose paragraph**
+  past any leading heading, strips markdown, and caps the length. So the blurb is
+  whatever leads the release notes.
+
+**The standard, going forward:** every release's notes must open with a
+one/two-sentence, user-facing summary of what changed — that lead paragraph *is*
+the in-app blurb. Keep the mechanics (asset lists, migration steps) below a `##`
+heading; the blurb-extractor skips the heading and takes the prose after it, so
+a notes body that starts with `## …` still yields a clean blurb from the first
+paragraph beneath it. This is enforced by convention + `TestReleaseBlurb`, not by
+a schema: as long as the notes lead with a human summary, the pop-up is right.
+
 ## Bootstrapping note
 
 The apply-by-default behavior shipped in **v0.1.13**. Updating *from* an earlier

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,7 +30,7 @@ import (
 func TestHostTerminalsAPI(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	h := srv.Handler()
 
 	// Off by default → 403 with a hint.
@@ -95,7 +97,7 @@ func TestDeleteGitHubIdentityWarnsAffectedIslands(t *testing.T) {
 	}
 
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	h := srv.Handler()
 
 	rr := do(t, h, http.MethodDelete, "/v1/credentials/github/work", "")
@@ -130,7 +132,7 @@ func TestGitHubReposHandler(t *testing.T) {
 	}
 
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	var gotName string
 	srv.reposFetch = func(_ context.Context, id githubid.Identity, _ int) (githubid.RepoList, error) {
 		gotName = id.Name
@@ -188,11 +190,17 @@ type fakeRuntime struct {
 	health           runtime.Health
 	statsByName      map[string]runtime.Stats // returned by StatsAll
 	volumeSizes      map[string]int64
+	mountsErr        error // forces ContainerMounts to fail (the "couldn't look" path)
+	reapsVal         *bool // overrides ContainerReapsOrphans; nil = true (as created)
+	dialFn           func(ctx context.Context, name, host string, port int) (net.Conn, error)
+	reapsErr         error // forces it to fail (the "couldn't look" path)
 	volumeCopies     [][2]string
 	startCalls       int
 	stopCalls        int
-	lastCopyMode     os.FileMode // mode of the source file last handed to CopyToContainer
-	failNewSession   bool        // when true, `tmux new-session` exits non-zero
+	lastCopyMode     os.FileMode       // mode of the source file last handed to CopyToContainer
+	lastBuildArgs    map[string]string // --build-arg set handed to the last BuildImage
+	buildCalls       int
+	failNewSession   bool // when true, `tmux new-session` exits non-zero
 	// execHook, when set, can intercept an Exec call and return a canned
 	// (stdout, stderr, exitCode); returning handled=false falls through to the
 	// default behavior. Lets a test drive e.g. git-status output.
@@ -255,6 +263,43 @@ func (f *fakeRuntime) VolumeSizes(context.Context) (map[string]int64, error) {
 	defer f.mu.Unlock()
 	return f.volumeSizes, nil
 }
+
+// ContainerMounts answers from the last create, so the fake container agrees
+// with what the server asked for. mountsErr forces the "couldn't look" path.
+// DialContainerPort backs the gateway proxy. Nil dialFn fails every dial, which
+// is the honest default: a test that wants a reachable gateway must provide one.
+func (f *fakeRuntime) DialContainerPort(ctx context.Context, name, host string, port int) (net.Conn, error) {
+	if f.dialFn == nil {
+		return nil, errors.New("fakeRuntime: no dialFn set")
+	}
+	return f.dialFn(ctx, name, host, port)
+}
+
+// ContainerReapsOrphans defaults to true — what the daemon creates — so only a
+// test that cares has to say anything.
+func (f *fakeRuntime) ContainerReapsOrphans(context.Context, string) (bool, error) {
+	if f.reapsErr != nil {
+		return false, f.reapsErr
+	}
+	if f.reapsVal != nil {
+		return *f.reapsVal, nil
+	}
+	return true, nil
+}
+
+func (f *fakeRuntime) ContainerMounts(context.Context, string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.mountsErr != nil {
+		return nil, f.mountsErr
+	}
+	var dests []string
+	for _, b := range f.lastCreate.BindMounts {
+		dests = append(dests, b.ContainerPath)
+	}
+	return dests, nil
+}
+
 func (f *fakeRuntime) Inspect(context.Context, string) (runtime.Health, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -299,7 +344,11 @@ func (f *fakeRuntime) ExecStream(_ context.Context, _ string, cmd []string) (io.
 	f.record(cmd)
 	return io.NopCloser(strings.NewReader("agent log output\n")), nil
 }
-func (f *fakeRuntime) BuildImage(context.Context, string, string, string) (io.ReadCloser, error) {
+func (f *fakeRuntime) BuildImage(_ context.Context, _, _, _ string, buildArgs map[string]string) (io.ReadCloser, error) {
+	f.mu.Lock()
+	f.lastBuildArgs = buildArgs
+	f.buildCalls++
+	f.mu.Unlock()
 	return io.NopCloser(strings.NewReader("")), nil
 }
 func (f *fakeRuntime) CopyToContainer(_ context.Context, _, hostPath, _ string) error {
@@ -336,7 +385,7 @@ func newTestServer(t *testing.T) (http.Handler, *fakeRuntime) {
 	t.Setenv("HOME", t.TempDir()) // redirect ~/.dejima to a temp dir
 	ledger.ResetDefault()         // re-resolve the ledger under this test's HOME
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	// Tests must not reach the network: treat every repo as anonymously cloneable
 	// so the create-time identity gate never fires here. Gate behavior is covered
 	// explicitly in create_identity_gate_test.go by stubbing this false.
@@ -919,7 +968,7 @@ func TestControlSocketNeverMountedIntoIsland(t *testing.T) {
 func TestAutonomyEnvAndExtraHosts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := &fakeRuntime{status: runtime.StatusRunning}
-	srv := NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := joinBackground(t, NewServer(f, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	srv.EnableAutonomy("host.docker.internal:7274")
 	h := srv.Handler()
 

@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dejima — secure infrastructure for AI coding agents on hardware you own</title>
-<meta name="description" content="Dejima is self-hosted infrastructure for AI coding agents (Claude Code, Codex, and more). Each agent is sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
-<meta property="og:title" content="Dejima">
-<meta property="og:description" content="Self-hosted infrastructure for AI coding agents. Each one sandboxed on hardware you own — isolated from your machine and each other, with no infrastructure to build. Open-source, up in minutes.">
+<meta name="description" content="Dejima is self-hosted infrastructure for AI coding agents (Claude Code, Codex, and more). Each project is sandboxed on hardware you own — isolated from your machine and your other projects, with no infrastructure to build. Open-source, up in minutes.">
+<meta property="og:title" content="Dejima — isolated projects, persistent sessions, on your hardware">
+<meta property="og:description" content="Self-hosted infrastructure for AI coding agents. Each project sandboxed on hardware you own — isolated from your machine and from your other projects, with no infrastructure to build. Open-source, up in minutes.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://dejima.tech/">
 <meta property="og:image" content="https://dejima.tech/assets/og-card.png">
@@ -21,13 +21,13 @@
 <script type="application/ld+json">
 {"@context":"https://schema.org","@graph":[
 {"@type":"WebSite","name":"Dejima","url":"https://dejima.tech/"},
-{"@type":"Organization","name":"Dejima","url":"https://dejima.tech/","logo":"https://dejima.tech/assets/logo.png","sameAs":["https://github.com/aoos/dejima"]},
-{"@type":"SoftwareApplication","name":"Dejima","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","url":"https://dejima.tech/","description":"Free, open-source, self-hosted infrastructure for running a fleet of AI coding agents (Claude Code, Codex, OpenClaw, and more) on hardware you own. Each agent is sandboxed in its own container, with brokered deny-all host access and a tamper-evident audit log.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"sameAs":["https://github.com/aoos/dejima"]},
+{"@type":"Organization","name":"Dejima","url":"https://dejima.tech/","logo":"https://dejima.tech/assets/logo.png","sameAs":["https://github.com/Scusi-Inc/dejima"]},
+{"@type":"SoftwareApplication","name":"Dejima","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","url":"https://dejima.tech/","description":"Free, open-source, self-hosted infrastructure for running a fleet of AI coding agents (Claude Code, Codex, OpenClaw, and more) on hardware you own. Each project runs in its own sandboxed container, isolated from the host and from your other projects, with brokered deny-all host access and a tamper-evident audit log.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"sameAs":["https://github.com/Scusi-Inc/dejima"]},
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Is Dejima free?","acceptedAnswer":{"@type":"Answer","text":"Yes. Dejima is free and open source under Apache 2.0. You run it on hardware you already own, so there is no subscription and no per-second usage bill. You bring your own agents and API keys, and pay only your normal LLM provider costs."}},
 {"@type":"Question","name":"Does my code leave my machine?","acceptedAnswer":{"@type":"Answer","text":"No. Your source, your files, and your credentials stay on your own box. The agents' model calls go out to whatever LLM provider you use, but there is no Dejima cloud in the loop and no vendor account holding your work. Auth is your own Tailscale identity."}},
 {"@type":"Question","name":"Which AI coding agents can I run?","acceptedAnswer":{"@type":"Answer","text":"Terminal agents you attach to, like Claude Code, Codex, or a plain shell, and headless runtimes like OpenClaw, Letta, and Hermes, or your own SDK loop. You bring your own API keys and can mix vendors freely across islands."}},
-{"@type":"Question","name":"What hardware do I need?","acceptedAnswer":{"@type":"Answer","text":"A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4 GB of RAM run a few agents comfortably. The same one install command works on all of them."}},
+{"@type":"Question","name":"What hardware do I need?","acceptedAnswer":{"@type":"Answer","text":"A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4 GB of RAM run a few agents comfortably. The same few commands work on all of them."}},
 {"@type":"Question","name":"How is this different from a cloud agent sandbox?","acceptedAnswer":{"@type":"Answer","text":"Services like E2B and Daytona run your agents on their infrastructure and bill by the second. Dejima runs on hardware you own, for free, with persistent sessions you attach to, a dashboard, brokered host access, and an audit log. Your code never leaves your perimeter."}}
 ]}
 ]}
@@ -48,13 +48,13 @@
   <a href="teams.html">Teams</a>
   <a href="build.html">Build</a>
   <a href="api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <section class="hero">
   <p class="hero-eyebrow">Manage a fleet of agents on your Mac mini, Linux box, local folder, or cloud.</p>
-  <h1 class="hero-h">Infrastructure for your agents.<br>None of the worry.</h1>
+  <h1 class="hero-h">Isolated projects, persistent sessions.<br>On your hardware.</h1>
   <p class="hero-sub">Run your coding agents without the tmux-and-SSH grind, and without handing them the whole machine.</p>
   <div class="hero-cta">
     <a class="btn-primary" href="quickstart.html">Run it yourself →</a>
@@ -62,37 +62,28 @@
   </div>
 </section>
 
-<section class="qol" aria-label="Why Dejima is nicer to use">
+<section class="qol" aria-label="Why Dejima">
   <div class="proof-tile">
-    <h3>Ditch the tmux + SSH grind</h3>
-    <p>Your sessions live on the server, so you can close your laptop and the agents keep working, then reconnect from any device. It runs on tmux under the hood, so you keep the multi-window power without babysitting SSH.</p>
+    <h3>Session resume</h3>
+    <p>Run <code>dejima</code>, hit enter on a project, and every agent in it opens at once, one window each. Close the laptop and they keep working; reattach from any device and the screens are where you left them. Switching projects is another keystroke, not another SSH login.</p>
   </div>
-  <div class="proof-tile">
-    <h3>Your whole fleet on one screen</h3>
-    <p>Every agent's status at a glance in one dashboard. Jump between projects and agents with a keystroke, so switching context costs you nothing.</p>
-  </div>
-  <div class="proof-tile">
-    <h3>It pings you when an agent needs you</h3>
-    <p>Get a notification the moment an agent finishes or is waiting on your input, so you're not watching a terminal to catch the handoff.</p>
-  </div>
-  <div class="proof-tile">
-    <h3>Many agents, no collisions</h3>
-    <p>Each agent gets its own git worktree automatically, so Claude Code, Codex, and headless runs can share one repo without stepping on each other.</p>
-  </div>
-</section>
-<p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
-
-<section class="proof" aria-label="Contained by design">
   <div class="proof-tile">
     <h3>Secure sandboxing</h3>
-    <p>Rogue agents can't break out. Each one is sealed in its own walled-off island, with no reach to your host machine, your files, or your other projects. Host access is deny-all, granted file by file.</p>
+    <p>Rogue agents can't break out. Each project is sealed in its own island, with no reach to your host machine, your files, or your other projects. Run several agents inside one, each on its own git worktree. Host files and MCP servers are gated: deny-all by default, opened one grant at a time. Outbound traffic is attributed to the island that made it and logged, and you can switch any island to an allowlist.</p>
   </div>
   <div class="proof-tile">
-    <h3>Your code never leaves your box</h3>
-    <p>It all runs on hardware you own. The agents' model calls go out, but your source, your files, and your credentials stay inside your perimeter. There's no managed cloud in the loop and no vendor account holding your work.</p>
+    <h3>Fleet management</h3>
+    <p>Status, CPU, memory, and token cost per session, for every agent at once. Summon it from inside a session to see what else is running, then drop back in; the agent never notices. Hibernate what's idle, wake what isn't, and jump between projects with a keystroke.</p>
+  </div>
+  <div class="proof-tile">
+    <h3>Clipboard and file transfer</h3>
+    <p>A remote shell normally costs you the clipboard and drag-drop. Here <kbd>Ctrl-V</kbd> pastes a screenshot straight to the agent, dragging a file onto the window uploads it, and pointing it at any local path does the same. The agent gets the in-island path; <code>dejima cp</code> moves work back out. No <code>scp</code>.</p>
   </div>
 </section>
+<p class="band-compat">Works with Claude Code, Codex, OpenClaw, or any command you supervise. Point it at frontier APIs, or at open-weights models running on your own box through Ollama.</p>
+<p class="qol-more">Still SSHing into tmux to run your agents? <a href="guides/tmux-ssh-agents.html">Read the full story.</a> Working with others? <a href="connect/">Onboard a teammate to their own private fleet</a>, without sharing your box.</p>
 
+<p class="startline">Every session starts the same way: <code>dejima</code></p>
 <figure class="demo-shot">
   <img src="assets/dejima-screenshot1.png" width="1200" loading="lazy"
        alt="The Dejima TUI: a live dashboard listing islands (dejima, janus, wildfire) and the agents running in each — with status, memory and CPU use, and a detail panel for the selected island.">
@@ -107,18 +98,56 @@
       <a id="fit-chatgpt" class="deeplink" href="https://chatgpt.com/" target="_blank" rel="noopener">Open in ChatGPT →</a>
       <span class="fit-hint">Opens in your own AI — nothing is sent to us.</span>
     </div>
-    <textarea id="fit-prompt" class="fit-prompt" rows="8" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
+    <textarea id="fit-prompt" class="fit-prompt" rows="10" spellcheck="false" aria-label="Prompt to paste into an LLM"></textarea>
   </div>
 </section>
 
 <h2 id="why-dejima">The hard parts of running agents, already handled</h2>
 <p><strong>You shouldn't have to become an infrastructure engineer to run agents safely.</strong> That usually means wiring up containers, networking, credentials, and session plumbing yourself. Dejima is that layer, already built — and it rests on three things:</p>
 <ul>
-  <li><strong>Ease.</strong> One line installs it; run <code>dejima</code> and the TUI walks you to a sandboxed agent in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same one command.</li>
-  <li><strong>Security.</strong> Every agent is walled off from your machine, your files, and the other agents; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
+  <li><strong>Ease.</strong> A few commands install it; run <code>dejima</code> and the TUI walks you to a sandboxed agent in minutes. It manages the containers, sessions, git worktrees, and logins so you don't — on your Mac mini, a VPS, or your own cloud VM, same handful of commands.</li>
+  <li><strong>Security.</strong> Every project is walled off from your machine, your files, and your other projects; host access is deny-all, granted explicitly and read-only. The LLM calls go out, but <strong>your code, files, and auth never leave your box</strong> — auth is your Tailscale identity, not a vendor account. It fits NDA, regulated, and client-confidential work in a way a managed cloud can't.</li>
   <li><strong>Audit.</strong> Every privileged crossing is written to a tamper-evident, hash-chained ledger you can read, export, and verify — so you can <em>prove</em> what an agent did, not just hope.</li>
 </ul>
 <p class="small">Running agents for a team that has to <em>prove</em> what they did? See <a href="teams.html">Dejima for teams →</a></p>
+
+<h2 id="features">Everything you need to run a fleet safely</h2>
+<p class="feat-lede">Past the four above, this is what you get for running agents on your own box.</p>
+<div class="featgrid">
+  <div class="feat">
+    <h3>Brokered host access</h3>
+    <p>Grant an island one host folder, read-only. Everything else stays invisible.</p>
+  </div>
+  <div class="feat">
+    <h3>Brokered MCP servers</h3>
+    <p>You curate which MCP servers exist. An island reaches one only once you grant it.</p>
+  </div>
+  <div class="feat">
+    <h3>Egress visibility</h3>
+    <p>See every host an island reaches. Put it on an allowlist when you want one.</p>
+  </div>
+  <div class="feat">
+    <h3>Audit trail</h3>
+    <p>Every brokered crossing is hash-chained, and verifiable after the fact.</p>
+  </div>
+  <div class="feat">
+    <h3>Agent messaging</h3>
+    <p>Agents in an island hand off work to each other with <code>dejima msg</code>.</p>
+  </div>
+  <div class="feat">
+    <h3>Cost and token tracking</h3>
+    <p>Spend and token counts per agent, for the session it's in, next to everything else.</p>
+  </div>
+  <div class="feat">
+    <h3>Local open-weights models</h3>
+    <p>A curated, hardware-aware catalog. Islands share one Ollama backend on your box.</p>
+  </div>
+  <div class="feat">
+    <h3>Scheduled wakes</h3>
+    <p>Wake a hibernated island on a timer and hand its agent the task to run.</p>
+  </div>
+</div>
+<p class="small">Also in the box: <strong>headless agents</strong> (OpenClaw, Letta, your own loop) alongside terminal ones · <strong>lifecycle verbs</strong> (<code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>) · <strong>roles and invites</strong> for a shared server · <strong>one-key updates</strong> that move the client and daemon together · an <strong>HTTP/WebSocket API</strong> and <strong>webhook events</strong> to build on.</p>
 
 <h2>The isolation of a cloud sandbox, on hardware you own</h2>
 <p>You're probably weighing Dejima against however you run agents today. Here's where it lands:</p>
@@ -135,11 +164,12 @@
   </tr>
   <tr><td>Isolated workspace per project</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>✓</td></tr>
   <tr><td>Several agents at once, one dashboard</td><td><strong>✓</strong></td><td>$</td><td>✗</td><td>✗</td><td>manual</td><td>✗</td></tr>
-  <tr><td>Each agent walled off from host &amp; each other</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>~ (from host)</td></tr>
+  <tr><td>Agents sandboxed from your host machine</td><td><strong>✓</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>~ (from host)</td></tr>
   <tr><td>Survives disconnect, multi-device</td><td><strong>✓</strong></td><td>✓</td><td>✗</td><td>~</td><td>✓</td><td>✗</td></tr>
   <tr><td>Runs where you put it — local or your own cloud</td><td><strong>✓</strong></td><td>✓</td><td>$</td><td>✓</td><td>✓</td><td>✓</td></tr>
   <tr><td>Audit log of host-file access</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
   <tr><td>Curated MCP servers, brokered &amp; audited</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
+  <tr><td>Managed local open-weights models (via Ollama)</td><td><strong>✓</strong></td><td>✗</td><td>✗</td><td>✗</td><td>manual</td><td>manual</td></tr>
   <tr><td>Up in minutes, nothing to build</td><td><strong>✓</strong></td><td>✗</td><td>~</td><td>~</td><td>~</td><td>✓</td></tr>
 </table>
 </div>
@@ -149,7 +179,7 @@
 <h2 id="architecture">One host. Many sealed islands.</h2>
 <figure class="demo-shot diagram">
   <img src="assets/architecture.png" width="1120" loading="lazy"
-       alt="How Dejima works: you drive it from a CLI, TUI, or your own app over a websocket + HTTP API on Tailscale. That reaches the Dejima host — a Mac mini, VPS, or cloud VM — which holds islands: 'web' running claude-code, openclaw, and a shell; 'api' running codex, letta, and a headless agent. Each island is one container; each agent gets its own git worktree, sandboxed from the host and the other agents.">
+       alt="How Dejima works: you drive it from a CLI, TUI, or your own app over a websocket + HTTP API on Tailscale. That reaches the Dejima host — a Mac mini, VPS, or cloud VM — which holds islands: 'web' running claude-code, openclaw, and a shell; 'api' running codex, letta, and a headless agent. Each island is one container, sandboxed from the host and from the other islands; the agents inside one island share it, each with its own git worktree.">
 </figure>
 <details class="ascii-fallback">
   <summary>Text version</summary>
@@ -166,7 +196,7 @@
 │   └────────────────────────┘    └────────────────────────┘     │
 │                                                                │
 │ per island: one container · shared home + credentials          │
-│ per agent:  own git worktree · sandboxed from host & others    │
+│ per agent:  own git worktree · shares the island with its peers│
 └────────────────────────────────────────────────────────────────┘</code></pre>
 </details>
 <p>An island is one container holding <strong>one or more agents</strong>. They share the workspace, credentials, and tool-auth, but each works on its own <strong>git worktree</strong> — so they collaborate without clobbering each other. Islands can't see each other; that blindness is the security boundary.</p>
@@ -177,27 +207,12 @@
 </ul>
 <p class="small">Both get the same isolation, lifecycle, events, and one-API management — bring your own keys and mix vendors freely.</p>
 
-<h2 id="features">Everything you need to run a fleet safely</h2>
-<ul>
-  <li><strong>Isolated islands</strong> — one container per project; own <code>$HOME</code>, credentials, network. Islands can't see each other.</li>
-  <li><strong>Multiple agents per island</strong> — N agents share workspace + tool-auth, each on its own git worktree.</li>
-  <li><strong>Terminal &amp; headless agents</strong> — attach to CLIs (Claude Code, Codex) or run background loops/workers.</li>
-  <li><strong>Persistent sessions</strong> — survive disconnect, sleep, device switch; multiple devices share one screen.</li>
-  <li><strong>Lifecycle verbs</strong> — <code>hibernate</code> · <code>wake</code> · <code>reset</code> · <code>upgrade</code> · <code>purge</code>.</li>
-  <li><strong>Brokered host-file access (Port)</strong> — grant an island scoped, read-only host folders; deny-all by default.</li>
-  <li><strong>Brokered MCP servers</strong> — grant an island host-curated MCP servers through a fixed method allow-list; deny-all, every call ledgered.</li>
-  <li><strong>Tamper-evident ledger</strong> — every brokered file crossing is hash-chained; verify with <code>dejima audit --verify</code>.</li>
-  <li><strong>Home Islands</strong> — run a 24/7 assistant daemon contained, not naked on the host.</li>
-  <li><strong>HTTP/WebSocket API</strong> — one control surface for CLI, TUI, dashboards, bots.</li>
-  <li><strong>Webhook events</strong> — island/agent lifecycle + agent-state pushed to your tooling.</li>
-  <li><strong>Self-hosted</strong> — Mac mini / VPS / cloud VM; identical behavior, over Tailscale.</li>
-</ul>
 
 <h2 id="guides">Guides</h2>
 <p>Short, practical walkthroughs for getting a fleet running on your own box.</p>
 <div class="guide-list">
   <a class="guide-card" href="guides/mac-mini-agent-server.html">
-    <h3>Turn a Mac mini into an AI agent server (5 minutes, free)</h3>
+    <h3>Turn a Mac mini into an AI agent server (free)</h3>
     <p>Install once, then run Claude Code, Codex, and OpenClaw contained on a mini in the closet.</p>
   </a>
   <a class="guide-card" href="guides/tmux-ssh-agents.html">
@@ -223,7 +238,7 @@
   </div>
   <div class="faq-item">
     <h3>What hardware do I need?</h3>
-    <p>A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4&nbsp;GB of RAM run a few agents comfortably. The same one install command works on all of them.</p>
+    <p>A Mac mini, a Linux server or VPS, a cloud VM in your own account, or just your laptop. Two cores and 4&nbsp;GB of RAM run a few agents comfortably. The same few commands work on all of them.</p>
   </div>
   <div class="faq-item">
     <h3>How is this different from a cloud agent sandbox?</h3>
@@ -234,7 +249,7 @@
 
 <section class="cta-band">
   <h2>Run a fleet on your own box</h2>
-  <p>On one machine, or on a server you drive from your laptop. One line to install, one word to run. Alpha and open source.</p>
+  <p>On one machine, or on a server you drive from your laptop. A few commands to install, one word to run. Free and open source.</p>
   <a class="btn-primary" href="quickstart.html">Get started →</a>
 </section>
 
@@ -250,8 +265,8 @@
   <a href="teams.html">Teams</a>
   <a href="build.html">Build</a>
   <a href="api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <a href="https://github.com/aoos/dejima/blob/master/docs/roadmap.md" target="_blank" rel="noopener">Roadmap</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima/blob/master/docs/roadmap.md" target="_blank" rel="noopener">Roadmap</a>
 </footer>
 
 </main>
@@ -270,40 +285,29 @@
   var openapiURL = base + 'openapi.yaml';
 
   ta.value = [
-    "I'm deciding whether to use Dejima. Help me figure out if it's a good fit for my situation.",
+    "I'm deciding whether to use Dejima. Interview me about my setup, then tell me honestly",
+    "whether it fits.",
     "",
-    "IMPORTANT: answer from Dejima's OWN pages, not your training data or a web search",
-    "(those describe other tools and get Dejima wrong). Please FETCH and read these first:",
-    "- Overview / how it works: " + base,
-    "- Quickstart / install:    " + base + "quickstart.html",
-    "- API reference:           " + apiURL,
-    "- Machine-readable spec:   " + openapiURL,
+    "Dejima is free, open-source, self-hosted infrastructure for running AI coding agents",
+    "(Claude Code, Codex, OpenClaw, or any command you supervise) on hardware I own: a Mac",
+    "mini, a Linux box, a VPS, my own cloud VM, or my laptop. Each project runs sandboxed in",
+    "its own container, agents each get their own git worktree, and sessions survive a closed",
+    "laptop. Host file access is deny-all and audited. No managed cloud, no per-second bill,",
+    "bring your own keys. It's alpha.",
     "",
-    "What Dejima is (correct any assumptions against the pages above):",
-    "- A self-hosted, open-source runtime for running a FLEET of AI coding agents",
-    "  (Claude Code, Codex, others) on hardware you OWN — a Mac mini, a server, or a",
-    "  cloud VM you control. No managed cloud; no bundled model weights (you bring your",
-    "  own agents + API keys).",
-    "- Each project runs in an isolated container (an \"island\"); one or more agents per",
-    "  island, each on its own git worktree, sandboxed from your machine and each other.",
-    "  Persistent multi-attach sessions; one HTTP/WebSocket API.",
-    "- It is NOT heavy to operate: one install command sets up Docker, Tailscale, and the",
-    "  background service for you — up in minutes, no infrastructure to build. You do not",
-    "  hand-manage containers/backups/upgrades to use it day to day.",
-    "- Brokered, deny-by-default access to host files and MCP servers, every crossing",
-    "  written to a tamper-evident audit log.",
-    "- Fine for a SINGLE agent on one project too — running a fleet is optional, not required.",
+    "Don't answer from training data or a web search: you'll find a 17th-century Japanese",
+    "island or some unrelated tool. Read these first, starting with the first one, which is",
+    "written for you and covers what the site leaves out:",
+    "- " + base + "fit.txt",
+    "- " + base,
+    "- " + base + "quickstart.html",
+    "- https://github.com/Scusi-Inc/dejima",
     "",
-    "Before you answer, INTERVIEW me about my use case. Ask these one at a time and wait",
-    "for my reply before moving on:",
-    "- What are you building, and on what OS / hardware (Mac mini, Linux box, cloud VM)?",
-    "- How many agents and projects do you run at once? Solo, or on a team?",
-    "- Any privacy, NDA, or compliance constraints on your code?",
-    "- How do you run agents today (tmux + SSH, devcontainers, a cloud sandbox, nothing yet)?",
+    "If you can't browse, say so, and answer from the description above while telling me",
+    "what you couldn't check.",
     "",
-    "Once you have my answers, give a candid verdict: given what Dejima actually does (per the",
-    "pages above), is it a good fit for me? Be honest about where it isn't, and suggest",
-    "alternatives if it's not a match."
+    "Then give me a candid verdict: lead with yes or no, name the deciding factor, and be",
+    "straight with me if it isn't a fit."
   ].join("\n");
 
   btn.addEventListener('click', function () {

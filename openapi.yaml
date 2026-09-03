@@ -20,7 +20,7 @@ info:
     `SessionEnvelope` schema for the wire protocol.
 servers:
   - url: http://{host}
-    description: Daemon over the tailnet (DEJIMA_HOST, e.g. 100.84.12.7:7273)
+    description: Daemon over the tailnet (DEJIMA_HOST, e.g. 100.101.102.103:7273)
     variables:
       host:
         default: 127.0.0.1:7273
@@ -168,6 +168,64 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/UpdateResourcesResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/agents/{id}/update:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Agent id
+    post:
+      tags: [agents]
+      summary: Update an agent's framework in place, then relaunch it
+      description: >-
+        Runs the agent framework's own upgrade inside the island (npm/pipx/pip,
+        per agent type) and RELAUNCHES the agent — updating the package while the
+        old process keeps running changes the version on disk and not the one in
+        memory. Agents bundled in the island image (claude-code) return 409
+        naming `dejima upgrade` instead, because their version is the image's.
+      operationId: updateAgentFramework
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAgentRequest" }
+      responses:
+        "200":
+          description: OK — what ran, and whether the agent came back on the new version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateAgentResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The agent is image-bundled, its type is unknown, or the island is not running
+  /v1/islands/{name}/github-identity:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    put:
+      tags: [islands]
+      summary: Repoint the island at a different stored GitHub identity
+      description: >-
+        Changes which identity the island clones and pushes as, and
+        re-materializes its gh credential and commit-author config immediately —
+        no container recreate, so agent sessions survive. An identity the daemon
+        cannot resolve is refused rather than written.
+      operationId: setIslandGitHubIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetIslandGitHubIdentityRequest" }
+      responses:
+        "200":
+          description: OK — the pin written and the identity it resolves to
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SetIslandGitHubIdentityResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The pin is empty and the daemon has no default identity
   /v1/islands/{name}/identity:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     put:
@@ -197,6 +255,55 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IslandInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/github/host-credential:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: Whether this island may use the host operator's GitHub login
+      description: >
+        Host-owned islands do not inherit the operator's `gh` login; it is an
+        explicit, revocable grant like every other gate. Tenant islands are never
+        eligible — they use a per-island GitHub identity instead.
+      operationId: getHostGitHubCredential
+      responses:
+        "200":
+          description: OK — the island's host-GitHub grant state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostGitHubCredential" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [islands]
+      summary: Grant this island the host operator's GitHub login
+      description: >
+        Operator-only, and account-wide in effect — the island gets whatever the
+        host's `gh` credential can reach. Refused for a tenant island, which
+        should use a per-island identity. Takes effect when the container is next
+        created, since the credential is a bind mount.
+      operationId: grantHostGitHubCredential
+      responses:
+        "200":
+          description: OK — the resulting grant state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostGitHubCredential" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [islands]
+      summary: Revoke this island's host-GitHub grant
+      description: >
+        The record is updated immediately; the mount survives until the container
+        is recreated, so the grants view reports configured-vs-effective rather
+        than implying the credential is already gone.
+      operationId: revokeHostGitHubCredential
+      responses:
+        "200":
+          description: OK — the resulting grant state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostGitHubCredential" }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/schedules:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
@@ -334,6 +441,61 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Event" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/secrets:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [islands]
+      summary: The island's secrets — names and metadata only
+      description: >
+        Values are NEVER returned by any endpoint. Readable by any role,
+        including an in-island token: knowing which secrets exist reveals
+        nothing the agent's own environment doesn't already.
+      operationId: listSecrets
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretsResponse" }
+  /v1/islands/{name}/secrets/{key}:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - name: key
+        in: path
+        required: true
+        description: The secret's name (an environment-variable identifier).
+        schema: { type: string }
+    put:
+      tags: [islands]
+      summary: Set or rotate a secret
+      description: >
+        Rotation keeps the original creation date and bumps updated_at.
+        Reserved names are refused with 400 — several environment variables are
+        interpreted by the loader, the shell, or a language runtime before any
+        program logic runs, and HTTP(S)_PROXY would disable the egress gate.
+        An in-island token is refused with 403: an agent that can plant a value
+        its peers trust is an escalation path.
+      operationId: putSecret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutSecretRequest" }
+      responses:
+        "200":
+          description: Stored; returns metadata (never the value)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretMeta" }
+        "400": { description: "Reserved or malformed name, or an empty value" }
+        "403": { description: Island tokens may not write secrets }
+    delete:
+      tags: [islands]
+      summary: Remove a secret
+      operationId: deleteSecret
+      responses:
+        "204": { description: Removed (also when it was not present) }
+        "403": { description: Island tokens may not remove secrets }
   /v1/islands/{name}/egress:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -475,11 +637,22 @@ paths:
       tags: [agents]
       summary: Remove an agent (any agent; islands may have zero)
       operationId: removeAgent
+      parameters:
+        - name: force
+          in: query
+          schema: { type: boolean }
+          description: >
+            Bypass the worktree guard, which otherwise refuses the removal when
+            the agent's worktree has uncommitted changes (removing the agent
+            prunes that worktree and discards them permanently; its branch and
+            commits are kept) or when the worktree can't be checked at all —
+            island hibernated, container wedged. An island token's self-reap of an
+            ephemeral sub-agent skips the guard without this flag.
       responses:
         "204": { description: Removed }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Refused — the agent is the container's PID 1 (a headless first agent); hibernate or purge instead
+          description: Refused — the agent is the container's PID 1 (a headless first agent; hibernate or purge instead), or its worktree holds uncommitted work (retry with force=true)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -504,6 +677,32 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentInfo" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/agents/{id}/restart:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AgentID"
+    post:
+      tags: [agents]
+      summary: Relaunch an agent in place so it picks up a changed environment (e.g. a new secret)
+      description: >
+        Kills and re-creates the agent's tmux session so it starts in a fresh
+        login shell. `{"resume": true}` continues the agent's previous
+        conversation when the framework supports it (claude-code). The island
+        must be running. Operator-only.
+      operationId: restartAgent
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { resume: { type: boolean, description: "continue the previous conversation instead of a cold start" } }
+      responses:
+        "200":
+          description: OK — { restarted, resumed }
+          content:
+            application/json: { schema: { type: object } }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/agents/{id}/config:
     parameters:
@@ -531,7 +730,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/islands/{name}/session:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AttachLabel"
     get:
       tags: [agents]
       summary: "WebSocket PTY stream (multi-attach). NOTE: WebSocket upgrade — see SessionEnvelope."
@@ -543,6 +744,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Name"
       - $ref: "#/components/parameters/AgentID"
+      - $ref: "#/components/parameters/AttachLabel"
     get:
       tags: [agents]
       summary: "Per-agent WebSocket PTY stream. NOTE: WebSocket upgrade — see SessionEnvelope."
@@ -551,7 +753,9 @@ paths:
       responses:
         "101": { description: Switching Protocols (WebSocket) }
   /v1/islands/{name}/shell/session:
-    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/AttachLabel"
     get:
       tags: [agents]
       summary: "WebSocket PTY stream for the island's contained shell at /workspace (shared, resumable; not an agent). NOTE: WebSocket upgrade — see SessionEnvelope."
@@ -616,6 +820,198 @@ paths:
               schema: { $ref: "#/components/schemas/MailboxSendResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/credentials/github/{name}/default:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Name of an EXISTING GitHub identity
+    post:
+      tags: [credentials]
+      summary: Choose which GitHub identity is used by default
+      operationId: setGitHubDefaultIdentity
+      description: >
+        Points the caller's default at an identity that already exists. The
+        default is what the daemon resolves when nothing names an identity —
+        island clones, the release check, `gh` inside an island.
+
+        Separate from PUT /v1/credentials/github/{name}, which requires a login
+        and token: choosing among credentials you already hold should not mean
+        supplying one again. Never creates — an unknown name is 404, not a new
+        identity.
+      responses:
+        "200":
+          description: The caller's identities, with the new default marked
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/GitHubIdentitiesResponse" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/agents/{id}/gateway/{path}:
+    description: >
+      Relay to the agent framework's console running on the container's
+      loopback. The daemon relays BYTES and does not model the framework's API,
+      so a framework works here the day it declares a gateway port.
+
+      Why a proxy rather than a published address: a browser cannot run
+      `ssh -L`, so an address only helps a client that could already dial it;
+      and the pinned console credential is injected server-side, so the client
+      never holds it. Returning that token to a client would put a credential in
+      a browser.
+
+      Not reachable by an island token. An island driving an assistant through
+      the daemon is the containment break the token scoping exists to prevent.
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Agent id
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+        description: Path within the gateway, relayed verbatim
+    get:
+      tags: [agents]
+      summary: Proxy a GET to an agent's framework console
+      operationId: proxyAgentGatewayGet
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    post:
+      tags: [agents]
+      summary: Proxy a POST to an agent's framework console
+      operationId: proxyAgentGatewayPost
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    put:
+      tags: [agents]
+      summary: Proxy a PUT to an agent's framework console
+      operationId: proxyAgentGatewayPut
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    delete:
+      tags: [agents]
+      summary: Proxy a DELETE to an agent's framework console
+      operationId: proxyAgentGatewayDelete
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    patch:
+      tags: [agents]
+      summary: Proxy a PATCH to an agent's framework console
+      operationId: proxyAgentGatewayPatch
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    head:
+      tags: [agents]
+      summary: Proxy a HEAD to an agent's framework console
+      operationId: proxyAgentGatewayHead
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+    options:
+      tags: [agents]
+      summary: Proxy an OPTIONS to an agent's framework console
+      operationId: proxyAgentGatewayOptions
+      responses:
+        "101":
+          description: >
+            Protocol upgraded (websocket). The console holds a live connection;
+            the proxy carries it end to end rather than serving the page and
+            dropping the socket.
+        "200": { description: Relayed from the gateway }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: >
+            The gateway could not be reached inside the island — starting,
+            installing, or stopped. Upstream, not a daemon fault.
+  /v1/islands/{name}/agents/{id}/gateway-ready:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Agent id
+    get:
+      tags: [agents]
+      summary: Whether the agent's console is serving yet
+      operationId: getAgentGatewayReady
+      description: >
+        Exposed so a client does not reimplement the probe and drift from the
+        one `dejima agent open` uses.
+      responses:
+        "200":
+          description: Readiness
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/GatewayReadiness" } }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/islands/{name}/files/{path}:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -623,7 +1019,22 @@ paths:
         in: path
         required: true
         schema: { type: string }
-        description: File path within the island (defaults to the primary worktree)
+        description: |
+          File path within the island (defaults to the primary worktree).
+
+          MULTI-SEGMENT. The daemon route is `{path...}` — a wildcard that
+          captures every remaining segment, so this value contains slashes and
+          they are part of the path, not encoded data.
+
+          OpenAPI has no way to say that, and this is a plain `type: string`
+          path parameter because there is no truthful alternative. A conforming
+          generated client percent-encodes a simple path parameter WHOLE, so
+          `/workspace/docs/spec.md` is sent as `%2Fworkspace%2Fdocs%2Fspec.md`
+          and matches no route. That is the spec's limitation, not the client's
+          bug, and it has already cost one integrator an afternoon.
+
+          If you are generating a client: bypass it for this operation and build
+          the URL yourself, encoding each segment but not the separators.
     get:
       tags: [exec-and-files]
       summary: Read a file from an island
@@ -720,7 +1131,16 @@ paths:
             schema: { $ref: "#/components/schemas/PortIntakeRequest" }
       responses:
         "200":
-          description: OK
+          description: OK — everything requested crossed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortIntakeResponse" }
+        "207":
+          description: >-
+            Partial import: some files crossed and some did not. `files` is what
+            arrived and `failed` says what did not and why. Nothing is rolled
+            back. Deliberately not 200 — a success code over an incomplete
+            result is how a partial import gets mistaken for a whole one.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PortIntakeResponse" }
@@ -1549,6 +1969,7 @@ paths:
         required: true
         schema: { type: string }
         description: Terminal id
+      - $ref: "#/components/parameters/AttachLabel"
     get:
       tags: [terminals]
       summary: "Host-terminal WebSocket PTY stream. NOTE: WebSocket upgrade — see SessionEnvelope."
@@ -1557,6 +1978,39 @@ paths:
       responses:
         "101": { description: Switching Protocols (WebSocket) }
         "403": { $ref: "#/components/responses/HostTerminalsDisabled" }
+  /v1/agents/observed:
+    get:
+      tags: [agents]
+      summary: Agents Dejima observes but does not gate
+      operationId: listObservedAgents
+      description: >
+        Agents Dejima can SEE and cannot STOP: running outside any island,
+        reading whatever their user reads, holding whatever credentials their
+        user holds. Dejima records what they report about themselves; nothing
+        gates them.
+
+        A SEPARATE COLLECTION, not a flag on the island list. An observed agent
+        has no island, so it cannot appear in `IslandInfo.agents` — and that is
+        the point rather than a limitation. Every island-keyed surface is
+        unreachable from an observed agent by construction. The grants pane is
+        the case that matters: it takes an island name and renders "fully
+        contained" when nothing is granted, which an observed agent satisfies by
+        construction, having no grants because nothing gates it. With no island
+        to key on, that pane has no way to be asked about one.
+
+        Each returned agent carries `containment: observed`, stamped by the
+        server from the collection it came from — never read off a stored record.
+
+        RETURNS AN EMPTY LIST WITH `registered: false` TODAY. There is no
+        registration path yet, and the flag exists so a client can tell "none are
+        registered" from "registration does not exist". Rendering an empty
+        section for the second claims Dejima looked and found nothing.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObservedAgentsResponse" }
   /v1/agent-types:
     get:
       tags: [daemon]
@@ -1746,6 +2200,89 @@ paths:
           description: Build output stream
           content:
             text/plain: { schema: { type: string } }
+  /v1/local:
+    get:
+      tags: [daemon]
+      summary: Managed local-model backend status
+      description: >
+        Backend (Ollama by default), whether it's installed/running, the in-island
+        OpenAI-compatible endpoint, pulled models, and a host-RAM-aware model
+        recommendation. Owner-only.
+      operationId: localStatus
+      responses:
+        "200":
+          description: Backend status
+          content:
+            application/json: { schema: { type: object } }
+  /v1/local/install:
+    post:
+      tags: [daemon]
+      summary: Install the local inference backend (streams progress)
+      description: >
+        Best-effort install of the backend on the daemon host, then auto-registers
+        the `local` LLM provider. Streams text/plain progress ending with a
+        `--- dejima: local backend installed ---` marker or a trailing `ERROR: …`.
+        Owner-only.
+      operationId: localInstall
+      responses:
+        "200":
+          description: Install output stream
+          content:
+            text/plain: { schema: { type: string } }
+  /v1/local/models:
+    get:
+      tags: [daemon]
+      summary: Pulled local models + host-aware recommendation
+      operationId: localModels
+      responses:
+        "200":
+          description: Pulled models and recommendation
+          content:
+            application/json: { schema: { type: object } }
+  /v1/local/models/{name}/pull:
+    post:
+      tags: [daemon]
+      summary: Pull a local model (streams progress)
+      description: >
+        `name` is a curated alias (e.g. `qwen-coder`) or a raw backend ref. Streams
+        text/plain progress ending with `--- dejima: local model pulled ---` or a
+        trailing `ERROR: …`. Owner-only.
+      operationId: localPull
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pull output stream
+          content:
+            text/plain: { schema: { type: string } }
+  /v1/local/models/{name}:
+    delete:
+      tags: [daemon]
+      summary: Remove a pulled local model
+      operationId: localRemove
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json: { schema: { type: object } }
+  /v1/local/off:
+    post:
+      tags: [daemon]
+      summary: Deregister the `local` provider (backend + pulled models stay)
+      operationId: localOff
+      responses:
+        "200":
+          description: Disabled
+          content:
+            application/json: { schema: { type: object } }
   /v1/ssh/account-keys:
     get:
       tags: [daemon]
@@ -1820,6 +2357,16 @@ components:
       required: true
       schema: { type: string }
       description: Agent id (e.g. p1, p2)
+    AttachLabel:
+      name: label
+      in: query
+      schema: { type: string, default: anonymous }
+      description: >
+        How this client names itself to everyone else attached to the same PTY.
+        These streams are multi-attach: the label is echoed back to every peer in
+        the `hello`/`attached` presence list and in the island's attach/detach
+        log, so a human can tell which device or teammate joined. Defaults to
+        "anonymous" when omitted.
   responses:
     NotFound:
       description: Island, agent, or resource not found
@@ -1843,10 +2390,61 @@ components:
         error: { type: string }
     CreateIslandRequest:
       type: object
-      required: [repo]
+      description: >
+        Exactly one clone source is required: `repo`, `seed_path`, or `no_repo`.
+        An empty `repo` is never treated as "no repo" — a URL eaten by the shell,
+        or a variable that expanded to nothing, is refused rather than silently
+        producing an empty island that looks exactly like a clone that failed.
       properties:
-        name: { type: string, description: optional; derived from repo if empty }
-        repo: { type: string, description: git URL or local path }
+        name: { type: string, description: optional; derived from repo if empty (required with no_repo) }
+        repo: { type: string, description: git URL or local path; required unless seed_path or no_repo is set }
+        from_dir:
+          type: string
+          description: >
+            Seed /workspace from a host DIRECTORY that is not a git repo — the
+            common case of a folder of work nobody has run `git init` on yet.
+            Its own source: mutually exclusive with `repo`, `seed_path` and
+            `no_repo`, and `name` is required (a folder name makes a poor island
+            name — "src" and "notes" recur everywhere).
+
+            A THIN WRAPPER over the brokered recursive intake, not a second way
+            to move host files in. The daemon grants a Port scope for the
+            directory, performs one ledgered crossing per file, then drops the
+            scope. The grant is the audit trail: `port.grant`, one `trade.read`
+            per file, `port.revoke`.
+
+            The same caps as a recursive intake apply and are refused UP FRONT.
+            A folder too large for them is rejected with the two-step path named
+            (create with `no_repo`, then grant + intake), which has no create
+            timeout over it.
+
+            A folder-sourced island reports `no_repo: true` on IslandInfo — it is
+            repo-less, it just is not empty.
+        keep_scope:
+          type: boolean
+          description: >
+            With `from_dir`: keep the Port scope after seeding. Default false —
+            the grant is needed to COPY, not to keep, and a retained scope is
+            standing host-file access the operator never asked to give.
+        git_init:
+          type: boolean
+          description: >
+            With `from_dir`: run `git init` in the seeded workspace. Default
+            false, and deliberately never implied. A fabricated repo has no
+            remote, so the agent commits where nothing can be pushed and work
+            looks saved when it is not; purge's unpushed-work guard gains a repo
+            it can only false-alarm on; and `agent rm`'s `git status` reasoning
+            becomes meaningless. Offered as an explicit choice with the
+            consequence stated, or not at all.
+        no_repo:
+          type: boolean
+          description: >
+            Create the island with no checkout at all — an empty /workspace and no
+            origin. For the things that genuinely have no repo: assistant brains,
+            headless task runners, scratch sandboxes, evaluating a tool before it
+            is a project. An EXPLICIT opt-in, never inferred from an empty `repo`,
+            and rejected alongside `repo`/`seed_path`. `name` is required in this
+            mode — there is no repo to derive one from.
         agent: { type: string, default: claude-code }
         image: { type: string, default: "dejima/island:latest" }
         cmd: { type: string, description: "entrypoint for agent=headless (required then; ignored otherwise)" }
@@ -2136,12 +2734,24 @@ components:
         agent: { type: string }
         image: { type: string }
         cmd: { type: string }
+        no_repo:
+          type: boolean
+          description: >
+            The island was created with a deliberately empty /workspace and no
+            origin. Needed to tell "empty on purpose" from "the clone failed" —
+            the two look identical from outside. It also changes what deleting the
+            island costs: with no remote, nothing inside has a copy anywhere else.
         role: { type: string }
         owner: { type: string }
         tags: { type: object, additionalProperties: { type: string } }
         github_cred_missing: { type: boolean, description: named GitHub identity no longer resolves for this island's tenant (clone/push will fail) }
+        github_host_credential:
+          allOf: [ { $ref: "#/components/schemas/HostGitHubCredential" } ]
+          description: whether this island may use the HOST operator's own gh login; omitted on list responses, which don't compute it
+        secrets_count: { type: integer, description: "how many secrets the island holds — a count, read from island metadata (never the keychain), never the names or values" }
         state: { type: string, description: desired state from config }
         container: { type: string, description: observed runtime status }
+        no_hibernate: { type: boolean, description: "the island is pinned awake — exempt from idle auto-hibernate (set via PATCH /v1/islands/{name})" }
         created_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
         attached:
@@ -2164,19 +2774,202 @@ components:
         agents:
           type: array
           items: { $ref: "#/components/schemas/AgentInfo" }
+        built_version: { type: string, description: "daemon build the island's container was first created against; empty for islands created before version stamping" }
+        upgraded_version:
+          type: string
+          description: >
+            Daemon build of the island's most recent `dejima upgrade` recreate.
+            A stamp behind the running daemon means the container was built from
+            an older image and may carry stale /opt shims. Empty for islands
+            created before version stamping (provenance unknown).
+        github_identity:
+          type: string
+          description: >
+            Which daemon GitHub identity this island clones and pushes as. EMPTY
+            IS A REAL ANSWER, not a missing one: it means the daemon default (or
+            the host's ~/.config/gh when no identities are configured).
+
+            Surfaced because it was not, and its absence had a cost: an operator
+            could list the identities and could not see which island used which,
+            so "what breaks if I remove this credential" had no answer from any
+            client.
+        reaps_orphans:
+          type: boolean
+          description: >
+            Whether this container runs an init as PID 1 to reap processes whose
+            parent exited first. Detail endpoint only.
+
+            THREE STATES, and the third is the reason this is nullable.
+            true — the container reaps; nothing accumulates.
+            false — it does not: an island created before the daemon passed
+            --init leaks a zombie per orphaned process for its entire life, and
+            this cannot be changed without recreating the container.
+            ABSENT — the runtime could not be asked. A client MUST render a
+            missing value as "not determined", never as false and never as true.
+            Rendering it false accuses a container nobody inspected; rendering it
+            true hands out a clean bill of health nobody earned.
+
+            Read from the engine, not from the daemon's configuration: the
+            daemon passes --init today, so the record says every island reaps
+            while containers created earlier do not.
+        never_heard_from:
+          type: boolean
+          description: >
+            The container is running yet NO agent has emitted a single
+            agent-state event since boot, past a short grace window. The direct
+            broken-shim signal: a stale notify hook silently no-ops, so the
+            heartbeat never fires and mail-nudges, idle-hibernate and the idle
+            metric all go dark with no error.
         identity:
           allOf: [ { $ref: "#/components/schemas/IslandIdentity" } ]
           description: operator-set visual color+glyph override; omitted when unset
+    GatewayReadiness:
+      type: object
+      description: >
+        Whether an agent's framework console is serving yet, and — separately —
+        whether that agent can reach a model at all.
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [ready, not-ready, unknown]
+          description: >
+            THREE states, and the third is why this is not a boolean.
+            ready — something is serving on the gateway port.
+            not-ready — nothing is listening: starting, installing, or stopped.
+            unknown — the daemon could not ask (the island was unreachable).
+            A client MUST NOT render `unknown` as `not-ready`. Claiming a gateway
+            is down is a stronger statement than admitting nobody looked, and an
+            operator acts differently on each.
+        reason:
+          type: string
+          description: Why the state is not `ready`, for a surface to show verbatim.
+        port:
+          type: integer
+          description: The in-container gateway port probed (absent when the agent type has none).
+        needs_provider_key:
+          type: boolean
+          description: >
+            This agent's framework reaches a model over a provider API key and
+            none is configured.
+
+            ORTHOGONAL to `state` and never folded into it: a keyless gateway
+            serves the readiness probe perfectly and then fails every task with a
+            missing-key error. "Nothing is listening" and "listening but cannot
+            reach a model" are different problems with different remedies, and a
+            client that merges them will tell the operator to wait for something
+            that has already arrived.
     IslandIdentity:
       type: object
       required: [color, glyph]
       properties:
         color: { type: string, description: "hex color: #rgb or #rrggbb" }
         glyph: { type: string, description: exactly one rune }
+    HostGitHubCredential:
+      type: object
+      description: >
+        Whether an island may use the HOST operator's `gh` login. This is a grant,
+        not an inheritance: host-owned islands are denied by default and an
+        operator grants explicitly, matching every other gate (Port, capability,
+        MCP, link, spawn, egress).
+      required: [granted, eligible]
+      properties:
+        granted:
+          type: boolean
+          description: can this island use the host operator's login
+        granted_at: { type: string, format: date-time }
+        granted_by: { type: string }
+        grandfathered:
+          type: boolean
+          description: >
+            written by the deny-by-default migration to preserve an island's
+            existing access. Means nobody has actually decided about this island
+            yet — the flag a surface should nag on, as distinct from a grant an
+            operator chose.
+        eligible:
+          type: boolean
+          description: >
+            false for a tenant island, where this grant does not apply at all —
+            tenants use a per-island GitHub identity, never the host's login.
+    ObservedAgentsResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          description: >
+            Observed agents, each stamped `containment: observed` by the server.
+            Never contained — this collection is the source of that fact, the way
+            an island's agent list is the source of the contained one.
+          items: { $ref: "#/components/schemas/ObservedAgent" }
+        registered:
+          type: boolean
+          description: >
+            Whether any mechanism for registering an observed agent exists yet.
+            FALSE today. Stated rather than inferred from an empty list, because
+            "none registered" and "registration is not built" are different
+            answers and only one of them means Dejima looked.
+    ObservedAgent:
+      type: object
+      description: >
+        An agent Dejima can SEE and cannot STOP. Deliberately NOT an `AgentInfo`:
+        that type carries `tmux`, `branch`, `worktree` and `attachable`, which
+        for an observed agent are meaningless or misleading. `attachable` is the
+        sharp one — attaching is something Dejima can do to an agent it LAUNCHED
+        and cannot do to one it merely watched. A field that does not exist
+        cannot be read by a hopeful renderer.
+
+        `alive`, `last_active` and `working` are what the agent reports about
+        ITSELF. Dejima does not verify any of it; that is the whole difference
+        between observing and gating.
+      properties:
+        id: { type: string }
+        label: { type: string }
+        containment:
+          type: string
+          enum: [observed]
+          description: >
+            Always `observed`, and always present on the wire (not omitted when
+            empty). Read containment off THIS FIELD rather than inferring it from
+            which endpoint the entry arrived on — inferring re-hides the
+            guarantee one layer above where the field fixed it. An unstamped
+            record shows as "" rather than vanishing, so a missing stamp is
+            visible while being debugged.
+        alive: { type: boolean, description: "self-reported; Dejima does not verify it" }
+        last_active: { type: string, format: date-time }
+        working: { type: string, description: "self-reported current task, if the agent supplies one" }
+        source: { type: string, description: "how discovery found this agent — so an operator can answer why Dejima knows about it" }
     AgentInfo:
       type: object
       properties:
         id: { type: string }
+        containment:
+          type: string
+          enum: [contained, observed]
+          description: >
+            Whether Dejima GATES this agent or merely watches it. `contained`
+            means the agent runs inside an island: brokered by Port, its host
+            crossings ledgered.
+
+            ABSENT IS NOT A LEVEL, and a client must treat it as NOT CONTAINED.
+            The two states are indistinguishable from outside — an agent nothing
+            gates has no Port scopes, no MCP grants, no links and no capabilities,
+            which is byte-identical to an agent for which everything is denied. So
+            a missing value means "nobody said", never "it is fine". The safe
+            default is the least reassuring answer.
+
+            The server stamps this at the boundary from where the agent actually
+            lives, not from a stored record, so it cannot drift from the
+            collection that already implies it.
+
+            `observed` means Dejima can SEE this agent and cannot STOP it: it runs
+            outside any island, reads whatever its user can read, and holds
+            whatever credentials its user holds. Dejima records what it reports
+            about itself; nothing gates it.
+
+            Named `observed` rather than `adopted` deliberately — `dejima adopt`
+            already means the opposite (migrating a local project INTO an island),
+            and one word for both ends of the containment axis would put a
+            false-containment claim in the vocabulary every surface is built from.
         type: { type: string }
         label: { type: string }
         tmux: { type: string }
@@ -2268,6 +3061,42 @@ components:
         method: { type: string, description: "\"CONNECT\" (HTTPS tunnel) or the HTTP verb" }
         decision: { type: string, enum: [allow, deny] }
         time: { type: string, format: date-time }
+    SecretMeta:
+      type: object
+      description: >
+        A secret's metadata. There is deliberately NO value field — values never
+        leave the daemon.
+      properties:
+        name: { type: string, example: EXPO_TOKEN }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        set_by: { type: string, description: Who last wrote it }
+        fingerprint:
+          type: string
+          description: >
+            sha256(value) truncated to 8 hex characters. Values are never shown
+            after entry — not even a prefix, since leading bytes are often the
+            identifying, high-entropy part. Hash your own copy to confirm a
+            match.
+          example: 4f2a91c8
+        require_approval:
+          type: boolean
+          description: >
+            Stored but NOT enforced in this version; reserved for brokered
+            per-use approval. See docs/secrets-manager-spec.md.
+      required: [name, created_at, updated_at, fingerprint]
+    SecretsResponse:
+      type: object
+      properties:
+        secrets:
+          type: array
+          items: { $ref: "#/components/schemas/SecretMeta" }
+      required: [secrets]
+    PutSecretRequest:
+      type: object
+      properties:
+        value: { type: string, description: The secret value. Never returned by any endpoint. }
+      required: [value]
     EgressEventsResponse:
       type: object
       properties:
@@ -2301,6 +3130,7 @@ components:
         ttl: { type: integer, format: int64, description: per-sub-agent max lifetime in nanoseconds (0 = no time cap) }
         per_agent_memory: { type: string, description: "per-sub-agent memory cap, e.g. 512m" }
         per_agent_cpus: { type: string, description: "per-sub-agent cpu cap, e.g. 1.0" }
+        used: { type: integer, description: "lifetime sub-agents spawned under this grant — what max_total is measured against; reset when the grant is replaced (a fresh grant is a fresh budget)" }
         created_at: { type: string, format: date-time }
         created_by: { type: string }
     SpawnGrantRequest:
@@ -2344,14 +3174,54 @@ components:
         scope: { type: string, description: scope name to read from }
         src_rel: { type: string, description: path relative to the scope's host root }
         dest: { type: string, description: "container path; default /intake/<scope>/<src_rel>" }
+        recursive: { type: boolean, description: "import a DIRECTORY, one brokered and ledgered crossing per file. Symlinks are never followed and are reported as skipped. Required to import a directory at all — without it a directory is refused, because \"I meant that directory\" and \"I mistyped a directory\" are indistinguishable. Default false" }
+        max_files: { type: integer, description: "cap on files in a recursive import, refused BEFORE the first byte moves; 0 = server default (2000)" }
+        max_bytes: { type: integer, format: int64, description: "cap on total bytes in a recursive import, refused BEFORE the first byte moves; 0 = server default (512 MiB)" }
     PortIntakeResponse:
       type: object
+      description: >-
+        A single-file intake fills bytes/sha256 and leaves the recursive fields
+        empty. A recursive intake fills files/skipped/failed, and src/dest then
+        name the directory. Responds 207 rather than 200 when any file failed —
+        a 200 carrying a failure list is a success report over an incomplete
+        result.
       properties:
         scope: { type: string }
         src: { type: string }
         dest: { type: string }
-        bytes: { type: integer }
+        bytes: { type: integer, format: int64, description: "single-file: the file's size. recursive: total bytes that actually crossed" }
+        sha256: { type: string, description: "single-file only" }
+        recursive: { type: boolean }
+        batch_id: { type: string, description: "groups this import's Ledger entries. Entries stay one-per-file: --verify walks a hash chain of crossings, and a single batch entry would carry no hash for the things that crossed" }
+        files:
+          type: array
+          description: files that crossed
+          items: { $ref: "#/components/schemas/PortIntakeFile" }
+        skipped:
+          type: array
+          description: "entries deliberately not imported (symlinks, non-regular files, unreadable directories). Reported rather than silently dropped — a caller cannot otherwise tell a skipped symlink from a file that was never there"
+          items: { $ref: "#/components/schemas/PortIntakeSkip" }
+        failed:
+          type: array
+          description: "files attempted that did not cross. There is NO rollback: everything in files is present and ledgered, and stays that way"
+          items: { $ref: "#/components/schemas/PortIntakeFailed" }
+    PortIntakeFile:
+      type: object
+      properties:
+        rel: { type: string, description: path relative to the imported directory }
+        dest: { type: string }
+        bytes: { type: integer, format: int64 }
         sha256: { type: string }
+    PortIntakeSkip:
+      type: object
+      properties:
+        rel: { type: string }
+        reason: { type: string }
+    PortIntakeFailed:
+      type: object
+      properties:
+        rel: { type: string }
+        error: { type: string }
     PortExportRequest:
       type: object
       required: [src]
@@ -2445,6 +3315,45 @@ components:
         links:
           type: array
           items: { $ref: "#/components/schemas/LinkGrant" }
+        host_github:
+          allOf: [ { $ref: "#/components/schemas/HostGitHubCredential" } ]
+          description: >
+            The host-operator gh credential grant. Unlike the four above it is a
+            single yes/no rather than a list, and it is the one grant that used to
+            be implicit — it appears here so "what does this island hold" has one
+            answer instead of four plus a special case.
+        credentials:
+          allOf: [ { $ref: "#/components/schemas/CredentialMountReport" } ]
+          description: what the RUNNING container actually has mounted, next to what the config says it should
+    CredentialMountReport:
+      type: object
+      description: >
+        The answer to "what credentials does this island actually have right
+        now". Credential mounts are fixed at container create, so a grant or
+        revoke does not take effect until a recreate — and a surface that reports
+        only the record answers a question about intent while the operator reads
+        it as a question about the running island.
+      properties:
+        known:
+          type: boolean
+          description: >
+            False when the runtime couldn't be asked — no container yet, or the
+            engine didn't answer. Consumers MUST render this as "not determined"
+            rather than as agreement: an unasked question is not a clean answer,
+            and a containment surface under-reporting access reassures instead of
+            failing. `states` is empty when this is false.
+        reason: { type: string, description: "explains a false `known`, for a surface to show verbatim" }
+        states:
+          type: array
+          items: { $ref: "#/components/schemas/CredentialMountState" }
+    CredentialMountState:
+      type: object
+      description: One credential the island can be given, in operator terms rather than container paths. `configured` and `mounted` disagreeing means a recreate is needed before the record describes reality.
+      properties:
+        label: { type: string, description: "e.g. GitHub credential" }
+        path: { type: string, description: where it is mounted in the container }
+        configured: { type: boolean, description: what the island's config implies it should have }
+        mounted: { type: boolean, description: what the container actually has right now }
     MCPCallRequest:
       type: object
       required: [server, method]
@@ -2502,18 +3411,91 @@ components:
     GitHubIdentityMeta:
       type: object
       properties:
+        scopes:
+          type: string
+          description: >-
+            What this token may do. Absent for a fine-grained token (GitHub sends
+            no X-OAuth-Scopes header for those); a classic token WITHOUT `repo`
+            can authenticate but cannot push or open pull requests.
+        updated_at:
+          type: string
+          format: date-time
+          description: >-
+            When this identity's TOKEN was last written. Two identities for the
+            same GitHub login are otherwise indistinguishable in a listing, and
+            this is the field that separates a live one from a month-dead one.
+            Absent for identities predating the field — render as unknown, never
+            as "just now".
         name: { type: string }
         login: { type: string }
         host: { type: string }
         default: { type: boolean }
         owner: { type: string, description: tenant that owns this identity (empty = host) }
         shared: { type: boolean, description: host identity usable by every tenant's islands }
+    UpdateAgentRequest:
+      type: object
+      properties:
+        resume: { type: boolean, description: "continue the previous conversation on relaunch, where the framework supports it" }
+    UpdateAgentResponse:
+      type: object
+      properties:
+        agent: { type: string }
+        command: { type: string, description: the upgrade command that ran inside the island }
+        output: { type: string, description: "tail of the command output, marked when truncated" }
+        restarted:
+          type: boolean
+          description: >-
+            Whether the agent was relaunched on the new version. FALSE means the
+            update succeeded and the relaunch did not — the new version is on
+            disk and the old one is still the running process.
     GitHubIdentitiesResponse:
       type: object
       properties:
         identities:
           type: array
-          items: { $ref: "#/components/schemas/GitHubIdentityMeta" }
+          items: { $ref: "#/components/schemas/GitHubIdentityView" }
+        dangling:
+          type: array
+          description: >-
+            Islands pinned to an identity this daemon does not have. They
+            materialize NO credential, which from inside the island looks
+            identical to an expired token and has a different fix. Kept separate
+            from identities because there is no identity row to attach them to.
+          items: { $ref: "#/components/schemas/DanglingIdentityPin" }
+    GitHubIdentityView:
+      description: >-
+        A GitHub identity plus the islands that resolve to it. Extends
+        GitHubIdentityMeta; every field of that schema is present unchanged.
+      allOf:
+        - $ref: "#/components/schemas/GitHubIdentityMeta"
+        - type: object
+          properties:
+            islands:
+              type: array
+              items: { type: string }
+              description: >-
+                Islands whose credential is materialized from this identity,
+                INCLUDING those that reach it by being the default rather than
+                naming it. Empty means nothing uses it — for a default identity
+                that is the signal that refreshing it will change nothing.
+    DanglingIdentityPin:
+      type: object
+      properties:
+        island: { type: string }
+        identity: { type: string, description: the identity name the island asks for and the daemon does not have }
+    SetIslandGitHubIdentityRequest:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: Identity name to use; empty string means follow the daemon default.
+    SetIslandGitHubIdentityResponse:
+      type: object
+      properties:
+        island: { type: string }
+        identity: { type: string, description: the pin that was written ("" = follow the default) }
+        resolved: { type: string, description: the identity the pin actually resolves to — differs from identity whenever the pin is empty }
+        login: { type: string }
     PutGitHubIdentityRequest:
       type: object
       required: [login, token]
@@ -2524,6 +3506,12 @@ components:
         token: { type: string }
         default: { type: boolean, description: make this the default (host owner only) }
         shared: { type: boolean, description: host owner only — mark usable by every tenant's islands }
+        scopes:
+          type: string
+          description: >-
+            What the token may do (X-OAuth-Scopes at verification time). ABSENT
+            for a fine-grained token, which sends no such header — that means
+            "not introspectable", not "no permissions".
     GitHubDeviceStartResponse:
       type: object
       properties:
@@ -2603,6 +3591,15 @@ components:
         supported_providers: { type: array, items: { type: string } }
         suggested_models: { type: array, items: { type: string } }
         gateway_port: { type: integer, description: "0 = no localhost UI to open" }
+        dashboard_token_cmd:
+          type: string
+          description: >
+            Command, run inside the container, that prints the framework's gateway
+            auth token. With `dashboard_token_suffix` it lets a client open the
+            console already authenticated. Both empty = open the gateway root.
+        dashboard_token_suffix: { type: string, description: "appended to the console URL with \"{token}\" substituted, e.g. \"#token={token}\"" }
+        bundled: { type: boolean, description: "tier-1 agent preinstalled in the island image; false = self-installs on first launch" }
+        install_cmd: { type: array, items: { type: string }, description: "informational install command for a non-bundled agent, so a picker can surface \"installs on first use\"" }
     AgentTypesResponse:
       type: object
       properties:
@@ -2704,10 +3701,41 @@ components:
       type: object
       properties:
         seq: { type: integer }
+        provenance:
+          type: string
+          enum: [brokered, witnessed, self-reported]
+          description: >
+            HOW Dejima knows this row is true. Three genuinely different claims,
+            and presenting them identically is how a strong one gets inherited by
+            a weak one.
+
+            `brokered` — the daemon ALLOWED the action; it went through the
+            broker. `witnessed` — the daemon SAW a contained action happen
+            without gating it. `self-reported` — the subject's own account of
+            itself, tailed from something the agent wrote. Dejima did not see it
+            and cannot verify it.
+
+            A CLIENT MUST RENDER self-reported ROWS DISTINCTLY. An observed
+            agent, or anything that has compromised it, can write whatever it
+            likes, and omission is trivial — it simply does not write the line.
+            "Here is an audit trail" and "here is an audit trail, some rows of
+            which are the subject's own account of itself" are different
+            products, and if the rows look alike the integrity claim of the whole
+            ledger degrades to that of its weakest one.
+
+            ABSENT MEANS UNKNOWN, NOT BROKERED. It appears on rows written before
+            this field existed — brokered in fact, since self-reporting did not
+            exist then — but a client must not infer that, because the reasoning
+            stops holding the moment a new writer forgets to stamp.
+
+            Named `witnessed` rather than `observed` deliberately: `observed` is
+            already the containment level of an UNGATED AGENT, and one word for
+            both would be a second collision on the axis this product is about.
         time: { type: string, format: date-time }
         type: { type: string, description: "port.grant | port.revoke | trade.read | trade.write | capability.* | mcp.* | api.request | <lifecycle event>" }
         island: { type: string }
-        agent: { type: string }
+        agent: { type: string, description: "agent id — the machine-keyed lookup handle" }
+        agent_label: { type: string, description: "the agent's human-given name, for read-side display; `agent` stays the id" }
         scope: { type: string }
         path: { type: string, description: "host/scope path (trades) or request path (api.request)" }
         mode: { type: string }
@@ -2769,6 +3797,15 @@ components:
         island_image: { type: string }
         host_terminals_enabled: { type: boolean }
         ssh_addr: { type: string }
+        ssh_host_key:
+          type: string
+          description: >
+            The SSH façade's host public key, as an OpenSSH `ssh-ed25519 AAAA…`
+            line, served alongside `ssh_addr` so a client pins it in a known_hosts
+            file it manages. That way a tunnel verifies the key over the trusted
+            API rather than TOFU, and a rotated key self-heals instead of failing
+            with "REMOTE HOST IDENTIFICATION HAS CHANGED". Empty on daemons
+            predating this and on daemons started without `--ssh`.
         daemon_version: { type: string }
         api_version: { type: integer }
         panicked: { type: boolean }
@@ -2802,11 +3839,27 @@ components:
 
         Client → server: `{type: data, b64}` for keystrokes and
         `{type: resize, rows, cols}` to resize the PTY.
+
+        `{type: exit}` is the server's application-level end signal: the bridged
+        terminal itself ended (a detach, an `exit`, a tmux that died on start).
+        A client must stop on it rather than treat the websocket close as a
+        transport drop and reconnect forever — that respawns a shell the operator
+        can't escape. An abnormal close WITHOUT an `exit` is a dropped link and
+        should be reconnected through; the tmux session survives it.
       properties:
-        type: { type: string, enum: [hello, data, resize, error] }
+        type: { type: string, enum: [hello, data, resize, error, exit] }
         b64: { type: string, description: base64-encoded PTY bytes (plaintext for type=error) }
         rows: { type: integer }
         cols: { type: integer }
+        term:
+          type: string
+          description: >
+            The client's TERM (and `colorterm` its COLORTERM), sent on the FIRST
+            resize and ignored on later ones — they describe the client's
+            terminal, which does not change mid-session. Optional in both
+            directions: an older client omits them and an older daemon ignores
+            them, so either side upgrading alone is safe.
+        colorterm: { type: string, description: the client's COLORTERM; see term }
         attached:
           type: array
           items: { $ref: "#/components/schemas/PresenceEntry" }

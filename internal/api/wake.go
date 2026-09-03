@@ -87,6 +87,18 @@ func (n *wakeNotifier) pendingSince(k nudgeKey) (time.Time, bool) {
 	return t, ok
 }
 
+// WaitBackground blocks until the detached work this server has started —
+// today, the mailbox arrival hooks — has finished, giving up after d and
+// reporting whether it drained.
+//
+// Production never calls this: the hooks are detached so a sender doesn't wait
+// on a wake, and the daemon outlives them. It exists for tests that drive a real
+// in-process server, which do not outlive them. See mailbox.WaitArrivalHooks
+// for what goes wrong without it.
+func (s *Server) WaitBackground(d time.Duration) bool {
+	return s.mailbox.WaitArrivalHooks(d)
+}
+
 // onMailboxArrival is the store's arrival hook. It always emits the
 // mailbox.arrival event (the app-layer override seam), then — when soft-notify is
 // enabled — records a nudge, wakes a hibernated recipient island, and tries to
@@ -221,15 +233,53 @@ func (s *Server) tmuxInject(ctx context.Context, p *project.Project, a *project.
 	if a.Tmux == "" {
 		return nil // headless / no attachable session — relies on polling
 	}
-	_, _, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{"tmux", "send-keys", "-t", a.Tmux, text, "Enter"})
-	if err != nil {
+	// TWO CALLS, LITERAL TEXT FIRST, THEN Enter SEPARATELY.
+	//
+	// This used to be one `send-keys <text> Enter`, which works for Claude Code
+	// and does NOT work for codex: the nudge appears in codex's prompt and just
+	// sits there, typed but never submitted. The operator watched it happen —
+	// the message text in the input box with the cursor beneath it, turn after
+	// turn, while every message went unanswered.
+	//
+	// Two things were wrong with the single call:
+	//
+	//   no -l   send-keys treats each argument as a KEY NAME first and only
+	//           falls back to characters. Nudge text is arbitrary — it contains
+	//           punctuation, an emoji and a path — and is not something to hand
+	//           to a key-name parser.
+	//
+	//   same    a full-screen TUI that re-renders on input can process the text
+	//   burst   and the Enter as one event and act on neither. Sending the
+	//           submit as its own call, after the text has landed, is what
+	//           these interfaces expect from a paste-then-submit.
+	//
+	// Claude Code accepts both forms, so this is not a trade between agents.
+	if _, _, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"tmux", "send-keys", "-t", a.Tmux, "-l", text}); err != nil {
 		return err
+	} else if code != 0 {
+		return fmt.Errorf("tmux send-keys (text) exit %d", code)
 	}
-	if code != 0 {
-		return fmt.Errorf("tmux send-keys exit %d", code)
+
+	// A beat for the agent's renderer to take the text before the submit. Short
+	// enough to be invisible, long enough that the two are separate events.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(injectSubmitDelay):
+	}
+
+	if _, _, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"tmux", "send-keys", "-t", a.Tmux, "Enter"}); err != nil {
+		return err
+	} else if code != 0 {
+		return fmt.Errorf("tmux send-keys (submit) exit %d", code)
 	}
 	return nil
 }
+
+// injectSubmitDelay separates the nudge text from its Enter. See tmuxInject.
+const injectSubmitDelay = 150 * time.Millisecond
 
 // wakeIslandFor wakes a hibernated/stopped island so a queued nudge can reach it
 // — the wake half of the actor model (paired with idle auto-hibernate). No-op when
@@ -249,7 +299,7 @@ func (s *Server) wakeIslandFor(ctx context.Context, name string) {
 	}
 	switch status {
 	case runtime.StatusMissing:
-		if err := s.createContainerForProject(ctx, p, ""); err != nil {
+		if err := s.createContainerForProject(ctx, p, "", false); err != nil {
 			s.log.Warn("wake-on-message: recreate", "island", name, "err", err)
 			return
 		}

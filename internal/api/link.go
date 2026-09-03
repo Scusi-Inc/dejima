@@ -77,7 +77,7 @@ func (s *Server) grantLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "link.grant", Island: from, Scope: topic, Detail: "→ " + to, Decision: "allowed",
 	})
 	s.log.Info("link granted", "from", from, "to", to, "topic", topic)
@@ -105,7 +105,7 @@ func (s *Server) revokeLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no such link grant %s→%s/%s", from, to, topic))
 		return
 	}
-	s.ledgerAppend(ledger.Entry{Type: "link.revoke", Island: from, Scope: topic, Detail: "→ " + to})
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{Type: "link.revoke", Island: from, Scope: topic, Detail: "→ " + to})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -149,7 +149,7 @@ func (s *Server) sendLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, ok := st.Allowed(from, to, topic); !ok {
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "link.deny", Island: from, Scope: topic, Detail: "→ " + to + "/" + toAgent, Decision: "denied",
 		})
 		writeError(w, http.StatusForbidden,
@@ -173,7 +173,7 @@ func (s *Server) sendLink(w http.ResponseWriter, r *http.Request) {
 	// = the sender's display label resolved from the source roster at send time).
 	fromAgent := strings.TrimSpace(req.FromAgent)
 	msg := s.mailbox.DeliverExternal(to, from, fromAgent, s.agentLabel(from, fromAgent), toAgent, topic, req.Payload)
-	s.ledgerAppend(ledger.Entry{
+	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 		Type: "link.message", Island: from, Scope: topic, Detail: "→ " + to + "/" + toAgent, Decision: "allowed",
 	})
 	writeJSON(w, http.StatusCreated, msg)

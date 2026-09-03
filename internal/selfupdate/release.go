@@ -18,13 +18,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -76,7 +79,22 @@ func ApplyReleaseSelf(ctx context.Context, ver string, out io.Writer) error {
 	}
 	dir := filepath.Dir(self)
 	binName := filepath.Base(self) // "dejima" or "dejima.exe"
+
+	// Stage beside the target when we can (same filesystem ⇒ atomic rename),
+	// but fall back to a temp dir when the install dir isn't ours. A daemon
+	// installed into a root-owned /usr/local/bin runs as the operator, so it
+	// cannot even CREATE the staging file there — which surfaced as
+	// "open /usr/local/bin/.dejimad.update: permission denied" and made
+	// self-update impossible for the standard install layout.
 	staged := filepath.Join(dir, "."+binName+".update")
+	if !dirWritable(dir) {
+		tmp, err := os.MkdirTemp("", "dejima-update-")
+		if err != nil {
+			return fmt.Errorf("stage update: %w", err)
+		}
+		defer os.RemoveAll(tmp)
+		staged = filepath.Join(tmp, binName)
+	}
 	_ = os.Remove(staged)
 	fmt.Fprintf(out, "downloading %s for %s/%s…\n", ver, runtime.GOOS, runtime.GOARCH)
 	if err := FetchBinary(ctx, ver, runtime.GOOS, runtime.GOARCH, binName, staged); err != nil {
@@ -84,7 +102,15 @@ func ApplyReleaseSelf(ctx context.Context, ver string, out io.Writer) error {
 	}
 	defer os.Remove(staged) // no-op once renamed into place
 	if err := ReplaceExecutable(staged, self); err != nil {
-		return fmt.Errorf("replace %s: %w", self, err)
+		// A root-owned install dir is the normal layout, not an edge case, so
+		// try the elevated path the service install already provisions for.
+		if !isPermission(err) {
+			return fmt.Errorf("replace %s: %w", self, err)
+		}
+		fmt.Fprintf(out, "install dir isn't writable; installing with sudo…\n")
+		if serr := elevatedInstall(ctx, staged, self); serr != nil {
+			return fmt.Errorf("replace %s: %w (and elevated install failed: %v)", self, err, serr)
+		}
 	}
 	fmt.Fprintf(out, "updated %s → %s\n", binName, ver)
 	return nil
@@ -252,4 +278,69 @@ func httpGet(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// dirWritable reports whether we can create files in dir.
+func dirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".dejima-wtest-")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
+// isPermission reports whether err is (or wraps) a permission failure.
+func isPermission(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
+}
+
+// ElevationAdvice is what to tell someone whose update could not elevate.
+//
+// It names the remedy that works for THEIR install, which the previous wording
+// did not. `sudo -n` needs a NOPASSWD rule, and the only thing that writes one
+// is `dejima service install --system` — so that was the only remedy offered.
+// On a CLIENT-ONLY machine that advice is actively wrong: the client is in a
+// root-owned /usr/local/bin, it has never run a service install, and it should
+// not, because that installs a DAEMON SERVICE the operator does not want. It
+// sent someone to set up a server in order to update a client. (Reported from
+// a real client-only Mac, 2026-09-01.)
+//
+// `sudo dejima update` needs no rule and fixes both layouts: as root the
+// install dir is writable, so the staged binary lands beside the target and the
+// plain rename succeeds without reaching the elevation path at all.
+//
+// Exported and separate from the error so it can be asserted on without
+// invoking sudo — a test that shells out here would pass for the wrong reason
+// on any CI runner with passwordless sudo, which is most of them.
+func ElevationAdvice() string {
+	return "re-run as `sudo dejima update` (on a machine running the daemon, " +
+		"`sudo dejima service install --system` grants passwordless updates instead)"
+}
+
+// elevatedInstall places src at target using sudo, for the normal layout where
+// the install dir is root-owned but the daemon runs as the operator.
+//
+// The command is spelled to match the NOPASSWD rule `dejima service install
+// --system` writes (/usr/bin/install -m 0755 <src> <pinned target>) — sudo
+// matches arguments positionally, so the flags, their order, and the target
+// must be exact or the grant does not apply. -n because the daemon has no TTY
+// to answer a password prompt on: better a clear error than a silent hang.
+func elevatedInstall(ctx context.Context, src, target string) error {
+	if runtime.GOOS == "windows" {
+		return errors.New("no elevation path on Windows")
+	}
+	cmd := exec.CommandContext(ctx, "sudo", "-n", "/usr/bin/install", "-m", "0755", src, target)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("sudo install %s: %s — %s", target, msg, ElevationAdvice())
+	}
+	return nil
 }

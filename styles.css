@@ -69,7 +69,7 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .topnav a + a::before { content: "·"; color: var(--border); margin-right: 1.1rem; }
 .nav-status { margin-left: auto; font-size: 0.8rem; color: var(--muted); }
 
-/* Hero + proof + safety --------------------------------------------- */
+/* Hero + the four-tile hook band ------------------------------------- */
 .hero { margin: 1.6rem 0 1.4rem; }
 .hero-eyebrow { color: var(--muted); font-size: 1rem; font-weight: 500; margin: 0 0 0.5rem; }
 .hero-h { font-size: 2.1rem; line-height: 1.15; letter-spacing: -0.02em;
@@ -93,15 +93,40 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .btn-ghost { color: var(--accent); text-decoration: none; border: 1px solid var(--accent);
   padding: 0.6rem 1.25rem; border-radius: 6px; font-weight: 600; font-size: 0.95rem; }
 .btn-ghost:hover { background: var(--hover); border-color: var(--hover); color: var(--bg); }
-.proof { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem;
-  margin: 1.5rem 0 2.2rem; }
 .proof-tile { border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem;
   background: transparent; }
 .proof-tile h3 { margin: 0 0 0.4rem; font-size: 1.0rem; color: var(--hover); }
 .proof-tile p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
-/* QoL "why it's nicer" band: the emotional hook, high on the homepage. 2x2. */
+/* The hook band: four tiles, 2x2, high on the page. Why you'd want this at
+   all. What's in the box is the #features grid further down; keep these four
+   persuasive, not an inventory. */
 .qol { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.8rem 0 1.1rem; }
 .qol-more { color: var(--muted); font-size: 0.9rem; margin: 0 0 2.6rem; }
+/* Compatibility reassurance, tight under the band it belongs to. */
+.band-compat { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.6rem; }
+
+/* The command is the hero: one line, sized between the body copy and the sub
+   so it reads as a statement, not a caption. The chip matches the sentence's
+   size — it's a word in the line, not a display block. Paired with the demo
+   shot below it: the line is the command, the shot is what it produces, so
+   kill the figure's top margin and let them read as one unit. */
+.startline { font-size: 1.1rem; color: var(--muted); margin: 2.2rem 0 0.6rem; }
+.startline code { font-size: 1em; color: var(--hover); font-weight: 600;
+  padding: 0.12em 0.5em; }
+.startline + .demo-shot { margin-top: 0; }
+
+/* Feature grid: 8 scannable boxes, 4 across, collapsing to 3 then 2. Titles
+   carry the scan; the sentence is there for the reader who stops. These are the
+   COMPLEMENT of the four hook tiles up top, never a restatement of them. */
+.feat-lede { color: var(--muted); margin: 0 0 0.2rem; }
+.featgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem;
+  margin: 0.9rem 0 1rem; }
+.feat { border: 1px solid var(--border); border-radius: 8px; padding: 0.85rem 0.9rem;
+  background: transparent; min-width: 0; }
+.feat h3 { margin: 0 0 0.3rem; font-size: 0.92rem; color: var(--hover); line-height: 1.3; }
+.feat p { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+.feat code, .feat kbd { font-size: 0.8em; }
+.feat :not(pre) > code { background: transparent; border: 0; padding: 0; color: var(--accent); }
 
 /* Generic cards (used by teams/build) -------------------------------- */
 .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin: 1.4rem 0; }
@@ -232,13 +257,34 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
   display: flex; align-items: center; }
 .os-ico { width: 0.95em; height: 0.95em; margin-right: 0.4em; fill: currentColor;
   flex-shrink: 0; }
+/* OS switcher tabs (client install): a small tablist over stacked command panels */
+.os-tabs { display: flex; gap: 0.4rem; margin: 0.6rem 0 0.4rem; }
+.os-tab { display: inline-flex; align-items: center; cursor: pointer;
+  font: inherit; font-size: 0.82rem; color: var(--muted);
+  background: transparent; border: 1px solid var(--border); border-radius: 7px;
+  padding: 0.3rem 0.7rem; transition: color 0.12s, border-color 0.12s, background 0.12s; }
+.os-tab:hover { color: var(--fg); }
+.os-tab.is-active { color: var(--fg); border-color: var(--fg);
+  background: var(--card-hover-bg); }
+.os-panel { display: none; }
+.os-panel.is-active { display: block; }
+
 /* command box with an inline copy button */
 .cmd { position: relative; margin: 0.3rem 0 0; min-width: 0; }
 .cmd pre { margin: 0; padding-right: 4.6rem; }
-.cmd-copy { position: absolute; top: 0.45rem; right: 0.45rem; background: var(--accent);
-  color: var(--bg); border: 0; border-radius: 6px; padding: 0.28rem 0.7rem;
-  font-weight: 600; cursor: pointer; font-size: 0.78rem; transition: opacity 0.12s; }
+.cmd-copy { position: absolute; top: 0.4rem; right: 0.4rem; background: var(--accent);
+  color: var(--bg); border: 0; border-radius: 6px; padding: 0.34rem;
+  cursor: pointer; line-height: 0; transition: opacity 0.12s; }
 .cmd-copy:hover { opacity: 0.85; }
+.cmd-copy .ico { width: 0.95rem; height: 0.95rem; display: block;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; }
+/* A label on the command line that is NOT part of the command. It lives outside
+   the <code>, and the copy handler reads querySelector('code').textContent — so
+   it cannot be copied by the button, and user-select stops a drag catching it
+   either. Muted, because it says how to run the line rather than what to run. */
+.cmd-pre { color: var(--muted); user-select: none; -webkit-user-select: none;
+  margin-right: 0.7rem; font-size: 0.85em; letter-spacing: 0.04em; }
 /* host + client side by side inside scenario 2 */
 /* Stacked full-width: "First" (server) over "Then" (your computer), so long
    install commands get the whole column and don't need a horizontal scrollbar. */
@@ -251,6 +297,43 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .hc .hc-sub { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.6rem; }
 
 /* Collapsible "Before you start" disclosures ------------------------- */
+/* Install substeps: ONE LINE, then the command. Everything else goes in a
+   <details> below it. Nine paragraphs for three commands is how an install page
+   stops being read at all — the caveats are each true and each one pushes the
+   thing you came for further down the screen. */
+.substeps { list-style: none; counter-reset: sub; margin: 0.5rem 0 0; padding: 0; }
+.substeps > li { counter-increment: sub; margin: 0 0 1rem; min-width: 0; }
+.substeps > li > p:first-child { margin: 0; color: var(--hover); font-weight: 600;
+  font-size: 0.95rem; display: flex; align-items: baseline; gap: 0.5rem; }
+.substeps > li > p:first-child::before { content: counter(sub); flex: 0 0 1.35rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 1.35rem; border-radius: 999px; background: var(--border);
+  color: var(--fg); font-size: 0.78rem; font-weight: 700; align-self: center; }
+.sub-note { color: var(--muted); font-weight: 400; font-size: 0.85rem; }
+/* The outer "Install it" label carries no number: on Windows the install is
+   three steps and on macOS one, so the numbers live on the ACTIONS and the
+   label just groups them. Two 1s and two 2s on screen at once read as broken
+   numbering, not as a hierarchy — which is the only reading available to
+   someone who has not seen the other tab. */
+.step-label-plain { padding-left: 0.05rem; }
+/* Inside an install step a disclosure is a CAVEAT, not a control. Boxed, it
+   competes with the command for attention and there are three of them per
+   panel — so the panel reads as a stack of widgets rather than as three
+   commands. No border, no fill, no full-width hit area: a quiet line with a
+   marker, sized down, so the command stays the loudest thing in its step. */
+.os-panel .disclose { border: 0; background: none; border-radius: 0; margin: 0.3rem 0 0; }
+.os-panel .disclose > summary { padding: 0.1rem 0 0.1rem 0.95rem; font-size: 0.82rem;
+  color: var(--muted); display: inline-block; }
+.os-panel .disclose > summary:hover { color: var(--hover); }
+.os-panel .disclose > summary::after { content: none; }
+.os-panel .disclose > summary::before { content: "+"; position: absolute; left: 0;
+  color: var(--muted); font-size: 0.95rem; line-height: 1.35; }
+.os-panel .disclose[open] > summary { border-bottom: 0; }
+.os-panel .disclose[open] > summary::before { content: "\2212"; }
+.os-panel .disclose-body { padding: 0.15rem 0 0.4rem 0.95rem; font-size: 0.88rem; }
+.os-panel .disclose-body p { margin: 0.5rem 0 0; }
+.os-panel .disclose-body > *:first-child { margin-top: 0.3rem; }
+
 .disclose { border: 1px solid var(--border); border-radius: 8px; margin: 0.6rem 0;
   background: var(--code-bg); }
 .disclose > summary { cursor: pointer; padding: 0.8rem 2.4rem 0.8rem 1.1rem;
@@ -280,6 +363,11 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .callout { border: 1px solid var(--border); border-left: 3px solid var(--accent);
   background: var(--code-bg); border-radius: 4px; padding: 0.9rem 1.1rem; margin: 1.6rem 0; }
 .callout p { margin: 0.3rem 0; }
+/* Inside a step column a callout is a note about the command just above it, not
+   a section break, so it sits close and stays narrow. */
+.callout-tight { margin: 0.7rem 0 0; padding: 0.7rem 0.9rem; }
+.callout-tight p { font-size: 0.9rem; }
+.callout-tight p.small { color: var(--muted); margin-top: 0.45rem; }
 .walkthrough { margin: 2.6rem 0; }
 .walkthrough > p { color: var(--muted); font-size: 0.95rem; margin: 0.3rem 0 0.9rem; }
 
@@ -304,8 +392,12 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .post-more { border-top: 1px solid var(--border); margin-top: 3rem; padding-top: 1.4rem; }
 .post-more a { font-weight: 600; }
 
+@media (max-width: 860px) {
+  .featgrid { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 720px) {
-  .proof, .cards, .hc-cols, .qol { grid-template-columns: 1fr; }
+  .cards, .hc-cols, .qol { grid-template-columns: 1fr; }
+  .featgrid { grid-template-columns: repeat(2, 1fr); }
   main { padding: 2.5rem 1.25rem 5rem; }
   .hero-h { font-size: 1.7rem; }
   .post-h { font-size: 1.6rem; }

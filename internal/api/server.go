@@ -32,6 +32,7 @@ import (
 	"github.com/aoos/dejima/internal/project"
 	"github.com/aoos/dejima/internal/providercreds"
 	"github.com/aoos/dejima/internal/runtime"
+	"github.com/aoos/dejima/internal/secrets"
 	"github.com/aoos/dejima/internal/spawn"
 	"github.com/aoos/dejima/internal/usage"
 	"github.com/aoos/dejima/internal/version"
@@ -154,6 +155,10 @@ type Server struct {
 	// sshAddr is the SSH-façade listen addr, recorded via EnableSSH purely so
 	// /v1/overview can report it to clients. Empty unless dejimad has --ssh.
 	sshAddr string
+	// sshHostKey is the façade's host public key (OpenSSH authorized-key line),
+	// reported alongside sshAddr so a client can pin it in a known_hosts file it
+	// manages itself — making a rotated host key self-heal.
+	sshHostKey string
 
 	// hostTerminals gates the operator host-terminal feature (uncontained shells
 	// on the daemon host). Off unless dejimad is started with --host-terminals.
@@ -244,7 +249,7 @@ func (s *Server) EnableEgress(dial string, log *egress.Log, policy *egress.Polic
 // EnableSSH records the SSH-façade listen addr so clients (the TUI,
 // `dejima ssh config/info`) can surface the connection target. Reporting only —
 // the listener itself is owned by dejimad/main; this never opens a port.
-func (s *Server) EnableSSH(addr string) { s.sshAddr = addr }
+func (s *Server) EnableSSH(addr, hostKey string) { s.sshAddr, s.sshHostKey = addr, hostKey }
 
 // statsAll returns per-container stats, serving from a short-TTL cache.
 // Holding statsMu across the engine query makes concurrent callers wait for
@@ -636,8 +641,53 @@ func (s *Server) Handler() http.Handler {
 // between listeners live in the middleware that wraps this mux, never in the
 // routes themselves, so there is exactly one source of truth for the API
 // surface.
+// routeRecorder is a ServeMux that remembers what it was asked to serve.
+//
+// The route-parity gate (sdk/openapi_parity.py) finds routes by matching
+// literal `mux.HandleFunc("VERB /path", …)` strings in these sources. That is a
+// defensible design and it has one blind spot: a route registered through a
+// LOOP or a variable is invisible to it — undocumented, AND silently exempt
+// from the gate whose entire job is catching undocumented routes.
+//
+// It was found the only way a textual scan can be: someone registered seven
+// verbs in a loop, the gate reported one missing route, and they noticed the
+// number was too small. That reflex works when you happen to know what the
+// number should be, which is not a check.
+//
+// Recording what is ACTUALLY registered gives the test below something
+// authoritative to compare the literal scan against, so the next person to loop
+// is told rather than silently exempted.
+// routeMux is what the Register* helpers take, so routes registered inside them
+// are recorded too. *http.ServeMux satisfies it, so nothing else changes.
+type routeMux interface {
+	HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request))
+}
+
+type routeRecorder struct {
+	mux      *http.ServeMux
+	patterns []string
+}
+
+func (r *routeRecorder) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	r.patterns = append(r.patterns, pattern)
+	r.mux.HandleFunc(pattern, h)
+}
+
+// registeredRoutes returns every pattern routes() actually registered — the
+// runtime truth, as opposed to what a regex over the source can see.
+func (s *Server) registeredRoutes() []string {
+	rec := &routeRecorder{mux: http.NewServeMux()}
+	s.buildRoutes(rec)
+	return rec.patterns
+}
+
 func (s *Server) routes() *http.ServeMux {
-	mux := http.NewServeMux()
+	rec := &routeRecorder{mux: http.NewServeMux()}
+	s.buildRoutes(rec)
+	return rec.mux
+}
+
+func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("GET /v1/islands", s.listIslands)
 	mux.HandleFunc("POST /v1/islands", s.createIsland)
 	mux.HandleFunc("GET /v1/islands/{name}", s.getIsland)
@@ -654,6 +704,13 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/islands/{name}/upgrade", s.upgradeIsland)
 	mux.HandleFunc("POST /v1/islands/{name}/clone", s.cloneIsland)
 	mux.HandleFunc("POST /v1/image/build", s.handleImageBuild)
+	// Managed local models (owner-only): orchestrate a host inference backend.
+	mux.HandleFunc("GET /v1/local", s.handleLocalStatus)
+	mux.HandleFunc("POST /v1/local/install", s.handleLocalInstall)
+	mux.HandleFunc("GET /v1/local/models", s.handleLocalModels)
+	mux.HandleFunc("POST /v1/local/models/{name}/pull", s.handleLocalPull)
+	mux.HandleFunc("DELETE /v1/local/models/{name}", s.handleLocalRemove)
+	mux.HandleFunc("POST /v1/local/off", s.handleLocalOff)
 	mux.HandleFunc("POST /v1/admin/update", s.handleAdminUpdate)
 	mux.HandleFunc("GET /v1/panic", s.handlePanicStatus)
 	mux.HandleFunc("POST /v1/panic", s.handlePanic)
@@ -668,6 +725,27 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}", s.removeAgent)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}", s.updateAgent)
 	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/move", s.moveAgent)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/restart", s.restartAgent)
+	// The framework console, proxied. One handler for every verb: the daemon
+	// relays bytes and does not model the gateway's API, so it has no business
+	// deciding which methods that API accepts.
+	//
+	// Written out rather than looped, deliberately. sdk/openapi_parity.py finds
+	// routes by matching a literal verb-and-path string in these sources, so a
+	// loop over verbs registers seven routes the parity gate cannot see —
+	// undocumented, and silently exempt from the check that exists to catch
+	// exactly that. Repetition here buys visibility to the gate.
+	//
+	// (The example that would make this comment clearer cannot be written here:
+	// the extractor reads comments too, so quoting the pattern invents a route.)
+	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("PUT /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("DELETE /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("HEAD /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("OPTIONS /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
+	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/gateway-ready", s.getAgentGatewayReady)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
 	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
 	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
@@ -693,6 +771,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
 	mux.HandleFunc("GET /v1/credentials/github", s.handleGitHubIdentities)
 	mux.HandleFunc("PUT /v1/credentials/github/{name}", s.handlePutGitHubIdentity)
+	mux.HandleFunc("POST /v1/credentials/github/{name}/default", s.handleSetGitHubDefault)
 	mux.HandleFunc("DELETE /v1/credentials/github/{name}", s.handleDeleteGitHubIdentity)
 	mux.HandleFunc("GET /v1/credentials/github/{name}/repos", s.handleGitHubRepos)
 	mux.HandleFunc("POST /v1/credentials/github/device-flow/start", s.handleGitHubDeviceStart)
@@ -701,6 +780,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /v1/credentials/providers/{provider}", s.handlePutProviderCred)
 	mux.HandleFunc("DELETE /v1/credentials/providers/{provider}", s.handleDeleteProviderCred)
 	mux.HandleFunc("GET /v1/agent-types", s.handleAgentTypes)
+	mux.HandleFunc("GET /v1/agents/observed", s.handleObservedAgents)
 	mux.HandleFunc("PATCH /v1/islands/{name}/agents/{id}/config", s.configureAgent)
 	mux.HandleFunc("GET /v1/events/subscriptions", s.listSubscriptions)
 	mux.HandleFunc("POST /v1/events/subscribe", s.subscribeWebhook)
@@ -717,6 +797,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PATCH /v1/terminals/{id}", s.handleRelabelTerminal)
 	mux.HandleFunc("GET /v1/terminals/{id}/session", s.terminalSessionWS)
 	mux.HandleFunc("GET /v1/islands/{name}/events", s.handleIslandEvents)
+	mux.HandleFunc("GET /v1/islands/{name}/secrets", s.handleListSecrets)
+	mux.HandleFunc("PUT /v1/islands/{name}/secrets/{key}", s.handlePutSecret)
+	mux.HandleFunc("DELETE /v1/islands/{name}/secrets/{key}", s.handleDeleteSecret)
 	mux.HandleFunc("GET /v1/islands/{name}/egress", s.handleIslandEgress)
 	mux.HandleFunc("GET /v1/islands/{name}/egress/policy", s.handleGetEgressPolicy)
 	mux.HandleFunc("PATCH /v1/islands/{name}/egress/policy", s.handlePatchEgressPolicy)
@@ -730,6 +813,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/islands/{name}/port/scopes", s.handleListPortScopes)
 	mux.HandleFunc("POST /v1/islands/{name}/port/scopes", s.handleGrantPortScope)
 	mux.HandleFunc("DELETE /v1/islands/{name}/port/scopes/{scope}", s.handleRevokePortScope)
+	mux.HandleFunc("GET /v1/islands/{name}/github/host-credential", s.handleGetHostGitHubCredential)
+	mux.HandleFunc("POST /v1/islands/{name}/github/host-credential", s.handleGrantHostGitHubCredential)
+	mux.HandleFunc("DELETE /v1/islands/{name}/github/host-credential", s.handleRevokeHostGitHubCredential)
 	// Capability broker — grant surface (operator-only; absent from
 	// tokenRouteAccess, so a contained brain can never self-grant). Execution
 	// lands in a later phase. See internal/api/capability.go.
@@ -762,8 +848,9 @@ func (s *Server) routes() *http.ServeMux {
 	// tokenRouteAccess, so a contained island can never set its own identity). The
 	// override is reflected back in IslandInfo.Identity. See internal/api/identity.go.
 	mux.HandleFunc("PUT /v1/islands/{name}/identity", s.setIslandIdentity)
+	mux.HandleFunc("PUT /v1/islands/{name}/github-identity", s.handleSetIslandGitHubIdentity)
+	mux.HandleFunc("POST /v1/islands/{name}/agents/{id}/update", s.handleUpdateAgent)
 	mux.HandleFunc("DELETE /v1/islands/{name}/identity", s.clearIslandIdentity)
-	return mux
 }
 
 // AdoptExisting brings the runtime state into alignment with persisted project
@@ -801,7 +888,7 @@ func (s *Server) AdoptExisting(ctx context.Context) {
 		}
 		// Restore non-primary agent sessions for islands meant to be running.
 		if p.DesiredState == project.StateRunning {
-			s.reconcileAgentsAsync(p)
+			s.reconcileAgentsAsync(p, false)
 		}
 	}
 }
@@ -876,7 +963,8 @@ func (s *Server) handleGitHubIdentities(w http.ResponseWriter, r *http.Request) 
 	// An operator sees only their own tenant's identities (plus host-shared ones);
 	// the host owner sees all.
 	owner, ownsAll := s.callerGHScope(r.Context())
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
 }
 
 // handlePutGitHubIdentity adds or updates a named GitHub identity. This is how
@@ -907,7 +995,7 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 	store, err := githubid.Update(func(st *githubid.Store) error {
 		st.PutOwned(githubid.Identity{
 			Name: name, Login: req.Login, ID: req.ID, Host: req.Host, Token: req.Token,
-			Owner: owner, Shared: ownsAll && req.Shared,
+			Owner: owner, Shared: ownsAll && req.Shared, Scopes: req.Scopes,
 		})
 		if req.Default {
 			_ = st.SetDefaultFor(owner, name)
@@ -919,7 +1007,56 @@ func (s *Server) handlePutGitHubIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.log.Info("github identity stored", "name", name, "login", req.Login, "owner", owner, "shared", ownsAll && req.Shared)
-	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: store.ListForOwner(owner, ownsAll)})
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
+}
+
+// handleSetGitHubDefault points the caller's default at an EXISTING identity.
+//
+// A separate route rather than a flag on PUT, because PUT requires a login and
+// token: choosing among identities you already have would otherwise mean
+// re-supplying a credential you are not changing, and relaxing PUT's validation
+// to allow a token-less update would make "seed an identity" and "pick one"
+// the same call with different meanings depending on which fields are blank.
+//
+// This gap is why an operator spent an hour on a 401. `dejima github connect`
+// without --default creates a SECOND identity, the resolver picks the DEFAULT
+// rather than the newest, and there was no route to say which one to use. You
+// could add identities and not manage them.
+func (s *Server) handleSetGitHubDefault(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	owner, ownsAll := s.callerGHScope(r.Context())
+	var known bool
+	store, err := githubid.Update(func(st *githubid.Store) error {
+		for _, m := range st.ListForOwner(owner, ownsAll) {
+			if m.Name == name {
+				known = true
+			}
+		}
+		if !known {
+			return nil // reported as 404 below; never create by side effect
+		}
+		return st.SetDefaultFor(owner, name)
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !known {
+		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", name))
+		return
+	}
+	s.log.Info("github default identity set", "name", name, "owner", owner)
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
+	views, dangling := identityViews(store, store.ListForOwner(owner, ownsAll))
+	writeJSON(w, http.StatusOK, GitHubIdentitiesResponse{Identities: views, Dangling: dangling})
 }
 
 // handleDeleteGitHubIdentity removes a GitHub identity. An operator can delete
@@ -944,6 +1081,10 @@ func (s *Server) handleDeleteGitHubIdentity(w http.ResponseWriter, r *http.Reque
 		s.log.Warn("deleted a github identity still referenced by islands",
 			"name", name, "islands", affected)
 	}
+	// The store changed, so every island's materialized gh credential is now
+	// potentially stale. Rewrite them: the mount is a directory, so a running
+	// container sees it without a recreate.
+	s.refreshIslandGitHubConfigs()
 	writeJSON(w, http.StatusOK, DeleteGitHubIdentityResponse{AffectedIslands: affected})
 }
 
@@ -1022,6 +1163,17 @@ func (s *Server) getIsland(w http.ResponseWriter, r *http.Request) {
 	// Git status is only computed in the detail view, not the list, because
 	// it requires container exec and is the slowest field to populate.
 	info.Git = s.gitStatusOf(ctx, p.ContainerName())
+	// Whether this container reaps orphans. Detail-only: one more inspect, and
+	// the answer cannot change without a recreate.
+	//
+	// Asked of the RUNTIME rather than read off our own source. The daemon passes
+	// --init today, so the code says every island reaps; a container created
+	// before that flag existed says otherwise and will go on leaking a zombie per
+	// orphaned process until it is recreated. Left nil on error, because "I
+	// couldn't ask" must not render as "fine" — see IslandInfo.ReapsOrphans.
+	if reaps, err := s.rt.ContainerReapsOrphans(ctx, p.ContainerName()); err == nil {
+		info.ReapsOrphans = &reaps
+	}
 	// Crash health is one extra inspect; detail-only to keep list refreshes cheap.
 	if h, err := s.rt.Inspect(ctx, p.ContainerName()); err == nil {
 		info.Health = &IslandHealth{
@@ -1050,6 +1202,15 @@ func (s *Server) workspaceReady(w http.ResponseWriter, r *http.Request) {
 	p, err := project.Load(name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	// A repo-less island has no /workspace/.git and never will, so the probe
+	// below can only ever fail. Left to run, the caller polls for its full
+	// two-minute budget and then reports "stalled" — a working island presented
+	// as a broken one, after the slowest possible wait. There is nothing to
+	// clone, so it is ready the moment it exists.
+	if p.NoRepo {
+		writeJSON(w, http.StatusOK, WorkspaceReadyResponse{Ready: true})
 		return
 	}
 	// Bounded: this is polled in a loop and a busy container shouldn't stall it.
@@ -1111,12 +1272,18 @@ func islandPeerRoster(infos []AgentInfo) []AgentInfo {
 	out := make([]AgentInfo, len(infos))
 	for i, ai := range infos {
 		out[i] = AgentInfo{
-			ID:       ai.ID,
-			Label:    ai.Label,
-			Type:     ai.Type,
-			State:    ai.State,
-			Branch:   ai.Branch,
-			Worktree: ai.Worktree,
+			// Carried, not re-asserted: the roster is a projection of an island's
+			// own agent list, so the level was already decided at that boundary.
+			// Dropping it would make every peer read as unset, which callers must
+			// treat as not-contained — safe, but wrong, and the wrong kind of wrong
+			// for a list whose whole purpose is "who else is in here with me".
+			Containment: ai.Containment,
+			ID:          ai.ID,
+			Label:       ai.Label,
+			Type:        ai.Type,
+			State:       ai.State,
+			Branch:      ai.Branch,
+			Worktree:    ai.Worktree,
 		}
 	}
 	return out
@@ -1239,7 +1406,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 	isSpawn := TokenIslandFromContext(r.Context()) != ""
 	if isSpawn {
 		if err := s.authorizeSpawn(p, spec); err != nil {
-			s.ledgerAppend(ledger.Entry{
+			s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 				Type: "spawn.deny", Island: name, Scope: spec.Type,
 				Detail: err.Error(), Actor: "agent:" + spec.SpawnedBy, Decision: "denied",
 			})
@@ -1258,13 +1425,13 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 		// Reserve a lifetime-budget slot (max_total) atomically — still under the
 		// projectLock — and ledger the spawn with its lineage.
 		_, _ = spawn.Update(func(st *spawn.Store) error { st.Consume(name); return nil })
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "spawn.create", Island: name, Scope: spec.Type,
 			Detail: "sub-agent " + id + " spawned by " + spec.SpawnedBy, Actor: "agent:" + spec.SpawnedBy, Decision: "allowed",
 		})
 	}
 	if s.agentsLive(r.Context(), p) {
-		if err := s.ensureAgentSession(r.Context(), p, &p.Agents[len(p.Agents)-1]); err != nil {
+		if err := s.ensureAgentSession(r.Context(), p, &p.Agents[len(p.Agents)-1], false); err != nil {
 			s.setAgentError(name, id, err)
 			s.log.Warn("add agent: ensure session", "island", name, "agent", id, "err", err)
 		} else {
@@ -1290,6 +1457,7 @@ func (s *Server) addAgent(w http.ResponseWriter, r *http.Request) {
 // agent cannot be removed.
 func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 	name, id := r.PathValue("name"), r.PathValue("id")
+	force := r.URL.Query().Get("force") == "true"
 	lock := s.projectLock(name)
 	lock.Lock()
 	defer lock.Unlock()
@@ -1331,6 +1499,22 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 			"this agent is the island's main process (PID 1) — hibernate or purge the island instead"))
 		return
 	}
+	// Guard the agent's worktree, unless forced. Deliberately AFTER the PID-1 and
+	// self-reap checks (those are about whether the removal is allowed at all)
+	// and BEFORE anything is persisted — a guard that fires after the config is
+	// saved would leave the agent half-removed.
+	//
+	// An island token's self-reap is exempt: an ephemeral sub-agent tearing itself
+	// down is the designed teardown path, its worktree is scratch by construction,
+	// and there is no operator present to read a message or pass a flag. Blocking
+	// it would strand sub-agents and make the operator the GC — the exact thing
+	// self-reap exists to avoid.
+	if !force && !isTokenReap {
+		if riskErr := s.agentRemovalRiskError(r.Context(), p, a); riskErr != nil {
+			writeError(w, http.StatusConflict, riskErr)
+			return
+		}
+	}
 	// Persist the removal first (the source of truth), then clean up the agent's
 	// tmux session + worktree best-effort. The cleanup execs into the container,
 	// which can be busy or wedged — so it runs detached and bounded rather than
@@ -1355,7 +1539,7 @@ func (s *Server) removeAgent(w http.ResponseWriter, r *http.Request) {
 	if isTokenReap {
 		// Ledger the agent-initiated teardown (a privileged crossing), matching the
 		// auto-reaper's spawn.reap shape so audit sees both paths uniformly.
-		s.ledgerAppend(ledger.Entry{
+		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
 			Type: "spawn.reap", Island: name,
 			Detail:   "self-reaped sub-agent " + id + " (spawned by " + agentCopy.SpawnedBy + ")",
 			Decision: "allowed",
@@ -1558,8 +1742,35 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	// A seed path is a valid clone source on its own — a local-copy of a repo
 	// with no remote resolves to Repo="" + SeedPath set (origin stays unset).
-	if strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "" {
-		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed)"))
+	// no_repo is the deliberate empty-workspace mode. Kept as its own opt-in
+	// rather than letting an empty repo through: an empty Repo is far more often
+	// a shell-eaten URL than an intent, and silently booting an empty island for
+	// it is indistinguishable from a clone that failed.
+	fromDir := strings.TrimSpace(req.FromDir)
+	switch {
+	case fromDir != "" && (strings.TrimSpace(req.Repo) != "" || strings.TrimSpace(req.SeedPath) != "" || req.NoRepo):
+		writeError(w, http.StatusBadRequest, errors.New("from_dir is its own workspace source — it can't be combined with a repo, a seed, or no_repo"))
+		return
+	case fromDir != "" && strings.TrimSpace(req.Name) == "":
+		// Deriving one from the directory's basename is tempting and wrong: the
+		// same folder name recurs everywhere ("src", "notes", "tmp"), so the
+		// island would be named something unpredictable and often colliding.
+		writeError(w, http.StatusBadRequest, errors.New("name is required with from_dir (a folder name is not a good island name)"))
+		return
+	case req.GitInit && fromDir == "":
+		writeError(w, http.StatusBadRequest, errors.New("git_init only applies with from_dir"))
+		return
+	case req.KeepScope && fromDir == "":
+		writeError(w, http.StatusBadRequest, errors.New("keep_scope only applies with from_dir"))
+		return
+	case req.NoRepo && (strings.TrimSpace(req.Repo) != "" || strings.TrimSpace(req.SeedPath) != ""):
+		writeError(w, http.StatusBadRequest, errors.New("no_repo can't be combined with a repo or seed — pick one"))
+		return
+	case req.NoRepo && strings.TrimSpace(req.Name) == "":
+		writeError(w, http.StatusBadRequest, errors.New("name is required with no_repo (there's no repo to derive one from)"))
+		return
+	case !req.NoRepo && fromDir == "" && strings.TrimSpace(req.Repo) == "" && strings.TrimSpace(req.SeedPath) == "":
+		writeError(w, http.StatusBadRequest, errors.New("repo is required (a URL, a local path, or a seed) — or from_dir to seed from a folder, or no_repo for an empty workspace"))
 		return
 	}
 	// Stop a doomed private-repo clone before it launches into an empty, repo-less
@@ -1680,7 +1891,8 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents)
+	// from_dir seeds a repo-less island: no clone, then a brokered copy.
+	p, err := s.provision(r.Context(), name, req.Repo, agent, image, cmd, req.Role, req.GitHubIdentity, req.Resources, req.SeedPath, req.Agents, req.NoRepo || fromDir != "")
 	if err != nil {
 		// Best-effort cleanup: remove anything we created if provisioning failed mid-flight.
 		s.log.Error("provision failed; cleaning up", "name", name, "err", err)
@@ -1703,6 +1915,24 @@ func (s *Server) createIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := p.Save(); err != nil {
 		s.log.Warn("save ownership metadata", "island", p.Name, "err", err)
+	}
+
+	// Seed from a host folder AFTER provisioning succeeded, deliberately outside
+	// the block above: a failure here must not reach that teardown. The island
+	// itself is fine by this point, so destroying it would make the operator
+	// recreate a working island to retry a copy they can re-run with
+	// `port intake -r`.
+	if fromDir != "" {
+		if err := s.seedWorkspaceFromDir(r.Context(), p, folderSeed{
+			Dir: fromDir, KeepScope: req.KeepScope, GitInit: req.GitInit,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf(
+				"island %q was created, but seeding /workspace from %q failed: %w — "+
+					"the source folder is untouched; retry with `dejima port grant %s %s:ro` "+
+					"then `dejima port intake %s <scope>:. -r`",
+				p.Name, fromDir, err, p.Name, fromDir, p.Name))
+			return
+		}
 	}
 
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: p.Name})
@@ -1746,6 +1976,11 @@ func cloneProjectConfig(src *project.Project, newName string, now time.Time) *pr
 		DesiredState:   project.StateRunning,
 		CreatedAt:      now,
 		LastUsedAt:     now,
+		// Grants are deliberately NOT cloned (Ports/Capabilities aren't either): a
+		// copy starts deny-all and the operator re-grants what it needs. Marking it
+		// reviewed keeps the migration from quietly re-granting what the clone was
+		// just denied.
+		HostGitHubReviewed: true,
 	}
 	if len(src.Agents) > 0 {
 		dst.Agents = make([]project.AgentSpec, len(src.Agents))
@@ -1834,11 +2069,11 @@ func (s *Server) cloneIsland(w http.ResponseWriter, r *http.Request) {
 		fail(fmt.Errorf("copy home volume: %w", err))
 		return
 	}
-	if err := s.createContainerForProject(r.Context(), dst, ""); err != nil {
+	if err := s.createContainerForProject(r.Context(), dst, "", false); err != nil {
 		fail(err)
 		return
 	}
-	s.reconcileAgentsAsync(dst)
+	s.reconcileAgentsAsync(dst, false)
 	s.emit(events.Event{Type: events.TypeIslandCreated, Island: dst.Name})
 	s.emit(events.Event{Type: events.TypeIslandRunning, Island: dst.Name})
 	writeJSON(w, http.StatusCreated, s.toInfo(r.Context(), dst))
@@ -1918,6 +2153,60 @@ func (s *Server) purgeRiskError(ctx context.Context, p *project.Project) error {
 	return fmt.Errorf("island %q has %s on branch %s — purging destroys it permanently; "+
 		"commit/push first, or re-run with --force to purge anyway",
 		p.Name, strings.Join(risks, " and "), branch)
+}
+
+// agentRemovalRiskError returns a non-nil error describing at-risk work in an
+// agent's worktree when removing it without --force would be unsafe, or nil when
+// there is nothing to guard.
+//
+// This is the purge guard's sibling, and the asymmetry it closes was the bug:
+// purging an island REFUSES on uncommitted work, while removing a single agent
+// destroyed the same class of work silently — with no confirm, no flag and no
+// guard — via `git worktree remove --force` in removeAgentSession. The careful
+// gate was on the surface a human drives and the ungated one on the surface
+// automation drives.
+//
+// It guards UNCOMMITTED work only, and that precision is the point rather than
+// laziness. `git worktree remove --force` deletes the working directory; it does
+// not delete the branch, so commits — pushed or not — survive in the shared
+// repository and can be checked out again. Tested rather than reasoned:
+// committed work is recoverable afterwards, uncommitted and untracked files are
+// not. Warning about unpushed commits here would be crying wolf, and a guard
+// that overstates the loss teaches people to pass --force by reflex.
+func (s *Server) agentRemovalRiskError(ctx context.Context, p *project.Project, a *project.AgentSpec) error {
+	// No worktree of its own means nothing is removed — removeAgentSession skips
+	// the worktree step for "" and /workspace, so there is no loss to guard.
+	if a.Worktree == "" || a.Worktree == "/workspace" {
+		return nil
+	}
+	status, _ := s.rt.Status(ctx, p.ContainerName())
+	if status != runtime.StatusRunning {
+		return fmt.Errorf("island %q is not running, so agent %q's worktree can't be checked for "+
+			"uncommitted work; wake it (`dejima wake %s`) to let the guard verify, "+
+			"or re-run with --force to remove it anyway", p.Name, a.ID, p.Name)
+	}
+	// Bounded, for the same reason purgeRiskError bounds its check: a wedged
+	// container must fail fast with an actionable message rather than hang a
+	// client that is holding this island's lock.
+	ictx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	git := s.gitStatusIn(ictx, p.ContainerName(), a.Worktree)
+	if ictx.Err() != nil {
+		return fmt.Errorf("agent %q's worktree didn't respond to a check within 5s "+
+			"(the container may be wedged) — re-run with --force to remove it anyway", a.ID)
+	}
+	if git == nil || git.Clean || git.DirtyFiles == 0 {
+		// Not a git worktree, or nothing uncommitted in it. Nothing to lose.
+		return nil
+	}
+	branch := git.Branch
+	if branch == "" {
+		branch = "HEAD"
+	}
+	return fmt.Errorf("agent %q has %s in its worktree on branch %s — removing the agent "+
+		"discards them permanently (its branch and commits are kept); commit them first, "+
+		"or re-run with --force to remove it anyway",
+		a.ID, countNoun(git.DirtyFiles, "uncommitted change"), branch)
 }
 
 // normalizeModel makes the model string forgiving: a bare model with no
@@ -2014,7 +2303,7 @@ func oomScoreAdjPtr(priority *int) *int {
 	return ptrInt(oomScoreAdj(*priority))
 }
 
-func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role, ghIdentity string, res Resources, seedPath string, seedAgents []AgentSpecRequest) (*project.Project, error) {
+func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, role, ghIdentity string, res Resources, seedPath string, seedAgents []AgentSpecRequest, noRepo bool) (*project.Project, error) {
 	exists, err := s.rt.ImageExists(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("check image %s: %w", image, err)
@@ -2027,6 +2316,7 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 	p := &project.Project{
 		Name:           name,
 		RepoURL:        repo,
+		NoRepo:         noRepo,
 		Agent:          agent,
 		Image:          image,
 		Cmd:            cmd,
@@ -2045,6 +2335,11 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		// against. Compared later (doctor / ls / detail) to the running daemon to
 		// flag an island built from a stale image whose /opt shims may be old.
 		BuiltVersion: version.Version,
+		// Born under the grant model, so the deny-by-default decision is already
+		// made: no host gh credential unless the operator grants one. Without this
+		// the load-time migration would grandfather every new island and the
+		// default would never actually change.
+		HostGitHubReviewed: true,
 	}
 	p.EnsureAgents()                             // mirror the scalar agent into Agents[0] for new islands
 	p.SetPrimaryID(project.PrimaryAgentID(name)) // fresh island: island-letter primary id (p1), not the legacy a1 back-fill
@@ -2088,16 +2383,22 @@ func (s *Server) provision(ctx context.Context, name, repo, agent, image, cmd, r
 		return p, fmt.Errorf("create network: %w", err)
 	}
 
-	if err := s.createContainerForProject(ctx, p, seedPath); err != nil {
+	if err := s.createContainerForProject(ctx, p, seedPath, false); err != nil {
 		return p, err
 	}
-	s.reconcileAgentsAsync(p) // bring up any non-primary agents once the clone lands
+	s.reconcileAgentsAsync(p, false) // bring up any non-primary agents once the clone lands
 	return p, nil
 }
 
 // createContainerForProject creates the long-lived container for an existing
 // project. Used by provision() and reset().
-func (s *Server) createContainerForProject(ctx context.Context, p *project.Project, seedPath string) error {
+// resume, when true, launches the primary agent with its handler's ResumeLaunch
+// (claude-code → `claude --continue`) instead of a cold Launch. Only the graceful
+// operator-initiated paths pass true — recreating the container under a user who
+// had a conversation going, where a cold start silently loses their context. A
+// brand-new or reset island must NOT resume: there is nothing to continue, and
+// `claude --continue` in an empty state dir is at best a no-op.
+func (s *Server) createContainerForProject(ctx context.Context, p *project.Project, seedPath string, resume bool) error {
 	binds, err := credentialBindMounts(p)
 	if err != nil {
 		return err
@@ -2147,12 +2448,30 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	if pa := p.PrimaryAgent(); pa != nil {
 		agentType = pa.Type
 		env["DEJIMA_AGENT_ID"] = pa.ID
+		// Fall back to the SAME default the attach path uses. These two disagreed:
+		// sessionWS defaults an empty Tmux to "agent-"+ID, while start.sh defaults
+		// an empty DEJIMA_TMUX to the literal "agent-a1" — a stale first-agent id
+		// that is wrong for every island whose agents are not named a1.
+		//
+		// So on a project record with no Tmux (one created before the field was
+		// populated), the entrypoint launches the agent into "agent-a1" and the
+		// daemon attaches to "agent-<id>", which does not exist. `tmux new-session
+		// -A` then CREATES it, and the operator gets a bare shell where their agent
+		// should be, while the real agent runs on in a session nothing points at.
+		// Two defaults for one name is the bug; this makes the daemon always send a
+		// value so the fallback in start.sh can never be reached.
 		env["DEJIMA_TMUX"] = pa.Tmux
+		if pa.Tmux == "" {
+			env["DEJIMA_TMUX"] = "agent-" + pa.ID
+		}
 		if pa.Cmd != "" {
 			env["DEJIMA_AGENT_CMD"] = pa.Cmd
 		}
 		if h, ok := handlers.Lookup(pa.Type); ok {
-			env["DEJIMA_LAUNCH"] = h.Launch // empty for headless → entrypoint runs DEJIMA_AGENT_CMD as PID 1
+			// LaunchFor falls back to the plain Launch when the handler has no resume
+			// affordance, and both are empty for headless → entrypoint runs
+			// DEJIMA_AGENT_CMD as PID 1.
+			env["DEJIMA_LAUNCH"] = h.LaunchFor(resume)
 			// LLM provider/model selection for frameworks that reach a model over
 			// an API key. The key bytes are NOT injected here — only the path to
 			// the read-only mounted file is (materialized by islandLLMConfigDir),
@@ -2236,11 +2555,11 @@ const agentsWorktreeRoot = "/workspace/.agents"
 // reconcileAgentsAsync ensures the island's non-primary agent sessions exist, in
 // the background. The container entrypoint launches the primary agent; the
 // daemon owns the rest. Safe to call after create, wake, and at adopt.
-func (s *Server) reconcileAgentsAsync(p *project.Project) {
+func (s *Server) reconcileAgentsAsync(p *project.Project, resume bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		if err := s.reconcileAgents(ctx, p); err != nil {
+		if err := s.reconcileAgents(ctx, p, resume); err != nil {
 			s.log.Warn("reconcile agents", "island", p.Name, "err", err)
 		}
 	}()
@@ -2249,7 +2568,10 @@ func (s *Server) reconcileAgentsAsync(p *project.Project) {
 // reconcileAgents brings tmux sessions and worktrees into line with p.Agents for
 // every non-primary agent. Idempotent. The primary (Agents[0]) is launched by
 // the entrypoint and skipped here.
-func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error {
+// resume is passed through to each session so the non-primary agents follow the
+// same cold/continue decision the primary got — otherwise an upgrade would
+// resume agent 0 and cold-start the rest, which is worse than being consistent.
+func (s *Server) reconcileAgents(ctx context.Context, p *project.Project, resume bool) error {
 	if len(p.Agents) <= 1 {
 		return nil
 	}
@@ -2258,7 +2580,7 @@ func (s *Server) reconcileAgents(ctx context.Context, p *project.Project) error 
 	}
 	for i := 1; i < len(p.Agents); i++ {
 		a := &p.Agents[i]
-		if err := s.ensureAgentSession(ctx, p, a); err != nil {
+		if err := s.ensureAgentSession(ctx, p, a, resume); err != nil {
 			s.setAgentError(p.Name, a.ID, err)
 			s.log.Warn("ensure agent session", "island", p.Name, "agent", a.ID, "err", err)
 		} else {
@@ -2293,7 +2615,7 @@ func (s *Server) waitForWorkspace(ctx context.Context, p *project.Project) bool 
 
 // ensureAgentSession makes sure one non-primary agent has its worktree and a
 // running tmux session. Idempotent.
-func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *project.AgentSpec) error {
+func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *project.AgentSpec, resume bool) error {
 	wt := a.Worktree
 	if wt == "" {
 		wt = "/workspace"
@@ -2323,7 +2645,7 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	// process), scoped to DEJIMA_AGENT_ID via sh so we don't depend on a specific
 	// tmux version's `new-session -e`. Headless agents are marked non-attachable,
 	// redirect to a per-agent log file, and optionally restart on crash.
-	script := agentLaunchScript(a)
+	script := agentLaunchScript(a, resume)
 	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(), []string{
 		"tmux", "new-session", "-d", "-s", a.Tmux, "-c", wt, "sh", "-c", script,
 	})
@@ -2344,6 +2666,59 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	// leaves the inline-scoped launch as-is).
 	s.setSessionAgentEnv(ctx, p, a)
 	return nil
+}
+
+// restartAgentSession relaunches ONE agent in place: it kills the agent's tmux
+// session and re-creates it, so the agent starts in a fresh login shell and picks
+// up any changed environment (a newly added or rotated secret). resume, when the
+// handler supports it (claude-code → `claude --continue`), continues the previous
+// conversation instead of a cold start. This is the lighter, per-agent
+// alternative to a whole-container recreate for an island that already carries
+// its secrets mount.
+func (s *Server) restartAgentSession(ctx context.Context, p *project.Project, a *project.AgentSpec, resume bool) error {
+	if a.Tmux != "" {
+		// Best-effort kill; if the session is already gone, ensureAgentSession just
+		// creates a fresh one below.
+		_, _, _, _ = s.rt.Exec(ctx, p.ContainerName(), []string{"tmux", "kill-session", "-t", a.Tmux})
+	}
+	return s.ensureAgentSession(ctx, p, a, resume)
+}
+
+// restartAgent relaunches one agent in place so it picks up a changed
+// environment — e.g. a newly added/rotated secret. Optional {"resume": true}
+// continues the agent's prior conversation when the framework supports it.
+// Operator-only; the island must be running (tmux lives in the container).
+func (s *Server) restartAgent(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("name"), r.PathValue("id")
+	lock := s.projectLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+	p, err := project.Load(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	a, ok := p.AgentByID(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("island %q has no agent %q", name, id))
+		return
+	}
+	var req struct {
+		Resume bool `json:"resume"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	if err := s.restartAgentSession(r.Context(), p, a, req.Resume); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	resumed := req.Resume
+	if h, ok := handlers.Lookup(a.Type); !ok || h.ResumeLaunch == "" {
+		resumed = false // asked to resume, but this framework has no resume affordance
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"restarted": id, "resumed": resumed})
 }
 
 // setSessionAgentEnv records the per-agent DEJIMA_AGENT_ID / DEJIMA_TMUX in the
@@ -2394,15 +2769,33 @@ func headlessLogPath(agentID string) string {
 // agentLaunchScript builds the sh -c script that a tmux session runs for one
 // agent. Interactive agents exec their launch command directly; headless agents
 // redirect output to a per-agent log file and (when Restart) self-respawn.
-func agentLaunchScript(a *project.AgentSpec) string {
+// shSingleQuote wraps s in single quotes for safe inclusion in a /bin/sh command,
+// escaping embedded single quotes (the '\” idiom).
+func shSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func agentLaunchScript(a *project.AgentSpec, resume bool) string {
 	idEnv := "DEJIMA_AGENT_ID=" + a.ID + " "
 	if handlers.Attachable(a.Type) {
 		h, _ := handlers.Lookup(a.Type)
-		launch := h.Launch
+		launch := h.LaunchFor(resume) // resume continues the prior conversation when supported
 		if launch == "" {
 			launch = a.Type // unknown/custom interactive agent: run the type as a command
 		}
-		return idEnv + "exec " + launch
+		// Source the island's Dejima-managed secrets into the agent's environment
+		// before exec, so they reach the agent AND every tool subprocess it spawns
+		// (its own Bash tool is a non-login shell, so inheriting from the agent
+		// process is the only path). Secrets normally load via /etc/profile.d, but
+		// ONLY for login shells — and the tmux session runs this under a non-login
+		// `sh -c`, so the agent otherwise never sees them (the exact "my secret
+		// isn't there" bug). We source the profile.d hook directly under `bash -c`
+		// (NOT `bash -lc`): a login shell would re-run /etc/profile and reset PATH,
+		// dropping /opt/dejima/npm-global/bin where the agent binary lives. bash
+		// (not sh) so load-secrets' %q-quoted output evals correctly. A missing hook
+		// (older image) is a harmless no-op; headless agents wrap their own bash -lc.
+		inner := ". /etc/profile.d/10-dejima-secrets.sh 2>/dev/null || true; exec " + launch
+		return idEnv + "exec bash -c " + shSingleQuote(inner)
 	}
 	// Headless: capture output to the per-agent log, optionally with a restart loop.
 	cmd := a.Cmd
@@ -2440,6 +2833,12 @@ func (s *Server) ensureWorktree(ctx context.Context, p *project.Project, a *proj
 		return nil // already a worktree
 	}
 	if _, _, code, _ := s.rt.Exec(ctx, p.ContainerName(), []string{"test", "-e", "/workspace/.git"}); code != 0 {
+		// Name the cause when it's by design. Identical symptom, opposite
+		// meaning: a repo-less island isn't missing a checkout, it never had
+		// one, and "no repo at /workspace" alone reads as a clone that failed.
+		if p.NoRepo {
+			return fmt.Errorf("island %q was created with --no-repo, so there's no /workspace repo to base a worktree on; co-located agents on a repo-less island share /workspace directly", p.Name)
+		}
 		return fmt.Errorf("no repo at /workspace to base a worktree on")
 	}
 	_, _, _, _ = s.rt.Exec(ctx, p.ContainerName(), []string{"mkdir", "-p", agentsWorktreeRoot})
@@ -2545,6 +2944,13 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	if dir, err := paths.LLMIslandConfigPath(p.Name); err == nil {
 		_ = os.RemoveAll(dir)
 	}
+	// Per-island secrets: values (keychain entries) AND the metadata + the
+	// materialized mount file. Scoped to the island, so they must not outlive
+	// it — and keychain entries would otherwise persist with nothing pointing
+	// at them, invisible to every surface.
+	if store, err := secrets.OpenIsland(); err == nil {
+		_ = store.Purge(p.Name)
+	}
 	return project.Delete(p.Name)
 }
 
@@ -2596,7 +3002,7 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 	switch status {
 	case runtime.StatusMissing:
 		// Container was removed; recreate it against the existing volumes.
-		if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
+		if err := s.createContainerForProject(r.Context(), p, "", false); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -2616,7 +3022,12 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandWoken, Island: p.Name})
-	s.reconcileAgentsAsync(p) // the entrypoint relaunches the primary; restore the rest
+	// Match whatever the ENTRYPOINT is about to do with the primary, rather than
+	// asserting a value here. A container upgraded earlier carries
+	// DEJIMA_LAUNCH="claude --continue" permanently, so a hardcoded false here
+	// resumed the primary and cold-started everyone else — the exact split the
+	// upgrade fix exists to prevent, one hibernate/wake cycle later.
+	s.reconcileAgentsAsync(p, s.containerResumesPrimary(r.Context(), p))
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
@@ -2657,7 +3068,7 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// reset preserves the workspace volume, so no re-clone happens; no seed.
-	if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
+	if err := s.createContainerForProject(r.Context(), p, "", false); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -2708,14 +3119,22 @@ func (s *Server) upgradeIsland(w http.ResponseWriter, r *http.Request) {
 	}
 	// Both volumes persist; the new container mounts them as-is. No seed —
 	// the workspace already holds the clone.
-	if err := s.createContainerForProject(r.Context(), p, ""); err != nil {
+	//
+	// resume=true: an upgrade is the textbook graceful, operator-initiated
+	// restart ResumeLaunch exists for. The operator is recreating the container
+	// under agents that were mid-conversation, and their state dirs (~/.claude et
+	// al) live on the persisted volume — so the transcript is right there and a
+	// cold start would strand it.
+	if err := s.createContainerForProject(r.Context(), p, "", true); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	// Honor the prior desired state, as reset does.
+	leftStopped := false
 	if !wasRunning && p.DesiredState == project.StateHibernated {
 		_ = s.rt.StopContainer(r.Context(), p.ContainerName())
+		leftStopped = true
 	}
 
 	p.LastUsedAt = time.Now().UTC()
@@ -2732,6 +3151,15 @@ func (s *Server) upgradeIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandUpgraded, Island: p.Name})
+	// The entrypoint relaunches only the PRIMARY agent; the rest are the daemon's
+	// job. wakeIsland has always done this and upgrade never did, so upgrading a
+	// multi-agent island silently brought back agent 0 alone and left the others
+	// with no tmux session at all. Skipped when the island was deliberately left
+	// hibernated above — there is no running container to create sessions in, and
+	// the next wake reconciles anyway.
+	if !leftStopped {
+		s.reconcileAgentsAsync(p, true)
+	}
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
@@ -2747,7 +3175,29 @@ func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanup()
 
-	stream, err := s.rt.BuildImage(r.Context(), dir, islandimage.Dockerfile, DefaultImage)
+	// Pin the in-island CLI to THIS daemon's release. Two reasons, both load-bearing:
+	//
+	//  1. Cache correctness. The Dockerfile's default is DEJIMA_VERSION=latest,
+	//     which it resolves by curl-ing the GitHub releases API *inside* a RUN.
+	//     Docker can't see that the answer changed, so it reuses that layer
+	//     forever — the in-island `dejima` froze at whatever release was newest
+	//     the first time the layer built, and no number of rebuilds moved it.
+	//     Passing an explicit version changes the ARG, which invalidates the layer.
+	//  2. Version agreement. An island's CLI talks to this daemon; building it
+	//     from "whatever GitHub calls latest" could straddle a release boundary
+	//     mid-build and hand an island a client newer than the daemon it reports to.
+	//
+	// A dev/source daemon has no matching published release, so it keeps the
+	// "latest" default (there is no asset named dejima_dev_*.tar.gz to fetch) —
+	// and with it the stale-layer caveat, which only bites un-released builds.
+	// IsExactRelease, not IsRelease: the latter also accepts a git-describe string
+	// like "v0.8.60-3-gabc1234", and no release asset exists under that name — the
+	// Dockerfile's curl would 404 and fail the whole build.
+	buildArgs := map[string]string{}
+	if version.IsExactRelease(version.Version) {
+		buildArgs["DEJIMA_VERSION"] = version.Version
+	}
+	stream, err := s.rt.BuildImage(r.Context(), dir, islandimage.Dockerfile, DefaultImage, buildArgs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -2796,6 +3246,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 		Name:        p.Name,
 		Title:       p.Title,
 		Repo:        p.RepoURL,
+		NoRepo:      p.NoRepo,
 		Agent:       agentType,
 		Image:       p.Image,
 		Cmd:         cmd,
@@ -2816,6 +3267,22 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 			if _, ok := store.ResolveForIsland(ghOwner(p.Owner), id); !ok {
 				info.GitHubCredMissing = true
 			}
+		}
+	}
+	// Host-gh grant state, so a host island that now has NO GitHub credential
+	// says so here — the same surface a tenant island uses — instead of failing
+	// opaquely at the first clone/push. It also carries the Grandfathered flag,
+	// which is how "islands still on the old inherited credential" stays a
+	// question with an answer after the deny-by-default migration.
+	if v := hostGitHubView(p); v.Eligible {
+		info.GitHubHostCredential = &v
+	}
+	// Secret COUNT for the dashboard's per-island row. Reads the island's
+	// metadata file only — never the keychain — so it stays cheap enough for the
+	// poll and can't trigger a keychain access prompt.
+	if store, err := secrets.OpenIsland(); err == nil {
+		if metas, lerr := store.List(p.Name); lerr == nil {
+			info.SecretsCount = len(metas)
 		}
 	}
 	if status, err := s.rt.Status(ctx, p.ContainerName()); err == nil {
@@ -2845,6 +3312,7 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	info.Attached = s.islandPresence(p.Name)
 	info.AgentState = s.islandAgentState(p.Name)
 	info.Agents = s.agentInfos(ctx, p, false)
+	info.GitHubIdentity = p.GitHubIdentity
 	info.BuiltVersion = p.BuiltVersion
 	info.UpgradedVersion = p.UpgradedVersion
 	// Zero-heartbeat liveness: a running island that has never emitted a single
@@ -2889,16 +3357,21 @@ func (s *Server) agentInfos(ctx context.Context, p *project.Project, live bool) 
 	for i := range p.Agents {
 		a := &p.Agents[i]
 		ai := AgentInfo{
-			ID:         a.ID,
-			Type:       a.Type,
-			Label:      a.Label,
-			Tmux:       a.Tmux,
-			Branch:     a.Branch,
-			Worktree:   a.Worktree,
-			Attachable: handlers.Attachable(a.Type),
-			CreatedAt:  a.CreatedAt,
-			Ephemeral:  a.Ephemeral,
-			SpawnedBy:  a.SpawnedBy,
+			// Stamped HERE, not read from the record. This function's whole
+			// premise is that it is enumerating one island's agents, so being in
+			// an island is a fact it knows and the stored agent does not. A record
+			// that carried its own level could drift from where it actually lives.
+			Containment: ContainmentContained,
+			ID:          a.ID,
+			Type:        a.Type,
+			Label:       a.Label,
+			Tmux:        a.Tmux,
+			Branch:      a.Branch,
+			Worktree:    a.Worktree,
+			Attachable:  handlers.Attachable(a.Type),
+			CreatedAt:   a.CreatedAt,
+			Ephemeral:   a.Ephemeral,
+			SpawnedBy:   a.SpawnedBy,
 		}
 		// Resolve the spawner's name from the same roster so lineage renders as a
 		// name, not a bare id.
@@ -2980,6 +3453,10 @@ func islandGHConfigDir(p *project.Project) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(githubid.ConfigYAML()), 0o600); err != nil {
 		return "", fmt.Errorf("write island gh config.yml: %w", err)
 	}
+	// The container runs as uid 1000 and cannot read a root-owned 0600 file in a
+	// 0700 directory. Without this the island has its credential mounted and
+	// unreadable, and every private clone fails as an auth error.
+	makeIslandReadableTree(dir)
 	return dir, nil
 }
 
@@ -3008,6 +3485,7 @@ func islandGitConfig(p *project.Project) (string, error) {
 	if err := os.WriteFile(path, []byte(githubid.GitConfig(id)), 0o600); err != nil {
 		return "", fmt.Errorf("write island gitconfig: %w", err)
 	}
+	makeIslandReadable(path)
 	return path, nil
 }
 
@@ -3034,12 +3512,21 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 			seen[prov.Name] = prov
 		}
 	}
-	if len(seen) == 0 {
-		return "", nil
-	}
 	dir, err := paths.LLMIslandConfigDir(p.Name)
 	if err != nil {
 		return "", err
+	}
+	// Prune first. This function is also the REFRESH path, so it runs against a
+	// dir that may already hold a previous resolution's files — and a provider
+	// the island no longer resolves must have its key REMOVED, not merely
+	// stopped being rewritten. Leaving it is the silent-revoke shape: `dejima
+	// provider rm` reports success, the store is clean, and the island keeps a
+	// working copy of the revoked key plus a manifest still advertising it.
+	if err := pruneIslandLLMConfig(dir, seen); err != nil {
+		return "", err
+	}
+	if len(seen) == 0 {
+		return "", nil
 	}
 	manifest := make([]providercreds.Meta, 0, len(seen))
 	for _, prov := range seen {
@@ -3056,7 +3543,42 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "providers.json"), b, 0o600); err != nil {
 		return "", fmt.Errorf("write island llm manifest: %w", err)
 	}
+	makeIslandReadableTree(dir)
 	return dir, nil
+}
+
+// pruneIslandLLMConfig deletes materialized provider keys the island no longer
+// resolves. keep is the set that survives; anything else goes, and when keep is
+// empty so does the manifest — an island with no provider must be left with no
+// key material at all, matching what LLMIslandConfigPath teardown promises.
+//
+// A missing dir is not an error: nothing to prune is the success case.
+func pruneIslandLLMConfig(dir string, keep map[string]providercreds.Provider) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read island llm dir: %w", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".env") {
+			continue
+		}
+		if _, ok := keep[strings.TrimSuffix(name, ".env")]; ok {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale island llm env: %w", err)
+		}
+	}
+	if len(keep) == 0 {
+		if err := os.Remove(filepath.Join(dir, "providers.json")); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale island llm manifest: %w", err)
+		}
+	}
+	return nil
 }
 
 func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
@@ -3070,21 +3592,44 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		return nil, err
 	} else if dir != "" {
 		binds = append(binds, runtime.BindMount{
-			HostPath: dir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
+			HostPath: dir, ContainerPath: GitHubCredentialMountPath, ReadOnly: true,
 		})
-	} else if ghOwner(p.Owner) == "" {
-		// v1b containment: the host's own ~/.config/gh is a HOST-island-only
-		// fallback. A tenant island that resolves no identity gets NO gh credential
-		// (surfaced via health + the self-serve "connect GitHub" prompt) rather than
-		// silently inheriting the host operator's login — that inheritance was the
-		// over-mount finding this feature closes.
+	} else if ghOwner(p.Owner) == "" && p.HostGitHubAllowed() {
+		// The host's own ~/.config/gh is a HOST-island-only fallback, and now also
+		// an EXPLICITLY GRANTED one. A tenant island that resolves no identity gets
+		// no gh credential (surfaced via health + the self-serve "connect GitHub"
+		// prompt) rather than silently inheriting the host operator's login; a host
+		// island gets it only where the operator granted it, because that login
+		// reads the operator's whole account and an island may hold several
+		// autonomous agents. See project/github_host.go for the grant model and the
+		// migration that converted the old silent inheritance into explicit grants.
 		if ghDir, err := paths.HostGHConfigDir(); err == nil {
 			if _, statErr := os.Stat(ghDir); statErr == nil {
 				binds = append(binds, runtime.BindMount{
-					HostPath: ghDir, ContainerPath: "/opt/host/gh-config", ReadOnly: true,
+					HostPath: ghDir, ContainerPath: GitHubCredentialMountPath, ReadOnly: true,
 				})
 			}
 		}
+	}
+
+	// Per-island secrets: a KEY=VALUE file the island PARSES (never sources).
+	// The DIRECTORY is mounted, not the file — a file bind binds the inode, and
+	// the file is replaced by rename, so the container would read the original
+	// inode forever. See island_secrets.go.
+	if secretsPath, err := islandSecretsMount(p); err != nil {
+		return nil, err
+	} else if secretsPath != "" {
+		binds = append(binds, runtime.BindMount{
+			HostPath: secretsPath, ContainerPath: secretsMountPath, ReadOnly: true,
+		})
+		// And the old file path alongside it, for an island image built before
+		// secrets.d existed — see legacySecretsMountPath. Without this, updating
+		// the daemon without rebuilding the image makes every secret vanish
+		// rather than merely go stale.
+		binds = append(binds, runtime.BindMount{
+			HostPath:      filepath.Join(secretsPath, secretsFileName),
+			ContainerPath: legacySecretsMountPath, ReadOnly: true,
+		})
 	}
 
 	claudeDir, err := paths.HostClaudeDir()

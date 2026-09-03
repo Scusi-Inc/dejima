@@ -34,6 +34,18 @@ type IslandGrantsResponse struct {
 	Capability []CapabilityGrantView `json:"capability"`
 	MCP        []MCPGrantView        `json:"mcp"`
 	Links      []link.Grant          `json:"links"`
+	// HostGitHub is the host-operator gh credential grant. Unlike the four
+	// above it is a single yes/no rather than a list, and it is the one grant
+	// that used to be implicit — it appears here so "what does this island
+	// hold" has one answer instead of four plus a special case.
+	HostGitHub HostGitHubCredentialView `json:"host_github"`
+	// Credentials is what the RUNNING container actually has mounted, next to
+	// what the config says it should. Credential mounts are fixed at container
+	// create, so a grant or revoke doesn't take effect until recreate — and a
+	// surface that reports only the record tells the operator about intent while
+	// they read it as behaviour. Known is false when the runtime couldn't be
+	// asked, which must render as "not determined", never as agreement.
+	Credentials CredentialMountReport `json:"credentials"`
 }
 
 // handleListGrants returns every grant type for one island in a single shape.
@@ -66,10 +78,12 @@ func (s *Server) handleListGrants(w http.ResponseWriter, r *http.Request) {
 	links := linksTouching(st.List(), name)
 
 	writeJSON(w, http.StatusOK, IslandGrantsResponse{
-		Port:       scopeViews(p.Ports),
-		Capability: capabilityViews(p.Capabilities),
-		MCP:        mcpGrantViews(mcpGrants),
-		Links:      links,
+		Port:        scopeViews(p.Ports),
+		Capability:  capabilityViews(p.Capabilities),
+		MCP:         mcpGrantViews(mcpGrants),
+		Links:       links,
+		HostGitHub:  hostGitHubView(p),
+		Credentials: s.credentialMountReport(r.Context(), p),
 	})
 }
 

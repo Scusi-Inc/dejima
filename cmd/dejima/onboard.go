@@ -26,6 +26,7 @@ import (
 	"github.com/aoos/dejima/internal/invite"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/vmmem"
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // newOnboardCmd is the explicit re-entry into the wizard. Always runs,
@@ -154,7 +155,14 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 	fmt.Println()
 	fmt.Println(bold("First time — set up Dejima on this machine, or join one that already exists?"))
 	fmt.Println()
-	fmt.Println("    s) Set up Dejima on this machine (run a daemon here)")
+	if kind == firstRunWindowsClient {
+		// Be honest about the shape of "here" on Windows: the daemon can't run on
+		// Windows itself, so "set up here" means WSL2. Saying that up front beats
+		// letting the user pick "s" and then discovering the constraint.
+		fmt.Println("    s) Set up Dejima on this machine — in WSL2 (Windows can't run the daemon directly)")
+	} else {
+		fmt.Println("    s) Set up Dejima on this machine (run a daemon here)")
+	}
 	fmt.Println("    j) Join an existing server — paste an invite from your team")
 	fmt.Println("    n) Not now — ask me again next time")
 	fmt.Println("    N) Never ask again")
@@ -185,11 +193,64 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 	if kind == firstRunFreshHost {
 		return firstRunSetUpHost(ctx)
 	}
+	if kind == firstRunWindowsClient {
+		return firstRunSetUpWSL(ctx)
+	}
 	if err := runOnboarding(ctx); err != nil {
 		return false, err
 	}
 	markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up
 	return true, nil
+}
+
+// firstRunSetUpWSL is the "set up here" branch on Windows. dejimad needs a Unix
+// host with Docker, which Windows isn't — but WSL2 is one, on this same machine,
+// so "locally" is achievable after all. The client then reaches the daemon by
+// tunnelling its Unix socket through wsl.exe, leaving the daemon's trust model
+// untouched (no TCP listener, no token).
+//
+// Reached only after the router's "set up" choice, so it doesn't re-ask the
+// set-up-vs-join question — it explains the WSL2 requirement and offers to do it.
+func firstRunSetUpWSL(ctx context.Context) (bool, error) {
+	fmt.Println()
+	fmt.Println("  Dejima's daemon needs Linux + Docker, so on Windows it runs inside WSL2 —")
+	fmt.Println("  still local, still your hardware. Setup installs Docker and dejimad into a")
+	fmt.Printf("  WSL2 distro (%q) and connects this client to it.\n", wsl.DefaultDistro)
+	fmt.Println()
+	if !wsl.Available() {
+		// WSL itself is missing; `wsl --install` needs admin AND a reboot, so we
+		// can't just do it. Give the exact command rather than a wizard that
+		// would fail two steps in.
+		fmt.Println("  WSL isn't installed yet. In an " + bold("administrator") + " PowerShell:")
+		fmt.Println()
+		fmt.Println("      " + wsl.InstallHint)
+		fmt.Println()
+		fmt.Println("  Reboot, then run:  dejima wsl setup")
+		fmt.Println()
+		fmt.Println("  Prefer a server instead? `dejima join <invite>`, or")
+		fmt.Println("  `dejima profile add <name> <host>:7273`.")
+		fmt.Println()
+		fmt.Println("Opening the dashboard.")
+		return true, nil
+	}
+	fmt.Println("    y) Yes, set up the WSL2 host now (dejima wsl setup)")
+	fmt.Println("    n) Not now")
+	fmt.Println()
+	switch readSingleKey("Choice [y/n]: ") {
+	case "y", "Y", "yes", "":
+		if err := runWSLSetup(ctx, "", false); err != nil {
+			// A failed provision shouldn't strand the user at an error with no way
+			// forward — the dashboard still works against any other target.
+			fmt.Fprintf(os.Stderr, "\nWSL setup didn't finish: %v\n", err)
+			fmt.Println("Re-run `dejima wsl setup` after fixing that, or point at a server with `dejima join <invite>`.")
+			return true, nil
+		}
+		markSetupDoneIfHealthy(ctx)
+		return true, nil
+	default:
+		fmt.Println("OK — opening the dashboard. Run `dejima wsl setup` anytime.")
+		return true, nil
+	}
 }
 
 // firstRunSetUpHost is the "set up here" branch on a fresh Mac: offer full host
@@ -247,30 +308,30 @@ func joinFromInvite(blob string) (invite.Payload, string, error) {
 // existing daemon (#68). It mirrors `dejima join <blob>` and the TUI switcher's
 // join step, all three sharing invite.Decode + clientcfg.SaveInvite.
 func firstRunJoin(ctx context.Context) (bool, error) {
-	fmt.Println()
-	fmt.Println(bold("Join an existing Dejima server"))
-	fmt.Println()
-	fmt.Println("  Paste the invite a teammate sent you (it starts with `dejima-invite:`).")
-	fmt.Println("  It carries the daemon host + your access token — no env vars to set.")
-	fmt.Println()
+	fmt.Fprintln(cliOut)
+	fmt.Fprintln(cliOut, bold("Join an existing Dejima server"))
+	fmt.Fprintln(cliOut)
+	fmt.Fprintln(cliOut, "  Paste the invite a teammate sent you (it starts with `dejima-invite:`).")
+	fmt.Fprintln(cliOut, "  It carries the daemon host + your access token — no env vars to set.")
+	fmt.Fprintln(cliOut)
 	blob := readSingleKey("Invite: ")
 	if strings.TrimSpace(blob) == "" {
-		fmt.Println("No invite entered — opening the dashboard. Run `dejima join <invite>` (or re-run `dejima onboard`) anytime.")
+		fmt.Fprintln(cliOut, "No invite entered — opening the dashboard. Run `dejima join <invite>` (or re-run `dejima onboard`) anytime.")
 		return true, nil
 	}
 	p, name, err := joinFromInvite(blob)
 	if err != nil {
 		// Decode/save errors are user-facing strings (a1's contract) — show
 		// verbatim, then fall through to the dashboard rather than blocking.
-		fmt.Println(err)
-		fmt.Println("Opening the dashboard. Try `dejima join <invite>` once you have a valid invite.")
+		fmt.Fprintln(cliOut, err)
+		fmt.Fprintln(cliOut, "Opening the dashboard. Try `dejima join <invite>` once you have a valid invite.")
 		return true, nil
 	}
 	scope := "all islands"
 	if len(p.Islands) > 0 {
 		scope = strings.Join(p.Islands, ", ")
 	}
-	fmt.Printf("Joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
+	fmt.Fprintf(cliOut, "Joined %s as %s (scope: %s) — saved as profile %q and made active.\n", p.Host, p.Role, scope, name)
 	// Confirm the connection now (bounded) so the teammate gets immediate
 	// feedback, but never block the dashboard on it: the profile is saved either
 	// way, and a transient failure shouldn't strand them. Probe the invite's own
@@ -282,10 +343,10 @@ func firstRunJoin(ctx context.Context) (bool, error) {
 			// tailnet — guide them there instead of the opaque timeout error.
 			printTailscaleJoinHelp(p.Host)
 		} else {
-			fmt.Printf("note: couldn't reach %s yet — the profile is saved; the dashboard will retry.\n", p.Host)
+			fmt.Fprintf(cliOut, "note: couldn't reach %s yet — the profile is saved; the dashboard will retry.\n", p.Host)
 		}
 	} else {
-		fmt.Println("Connection verified. Opening the dashboard.")
+		fmt.Fprintln(cliOut, "Connection verified. Opening the dashboard.")
 	}
 	_ = writeDismissalMarker() // configured now — don't nag on the next run
 	return true, nil
@@ -299,6 +360,7 @@ const (
 	firstRunConfigured                               // a daemon is already reachable
 	firstRunClientUnreachable                        // DEJIMA_HOST set but daemon down → troubleshoot
 	firstRunFreshHost                                // macOS, no daemon, looks like a host to provision
+	firstRunWindowsClient                            // Windows: can't host dejimad here; WSL2 or a server
 )
 
 // detectFirstRunContext does a cheap classification of this machine. It avoids
@@ -326,8 +388,15 @@ func detectFirstRunContext(ctx context.Context) firstRunContext {
 	if _, _, source := resolveTarget(); source != "local" {
 		return firstRunClientUnreachable
 	}
-	// No reachable daemon and no connection target at all. On macOS with no daemon
-	// installed, this is the fresh-Mac-mini-host case the provisioning wizard targets.
+	// No reachable daemon and no connection target at all. On Windows that's a
+	// distinct situation from every Unix one: this machine CAN'T host dejimad, so
+	// the "set up a daemon here" branch would be a dead end. The local answer is
+	// a daemon in WSL2 — see firstRunSetUpWSL.
+	if runtime.GOOS == "windows" {
+		return firstRunWindowsClient
+	}
+	// On macOS with no daemon installed, this is the fresh-Mac-mini-host case the
+	// provisioning wizard targets.
 	if runtime.GOOS == "darwin" {
 		if _, err := exec.LookPath("dejimad"); err != nil {
 			return firstRunFreshHost
@@ -342,13 +411,48 @@ func detectFirstRunContext(ctx context.Context) firstRunContext {
 var stdinReader = bufio.NewReader(os.Stdin)
 
 // readSingleKey prompts and reads a line of input from stdin.
+// promptOut is where interactive prompts are written.
+//
+// A var because `fmt.Print` here wrote to the PROCESS's stdout, which no caller
+// could redirect — so a table test of a confirm helper printed "go? [Y/n]:"
+// straight onto whatever screen the test binary was attached to. In an agent
+// island that is an operator's pane, and they saw it three times before anyone
+// traced it to a test. `go test` pipes the binary's stdout and prints it
+// verbatim, so this was never hidden by not passing -v either.
+//
+// TestMain points it at io.Discard for the whole package; a test that wants to
+// ASSERT on a prompt sets it to its own buffer.
+var promptOut io.Writer = os.Stdout
+
+// cliOut is the same idea for helpers that print progress but sit BELOW a cobra
+// command, where cmd.OutOrStdout() is not in scope. Same failure: a test calling
+// one of these emitted "no SSH key on this machine — generating an ed25519
+// keypair…" onto an operator's pane, from a suite they were not running.
+//
+// Prefer cmd.OutOrStdout() when a *cobra.Command is available — it is already
+// redirectable and the test harness already captures it. This var is for the
+// helpers that have no command to ask.
+var cliOut io.Writer = os.Stdout
+
 func readSingleKey(prompt string) string {
-	fmt.Print(prompt)
+	ans, _ := readSingleKeyResult(prompt)
+	return ans
+}
+
+// readSingleKeyResult also reports whether an answer was actually READ.
+//
+// readSingleKey collapses "the operator pressed Enter" and "there is nobody
+// there" into the same empty string. That is safe only while empty means no —
+// the moment a prompt defaults to yes, EOF stops meaning "declined" and starts
+// meaning "consented", and a piped or serviced invocation installs things
+// nobody agreed to. --yes is how a script says yes.
+func readSingleKeyResult(prompt string) (string, bool) {
+	fmt.Fprint(promptOut, prompt)
 	line, err := stdinReader.ReadString('\n')
-	if err != nil {
-		return ""
+	if err != nil && strings.TrimSpace(line) == "" {
+		return "", false
 	}
-	return strings.TrimSpace(line)
+	return strings.TrimSpace(line), true
 }
 
 // ---------------------------------------------------------------------------
@@ -389,6 +493,12 @@ var errSetupIncomplete = errors.New("setup incomplete — dejimad is not reachab
 // daemonHealthy reports whether the daemon for the *current target* answers a
 // health check quickly. This is the single source of truth for "did setup
 // actually work?" — distinct from "the wizard printed all its steps."
+// daemonHealthyFn is a seam. Without it markSetupDoneIfHealthy cannot be tested
+// at all, and a mutation deleting the handoff reprint from it PASSED — the tests
+// drove printHandoffAddress directly, so the CALL SITE was unguarded. That is
+// the guard-covers-the-logic-not-the-wiring shape, and here it was closeable.
+var daemonHealthyFn = daemonHealthy
+
 func daemonHealthy(ctx context.Context) bool {
 	c, err := client()
 	if err != nil {
@@ -399,6 +509,43 @@ func daemonHealthy(ctx context.Context) bool {
 	return c.Health(hctx) == nil
 }
 
+// printHandoffAddress reprints the address a laptop needs to reach this host.
+//
+// It is printed exactly ONCE otherwise — by setup.sh during step 1 — and by the
+// time the run finishes the operator is minutes and several screens of Docker
+// and Tailscale output away from it. It is also THE ONLY THING FROM THE WHOLE
+// SERVER RUN THAT HAS TO BE CARRIED TO ANOTHER MACHINE. A value printed once,
+// early, in a long scroll, and needed later on a different computer is the
+// definition of something to reprint at the end.
+//
+// The success branch is the right place because it already knows the daemon is
+// reachable, so it can say what to reach it AT.
+//
+// Silence is wrong in the no-Tailscale case too: nothing is broken, and saying
+// so is the difference between "my setup failed" and "this only affects reaching
+// it from elsewhere". The wording follows setup.sh, which operators will have
+// seen once already, so the two screens pattern-match.
+func printHandoffAddress() {
+	hostPort, rawIP, ok := daemonInviteHost()
+	if !ok {
+		fmt.Println()
+		fmt.Println("   No remote address yet — Tailscale isn't up on this machine.")
+		fmt.Println("   Dejima is installed and working LOCALLY; this only affects reaching")
+		fmt.Println("   it from your laptop or phone. Nothing here needs redoing.")
+		fmt.Println("   To finish it: bring Tailscale up, then run `dejima doctor` here —")
+		fmt.Println("   it prints the DEJIMA_HOST to copy.")
+		return
+	}
+	fmt.Println()
+	fmt.Println("   Your DEJIMA_HOST is: " + bold(hostPort))
+	if rawIP {
+		// MagicDNS off: the raw IP works from this tailnet but is the fragile
+		// form for a node-shared teammate, who may see the node re-addressed.
+		fmt.Println("   (a raw tailnet IP — a MagicDNS name would be more durable)")
+	}
+	fmt.Println("   That line is the whole handoff. `dejima doctor` reprints it here.")
+}
+
 // markSetupDoneIfHealthy is the honest end of every setup flow. It records the
 // run as done (writes the first-run dismissal marker) ONLY if dejimad is now
 // reachable. When it isn't, it leaves the marker UNWRITTEN — so the first-run
@@ -406,10 +553,11 @@ func daemonHealthy(ctx context.Context) bool {
 // (the exact failure that bit the dejimaqa box) — and prints the concrete next
 // step. Returns whether setup is verified working.
 func markSetupDoneIfHealthy(ctx context.Context) bool {
-	if daemonHealthy(ctx) {
+	if daemonHealthyFn(ctx) {
 		_ = writeDismissalMarker()
 		fmt.Println()
 		fmt.Println(bold("✅ Setup verified — dejimad is reachable."))
+		printHandoffAddress()
 		return true
 	}
 	if resolveHost() == "" {
@@ -498,7 +646,7 @@ func runNewHostGuide(ctx context.Context) error {
 
 	fmt.Println(bold("3. Get the mini on your network"))
 	fmt.Println("   Recommended — Tailscale (reachable anywhere, no port-forwarding):")
-	fmt.Println("     • Install: `brew install --cask tailscale` (or https://tailscale.com/download)")
+	fmt.Println("     • Install: `brew install --cask tailscale-app` (or https://tailscale.com/download)")
 	fmt.Println("     • HEADLESS mini (no browser to log in)? Use a pre-auth key — generate one at")
 	fmt.Println("       https://login.tailscale.com/admin/settings/keys, then on the mini:")
 	fmt.Println("         `sudo tailscale up --ssh --auth-key=tskey-auth-xxxxx`")
@@ -709,7 +857,7 @@ func printServerInstall(ctx context.Context, e *envProbe, alsoClient bool) error
 		switch e.OS {
 		case "darwin":
 			steps = append(steps,
-				"# Install Docker Desktop (free for personal + small business use):\nbrew install --cask docker\n# Launch /Applications/Docker.app once to grant macOS permissions.")
+				"# Install Docker Desktop (free for personal + small business use):\nbrew install --cask docker-desktop\n# Launch /Applications/Docker.app once to grant macOS permissions.")
 		case "linux":
 			steps = append(steps,
 				"# Install Docker engine via your distro:\n#   Debian/Ubuntu: sudo apt install docker.io\n#   Fedora:        sudo dnf install docker\n#   Arch:          sudo pacman -S docker\n# Then: sudo systemctl enable --now docker && sudo usermod -aG docker $USER")
@@ -717,7 +865,7 @@ func printServerInstall(ctx context.Context, e *envProbe, alsoClient bool) error
 	}
 	if !e.TailscalePresent {
 		steps = append(steps,
-			"# (Optional but recommended) Install Tailscale for multi-device access:\n#   macOS: brew install --cask tailscale\n#   Linux: see https://tailscale.com/download")
+			"# (Optional but recommended) Install Tailscale for multi-device access:\n#   macOS: brew install --cask tailscale-app\n#   Linux: see https://tailscale.com/download")
 	}
 
 	steps = append(steps,
@@ -774,12 +922,12 @@ func printClientInstall(ctx context.Context, e *envProbe) error {
 	if !e.TailscalePresent {
 		fmt.Println("⚠ Tailscale isn't detected here. The host accepts only tailnet peers, so")
 		fmt.Println("  install it and log into the same account first:")
-		fmt.Println("    macOS: brew install --cask tailscale")
+		fmt.Println("    macOS: brew install --cask tailscale-app")
 		fmt.Println("    Linux: https://tailscale.com/download")
 		fmt.Println()
 	}
 
-	host := strings.TrimSpace(readSingleKey("Daemon host (e.g. minion.tail2f808e.ts.net): "))
+	host := strings.TrimSpace(readSingleKey("Daemon host (e.g. mac-mini.tailnet1234.ts.net): "))
 	if host == "" {
 		fmt.Println("Skipped (no host provided). Set it later: export DEJIMA_HOST=<host>:7273")
 		return nil
@@ -984,13 +1132,16 @@ func ensureTailscale(e *envProbe) bool {
 	switch e.OS {
 	case "darwin":
 		if e.BrewPresent {
-			if ans := readSingleKey("Install it now with `brew install --cask tailscale`? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
-				if err := execInteractive("brew", "install", "--cask", "tailscale"); err != nil {
+			if ans := readSingleKey("Install it now with `brew install --cask tailscale-app`? [Y/n]: "); ans == "" || strings.EqualFold(ans, "y") {
+				stopSudo := primeSudo("Installing Tailscale")
+				err := execInteractive("brew", "install", "--cask", "tailscale-app")
+				stopSudo()
+				if err != nil {
 					fmt.Printf("  ✗ install failed: %v\n", err)
 				}
 			}
 		} else {
-			fmt.Println("  Install it: brew install --cask tailscale  (or https://tailscale.com/download)")
+			fmt.Println("  Install it: brew install --cask tailscale-app  (or https://tailscale.com/download)")
 		}
 	case "linux":
 		fmt.Println("  Install it: curl -fsSL https://tailscale.com/install.sh | sh")
@@ -1192,7 +1343,7 @@ func printRemoteAccessNextSteps(fqdn, unixUser string) {
 	fmt.Println("(this part is on the other machine — it can't be done from here):")
 	fmt.Println()
 	fmt.Println("  1. Install Tailscale:")
-	fmt.Println("       macOS:   brew install --cask tailscale")
+	fmt.Println("       macOS:   brew install --cask tailscale-app")
 	fmt.Println("       Linux:   curl -fsSL https://tailscale.com/install.sh | sh")
 	fmt.Println("       Windows/iOS/Android: https://tailscale.com/download")
 	fmt.Println("  2. Log into the SAME account that owns this host:")
@@ -1272,6 +1423,17 @@ func offerToRunMakeSetup(e *envProbe) bool {
 func execInteractive(name string, args ...string) error {
 	c := exec.Command(name, args...)
 	c.Stdin = os.Stdin
+	// When our own stdin is a pipe but a terminal exists, hand the child the
+	// terminal. Homebrew changes how it asks for a password based on whether
+	// stdin is a tty — given a pipe it reads EOF with echo left on, which is
+	// how the operator's password ended up in the clear in #341. Callers here
+	// run brew casks, `tailscale up` and `make setup`, all of which may prompt.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		if tty := openTTY(); tty != nil {
+			defer tty.Close()
+			c.Stdin = tty
+		}
+	}
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()
@@ -1285,3 +1447,32 @@ var (
 		return context.WithCancel(context.Background())
 	}
 )
+
+// confirmDefault asks a yes/no question, deriving the DISPLAYED default and the
+// RETURNED default from one boolean so the two cannot disagree.
+//
+// They used to be two artifacts sitting next to each other. confirmWSL printed a
+// literal `[y/N]` and separately branched to no-on-empty — internally consistent,
+// so review saw nothing wrong. The bug was that the honest answer was the wrong
+// one: Enter cancelled `dejima wsl setup` at both questions the command exists to
+// ask, while install-client.ps1 had just taught the same operator, in the same
+// sitting, that Enter means yes.
+//
+// The pairing is the part worth removing. "[y/N] that actually defaults to yes"
+// and "[Y/n] that actually defaults to no" both ship silently and both read fine
+// in review; the operator finds out by pressing Enter and losing the run.
+func confirmDefault(question string, defYes bool) bool {
+	suffix := "[y/N]"
+	if defYes {
+		suffix = "[Y/n]"
+	}
+	ans, answered := readSingleKeyResult(question + " " + suffix + ": ")
+	if !answered {
+		// Nobody is there. A yes-default must not turn silence into consent.
+		return false
+	}
+	if ans == "" {
+		return defYes
+	}
+	return strings.EqualFold(ans, "y") || strings.EqualFold(ans, "yes")
+}

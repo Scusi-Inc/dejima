@@ -149,7 +149,7 @@ func (m tuiModel) findPendingAction(id string) (link.ActionRequest, bool) {
 func (m tuiModel) approvalsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.approvals
 	switch msg.String() {
-	case "esc", "q", "V":
+	case "esc", "ctrl+[", "q", "V":
 		m.approvals = nil
 		return m, nil
 	case "tab":
@@ -191,7 +191,8 @@ func (m tuiModel) approvalsPendingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if a.Tier == link.TierDestructive {
-			// Loud typed confirm — never rubber-stamp a destructive action.
+			// Typed confirm on the action id — never rubber-stamp a destructive
+			// action. The gate matches this sentence now; it used to be a single "y".
 			m.confirm = &confirmPrompt{verb: "approve-action", agent: a.ID}
 			return m, nil
 		}

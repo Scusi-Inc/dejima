@@ -25,7 +25,7 @@
 {"@type":"ListItem","position":1,"name":"Home","item":"https://dejima.tech/"},
 {"@type":"ListItem","position":2,"name":"Guides","item":"https://dejima.tech/guides/"},
 {"@type":"ListItem","position":3,"name":"Cloud VM","item":"https://dejima.tech/guides/cloud-vm-agent-server.html"}]},
-{"@type":"TechArticle","headline":"Run AI coding agents on your own cloud VM","description":"Self-host a fleet of AI coding agents on a cloud VM in your own AWS, GCP, or Hetzner account, instead of renting a managed sandbox by the second. Your code stays in your perimeter, you set egress, and there is no usage meter.","image":"https://dejima.tech/assets/og-cloud-vm.png","datePublished":"2026-06-26","dateModified":"2026-06-27","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/cloud-vm-agent-server.html"},
+{"@type":"TechArticle","headline":"Run AI coding agents on your own cloud VM","description":"Self-host a fleet of AI coding agents on a cloud VM in your own AWS, GCP, or Hetzner account, instead of renting a managed sandbox by the second. Your code stays in your perimeter, you set egress, and there is no usage meter.","image":"https://dejima.tech/assets/og-cloud-vm.png","datePublished":"2026-06-26","dateModified":"2026-08-31","author":{"@type":"Organization","name":"Dejima"},"publisher":{"@type":"Organization","name":"Dejima","logo":{"@type":"ImageObject","url":"https://dejima.tech/assets/logo.png"}},"mainEntityOfPage":"https://dejima.tech/guides/cloud-vm-agent-server.html"},
 {"@type":"FAQPage","mainEntity":[
 {"@type":"Question","name":"Why self-host agents on my own cloud VM instead of a managed sandbox?","acceptedAnswer":{"@type":"Answer","text":"A VM in your own account keeps your code inside your boundary, lets you set egress with your own security groups, and costs a fixed monthly amount instead of a per-second meter. Managed sandboxes run your agents on a vendor's infrastructure; a VM you own does not."}},
 {"@type":"Question","name":"How big a cloud VM do I need?","acceptedAnswer":{"@type":"Answer","text":"Two vCPUs and 4 GB of RAM run a handful of agents comfortably. Step up to 4 vCPU and 8 GB for many at once. Give it at least 20 GB of disk, since each island keeps its own Docker volume. Ubuntu 22.04+ or Debian 12+ keeps the install simple."}},
@@ -48,8 +48,8 @@
   <a href="index.html" aria-current="page">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
-  <span class="nav-status"><a href="https://github.com/aoos/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
+  <span class="nav-status"><a href="https://github.com/Scusi-Inc/dejima/releases" target="_blank" rel="noopener"><span class="nav-ver"></span>alpha</a></span>
 </nav>
 
 <article class="post">
@@ -75,10 +75,11 @@
   <p>Hetzner and DigitalOcean are the cheap, no-friction picks. AWS or GCP make sense if your code already lives there and you want the agents next to it.</p>
 
   <h2>Install and run</h2>
-  <p>Once the VM is up, it's an ordinary Linux server, so the setup is the same one command. SSH in and run it.</p>
+  <p>Once the VM is up, it's an ordinary Linux server, so the setup is the same as on any Linux box. SSH in and run it.</p>
   <pre><code>curl -fsSL https://dejima.tech/install.sh | bash
-loginctl enable-linger $USER          # keep the daemon up between logins
+loginctl enable-linger $USER           # keep the daemon up between logins
 dejima init --repo git@github.com:you/your-project.git</code></pre>
+  <p class="small">On a brand-new VM with no Docker, the installer offers to install it, then asks you to log out and back in before continuing, because the <code>docker</code> group only applies to a new login. Log back in and run the same line again: it's idempotent and picks up where it stopped.</p>
   <p>The full walkthrough, including the systemd detail and day-to-day commands, is in the <a href="linux-server-agent-server.html">Linux server guide</a>. Everything there applies here.</p>
 
   <h2>Reach it without opening a port</h2>
@@ -145,7 +146,7 @@ Goal: a VM in my own cloud account running my agents contained in islands, reach
   <a href="index.html">Guides</a>
   <a href="../teams.html">Teams</a>
   <a href="../api.html">API reference</a>
-  <a href="https://github.com/aoos/dejima" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Scusi-Inc/dejima" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 </main>

@@ -2,7 +2,7 @@ import { DejimaError } from "./errors.js";
 
 /** One PTY session envelope on the wire (see openapi.yaml `SessionEnvelope`). */
 export interface SessionEnvelope {
-  type: "hello" | "data" | "resize" | "error";
+  type: "hello" | "data" | "resize" | "error" | "exit";
   b64?: string;
   rows?: number;
   cols?: number;
@@ -100,6 +100,13 @@ export class Session {
         this.finish();
         break;
       }
+      case "exit":
+        // The bridged terminal itself ended (a detach, an `exit`, a tmux that
+        // died on start) — end the session rather than waiting for the socket.
+        // Distinct from a transport drop on purpose: a caller that treats it as
+        // one reconnects forever, respawning a shell nobody can escape.
+        this.finish();
+        break;
     }
   }
 

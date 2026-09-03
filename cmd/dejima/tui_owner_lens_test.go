@@ -121,7 +121,8 @@ func TestOwnerKeyGatedForNonOwner(t *testing.T) {
 func TestOverviewPopulatesCallerIdentity(t *testing.T) {
 	m := initialTUIModel(nil)
 	m.width, m.height = 100, 40
-	out, _ := m.Update(overviewMsg(&api.OverviewResponse{Owner: "aoos", Role: "owner"}))
+	// gen 0 matches a fresh model's generation, so this isn't discarded as stale.
+	out, _ := m.Update(overviewMsg{ov: &api.OverviewResponse{Owner: "aoos", Role: "owner"}})
 	m = out.(tuiModel)
 	if m.callerOwner != "aoos" || m.callerRole != "owner" {
 		t.Errorf("overview should populate caller identity, got owner=%q role=%q", m.callerOwner, m.callerRole)
