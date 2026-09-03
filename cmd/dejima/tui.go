@@ -4430,6 +4430,15 @@ func (m tuiModel) scrollDetail(pages int) tuiModel {
 	return m
 }
 
+// The island list's cursor, in its two states. Filled while the list has the
+// keys; hollow while another region (today only the host-terminal band) has
+// them. The pair is a GLYPH difference, not just a color one, so "who gets the
+// next keystroke" is answerable from a screenshot.
+const (
+	cursorFocused = "▶"
+	cursorBlurred = "▹"
+)
+
 func (m tuiModel) renderList(width int) (string, int) {
 	if len(m.islands) == 0 {
 		if m.lastError != "" {
@@ -4566,8 +4575,26 @@ func (m tuiModel) renderList(width int) (string, int) {
 			}
 		}
 		if i == m.selected {
+			// selLine is recorded whether or not this row is highlighted — it drives
+			// the viewport window, so dropping it while the band has focus would
+			// scroll the list out from under the cursor and back when focus returns.
 			selLine = strings.Count(b.String(), "\n") // line index this row will occupy
-			line = styleSelected.Render("▶ " + line)
+			if m.bandFocused {
+				// The host-terminal band owns the keys right now and draws its OWN
+				// highlighted row. Two highlighted lines on one screen is two claims
+				// about where the next keystroke lands, and only one of them is true.
+				// The cursor stays — hollow and muted — so the operator can still see
+				// where they were when [/] hands the keys back: position without a
+				// claim.
+				//
+				// Hollow rather than merely dimmed, because dimming is a COLOR
+				// difference and this has to survive a screenshot, a no-color
+				// terminal, and a test harness (lipgloss renders bare under the Ascii
+				// profile, so a color-only distinction is one no test can see).
+				line = styleMuted.Render(cursorBlurred) + " " + line
+			} else {
+				line = styleSelected.Render(cursorFocused + " " + line)
+			}
 		} else {
 			line = "  " + line
 		}
