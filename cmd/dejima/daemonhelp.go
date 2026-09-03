@@ -502,6 +502,18 @@ func diagnoseWSLDaemon(distro string, rep *wsl.Report, probeErr error) daemonDia
 			"dejima wsl setup",
 			"if setup reports Docker installed but not answering, the distro may need a restart:  wsl -t " + distro,
 		}
+	case rep.SocketUp && !rep.Listening:
+		// The socket file outlived the daemon. Worth its own wording: an operator
+		// looking at a socket that plainly exists needs to be told why it does not
+		// answer, or the two facts cannot be reconciled and every remedy looks
+		// like it should already have worked.
+		d.Cause = "the daemon socket in " + quoteDistro(distro) + " is a leftover: the file is " +
+			"there but nothing is listening on it. dejimad stopped without cleaning it up, " +
+			"which is what happens when WSL terminates an idle distro."
+		d.Steps = []string{
+			"start it:  dejima wsl start",
+			"if that fails, its log is inside the distro:  wsl -d " + distro + " -- tail -40 ~/.dejima/dejimad.log",
+		}
 	case !rep.SocketUp:
 		// Everything is installed; the daemon simply is not running. This is the
 		// common case after a reboot, and the one the tailnet advice buried.

@@ -105,7 +105,7 @@ func runWSLStatus(parent context.Context, distro string) error {
 	fmt.Fprintf(w, "socat:\t%s\n", checkMark(rep.HasSocat, "installed", "missing — the client tunnels the socket through it"))
 	fmt.Fprintf(w, "docker:\t%s\n", checkMark(rep.HasDocker, "engine responding", "not responding — islands can't start"))
 	fmt.Fprintf(w, "dejimad:\t%s\n", checkMark(rep.HasDejima, "installed", "not installed"))
-	fmt.Fprintf(w, "socket:\t%s\n", checkMark(rep.SocketUp, "up (~/.dejima/dejimad.sock)", "daemon not running"))
+	fmt.Fprintf(w, "socket:\t%s\n", socketMark(rep))
 	_ = w.Flush()
 
 	fmt.Println()
@@ -117,6 +117,16 @@ func runWSLStatus(parent context.Context, distro string) error {
 		}
 	case rep.Version == 1:
 		fmt.Printf("this distro is WSL 1 — convert it:  wsl --set-version %s 2\n", distro)
+	case rep.HasSocat && rep.HasDocker && rep.HasDejima && rep.SocketUp && !rep.Listening:
+		// Everything installed, socket file present, nothing accepting on it.
+		// Naming the stale file matters: without it the operator sees a socket
+		// that exists and a daemon that will not answer, and no way to reconcile
+		// the two.
+		fmt.Println("not ready — the socket file is there but nothing is listening on it:")
+		fmt.Println("dejimad is not running, and left its socket behind when it stopped")
+		fmt.Println("(WSL terminating an idle distro does not shut it down cleanly).")
+		fmt.Println()
+		fmt.Println("start it:  dejima wsl start")
 	default:
 		fmt.Println("not ready — finish setup:  dejima wsl setup")
 	}
@@ -131,6 +141,20 @@ func wslVersionNote(v int) string {
 		return "  (WSL 1 has no real kernel — Docker won't run; needs `wsl --set-version <distro> 2`)"
 	default:
 		return "  (unknown)"
+	}
+}
+
+// socketMark renders the socket's THREE states, because two of them used to
+// print the same line. `[ -S ]` passing said "up", so a daemon that had died
+// without unlinking its socket reported exactly as one that was serving.
+func socketMark(rep wsl.Report) string {
+	switch {
+	case rep.Listening:
+		return "OK    up (~/.dejima/dejimad.sock)"
+	case rep.SocketUp:
+		return "STALE    the file is there, nothing is listening — dejimad is not running"
+	default:
+		return "MISSING  daemon not running"
 	}
 }
 

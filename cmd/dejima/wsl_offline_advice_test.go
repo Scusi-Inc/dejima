@@ -103,7 +103,7 @@ func TestTheWSLSetupShortcutIsOfferedForAWSLTarget(t *testing.T) {
 // Each probe state names the remedy that fits it, and only that one.
 func TestTheWSLDiagnosisNamesTheRemedyForEachState(t *testing.T) {
 	ready := wsl.Report{Distro: "dejima", Exists: true, Version: 2,
-		HasSocat: true, HasDocker: true, HasDejima: true, SocketUp: true}
+		HasSocat: true, HasDocker: true, HasDejima: true, SocketUp: true, Listening: true}
 	for _, tc := range []struct {
 		name string
 		rep  wsl.Report
@@ -125,13 +125,24 @@ func TestTheWSLDiagnosisNamesTheRemedyForEachState(t *testing.T) {
 			deny: "dejima wsl start",
 		},
 		{
-			// Everything installed, daemon down. The common state after a reboot,
-			// and the one the tailnet advice buried deepest.
+			// Everything installed, daemon down, no socket file. The common state
+			// after a reboot, and the one the tailnet advice buried deepest.
 			name: "installed but not running",
 			rep: wsl.Report{Distro: "dejima", Exists: true, Version: 2,
 				HasSocat: true, HasDocker: true, HasDejima: true},
 			want: "dejima wsl start",
 			deny: "dejima wsl setup", // re-running setup will not start a daemon
+		},
+		{
+			// The state the operator actually reached: the socket FILE is there,
+			// left behind by a daemon that died, and nothing is accepting on it.
+			// Same remedy as above but it must be SAID, or a person looking at a
+			// socket that plainly exists cannot reconcile it with a refusal.
+			name: "socket file left behind by a dead daemon",
+			rep: wsl.Report{Distro: "dejima", Exists: true, Version: 2,
+				HasSocat: true, HasDocker: true, HasDejima: true, SocketUp: true},
+			want: "dejima wsl start",
+			deny: "dejima wsl setup",
 		},
 		{
 			name: "wsl1 cannot be repaired by setup alone",
