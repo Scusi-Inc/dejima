@@ -172,8 +172,19 @@ func TestTheRestartNoteNamesTheAgentAndRulesOutTheRest(t *testing.T) {
 		t.Fatal("a pulled model should explain what to restart")
 	}
 	low := strings.ToLower(note)
-	if !strings.Contains(low, "restart") || !strings.Contains(low, "agent") {
-		t.Errorf("the note must name the agent restart, got %q", note)
+	// THE INSTRUCTION AS A PHRASE, not its words scattered anywhere in the note.
+	// This asserted Contains("restart") && Contains("agent"), and a mutation that
+	// DELETED the instruction survived it: "to use it from an agent:" supplies
+	// "agent" and "no daemon restart" supplies "restart", so both halves passed
+	// with nothing left telling the operator what to do. Two true substrings
+	// composing into a false conclusion — the same shape as everything else this
+	// week, inside the guard written against it.
+	if !strings.Contains(low, "restart the agent") {
+		t.Errorf("the note must tell the operator to restart the agent, in those words, got %q", note)
+	}
+	// ...and name the affordance, so it is an instruction rather than a fact.
+	if !strings.Contains(note, "[s]") || !strings.Contains(note, "Restart") {
+		t.Errorf("the note must point at the key that does it, got %q", note)
 	}
 	// The two costly wrong guesses it rules out. Both are now true again as of
 	// 8b850d1 (#396), which made the /opt/host/llm mount unconditional and
