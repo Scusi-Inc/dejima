@@ -186,20 +186,32 @@ func TestTheRestartNoteNamesTheAgentAndRulesOutTheRest(t *testing.T) {
 	if !strings.Contains(note, "[s]") || !strings.Contains(note, "Restart") {
 		t.Errorf("the note must point at the key that does it, got %q", note)
 	}
-	// The two costly wrong guesses it rules out. Both are now true again as of
-	// 8b850d1 (#396), which made the /opt/host/llm mount unconditional and
-	// resolved the provider key file per agent at launch.
-	if !strings.Contains(low, "no daemon restart") || !strings.Contains(low, "no island recreate") {
-		t.Errorf("the note must rule out the daemon restart and the recreate, got %q", note)
+	// The daemon bounce stays ruled out: it closes every terminal and is never
+	// the answer here.
+	if !strings.Contains(low, "no daemon restart") {
+		t.Errorf("the note must rule out the daemon restart, got %q", note)
 	}
-	// AND IT MUST NOT HEDGE ANY MORE. For about an hour this note carried a second
-	// bullet sending some operators to `dejima upgrade`, because the mount used to
-	// be conditional at container create. 8b850d1 removed that class of island
-	// entirely. A hedge kept for a case that no longer exists is its own small
-	// lie, and the kind that survives for years: nobody can disprove it by trying,
-	// they just do the extra step and it works.
-	if strings.Contains(low, "upgrade") || strings.Contains(low, "cannot tell") {
-		t.Errorf("the note still hedges about a recreate no island needs since 8b850d1: %q", note)
+	// THE RECREATE REMEDY MUST BE PRESENT. A regression pin, not a preference.
+	// This note briefly said "No island recreate" outright, which is false for
+	// every island created before 8b850d1: #396 made the /opt/host/llm bind
+	// unconditional AT CONTAINER CREATE, and credential mounts are decided once
+	// inside createContainerForProject, so a container that already existed never
+	// gains the bind and an agent restart re-reads a path not in its filesystem.
+	// Nothing self-heals into it — hibernate only stops the container, and wake
+	// recreates only when it is Missing.
+	if !strings.Contains(low, "upgrade") {
+		t.Errorf("the note must offer the recreate for islands predating the mount, got %q", note)
+	}
+	// The sentence that caused it, pinned negatively so it cannot return as an
+	// assertion someone writes in good faith from the create-path reasoning.
+	if strings.Contains(low, "no island recreate") {
+		t.Errorf("the note claims a recreate is never needed; false for pre-8b850d1 islands: %q", note)
+	}
+	// Both remedies reachable IN THE TUI. Sending the operator to a shell for the
+	// second half is the CLI-in-the-TUI shape that is ruled out here; island
+	// upgrade lives behind [s] on the island.
+	if !strings.Contains(note, "[s] on the island") {
+		t.Errorf("the recreate must name the in-TUI affordance, not a shell command, got %q", note)
 	}
 
 	// Nothing to say before the backend exists.

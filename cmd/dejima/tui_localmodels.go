@@ -156,34 +156,43 @@ func localModelActions(ls *localmodel.Status) []localAction {
 //   - THE AGENT, at minimum. The launch shim sources the .env at start, so a
 //     process that was already running holds its start-time environment.
 //
-// IT SAID MORE THAN THAT FOR ABOUT AN HOUR, AND THE HISTORY IS THE USEFUL PART.
+// THE SECOND BULLET IS STILL TRUE, AND IT HAS NOW BEEN WRONGLY DELETED ONCE.
 //
-// The first version said "no island recreate", reasoning from llm_refresh.go
-// that the provider config is a directory mount so a rewrite lands inside a
-// running container. True — of islands that HAD the mount. The /opt/host/llm
-// bind was conditional at container create, and islandLLMConfigDir returned ""
-// when no key-requiring agent resolved a provider, so an island created before
-// its operator had any provider — or with no agent that needed one, since
-// claude-code and codex do not — had no mount at all. Registering a provider
-// then wrote into a host directory nothing in the container was reading, and
-// restarting the agent re-read a path not in its filesystem: it changed
-// nothing, silently, to someone who had followed the instruction exactly.
+// The first version of this note said "no island recreate", reasoning from
+// llm_refresh.go that the provider config is a directory mount so a rewrite
+// lands inside a running container. True — of islands that HAVE the mount. The
+// /opt/host/llm bind was conditional at container create, so an island created
+// before its operator had any provider — or with no agent that needed one,
+// since claude-code and codex do not — had no mount at all.
 //
-// d3 found that by standing an island up and dumping the binds, after I claimed
-// the opposite from reading. The note then carried BOTH remedies and admitted it
-// could not tell which applied.
+// 8b850d1 (#396) made islandLLMConfigDir return the directory even when nothing
+// resolves, so the bind is now unconditional. That is where the deletion came
+// from, and it is a claim about the CREATE PATH ONLY. credentialBindMounts runs
+// inside createContainerForProject and nowhere else — credential_mounts.go says
+// so in its first sentence — so nothing can add a bind to a container that
+// already exists. Every island created before that build still has no
+// /opt/host/llm, and restarting its agent re-reads a path that is not in its
+// filesystem.
 //
-// FIXED IN 8b850d1 (#396): the dir is returned even when nothing resolves, so
-// the mount is always present — the shape island_secrets.go had already chosen
-// for the identical reason — and the provider key file is resolved PER AGENT at
-// launch rather than from the primary at create. Verified on master rather than
-// taken from the merge message: islandLLMConfigDir returns the dir with
-// len(seen) == 0, so the caller's `dir != ""` is always true.
+// Nothing self-heals into it either: hibernateIsland only stops the container,
+// and wakeIsland recreates ONLY when the status is Missing. A hibernate/wake
+// cycle preserves the old mount set. Upgrade and reset are the only paths that
+// recreate.
 //
-// So the second bullet is DROPPED rather than softened. A hedge for a case that
-// no longer exists is its own small lie, and the kind that survives for years
-// because nobody can disprove it by trying: they do the extra step, it works,
-// and they never learn it was unnecessary.
+// So BOTH remedies stay, and the second is phrased to be self-diagnosing ("if
+// that changes nothing") because the page cannot tell which island it is
+// looking at. What CAN tell is credentialMountReport, which asks the runtime
+// what is mounted and diffs it against config; /opt/host/llm is a row there as
+// of #398, and configured=true mounted=false means exactly this case. Wiring
+// that into this pane would let it name the island instead of offering a
+// conditional — worth doing, not done here.
+//
+// The deletion was argued well and the argument was right about a case that had
+// not stopped existing: "a hedge kept for a case that no longer exists is its
+// own small lie". Correct, and the antecedent was false. A hedge deleted for a
+// case that DOES still exist is the same lie with the sign flipped, and this
+// one costs an evening: the operator restarts, nothing happens, the page has
+// nothing further to say, and they conclude local models are broken.
 func localModelsAppliedNote(ls *localmodel.Status) string {
 	if ls == nil || !ls.Installed {
 		return ""
@@ -197,6 +206,8 @@ func localModelsAppliedNote(ls *localmodel.Status) string {
 	if len(ls.Models) == 0 {
 		return ""
 	}
-	return "to use it from an agent: restart the agent so it re-reads its environment —\n" +
-		"[s] on the agent → Restart.  No island recreate and no daemon restart."
+	return "to use it from an agent — no daemon restart either way:\n" +
+		"  · restart the agent so it re-reads its environment:  [s] on the agent → Restart\n" +
+		"  · if that changes nothing, this island predates the always-present LLM config\n" +
+		"    mount and has nothing to read. Recreate it:  [s] on the island → Upgrade"
 }
