@@ -53,9 +53,37 @@ from the root command via `rootCommandPaths` (`cmd/dejima/cmd_paths_test.go`),
 which is the stronger assertion anyway: a family that loses its `AddCommand` call
 passes the constructor form and fails this one.
 
+### A mention is not an invocation
+
+For CLI commands the gate accepts each form only where it *is* an invocation:
+
+| file | counts | does not count |
+| --- | --- | --- |
+| Go test | `"ssh", "enroll"` — a quoted-arg run, what `SetArgs` and `runCLI` are built from | `"dejima ssh enroll"` — the human spelling in a string |
+| shell suite | `dejima ssh enroll` — the script really runs it | a `#` comment |
+
+The human spelling in a Go string used to count, which is issue #335: an
+expected-output assertion checking that an error names the right remedy —
+`strings.Contains(hint, "dejima ssh enroll")` — marked `cli ssh enroll` a stale
+waiver. Green was one `sed` away from a permanent claim of coverage that did not
+exist, and since naming a remedy in an error is good practice, the gate was
+penalising the pattern it should reward. One test in the tree had already
+started building the literal by concatenation (`"auth" + " push"`) to dodge it;
+that workaround is gone.
+
+Stale-waiver and uncovered reports now name the **file and line** that matched,
+so a demand to delete a waiver can be checked in one look instead of grepped
+for.
+
 **Writing a reference on purpose is fine and expected** — `root.SetArgs([]string{
 "profile", "switch", "cloud"})` in a test that actually runs the verb is exactly
 what the gate is looking for. What no longer counts is a sentence about it.
+
+When a command genuinely cannot be invoked in a test — it installs software,
+downloads gigabytes, or waits for a browser — waive it and say which of those it
+is, naming the tests that cover the logic underneath. Four commands are in that
+position today (`local install`, `local pull`, `voice install`, `github
+connect`).
 
 `TestCoverageGateIgnoresComments` is the control: prose does not count, code
 still does, a `//` inside a string literal survives (the Go scanner decides, not

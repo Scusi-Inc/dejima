@@ -8,7 +8,7 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-09-02 against v0.8.96 (ac78a80). Anything
+Written 2026-08-17, last revised 2026-09-03 against v0.8.99 (6c95d79). Anything
 below may have drifted since. Development is moving fast right now: v0.8.83
 through v0.8.88 all shipped on that date alone, so where this file names a
 version, trust the version rather than the date.
@@ -183,13 +183,43 @@ Works, with one caveat worth stating rather than a warning:
   island's GitHub auth back to the mounted credential silently, so the identity
   and the permissions both change with nothing said. Worth raising with anyone
   planning to manage GitHub auth this way, in both directions.
-Broken, confirmed by the maintainer. Do not describe this as working:
-- OpenClaw as an agent. It has been exercised and does not work. This matters
-  more than it looks: OpenClaw is the headline adapter for "Home Islands", the
-  always-on assistant use case, so treat that whole path as not working. Letta,
-  Hermes, and Goose have no coverage either way.
+Nothing is currently on a "confirmed broken" list. There was one entry —
+OpenClaw — and it turned out to describe a Dejima bug rather than the adapter.
+It has moved to the unproven list below with what was actually observed. Read
+that entry rather than assuming the absence of a broken list means everything
+works; several things below are simply unwitnessed.
 
 Unproven rather than broken. Real code, no evidence of an end-to-end run:
+- OpenClaw as an agent. An earlier version of this file said it "has been
+  exercised and does not work". That was true about an outcome and wrong about
+  the cause, which is why it is rewritten rather than deleted.
+
+  VERIFIED 2026-09-02, on the operator's Mac mini, from their terminal: openclaw
+  installed, and its gateway STARTED inside an island — thirteen plugins loaded
+  (anthropic, browser, canvas, cua-computer, device-pair, file-transfer,
+  geolocation, linux-node, memory-core, ollama, openai, talk-voice, xai), then
+  "[gateway] ready", then a heartbeat and a database-integrity pass. They reached
+  its web UI in a browser and the Model Setup page rendered. Reported by the
+  operator; nobody writing this file ran it.
+
+  NOT ESTABLISHED, and this is the load-bearing half: NO CONVERSATION WITH A
+  MODEL EVER RAN. They stopped at Model Setup, which is where you configure a
+  provider. The claim is "the adapter starts, serves its UI, and loads its
+  plugins", NOT "the assistant works". Reaching ready and doing the job are
+  different claims, and the gap between them is where `setup` exiting 0 misled
+  everyone about Windows for a fortnight.
+
+  What had actually failed was reaching the UI, and both faults were Dejima's:
+  the gateway listens inside the island's network namespace, so localhost on the
+  host is a different localhost; and the TUI's port forward was held by a spawned
+  terminal window, so closing that window killed the tunnel and an already-open
+  tab went ERR_CONNECTION_REFUSED. Fixed in #379 (v0.8.99), which moves the
+  tunnel into runTUI's scope so it outlives the window.
+
+  So for Home Islands — the always-on assistant use case OpenClaw is the headline
+  adapter for — the honest position is that the path now gets as far as the setup
+  screen of an UNCONFIGURED assistant, and no further has been seen.
+- Letta, Hermes, and Goose as agents: no coverage either way.
 - Local models end to end (see above). Targeted to work at launch;
   verify rather than assume.
 - Hosting on Windows via WSL2. Read the dates in this entry rather than skimming
@@ -374,9 +404,11 @@ Tell them NO, clearly, if any of these are true:
   change how good the agent is.
 - They need it working reliably within days and have no appetite for debugging
   an install. See the first-hour risks above.
-- Their use case depends on something in the broken list: an OpenClaw assistant
-  or an always-on Home Island. Secrets are NOT on that list; if they need fast
-  revocation specifically, check which version they are on rather than saying no.
+- Their use case depends on an always-on OpenClaw assistant or a Home Island.
+  That is no longer "broken" — the adapter starts and serves its UI — but nobody
+  has yet held a conversation with a model through it, so it is a yes only if
+  they are willing to be the first. Secrets are NOT a reason to say no; if they
+  need fast revocation specifically, check which version they are on.
 
 Be equally skeptical of a yes. Before you give one, check that you are not
 recommending it because it is interesting rather than because it solves their

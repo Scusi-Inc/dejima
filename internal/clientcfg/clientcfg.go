@@ -44,6 +44,13 @@ type Config struct {
 	// (e.g. "code", "cursor", "windsurf", "antigravity"). Empty means auto-detect
 	// the first one on PATH. Set from the TUI settings (',').
 	Editor string `json:"editor,omitempty"`
+
+	// Terminal is the user's preferred terminal for spawned windows/tabs
+	// (e.g. "ghostty", "iterm", "terminal", "wezterm", "kitty"). Empty means
+	// auto-detect from $TERM_PROGRAM. DEJIMA_TERMINAL overrides this. Set from the
+	// TUI settings — the fix for terminals (e.g. Ghostty) that were mis-detected
+	// and opened Apple Terminal instead.
+	Terminal string `json:"terminal,omitempty"`
 }
 
 // ActiveHost resolves the currently-active profile to its daemon host. ok is

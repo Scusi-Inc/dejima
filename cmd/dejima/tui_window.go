@@ -417,7 +417,8 @@ func openInEditor(alias, preferred string) error {
 // which has no reliable "open tab with command" CLI — falls through to the
 // existing osascript path (a new iTerm tab or Terminal.app window).
 func openMacTerminal(inner string) error {
-	switch currentTerminal() {
+	kind := resolveTerminalKind() // DEJIMA_TERMINAL / clientcfg override, else auto-detect
+	switch kind {
 	case terminalWezTerm:
 		if err := spawnWezTermTab(inner); err == nil {
 			return nil
@@ -428,17 +429,25 @@ func openMacTerminal(inner string) error {
 			return nil
 		}
 		// kitty CLI missing or remote control off → fall through to osascript.
+	case terminalGhostty:
+		if err := spawnGhosttyWindow(inner); err == nil {
+			return nil
+		}
+		// Ghostty launch failed (not installed under that name?) → osascript fallback.
 	}
-	return openMacTerminalOSA(inner)
+	// iTerm/Terminal/Warp/unknown: the osascript path (iTerm tab or a Terminal.app
+	// window). Warp has no scriptable new-window-with-command CLI, so it lands here
+	// too — the setting still lets a Warp user force a scriptable terminal.
+	return openMacTerminalOSA(kind, inner)
 }
 
 // openMacTerminalOSA is the AppleScript path: a new iTerm tab in the current
 // window, or — on Terminal.app, whose AppleScript has no first-class tab
 // support — a new window. This is the durable fallback for every terminal whose
 // native new-tab CLI is unavailable.
-func openMacTerminalOSA(inner string) error {
+func openMacTerminalOSA(kind terminalKind, inner string) error {
 	var script string
-	if os.Getenv("TERM_PROGRAM") == "iTerm.app" {
+	if kind == terminalITerm2 {
 		script = fmt.Sprintf(`tell application "iTerm"
   tell current window to set t to (create tab with default profile)
   tell current session of t to write text %s

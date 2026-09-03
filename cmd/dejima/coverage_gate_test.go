@@ -54,13 +54,22 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// testCorpus is the concatenation of every Go test file plus the live shell
-// suites under scripts/ — the body of text the gate searches for references.
-// Worktrees and per-agent checkouts under .claude/ and .agents/ are excluded so
-// a sibling branch can never spoof coverage on this one.
-func testCorpus(t *testing.T, root string) string {
+// corpusFile is one searched file, kept whole rather than concatenated so a
+// match can say WHERE it came from and so Go and shell can be matched by
+// different rules. See cliReferenced for why the rules differ.
+type corpusFile struct {
+	rel   string // path relative to the repo root
+	goSrc bool   // Go test file (vs a shell suite under scripts/)
+	text  string // comments already blanked
+}
+
+// testCorpus is every Go test file plus the live shell suites under scripts/ —
+// the body of text the gate searches for references. Worktrees and per-agent
+// checkouts under .claude/ and .agents/ are excluded so a sibling branch can
+// never spoof coverage on this one.
+func testCorpus(t *testing.T, root string) []corpusFile {
 	t.Helper()
-	var b strings.Builder
+	var files []corpusFile
 	// Skip nested worktrees / per-agent checkouts / vendored deps so a sibling
 	// branch can't spoof coverage here. Match on the path RELATIVE to root: when
 	// the gate itself runs inside a worktree the absolute root contains ".claude",
@@ -105,14 +114,43 @@ func testCorpus(t *testing.T, root string) string {
 		if serr != nil {
 			return serr
 		}
-		b.WriteString(text)
-		b.WriteByte('\n')
+		files = append(files, corpusFile{rel: rel, goSrc: isGoTest, text: text})
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk corpus: %v", err)
 	}
-	return b.String()
+	// The control: an empty or tiny corpus reports every command uncovered and
+	// every waiver orphaned, which is loud — but a corpus missing just the SHELL
+	// half would quietly under-credit, so assert both kinds are present.
+	var goN, shN int
+	for _, f := range files {
+		if f.goSrc {
+			goN++
+		} else {
+			shN++
+		}
+	}
+	if goN < 20 || shN < 3 {
+		t.Fatalf("corpus looks broken: %d Go test files, %d shell suites — "+
+			"the gate's answers are meaningless until the walk is fixed", goN, shN)
+	}
+	return files
+}
+
+// match reports the first file and line where re matches, "" if nowhere. Only
+// files satisfying want are searched, so a rule can apply to Go or shell alone.
+func match(files []corpusFile, re *regexp.Regexp, want func(corpusFile) bool) string {
+	for _, f := range files {
+		if want != nil && !want(f) {
+			continue
+		}
+		if loc := re.FindStringIndex(f.text); loc != nil {
+			line := 1 + strings.Count(f.text[:loc[0]], "\n")
+			return fmt.Sprintf("%s:%d", f.rel, line)
+		}
+	}
+	return ""
 }
 
 // corpusText prepares one file for the corpus by blanking its comments.
@@ -168,10 +206,29 @@ func cliCommands() []string {
 	return out
 }
 
-// cliReferenced reports whether the token sequence of a command appears in the
-// corpus either as a Go quoted-arg sequence (`"agent", "ls"`) or as a shell
-// invocation (`dejima agent ls`).
-func cliReferenced(corpus, cmd string) bool {
+// cliReferenced reports where a command is INVOKED in the corpus, and "" when
+// it is only mentioned. The two forms are matched in the file kind where each
+// one means invocation, and nowhere else:
+//
+//   - Go test:  a quoted-arg sequence, `"agent", "ls"` — what SetArgs and the
+//     runCLI helpers are built from.
+//   - Shell:    `dejima agent ls` — in a shell suite that IS the invocation.
+//
+// The human spelling used to count in Go too, which is issue #335: an
+// expected-output assertion quoting another command's remedy —
+//
+//	if !strings.Contains(hint, "dejima ssh enroll") { … }
+//
+// — marked `cli ssh enroll` a STALE waiver, and the cure for a stale waiver is
+// to delete it. Green became reachable one sed away from a claim of coverage
+// that did not exist, and error messages naming a remedy are good practice, so
+// the gate was penalising the pattern it should reward.
+//
+// This is the same defect as the comment case (see corpusText) one level in:
+// there, prose ABOUT a command credited it; here, a string quoting a command
+// credited it. Both fail toward "you have more coverage than you think", which
+// is the direction nobody checks.
+func cliReferenced(files []corpusFile, cmd string) string {
 	toks := strings.Fields(cmd)
 	quoted := make([]string, len(toks))
 	esc := make([]string, len(toks))
@@ -179,10 +236,12 @@ func cliReferenced(corpus, cmd string) bool {
 		quoted[i] = regexp.QuoteMeta(`"` + tk + `"`)
 		esc[i] = regexp.QuoteMeta(tk)
 	}
-	if regexp.MustCompile(strings.Join(quoted, `\s*,\s*`)).MatchString(corpus) {
-		return true
+	goForm := regexp.MustCompile(strings.Join(quoted, `\s*,\s*`))
+	if where := match(files, goForm, func(f corpusFile) bool { return f.goSrc }); where != "" {
+		return where
 	}
-	return regexp.MustCompile(`dejima\s+` + strings.Join(esc, `\s+`)).MatchString(corpus)
+	shForm := regexp.MustCompile(`dejima\s+` + strings.Join(esc, `\s+`))
+	return match(files, shForm, func(f corpusFile) bool { return !f.goSrc })
 }
 
 // --- API surface -----------------------------------------------------------
@@ -254,10 +313,17 @@ func apiOps(t *testing.T, root string) []apiOp {
 
 // apiReferenced credits an operation when its operationId literal OR a literal
 // matching its path (with each {param} standing in for one path segment)
-// appears in the corpus.
-func apiReferenced(corpus string, op apiOp) bool {
-	if op.id != "" && strings.Contains(corpus, op.id) {
-		return true
+// appears in the corpus, and reports where.
+//
+// Unlike the CLI side, a path inside a string literal IS how a Go test reaches
+// a route — `client.Get(srv.URL + "/v1/islands/" + name + "/hibernate")` — so
+// there is no equivalent of the #335 rule to apply here. Comments are still
+// stripped, which is what stops prose about a route from counting.
+func apiReferenced(files []corpusFile, op apiOp) string {
+	if op.id != "" {
+		if where := match(files, regexp.MustCompile(regexp.QuoteMeta(op.id)), nil); where != "" {
+			return where
+		}
 	}
 	segs := strings.Split(op.path, "/")
 	parts := make([]string, len(segs))
@@ -268,7 +334,7 @@ func apiReferenced(corpus string, op apiOp) bool {
 			parts[i] = regexp.QuoteMeta(s)
 		}
 	}
-	return regexp.MustCompile(strings.Join(parts, "/")).MatchString(corpus)
+	return match(files, regexp.MustCompile(strings.Join(parts, "/")), nil)
 }
 
 // --- waivers ---------------------------------------------------------------
@@ -310,22 +376,27 @@ func TestCoverageGate(t *testing.T) {
 
 	var uncovered, staleWaived []string
 
-	check := func(key string, referenced bool, uncoveredMsg string) {
+	// where is "" when nothing referenced the surface, else file:line. Reporting
+	// the location is issue #335's other half: a stale-waiver report is a demand
+	// to delete a waiver, and the person acting on it could not previously tell a
+	// real test from a quoted string without grepping for it themselves.
+	check := func(key, where, uncoveredMsg string) {
 		if waivers[key] {
 			usedWaiver[key] = true
-			if referenced {
-				staleWaived = append(staleWaived, key+" (now has a test — delete the waiver)")
+			if where != "" {
+				staleWaived = append(staleWaived,
+					key+" (now invoked at "+where+" — delete the waiver)")
 			}
 			return
 		}
-		if !referenced {
+		if where == "" {
 			uncovered = append(uncovered, uncoveredMsg)
 		}
 	}
 
 	for _, cmd := range cliCommands() {
 		check("cli "+cmd, cliReferenced(corpus, cmd),
-			"cli "+cmd+"  (cobra command with no referencing test)")
+			"cli "+cmd+"  (cobra command with no test that invokes it)")
 	}
 	for _, op := range apiOps(t, root) {
 		key := "api " + op.method + " " + op.path
@@ -361,82 +432,112 @@ func TestCoverageGate(t *testing.T) {
 	}
 }
 
-// TestCoverageGateIgnoresComments is the control for corpusText: a command named
-// only in PROSE must not read as covered, and a command named in code must still
-// read as covered.
+// goFile / shFile build one-file corpora for the tests below, through the real
+// corpusText so the stripping under test is the stripping that ships.
+func goFile(t *testing.T, src string) []corpusFile {
+	t.Helper()
+	text, err := corpusText("x_test.go", src, true)
+	if err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+	return []corpusFile{{rel: "x_test.go", goSrc: true, text: text}}
+}
+
+func shFile(t *testing.T, src string) []corpusFile {
+	t.Helper()
+	text, err := corpusText("scripts/x.sh", src, false)
+	if err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+	return []corpusFile{{rel: "scripts/x.sh", goSrc: false, text: text}}
+}
+
+// TestMentionIsNotCoverage is the control for what the gate accepts as evidence
+// that a command is tested. A command must be INVOKED; naming it is not enough.
 //
-// Both halves matter, and the second is the dangerous one. Stripping too little
-// credits a comment — noisy, and how d1 lost an afternoon on 96f6a54: a comment
-// explaining that operators should NOT be sent to `dejima auth push` marked that
-// command's waiver STALE, and the ratchet's cure for a stale waiver is to delete
-// it, from a command with no test. Stripping too MUCH would blind the gate to
-// real tests and report untested surface that is tested — the same class of
-// wrong answer, arriving as a confident green ratchet.
-func TestCoverageGateIgnoresComments(t *testing.T) {
-	// d1's case, reproduced: the token sequence appears once, in a comment.
-	commentOnly := "package main\n" +
+// Two ways of naming one have each shipped a false positive, and both failed in
+// the same direction — "you have more coverage than you think", which nothing
+// else in the suite would contradict:
+//
+//   - A COMMENT about a command credited it. d1 hit this on 96f6a54 writing
+//     prose about why operators should NOT be sent to `dejima auth push`.
+//   - A STRING quoting a command credited it (issue #335): an expected-output
+//     assertion checking that an error names the right remedy.
+//
+// Both then reported the command's waiver STALE, and the cure for a stale
+// waiver is to delete it — so acting on either report claims coverage that does
+// not exist, permanently. That is why these assertions are worth their length.
+func TestMentionIsNotCoverage(t *testing.T) {
+	// #335, verbatim from the issue: the remedy for one command, asserted in the
+	// expected output of another.
+	quoting := "package main\n" +
+		"func TestOpenFails(t *testing.T) {\n" +
+		"\tif !strings.Contains(hint, \"dejima ssh enroll\") { t.Error(\"no remedy\") }\n" +
+		"}\n"
+	if where := cliReferenced(goFile(t, quoting), "ssh enroll"); where != "" {
+		t.Errorf("a command quoted in an expected-output assertion counts as invoked (matched %s)", where)
+	}
+
+	// A comment naming one — the earlier half of the same bug.
+	commented := "package main\n" +
 		"// Do not send operators to dejima auth push — it is not the path.\n" +
 		"func TestSomething(t *testing.T) {}\n"
-	got, err := corpusText("prose_test.go", commentOnly, true)
-	if err != nil {
-		t.Fatalf("stripping a valid Go file should not error: %v", err)
-	}
-	if cliReferenced(got, "auth push") {
-		t.Error("a command named only in a comment counts as covered — the gate is reading prose")
-	}
-	// The control on that control: the sequence really was there to be found.
-	if !cliReferenced(commentOnly, "auth push") {
-		t.Fatal("the fixture does not contain the command at all — this test proves nothing")
+	if where := cliReferenced(goFile(t, commented), "auth push"); where != "" {
+		t.Errorf("a command named only in a comment counts as invoked (matched %s)", where)
 	}
 
-	// A real reference in code still counts, in both forms the gate accepts.
-	inCode := "package main\n" +
-		"func TestX(t *testing.T) { root.SetArgs([]string{\"auth\", \"push\"}) }\n"
-	got, err = corpusText("real_test.go", inCode, true)
-	if err != nil {
-		t.Fatalf("strip: %v", err)
+	// THE DANGEROUS DIRECTION. Everything above is about refusing evidence; if
+	// the refusal goes too far the gate reports tested surface as untested, and
+	// the fix for THAT looks like adding a waiver — which is the same wrong claim
+	// with the sign flipped. So: the invocation forms must still count, and they
+	// must report where.
+	invoked := "package main\n" +
+		"func TestX(t *testing.T) { root.SetArgs([]string{\"ssh\", \"enroll\"}) }\n"
+	where := cliReferenced(goFile(t, invoked), "ssh enroll")
+	if where == "" {
+		t.Fatal("a quoted-arg invocation no longer counts — the gate is now blind to real tests")
 	}
-	if !cliReferenced(got, "auth push") {
-		t.Error("a quoted-arg sequence in code no longer counts — stripping has blinded the gate")
+	if !strings.HasSuffix(where, ":2") {
+		t.Errorf("the reported location should be the line that invokes it, got %q", where)
 	}
 
-	// The Go scanner decides what a comment is, not a regex: a comment marker
-	// inside a string literal is code and survives.
+	// Shell suites: there, the human spelling IS the invocation.
+	if where := cliReferenced(shFile(t, "#!/bin/sh\ndejima ssh enroll --yes\n"), "ssh enroll"); where == "" {
+		t.Error("a shell invocation stopped counting")
+	}
+	// ...but a whole-line comment in one still does not.
+	if where := cliReferenced(shFile(t, "#!/bin/sh\n# dejima ssh enroll would fix it\ntrue\n"), "ssh enroll"); where != "" {
+		t.Errorf("a shell comment counts as invoked (matched %s)", where)
+	}
+	// The Go rule does not leak into shell files and vice versa: a Go file
+	// containing the shell spelling is the #335 case, already asserted above; a
+	// shell file containing the Go quoted-arg form is not an invocation either.
+	if where := cliReferenced(shFile(t, "#!/bin/sh\necho '\"ssh\", \"enroll\"'\n"), "ssh enroll"); where != "" {
+		t.Errorf("a quoted-arg sequence inside a shell script counts as invoked (matched %s)", where)
+	}
+
+	// The Go scanner decides what a comment is, not a regex: an invocation is
+	// not stripped just because a "//" appears in a string near it.
 	inString := "package main\n" +
-		"func TestY(t *testing.T) { want := \"run // dejima auth push\" ; _ = want }\n"
-	got, err = corpusText("literal_test.go", inString, true)
-	if err != nil {
-		t.Fatalf("strip: %v", err)
-	}
-	if !cliReferenced(got, "auth push") {
-		t.Error("a command inside a string literal was stripped — the stripper is guessing, not parsing")
+		"func TestY(t *testing.T) { u := \"http://x/y\" ; root.SetArgs([]string{\"ssh\", \"enroll\"}) ; _ = u }\n"
+	if where := cliReferenced(goFile(t, inString), "ssh enroll"); where == "" {
+		t.Error("an invocation next to a URL was stripped — the stripper is guessing, not parsing")
 	}
 
-	// Shell: whole-line comments go, real invocations stay.
-	shell := "#!/usr/bin/env bash\n# dejima auth push is deliberately not run here\ndejima island ls\n"
-	got, err = corpusText("scripts/x.sh", shell, false)
-	if err != nil {
-		t.Fatalf("strip: %v", err)
-	}
-	if cliReferenced(got, "auth push") {
-		t.Error("a shell comment counts as covered")
-	}
-	if !cliReferenced(got, "island ls") {
-		t.Error("a real shell invocation stopped counting")
-	}
-
-	// API operations read the same corpus and inherit the same fix.
+	// API operations: a path in a string literal IS how a Go test reaches a
+	// route, so that must still count — but prose about one must not.
 	apiProse := "package main\n// GET /v1/islands/{name}/audit is not exercised anywhere.\n"
-	got, err = corpusText("api_prose_test.go", apiProse, true)
-	if err != nil {
-		t.Fatalf("strip: %v", err)
+	if where := apiReferenced(goFile(t, apiProse), apiOp{method: "GET", path: "/v1/islands/{name}/audit"}); where != "" {
+		t.Errorf("an API path named only in a comment counts as covered (matched %s)", where)
 	}
-	if apiReferenced(got, apiOp{method: "GET", path: "/v1/islands/{name}/audit"}) {
-		t.Error("an API path named only in a comment counts as covered")
+	apiCall := "package main\n" +
+		"func TestA(t *testing.T) { http.Get(srv.URL + fmt.Sprintf(\"/v1/islands/%s/audit\", n)) }\n"
+	if where := apiReferenced(goFile(t, apiCall), apiOp{method: "GET", path: "/v1/islands/{name}/audit"}); where == "" {
+		t.Error("a route reached through a string literal stopped counting")
 	}
 
 	// Unparseable Go is an ERROR, never a silent fall back to the raw text:
-	// falling back would restore the bug in the one file nobody is watching.
+	// falling back would restore both bugs in the one file nobody is watching.
 	if _, err := corpusText("broken_test.go", "package main\nfunc (\n\"unterminated\n", true); err == nil {
 		t.Error("a file that cannot be stripped must fail the gate, not be scanned raw")
 	}
