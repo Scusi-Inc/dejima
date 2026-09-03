@@ -2785,7 +2785,7 @@ func newAgentRestartCmd() *cobra.Command {
 	var resume bool
 	cmd := &cobra.Command{
 		Use:   "restart <island> <agent-id>",
-		Short: "Relaunch an agent in place (picks up new secrets; --resume continues the convo).",
+		Short: "Relaunch an agent in place (picks up new secrets and providers; --resume continues the convo).",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
