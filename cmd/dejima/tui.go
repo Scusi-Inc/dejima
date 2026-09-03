@@ -415,6 +415,7 @@ const (
 	settingsEditor                        // the editor radio sub-page
 	settingsLocal                         // the local-models status sub-page
 	settingsProviders                     // LLM provider keys: list, add, rotate
+	settingsTerminal                      // the default-terminal radio sub-page
 )
 
 type editorChoice struct {
@@ -437,8 +438,29 @@ var editorChoices = []editorChoice{
 // the row menu, and the header kept advertising it for another release.
 const switchKey = "C"
 
+// terminalChoices is the "Default terminal" radio: which terminal to spawn
+// agent/host windows into (stored as clientcfg.Terminal; "" = auto-detect from
+// $TERM_PROGRAM). DEJIMA_TERMINAL overrides it at runtime.
+var terminalChoices = []editorChoice{
+	{"Auto-detect", ""},
+	{"Ghostty", "ghostty"},
+	{"iTerm2", "iterm"},
+	{"WezTerm", "wezterm"},
+	{"kitty", "kitty"},
+	{"Apple Terminal", "terminal"},
+}
+
+func terminalIndex(v string) int {
+	for i, c := range terminalChoices {
+		if c.cmd == v {
+			return i
+		}
+	}
+	return 0
+}
+
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 9 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models · provider keys
+const settingsTopLen = 10 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models · provider keys · terminal
 // NB: voice dictation was row 6; it is roadmapped, not wired — see docs/roadmap.md.
 
 func (m tuiModel) openSettings() tuiModel {
@@ -464,6 +486,8 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		rows = len(editorChoices)
 	case settingsLocal:
 		rows = len(s.localActs) // only the actions the current status allows
+	case settingsTerminal:
+		rows = len(terminalChoices)
 	}
 	// The provider-keys page owns its keys entirely: j, k and q are legal
 	// characters in an API key, and the shared handling below would eat them as
@@ -474,7 +498,7 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc", "ctrl+[", "q", "ctrl+c", "left", "h":
-		if s.page == settingsEditor || s.page == settingsLocal || s.page == settingsProviders { // back to the top page, don't close
+		if s.page == settingsEditor || s.page == settingsLocal || s.page == settingsProviders || s.page == settingsTerminal { // back to the top page, don't close
 			s.page, s.sel = settingsTop, 0
 			return m, nil
 		}
@@ -524,6 +548,10 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.lastNotice = "already up to date"
 				}
 				return m, nil
+			case 9: // Default terminal → radio sub-page
+				cfg, _ := clientcfg.Load()
+				s.page, s.sel = settingsTerminal, terminalIndex(cfg.Terminal)
+				return m, nil
 			case 8: // Provider keys → list + set/rotate (fetched async)
 				s.page, s.sel = settingsProviders, 0
 				s.provCreds, s.provCands, s.provErr = nil, nil, ""
@@ -534,6 +562,20 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				s.localStatus, s.localErr = nil, ""
 				return m, m.fetchLocalStatusCmd()
 			}
+			return m, nil
+		case settingsTerminal:
+			// Choose a terminal + persist, then back to the top page.
+			choice := terminalChoices[s.sel]
+			cfg, _ := clientcfg.Load()
+			cfg.Terminal = choice.cmd
+			if err := clientcfg.Save(cfg); err != nil {
+				m.lastError = "couldn't save settings: " + err.Error()
+			} else if choice.cmd == "" {
+				m.lastNotice = "terminal: auto-detect"
+			} else {
+				m.lastNotice = "terminal set to " + choice.label
+			}
+			s.page, s.sel = settingsTop, 0
 			return m, nil
 		case settingsEditor:
 			// Choose an editor + persist, then back to the top page.
@@ -5853,6 +5895,26 @@ func (m tuiModel) renderSettings() string {
 		b.WriteString(styleMuted.Render("↑/↓ move · ⏎ choose · esc back"))
 		return b.String()
 	}
+	if st.page == settingsTerminal {
+		cur := ""
+		if cfg, err := clientcfg.Load(); err == nil {
+			cur = cfg.Terminal
+		}
+		b.WriteString(styleHeader.Render("Settings · default terminal"))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("which terminal new windows spawn into (DEJIMA_TERMINAL overrides)"))
+		b.WriteString("\n\n")
+		for i, c := range terminalChoices {
+			dot := "○ "
+			if c.cmd == cur {
+				dot = "● "
+			}
+			row(i, dot, c.label)
+		}
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("↑/↓ move · ⏎ choose · esc back"))
+		return b.String()
+	}
 
 	if st.page == settingsProviders {
 		return m.renderProviders()
@@ -5987,6 +6049,7 @@ func (m tuiModel) renderSettings() string {
 	row(6, "", updateRow)
 	row(7, "", "Local models              "+styleMuted.Render("shared open-weights models (Ollama)")+styleMuted.Render("  →"))
 	row(8, "", "Provider keys             "+styleMuted.Render("Anthropic / OpenAI / Google API keys")+styleMuted.Render("  →"))
+	row(9, "", "Default terminal          "+styleMuted.Render("which terminal new windows open in")+styleMuted.Render("  →"))
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()
