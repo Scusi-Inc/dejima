@@ -325,17 +325,52 @@ func apiOps(t *testing.T, root string) []apiOp {
 	return ops
 }
 
+// serverBuilder matches a file that can actually reach an HTTP route: it builds
+// the API server, or calls the shared CLI harness that does. httptest.NewServer
+// deliberately does NOT count — that is a stub with no handler behind it.
+// The list is deliberately a whitelist of the harnesses that exist, and it
+// errs the safe way: too narrow and a real test's route reads as uncovered,
+// which is a loud report someone must resolve; too broad and a handler is
+// credited to a test that never runs it, silently. A new harness therefore
+// costs one line here rather than a silent hole.
+var serverBuilder = regexp.MustCompile(
+	`(^|[^.\w])NewServer\(` + // api.NewServer / NewServer inside package api — NOT httptest.NewServer
+		`|api\.NewServer\(` +
+		`|newTestServer\(|wakeServer\(` + // internal/api's shared fixtures
+		`|cliEnv\(` + // cmd/dejima's in-proc daemon harness
+		`|HandleFunc\(` + // registers the real handler on a mux (http.HandlerFunc does not match)
+		`|\.handle[A-Z]`) // calls a handler method directly
+
+// reachesTheServer is apiReferenced's equivalent of the CLI's invocation rule.
+//
+// A path in a string literal IS how a Go test reaches a route —
+// `http.Get(srv.URL + fmt.Sprintf("/v1/islands/%s/hibernate", n))` — so the
+// #335 rule cannot be applied directly here. But a path in a string literal is
+// ALSO how a test asserts which URL a client built, with no server behind it at
+// all, and that credits the handler for a test that never runs it.
+//
+// Found the moment local_cli_test.go landed: it drives `dejima local install`
+// against a STUB daemon and asserts the path the CLI asked for, which promptly
+// marked `api POST /v1/local/install` as a stale waiver — a demand to delete
+// the waiver on a handler with no test anywhere in the tree. Same shape as
+// #335, one surface over.
+//
+// So a route is credited only from a file that could reach it: one that builds
+// the server, uses the harness that builds it, or is a live shell suite driving
+// a real daemon.
+func reachesTheServer(f corpusFile) bool {
+	if !f.goSrc {
+		return true // a live suite under scripts/ drives a real daemon
+	}
+	return serverBuilder.MatchString(f.text)
+}
+
 // apiReferenced credits an operation when its operationId literal OR a literal
 // matching its path (with each {param} standing in for one path segment)
-// appears in the corpus, and reports where.
-//
-// Unlike the CLI side, a path inside a string literal IS how a Go test reaches
-// a route — `client.Get(srv.URL + "/v1/islands/" + name + "/hibernate")` — so
-// there is no equivalent of the #335 rule to apply here. Comments are still
-// stripped, which is what stops prose about a route from counting.
+// appears in a file that can reach it, and reports where.
 func apiReferenced(files []corpusFile, op apiOp) string {
 	if op.id != "" {
-		if where := match(files, regexp.MustCompile(regexp.QuoteMeta(op.id)), nil); where != "" {
+		if where := match(files, regexp.MustCompile(regexp.QuoteMeta(op.id)), reachesTheServer); where != "" {
 			return where
 		}
 	}
@@ -348,7 +383,7 @@ func apiReferenced(files []corpusFile, op apiOp) string {
 			parts[i] = regexp.QuoteMeta(s)
 		}
 	}
-	return match(files, regexp.MustCompile(strings.Join(parts, "/")), nil)
+	return match(files, regexp.MustCompile(strings.Join(parts, "/")), reachesTheServer)
 }
 
 // --- waivers ---------------------------------------------------------------
@@ -545,8 +580,12 @@ func TestMentionIsNotCoverage(t *testing.T) {
 	if where := apiReferenced(goFile(t, apiProse), apiOp{method: "GET", path: "/v1/islands/{name}/audit"}); where != "" {
 		t.Errorf("an API path named only in a comment counts as covered (matched %s)", where)
 	}
+	// The harness call is part of the fixture now: reachesTheServer requires the
+	// file to be able to reach the route at all. See
+	// TestStubClientDoesNotCoverTheHandler for that rule's own control.
 	apiCall := "package main\n" +
-		"func TestA(t *testing.T) { http.Get(srv.URL + fmt.Sprintf(\"/v1/islands/%s/audit\", n)) }\n"
+		"func TestA(t *testing.T) { h, _ := newTestServer(t); " +
+		"http.Get(srv.URL + fmt.Sprintf(\"/v1/islands/%s/audit\", n)); _ = h }\n"
 	if where := apiReferenced(goFile(t, apiCall), apiOp{method: "GET", path: "/v1/islands/{name}/audit"}); where == "" {
 		t.Error("a route reached through a string literal stopped counting")
 	}
@@ -579,5 +618,59 @@ func TestGateDoesNotCreditItself(t *testing.T) {
 	if where := cliReferenced(self, "agent ls"); where == "" {
 		t.Fatal("the failure message's example is no longer an invocation — " +
 			"the exclusion above is now guarding nothing, and this test would pass either way")
+	}
+}
+
+// TestStubClientDoesNotCoverTheHandler is the control for reachesTheServer.
+//
+// A path in a string literal is how a Go test reaches a route AND how a test
+// asserts which URL a client built with nothing behind it. The second must not
+// credit the handler: cmd/dejima/local_cli_test.go drives `dejima local
+// install` against a stub daemon and asserts the path the CLI asked for, which
+// (before this rule) marked `api POST /v1/local/install` a stale waiver — a
+// demand to delete the waiver on a handler with no test anywhere in the tree.
+//
+// Both directions are asserted, because the failure modes are not symmetric:
+// crediting a stub is silent and permanent, while refusing a real test is a
+// loud report someone has to resolve.
+func TestStubClientDoesNotCoverTheHandler(t *testing.T) {
+	op := apiOp{method: "POST", path: "/v1/local/install"}
+
+	stub := "package main\n" +
+		"func TestX(t *testing.T) {\n" +
+		"\tts := httptest.NewServer(http.HandlerFunc(h))\n" +
+		"\tif seen[0] != \"POST /v1/local/install\" { t.Error(\"wrong endpoint\") }\n" +
+		"}\n"
+	if where := apiReferenced(goFile(t, stub), op); where != "" {
+		t.Errorf("a path asserted against a stub with no handler counts as covered (matched %s)", where)
+	}
+	// The control on the control: the path really is in that fixture, so the
+	// refusal above is the rule working rather than the string being absent.
+	stubFiles := goFile(t, stub)
+	for i := range stubFiles {
+		stubFiles[i].text += "\nnewTestServer(t)\n" // now it can reach the server
+	}
+	if where := apiReferenced(stubFiles, op); where == "" {
+		t.Fatal("the fixture's path is unmatchable even from a server-building file — " +
+			"this test proves nothing about the rule")
+	}
+
+	// A real handler test, in the shapes the tree actually uses.
+	for _, harness := range []string{
+		"h, f := newTestServer(t)",
+		"srv, h, _ := wakeServer(t)",
+		"mux.HandleFunc(\"POST /v1/local/install\", s.handleLocalInstall)",
+		"cliEnv(t)",
+	} {
+		src := "package main\nfunc TestY(t *testing.T) {\n\t" + harness + "\n" +
+			"\tdo(t, h, http.MethodPost, \"/v1/local/install\", \"\")\n}\n"
+		if where := apiReferenced(goFile(t, src), op); where == "" {
+			t.Errorf("a real handler test using %q stopped counting", harness)
+		}
+	}
+
+	// Shell suites drive a real daemon, so they always count.
+	if where := apiReferenced(shFile(t, "#!/bin/sh\ncurl -X POST $H/v1/local/install\n"), op); where == "" {
+		t.Error("a live shell suite's call stopped counting")
 	}
 }

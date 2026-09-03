@@ -25,9 +25,11 @@ cli auth push         # pushes host Claude/GitHub creds — needs a logged-in ho
 cli service uninstall # removes the launchd/systemd daemon service (tier3)
 
 # Local-model endpoints that shell out to the backend CLI (ollama / install
-# script) — side-effectful, so not hit in surface tests. Backend logic is covered
-# by internal/localmodel unit tests + the `dejima local` CLI test; the read-only
-# GETs and /off are exercised in TestSurfaceLocalModels.
+# script) — side-effectful, so not hit in surface tests. THIS is the half that
+# would need an injectable LocalBackend on the server; the CLI commands in front
+# of them are invoked against a stub daemon in local_cli_test.go and must not be
+# read as covering these. Backend logic is covered by internal/localmodel unit
+# tests; the read-only GETs and /off are exercised in TestSurfaceLocalModels.
 api POST /v1/local/install
 api POST /v1/local/models/{name}/pull
 api DELETE /v1/local/models/{name}
@@ -39,28 +41,35 @@ api DELETE /v1/local/models/{name}
 api POST /v1/islands/{name}/agents/{id}/restart
 
 # Commands that cannot be INVOKED in a test, revealed when the gate stopped
-# accepting a mention as evidence (issue #335). Each one does something to the
-# machine running it, so a test that exercised it would be the side effect, not
-# the assertion. Their non-invocable halves are covered where they can be:
+# accepting a mention as evidence (issue #335). The side effect has to be IN THE
+# COMMAND for this to hold — a command that only calls the daemon can be invoked
+# against a stub, and two entries that were here have been replaced by exactly
+# that (local_cli_test.go). Reviewed by d1, who found both.
 #
-#   local install / pull  — runs Ollama's installer, or downloads a multi-GB
-#                           model, onto the host running the suite. The command
-#                           tree is asserted by TestLocalCommandTree and the
-#                           read-only verbs are invoked in
-#                           TestLocalCommandsAgainstDaemon; the backend logic is
-#                           internal/localmodel's own tests.
-#   voice install         — installs whisper.cpp + a recorder through Homebrew or
-#                           the distro package manager. The decision logic is
-#                           internal/voicein's TestPlanInstall (+ the checksum
-#                           pin); `voice status` and `voice device` are invoked
-#                           in cli_invocation_test.go.
-#   github connect        — an OAuth device flow: it calls GitHub and waits for a
-#                           human to approve in a browser. Beneath it,
-#                           internal/api's TestGitHubDeviceFlow{,Disabled} cover
-#                           the exchange, TestDeviceFlowUnconfiguredDetection the
-#                           unconfigured case, and TestNewGithubConnectCmdShape
-#                           the command itself.
-cli local install
-cli local pull
+#   voice install   — voicein.Install runs Homebrew or the distro package
+#                     manager IN THIS PROCESS (voice.go:158). No daemon in
+#                     between, so the stub trick cannot reach it, and every
+#                     platform the CLI builds for is Supported() — linux, darwin
+#                     and windows all return recorders — so there is no
+#                     unsupported-platform branch for a CI invocation to stop at
+#                     either. The decision logic is internal/voicein's
+#                     TestPlanInstall (+ the checksum pin); `voice status` and
+#                     `voice device` are invoked in cli_invocation_test.go.
+#
+#   github connect  — NOT because of the device flow. A `--token` invocation
+#                     never reaches it: github.go:67-69 returns
+#                     connectGitHubViaToken first, so a test taking the obvious
+#                     path would find the device-flow reason false and delete
+#                     this line. The binding reason is one layer in —
+#                     connectGitHubViaToken calls githubid.VerifyToken, and
+#                     apiBase("") hardcodes https://api.github.com with no
+#                     override (internal/githubid/repos.go:34-40), so the token
+#                     path makes a real network call to GitHub. Make apiBase
+#                     injectable and this waiver goes; that is a change to argue
+#                     on its own merits, not to smuggle in as test-enablement.
+#                     Beneath it, internal/api's TestGitHubDeviceFlow{,Disabled}
+#                     cover the exchange, TestDeviceFlowUnconfiguredDetection the
+#                     unconfigured case, and TestNewGithubConnectCmdShape the
+#                     command itself.
 cli voice install
 cli github connect
