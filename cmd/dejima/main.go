@@ -3433,36 +3433,20 @@ func shortenRepo(repo string) string {
 // failures that actually happen are all local and all nameable.
 func troubleshootWSL(ctx context.Context, host string) {
 	distro := wsl.Distro(host)
-	fmt.Fprintf(os.Stderr, "  This is a LOCAL WSL host (distro %q). Tailscale and TCP are not involved.\n\n", distro)
 
+	// Both this and the TUI's offline panel derive from diagnoseWSLDaemon, so
+	// the dashboard and the CLI cannot tell the same operator two different
+	// stories about the same distro — which is exactly what happened when only
+	// this surface knew that a wsl:// target is not a remote host.
+	var repp *wsl.Report
 	rep, err := wsl.Probe(ctx, distro)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ✗ couldn't inspect the distro: %v\n", err)
-		fmt.Fprintln(os.Stderr, "      dejima wsl setup   (idempotent — safe to re-run)")
-		return
+	if err == nil {
+		repp = &rep
 	}
-	switch {
-	case !rep.Exists:
-		fmt.Fprintf(os.Stderr, "  ✗ distro %q does not exist. Create it:\n", distro)
-		fmt.Fprintln(os.Stderr, "      dejima wsl setup")
-	case !rep.HasSocat:
-		// The exact state the operator hit. socat is the tunnel; without it the
-		// client cannot reach a daemon that may be running perfectly well.
-		fmt.Fprintln(os.Stderr, "  ✗ socat is missing in the distro — that IS the tunnel, so nothing can")
-		fmt.Fprintln(os.Stderr, "    reach the daemon even if it is running. Re-run setup:")
-		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
-		fmt.Fprintln(os.Stderr, "    It is idempotent and will install what is missing.")
-	case !rep.HasDejima:
-		fmt.Fprintln(os.Stderr, "  ✗ dejimad is not installed in the distro:")
-		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
-	case !rep.HasDocker:
-		fmt.Fprintln(os.Stderr, "  ✗ Docker is not usable in the distro (islands cannot start without it):")
-		fmt.Fprintln(os.Stderr, "        dejima wsl setup")
-	default:
-		fmt.Fprintln(os.Stderr, "  ✓ the distro has socat, dejimad and Docker — the daemon is likely just")
-		fmt.Fprintln(os.Stderr, "    not running. Start it:")
-		fmt.Fprintln(os.Stderr, "        dejima wsl start")
-		fmt.Fprintf(os.Stderr, "    If that fails, its log is inside the distro:\n")
-		fmt.Fprintf(os.Stderr, "        wsl -d %s -- tail -40 ~/.dejima/dejimad.log\n", distro)
+	d := diagnoseWSLDaemon(distro, repp, err)
+	fmt.Fprintf(os.Stderr, "  %s\n\n", d.Cause)
+	for _, step := range d.Steps {
+		fmt.Fprintf(os.Stderr, "      %s\n", step)
 	}
+	fmt.Fprintln(os.Stderr)
 }
