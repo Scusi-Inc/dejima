@@ -94,7 +94,7 @@ func (m tuiModel) importKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch v.step {
 	case importPickScope:
 		switch msg.String() {
-		case "esc", "q":
+		case "esc", "ctrl+[", "q":
 			m.importPane = nil
 		case "up", "k":
 			if v.cursor > 0 {
@@ -114,7 +114,7 @@ func (m tuiModel) importKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case importTypePath:
 		switch msg.String() {
-		case "esc":
+		case "esc", "ctrl+[":
 			v.step = importPickScope
 		case "tab":
 			// Toggling recursion is the difference between one file and a tree, so
@@ -144,7 +144,7 @@ func (m tuiModel) importKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	default: // importDone
 		switch msg.String() {
-		case "esc", "q", "enter":
+		case "esc", "ctrl+[", "q", "enter":
 			m.importPane = nil
 		case "r":
 			v.step, v.result, v.err = importPickScope, nil, ""

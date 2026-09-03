@@ -61,10 +61,21 @@ def install_block(page: str) -> str:
     it in and failed on correct copy.
 
     The scope matters because the Windows panel names commands that are NOT
-    install steps: `wsl --status` probes for the feature and `dejima wsl setup`
-    builds the distro. Neither belongs in a comparison against a constant that
-    is only about installing WSL itself. Marking the region says so in the page,
-    where the person editing the page can see it.
+    install steps: `dejima wsl setup` builds the distro, and it does not belong
+    in a comparison against a constant that is only about installing WSL itself.
+    Marking the region says so in the page, where the person editing the page
+    can see it.
+
+    HISTORICAL NOTE, because the strongest reason for this marker is no longer
+    visible on the page. The panel used to carry `wsl --status` in a line telling
+    readers to skip step 1 if it "already reports a version". That instruction
+    was WRONG — on a machine with WSL fully removed, `wsl --status` still prints
+    "Default Version: 2" alongside errors saying WSL is unusable, so it sent
+    readers past the step they needed. It was deleted, and with it the clearest
+    example of a non-install command sitting inches from the install block.
+    The invariant is unchanged and the marker still earns its place; without this
+    note the next reader would find a scope with nothing obvious to scope out,
+    and reasonably conclude it was over-engineering.
     """
     marker = "<div data-wsl-install-hint>"
     start = page.find(marker)

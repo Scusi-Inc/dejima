@@ -98,6 +98,8 @@ jobs:
           sudo apt-get install -y shellcheck
           shellcheck -x install.sh \
             install-client.sh \
+            image/agents/claude-code/hooks/notify.sh \
+            image/agents/codex/hooks/notify.sh \
             scripts/lib/clientinstall_test.sh \
             scripts/lib/codexheal_test.sh \
             scripts/setup.sh \
@@ -106,6 +108,8 @@ jobs:
             scripts/lib/tty_test.sh \
             scripts/lib/transcript_test.sh \
             scripts/lib/installfork_test.sh \
+            scripts/lib/dockerwait.sh \
+            scripts/lib/dockerwait_test.sh \
             scripts/verify-secrets-propagation.sh \
             scripts/verify-ssh-forward-semantics.sh \
             scripts/integration.sh \
@@ -200,3 +204,11 @@ jobs:
       # exercises both branches with stubs, since the failure needs no registry.
       - name: codex agent repairs a missing platform binary
         run: ./scripts/lib/codexheal_test.sh
+
+      # What the installer SAYS while it waits for Docker Desktop's first
+      # launch. On a Mac mini install `open -a Docker` returned success without
+      # bringing the app up, and the loop spent five minutes telling the
+      # operator to accept a licence prompt on a screen that had nothing on it.
+      # The loop runs here with the world stubbed — no Docker, no launching.
+      - name: docker first-launch wait says what is actually wrong
+        run: ./scripts/lib/dockerwait_test.sh

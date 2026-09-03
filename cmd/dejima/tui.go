@@ -231,12 +231,22 @@ type tuiModel struct {
 	team         *teamView         // non-nil while the owner-only Team / invite overlay is open (opened with `I`)
 	github       *githubView       // non-nil while the self-serve GitHub identity pane is open (settings → GitHub)
 	secretsPane  *secretsView      // non-nil while the per-island Secrets pane is open
+	importPane   *importView       // non-nil while the per-island Import files pane is open
+	restartPane  *restartView      // non-nil while the "which agents to restart" checklist is open
+	aggregate    *aggregateView    // non-nil while the host-utilization panel is open (opened with `%`)
 	// tunnels is owned by runTUI and shared across dashboard re-entries; see
 	// tunnelManager. Nil in tests that do not exercise gateway UIs.
-	tunnels     *tunnelManager
-	importPane  *importView    // non-nil while the per-island Import files pane is open
-	restartPane *restartView   // non-nil while the "which agents to restart" checklist is open
-	aggregate   *aggregateView // non-nil while the host-utilization panel is open (opened with `%`)
+	tunnels *tunnelManager
+	// escSeqState/escSeqAt track a split escape sequence across keypresses, so a
+	// terminal that delivers ESC [ A as three of them cannot fire the binding on
+	// "A". nowFn is injected so the window is testable without sleeping. See
+	// escseq.go.
+	escSeqState int
+	escSeqAt    time.Time
+	nowFn       func() time.Time
+	// keyLog records every received key when DEJIMA_KEYLOG is set. nil (and a
+	// no-op) otherwise. See keylog.go.
+	keyLog *keyLogger
 	// observed is the observed-agent collection: agents Dejima can SEE and cannot
 	// STOP, running outside every island. nil means we have not (or could not)
 	// load it, which renders NOTHING — deliberately distinct from a loaded
@@ -348,6 +358,8 @@ func initialTUIModel(c *api.Client) tuiModel {
 	cfg, _ := clientcfg.Load()
 	m := tuiModel{
 		client:       c,
+		nowFn:        time.Now,
+		keyLog:       openKeyLog(),
 		dirtyOps:     map[string]string{},
 		expanded:     map[string]bool{},
 		activeHost:   host,
@@ -378,6 +390,11 @@ type settingsModel struct {
 	// Local-models sub-page state, fetched async when the page opens.
 	localStatus *localmodel.Status
 	localErr    string
+	// localActs are the runnable rows derived from localStatus — there is
+	// nothing to move through until the status lands, and what's offered
+	// depends on it (install a missing backend, pull the recommended model).
+	localActs   []localAction
+	localNotice string // outcome of the last action run from this page
 	// Provider-keys sub-page. provCreds is what the daemon holds; provCands is
 	// every provider an agent COULD use, so the page can offer one that has no
 	// key yet — ListProviderCredentials returns nothing at all on a fresh daemon,
@@ -414,6 +431,12 @@ var editorChoices = []editorChoice{
 	{"VS Code Insiders", "code-insiders"},
 }
 
+// switchKey is the accelerator for the connection switcher: both the key
+// handleKey binds and the key the header prints. One constant, because the two
+// drifting apart is exactly what went wrong — `s` switched servers, then became
+// the row menu, and the header kept advertising it for another release.
+const switchKey = "C"
+
 // settingsTopLen is the number of rows on the top preferences page.
 const settingsTopLen = 9 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models · provider keys
 // NB: voice dictation was row 6; it is roadmapped, not wired — see docs/roadmap.md.
@@ -440,7 +463,7 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case settingsEditor:
 		rows = len(editorChoices)
 	case settingsLocal:
-		rows = 0 // read-only status page — nothing to move through
+		rows = len(s.localActs) // only the actions the current status allows
 	}
 	// The provider-keys page owns its keys entirely: j, k and q are legal
 	// characters in an API key, and the shared handling below would eat them as
@@ -450,7 +473,7 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.settingsProvidersKey(msg)
 	}
 	switch msg.String() {
-	case "esc", "q", "ctrl+c", "left", "h":
+	case "esc", "ctrl+[", "q", "ctrl+c", "left", "h":
 		if s.page == settingsEditor || s.page == settingsLocal || s.page == settingsProviders { // back to the top page, don't close
 			s.page, s.sel = settingsTop, 0
 			return m, nil
@@ -527,10 +550,101 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			s.page, s.sel = settingsTop, 0
 			return m, nil
+		case settingsLocal:
+			if s.sel < 0 || s.sel >= len(s.localActs) {
+				return m, nil
+			}
+			s.localNotice = ""
+			return m, runLocalActionCmd(s.localActs[s.sel])
 		}
 		return m, nil
 	}
 	return m, nil
+}
+
+// localAction is a runnable row on the local-models sub-page. Each one shells
+// out to the matching `dejima local …` subcommand rather than calling the API
+// from here: install may have to run the backend's own installer on THIS
+// machine, with a terminal for its sudo prompt (see installLocalBackendHere),
+// and a pull streams a multi-GB progress bar. tea.ExecProcess hands the child
+// the real terminal and takes it back afterwards, so both behave exactly as
+// they do from a shell — which is also why neither is reimplemented here.
+type localAction struct {
+	label string   // the row
+	verb  string   // names the action in the outcome notice
+	args  []string // argv after the dejima binary
+}
+
+// localActions derives the runnable rows from the backend status. Everything
+// not listed stays CLI-only (`dejima local rm`, `dejima local off`): those are
+// destructive or rare, and this page is the setup path.
+func localActions(ls *localmodel.Status) []localAction {
+	if ls == nil {
+		return nil
+	}
+	backend := string(ls.Backend)
+	if backend == "" {
+		backend = "the backend"
+	}
+	if !ls.Installed {
+		// Nothing else is possible until the backend exists on the host.
+		return []localAction{{
+			label: "Install " + backend + " on the host",
+			verb:  "install",
+			args:  []string{"local", "install"},
+		}}
+	}
+	var acts []localAction
+	if top := ls.Recommend.Top; top != nil && !localModelPulled(ls, *top) {
+		acts = append(acts, localAction{
+			label: fmt.Sprintf("Pull %s (%s) — recommended for this host", top.Alias, top.Params),
+			verb:  "pull " + top.Alias,
+			args:  []string{"local", "pull", top.Alias},
+		})
+	}
+	// Installing an already-installed backend is just provider registration —
+	// the path back for a host where someone installed the backend by hand, or
+	// where `dejima local off` deregistered it. See handleLocalInstall.
+	acts = append(acts, localAction{
+		label: "Register the `local` provider with the daemon",
+		verb:  "register",
+		args:  []string{"local", "install"},
+	})
+	return acts
+}
+
+// localModelPulled reports whether a curated model is already on the host,
+// matching either the alias the catalog knows it by or the backend ref.
+func localModelPulled(ls *localmodel.Status, m localmodel.Model) bool {
+	for _, got := range ls.Models {
+		if got.Ref == m.Ref || (got.Alias != "" && got.Alias == m.Alias) {
+			return true
+		}
+	}
+	return false
+}
+
+// localActionMsg reports that a local-models action finished (or couldn't be
+// started at all).
+type localActionMsg struct {
+	verb string
+	err  error
+}
+
+// runLocalActionCmd suspends the TUI, runs `dejima <args…>` on the real
+// terminal, and resumes. DEJIMA_PAUSE_AFTER keeps the child's last screen up
+// until Enter — without it the installer's summary (or its error) is wiped by
+// the redraw the moment it exits.
+func runLocalActionCmd(act localAction) tea.Cmd {
+	exe, err := os.Executable()
+	if err != nil {
+		return func() tea.Msg { return localActionMsg{verb: act.verb, err: err} }
+	}
+	c := exec.Command(exe, act.args...)
+	c.Env = append(os.Environ(), "DEJIMA_PAUSE_AFTER=1")
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return localActionMsg{verb: act.verb, err: err}
+	})
 }
 
 // localStatusMsg carries the managed local-model status into the settings
@@ -961,6 +1075,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Recorded BEFORE any handling, so the log shows what the terminal sent
+		// rather than what we made of it — the whole point is to settle whether
+		// escape sequences arrive intact. No-op unless DEJIMA_KEYLOG is set.
+		m.keyLog.record(msg)
 		return m.handleKey(msg)
 
 	case tickMsg:
@@ -1058,6 +1176,22 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if name := m.selectedName(); name != "" && (m.detail == nil || m.detail.Name != name) {
 			return m, m.fetchDetailCmd(name)
+		}
+		return m, nil
+
+	case deviceStartedMsg:
+		mm, cmd := m.applyDeviceStarted(msg)
+		return mm, cmd
+
+	case devicePolledMsg:
+		mm, cmd := m.applyDevicePolled(msg)
+		return mm, cmd
+
+	case devicePollTickMsg:
+		// Only the flow this tick was scheduled for may act on it: a tick from a
+		// cancelled sign-in must not drive the one that replaced it.
+		if m.github != nil && m.github.connect != nil && m.github.connect.sessionID == msg.sessionID {
+			return m, m.pollDeviceFlowCmd(m.github.connect)
 		}
 		return m, nil
 
@@ -1193,12 +1327,34 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Land the status in the settings sub-page only if it's still open on it.
 		if s := m.settings; s != nil && s.page == settingsLocal {
 			if msg.err != nil {
-				s.localErr = msg.err.Error()
+				s.localErr, s.localActs = msg.err.Error(), nil
 			} else {
 				s.localStatus, s.localErr = msg.status, ""
+				s.localActs = localActions(msg.status)
+			}
+			// What's offered changes with the status (an install removes its own
+			// row), so a cursor left over from the previous list can point past
+			// the end of this one.
+			if s.sel >= len(s.localActs) {
+				s.sel = 0
 			}
 		}
 		return m, nil
+
+	case localActionMsg:
+		s := m.settings
+		if s == nil || s.page != settingsLocal {
+			return m, nil
+		}
+		if msg.err != nil {
+			s.localNotice = styleErrored.Render("✗ " + msg.verb + " didn't finish: " + msg.err.Error())
+		} else {
+			s.localNotice = styleRunning.Render("✓ " + msg.verb + " finished")
+		}
+		// Re-ask the daemon rather than assuming: the status is what decides
+		// which rows the page now offers, and the child may have half-succeeded.
+		s.localStatus, s.localErr, s.localActs = nil, "", nil
+		return m, m.fetchLocalStatusCmd()
 
 	case latestReleaseMsg:
 		if msg.latest != "" {
@@ -1718,6 +1874,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// FIRST, before any binding can act on it: drop a byte that is a fragment of
+	// an escape sequence a terminal failed to deliver atomically. On such a
+	// terminal the up arrow arrives as esc, then "[", then "A" — and "A" opens
+	// the audit ledger. See escseq.go. This is above the overlay dispatch on
+	// purpose: every pane binds letters, so a guard inside one of them would
+	// leave the rest exposed.
+	mm, swallow := m.swallowEscapeSequenceByte(msg)
+	m = mm
+	if swallow {
+		return m, nil
+	}
 	// A success notice lingers until the next keystroke, then clears (an action
 	// may set a fresh one — e.g. setup-ssh sets it via runConfirmed below).
 	m.lastNotice = ""
@@ -1727,7 +1894,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// and the Enter, leaving the modal unusable.
 	if m.confirm != nil {
 		switch msg.String() {
-		case "esc", "ctrl+c":
+		case "esc", "ctrl+[", "ctrl+c":
 			m.confirm = nil
 			return m, nil
 		case "enter":
@@ -1781,7 +1948,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The help overlay owns keys while shown.
 	if m.help {
 		switch msg.String() {
-		case "?", "esc", "q":
+		case "?", "esc", "ctrl+[", "q":
 			m.help = false
 		case "a":
 			m.helpMore = !m.helpMore // expand / collapse the reference dropdown
@@ -1969,6 +2136,13 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Direct shortcuts to the global Dejima settings, regardless of the
 		// highlighted row (power-user accelerators; `s` on a plain row does the same).
 		return m.openSettings(), nil
+	case switchKey:
+		// Switch which server the dashboard is attached to. The header advertises
+		// this key next to the server it names, which is where you notice you are
+		// on the wrong one; it also stays reachable at Settings → Connection
+		// target. `s` used to do this and now opens the highlighted row's menu —
+		// the header went on saying "[s] switch" long after it stopped switching.
+		return m.openSwitcher()
 	case ">":
 		// In-island /workspace shell for the selected island. (Enter opens the
 		// island's agents; `>` — a shell prompt — opens the contained shell.)
@@ -2216,7 +2390,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// direct keys (/, b, R) still work. The daemon self-update lives ONLY here,
 		// behind an explicit fleet-wide-restart warning.
 		return m.openServerMenu(), nil
-	case "esc":
+	case "esc", "ctrl+[":
 		// Dismiss whichever sticky banner is showing (no overlay here): a failure, an
 		// applied-but-needs-restart notice, or a built-image-needs-upgrade notice.
 		// (Green fades itself.)
@@ -3085,7 +3259,7 @@ func partitionBoundary(items []actionMenuItem) (boundary, rest []actionMenuItem)
 // own accelerator key selects it directly.
 func (m tuiModel) actionMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	case "esc", "ctrl+[", "q", "ctrl+c":
 		m.menu = nil
 		return m, nil
 	case "j", "down":
@@ -3274,7 +3448,7 @@ func (m tuiModel) resEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	case "esc", "ctrl+[", "q", "ctrl+c":
 		m.resEditor = nil
 		return m, nil
 	case "down", "j":
@@ -4050,16 +4224,19 @@ func (m tuiModel) renderHeader() string {
 	}
 	logo := strings.Join(logoLines, "\n")
 
-	// server: <label>  ·  [s] switch  [·  ssh <addr>]
-	// [s] opens settings, where "connection target" changes which server the
-	// dashboard attaches to. The ssh hint appears only when the daemon has the
-	// SSH-façade listener on (--ssh); `dejima ssh config <island> --install`
-	// resolves the full address.
+	// server: <label>  ·  [C] switch  [·  ssh <addr>]
+	// [C] opens the connection switcher (also at Settings → Connection target).
+	// It said [s] until `s` became the row menu, at which point the header was
+	// pointing the operator at a menu for the island they happened to be on —
+	// so the key named here and the key that switches must stay the same one,
+	// which TestHeaderSwitchKeyActuallySwitches holds down. The ssh hint appears
+	// only when the daemon has the SSH-façade listener on (--ssh);
+	// `dejima ssh config <island> --install` resolves the full address.
 	serverLine := styleMuted.Render("server: ") + styleAccent.Render(label)
 	if m.activeSource == "env" {
 		serverLine += styleMuted.Render(" via $DEJIMA_HOST")
 	}
-	serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("[s]") + styleMuted.Render(" switch")
+	serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("["+switchKey+"]") + styleMuted.Render(" switch")
 	// Team controls are owner-only; surface the hint unless we know the caller is
 	// a teammate (fail-open before the daemon reports identity, matching the lens).
 	if m.callerRole == "" || m.callerRole == "owner" {
@@ -4617,7 +4794,7 @@ func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "esc", "/", "`", "left", "q":
+	case "esc", "ctrl+[", "/", "`", "left", "q":
 		return collapse()
 	case "j", "down":
 		if m.bandSel < m.bandRowCount()-1 {
@@ -5203,6 +5380,7 @@ func (m tuiModel) renderHelp() string {
 		{"H", "server menu — update daemon · set up SSH fleet-wide · build image · refresh"},
 		{"u / U", "update Dejima — the client first, then the daemon if needed (daemon update warns + gates: it restarts the daemon, closing all terminals fleet-wide). Also in [H]"},
 		{"S / ,", "global Dejima settings — editor · group-by-repo · connection target (which server) · provider keys. Also `s` on empty space, or the top nav button in any row's settings menu"},
+		{switchKey, "switch server — saved connections, add/join one, or drop back to the local socket. The same list as Settings → Connection target, one key from the header that names the server you're on"},
 		{"/", "host terminals — the pinned band of (uncontained) shells on the daemon host; [t] adds one"},
 		{"b", "rebuild the island image on the daemon host — the step BEFORE [s] → Upgrade, which only recreates against the image already there. Also in [H] and in an island's [s] menu"},
 		{"R", "refresh now"},
@@ -5673,7 +5851,7 @@ func (m tuiModel) renderSettings() string {
 			case ls.Installed:
 				state = styleWaiting.Render("installed (not running)")
 			default:
-				state = styleMuted.Render("not installed — run `dejima local install`")
+				state = styleMuted.Render("not installed")
 			}
 			b.WriteString(fmt.Sprintf("backend:  %s\n", ls.Backend))
 			b.WriteString("status:   " + state + "\n")
@@ -5683,7 +5861,17 @@ func (m tuiModel) renderSettings() string {
 			}
 			b.WriteString("\n")
 			if len(ls.Models) == 0 {
-				b.WriteString(styleMuted.Render("no models pulled — `dejima local pull <model>`") + "\n")
+				// The CLI hint is for the case the rows can't cover: a model
+				// outside the curated catalog. When there's a Pull row below,
+				// repeating a command to retype is what this page stopped being.
+				hint := "no models pulled — `dejima local pull <model>`"
+				for _, act := range st.localActs {
+					if strings.HasPrefix(act.verb, "pull") {
+						hint = "no models pulled"
+						break
+					}
+				}
+				b.WriteString(styleMuted.Render(hint) + "\n")
 			} else {
 				b.WriteString("pulled models:\n")
 				for _, mdl := range ls.Models {
@@ -5694,11 +5882,28 @@ func (m tuiModel) renderSettings() string {
 					b.WriteString(line + "\n")
 				}
 			}
-			if ls.Recommend.Top != nil {
+			if top := ls.Recommend.Top; top != nil && localModelPulled(ls, *top) {
+				// Already pulled, so there's no row for it — say why it's the one
+				// to point an agent at.
 				b.WriteString("\n" + styleMuted.Render(fmt.Sprintf(
-					"recommended for this host: %s (%s) — `dejima local pull %s`",
-					ls.Recommend.Top.Alias, ls.Recommend.Top.Params, ls.Recommend.Top.Alias)) + "\n")
+					"recommended for this host: %s (%s) — pulled", top.Alias, top.Params)) + "\n")
 			}
+		}
+		if st.localNotice != "" {
+			b.WriteString("\n" + st.localNotice + "\n")
+		}
+		if len(st.localActs) > 0 {
+			b.WriteString("\n")
+			for i, act := range st.localActs {
+				lead, style := "   ", lipgloss.NewStyle()
+				if i == st.sel {
+					lead, style = styleAccent.Render(" ▸ "), styleSelected
+				}
+				b.WriteString(lead + style.Render(act.label) + "\n")
+			}
+			b.WriteString("\n")
+			b.WriteString(styleMuted.Render("↑/↓ move · ⏎ run (hands over the terminal) · esc back"))
+			return b.String()
 		}
 		b.WriteString("\n")
 		b.WriteString(styleMuted.Render("esc back"))

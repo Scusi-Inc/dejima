@@ -20,7 +20,7 @@ info:
     `SessionEnvelope` schema for the wire protocol.
 servers:
   - url: http://{host}
-    description: Daemon over the tailnet (DEJIMA_HOST, e.g. 100.84.12.7:7273)
+    description: Daemon over the tailnet (DEJIMA_HOST, e.g. 100.101.102.103:7273)
     variables:
       host:
         default: 127.0.0.1:7273

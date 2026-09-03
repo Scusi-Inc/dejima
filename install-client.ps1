@@ -165,7 +165,7 @@ if (-not $localHost) {
 Write-Host ""
 Write-Bold "Server address"
 Write-Info "On the SERVER (mac mini / linux box), run 'tailscale ip -4' to find its address."
-Write-Info "Example: 100.84.12.7"
+Write-Info "Example: 100.101.102.103"
 
 if ([Environment]::UserInteractive) {
   $serverHost = Read-Host "Enter your server's tailnet IP or hostname (blank to skip)"

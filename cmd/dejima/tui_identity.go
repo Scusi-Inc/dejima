@@ -65,7 +65,7 @@ func (m tuiModel) openIdentityEditor(name string) (tea.Model, tea.Cmd) {
 func (m tuiModel) identityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.identity
 	switch msg.String() {
-	case "esc", "q", "i":
+	case "esc", "ctrl+[", "q", "i":
 		m.identity = nil
 	case "tab":
 		v.axis = 1 - v.axis

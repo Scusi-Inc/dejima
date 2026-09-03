@@ -243,7 +243,7 @@ func (m tuiModel) teamKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// secret when there's no one-paste invite — to the operator's clipboard.
 			payload, notice := m.mintedCopyPayload()
 			return m, copyToClipboardCmd(payload, notice)
-		case "enter", "esc", "q":
+		case "enter", "esc", "ctrl+[", "q":
 			v.minted = nil
 			v.loading = true
 			return m, m.loadTokensCmd()
@@ -284,7 +284,7 @@ func (m tuiModel) teamKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "esc", "q", "I":
+	case "esc", "ctrl+[", "q", "I":
 		m.team = nil
 		return m, nil
 	case "r":
@@ -504,7 +504,7 @@ func (m tuiModel) renderTeamForm() string {
 		hostVal += "▎" // cursor
 	}
 	if hostVal == "" {
-		hostVal = styleMuted.Render("(e.g. minion.ts.net:7274 — for the one-paste invite)")
+		hostVal = styleMuted.Render("(e.g. mac-mini.ts.net:7274 — for the one-paste invite)")
 	} else {
 		hostVal = styleAccent.Render(hostVal)
 	}

@@ -765,6 +765,26 @@ missing field, a returned error — already tell you.
 The question to ask: *if this check quietly stopped working, would anything look
 different?* If the honest answer is no, write the control.
 
+**And some failure modes here have no control at all.** Two turned up on the same
+day, on unrelated fixes. d5 read 298aa48 — which stopped treating `wsl.exe`'s exit code
+as an answer, because the stub replies either way — and then wrote "skip this if
+`wsl --status` already reports a version" onto the website: presence as verdict,
+the exact defect that commit corrects. d1 spent an afternoon fixing a classifier
+that mistook socat's own error text for socat's absence, then hours later told
+the operator socat was missing on the strength of that classifier, and went and
+fixed an unrelated sudo assumption because the message pointed there.
+
+Neither has an assert, a mutation, or anything a reviewer can run. **Reading a
+correction is not the same as absorbing it, and no check catches the difference**
+— in both cases the correction was not merely available, it had just been read,
+and in one it had just been written by the person who then inverted it.
+
+Record those in the commit message and move on. Do not invent a guard for them:
+an entry in this file with an empty **Control** would weaken the format more than
+the observation strengthens it. But a file listing only solvable problems quietly
+implies the unsolvable ones do not exist, which is how someone loses an afternoon
+trying to mechanise this one.
+
 ## Where the pattern already lives
 
 | Guard | Control | What the control proves |

@@ -92,7 +92,7 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// swList
 	switch msg.String() {
-	case "esc", "q", "s", "ctrl+c":
+	case "esc", "ctrl+[", "q", "s", "ctrl+c":
 		m.switcher = nil
 	case "up", "k":
 		if s.cursor > 0 {
@@ -128,7 +128,7 @@ func (m tuiModel) switcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step, s.err = swList, ""
 	case "enter":
 		old := s.profiles[s.cursor].Name
@@ -203,7 +203,7 @@ func (m tuiModel) switcherConfirmDeleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	switch msg.String() {
 	case "y", "Y":
 		return m.switcherDelete()
-	case "n", "N", "esc", "q", "ctrl+c":
+	case "n", "N", "esc", "ctrl+[", "q", "ctrl+c":
 		s.step, s.err = swList, ""
 	}
 	return m, nil
@@ -254,7 +254,7 @@ func (m tuiModel) switcherDelete() (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherAddLabelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step = swList
 	case "enter":
 		if strings.TrimSpace(s.label) == "" {
@@ -274,12 +274,12 @@ func (m tuiModel) switcherAddLabelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step = swAddLabel
 	case "enter":
 		host := normalizeHost(s.host)
 		if host == "" {
-			s.err = "host is required (e.g. 100.77.85.107:7273)"
+			s.err = "host is required (e.g. 100.101.102.103:7273)"
 			return m, nil
 		}
 		cfg, _ := clientcfg.Load()
@@ -306,7 +306,7 @@ func (m tuiModel) switcherAddHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) switcherJoinKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := m.switcher
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		s.step, s.err = swList, ""
 		return m, nil
 	case "enter":
@@ -389,12 +389,12 @@ func (s *switcherModel) view() string {
 
 	switch s.step {
 	case swAddLabel:
-		b.WriteString(styleMuted.Render("Name this connection (e.g. minion, work-vps)."))
+		b.WriteString(styleMuted.Render("Name this connection (e.g. mac-mini, work-vps)."))
 		b.WriteString("\n\nname: " + styleAccent.Render(s.label+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("[⏎] next   [esc] back"))
 	case swAddHost:
 		b.WriteString(styleMuted.Render("Daemon address as ") + styleAccent.Render("host:port") + styleMuted.Render(" — the port is required (default ") + styleAccent.Render("7273") + styleMuted.Render(")."))
-		b.WriteString("\n" + styleMuted.Render("  e.g.  ") + styleAccent.Render("100.77.85.107:7273") + styleMuted.Render("  (a Tailscale IP)    or    ") + styleAccent.Render("minion:7273"))
+		b.WriteString("\n" + styleMuted.Render("  e.g.  ") + styleAccent.Render("100.101.102.103:7273") + styleMuted.Render("  (a Tailscale IP)    or    ") + styleAccent.Render("mac-mini:7273"))
 		b.WriteString("\n\nhost: " + styleAccent.Render(s.host+"_"))
 		b.WriteString("\n\n" + styleMuted.Render("How to find it: on the machine running dejimad, run ") + styleAccent.Render("tailscale ip") + styleMuted.Render(" → use that address with ") + styleAccent.Render(":7273") + styleMuted.Render("."))
 		b.WriteString("\n" + styleMuted.Render("(a bare host with no :port gets :7273 added automatically.)"))

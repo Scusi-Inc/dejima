@@ -70,7 +70,7 @@ func (p *agentPicker) handleKey(msg tea.KeyMsg) pickerResult {
 	switch p.phase {
 	case pickType:
 		switch msg.String() {
-		case "esc":
+		case "esc", "ctrl+[":
 			return pickerBack
 		case "up", "k":
 			if p.cursor > 0 {
@@ -89,7 +89,7 @@ func (p *agentPicker) handleKey(msg tea.KeyMsg) pickerResult {
 		}
 	case pickCmd:
 		switch msg.String() {
-		case "esc":
+		case "esc", "ctrl+[":
 			p.phase = pickType
 		case "enter":
 			if p.cmd() != "" {
@@ -244,7 +244,7 @@ func (m tuiModel) agentAdderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if a.phase == adderLabel {
 		switch msg.String() {
-		case "esc":
+		case "esc", "ctrl+[":
 			a.phase = adderPick // back to type selection
 		case "enter":
 			a.adding, a.err = true, ""
@@ -295,7 +295,7 @@ func (m tuiModel) agentAdderKeyStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // waiting on the store; ignore keys
 	}
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+[":
 		a.phase = adderLabel // skip: the picker already warned; `v` can set it later
 	case "up":
 		// Arrow keys only for provider nav — j/k are valid key characters.

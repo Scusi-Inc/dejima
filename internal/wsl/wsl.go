@@ -48,7 +48,30 @@ const DefaultDistro = "dejima"
 // distro. It stays a `sh -c` expression (rather than a literal path) because the
 // WSL user's home isn't knowable from the Windows side — the distro may have
 // been created with any username.
-const socketExpr = `exec socat STDIO UNIX-CONNECT:"$HOME/.dejima/dejimad.sock"`
+// It WAITS BRIEFLY FOR THE SOCKET before connecting, because a dial is what
+// BOOTS the distro. WSL shuts an idle distro down; the next `wsl.exe -d …`
+// starts it, systemd then starts dejimad, and the socket appears a second or
+// two later. Connecting immediately loses that race, and the operator sees
+//
+//	Can't reach your Dejima host — your active profile "wsl" points at
+//	wsl://dejima, which isn't answering right now
+//
+// moments after a setup that verified the connection. Nothing is wrong; the
+// distro was asleep and the first knock woke it.
+//
+// A FIXED SEQUENCE OF SLEEPS RATHER THAN A LOOP WITH A COUNTER, deliberately.
+// This text crosses the WSL channel, and a counter in a script here is exactly
+// what produced `sh: 18: [: Illegal number:` on a real machine — the variable
+// arrived empty with its quotes intact. There is one variable, $HOME, which is
+// unavoidable (the distro's username is not knowable from Windows) and is
+// already proven on this path.
+//
+// Warm socket: no delay at all, since the first test succeeds. Cold: about five
+// seconds, spent once, instead of an error.
+const socketExpr = `S="$HOME/.dejima/dejimad.sock"
+[ -S "$S" ] || sleep 2
+[ -S "$S" ] || sleep 3
+exec socat STDIO UNIX-CONNECT:"$S"`
 
 // execCommand indirects exec.Command so tests can substitute a fake `wsl.exe`.
 var execCommand = exec.Command

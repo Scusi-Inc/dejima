@@ -124,7 +124,19 @@ func (h Handler) NeedsProviderKey() bool { return h.RequiresProviderKey }
 // runs the type string as a command); see Lookup.
 var registry = map[string]Handler{
 	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", ResumeLaunch: "claude --continue", StateDir: "/home/dejima/.claude", Bundled: true},
-	"codex":       {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox-policy=no-sandbox", StateDir: "/home/dejima/.codex", Bundled: true},
+	// `--sandbox danger-full-access`, NOT `--sandbox-policy=no-sandbox`. The latter
+	// is not a Codex flag — it exits 2 with "unexpected argument", the tmux session
+	// dies on the spot, and attaching lands the operator on a bare shell prompt
+	// with no sign that an agent was ever meant to start. It has been wrong since
+	// this registry was written.
+	//
+	// The island is the sandbox: Codex's own bubblewrap cannot run inside a
+	// container (no unprivileged user namespaces — "bwrap: No permissions to
+	// create a new namespace"), so its inner sandbox is disabled rather than left
+	// to fail on every command. init.sh writes the same setting into config.toml;
+	// passing it here too keeps the agent working when the operator has supplied
+	// their own config, which init.sh deliberately leaves alone.
+	"codex": {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox danger-full-access", StateDir: "/home/dejima/.codex", Bundled: true},
 	// Aider: the open, model-agnostic tier-1 anchor (interactive). Its diff-based
 	// edit loop tolerates weaker LOCAL models far better than a tool-call-heavy
 	// agent — so it's the natural pairing for `dejima local`. Self-installs on

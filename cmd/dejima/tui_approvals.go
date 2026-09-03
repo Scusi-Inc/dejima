@@ -149,7 +149,7 @@ func (m tuiModel) findPendingAction(id string) (link.ActionRequest, bool) {
 func (m tuiModel) approvalsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := m.approvals
 	switch msg.String() {
-	case "esc", "q", "V":
+	case "esc", "ctrl+[", "q", "V":
 		m.approvals = nil
 		return m, nil
 	case "tab":

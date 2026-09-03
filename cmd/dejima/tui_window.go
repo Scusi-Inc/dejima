@@ -242,42 +242,6 @@ func (m tuiModel) openHostTermWindow(id, label string) error {
 	}
 }
 
-// openGithubConnectWindow launches the guided `dejima github connect` device-flow
-// sign-in in a new window/tab (it opens a browser + polls, so it belongs in its
-// own window, not the dashboard). It talks to the daemon, so it inherits the
-// TUI's DEJIMA_HOST. Returns an error the caller turns into a "run it in a
-// terminal" hint when a new window isn't possible.
-func (m tuiModel) openGithubConnectWindow(args string) error {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "dejima"
-	}
-	title := "github-connect"
-	// args is "" for a brand-new identity, or "<name> --default" to REFRESH one
-	// that already exists. Passing nothing was how this pane manufactured the
-	// incident it is meant to resolve: `github connect` with no name stores under
-	// the fixed name "github" and does NOT become the default, so an operator
-	// pressing [c] to fix an expired credential silently gained a SECOND identity
-	// for the same login that no island used — while the pane showed both with a
-	// ✓ and no way to tell them apart.
-	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s github connect%s",
-		shquote(m.activeHost), shquote(title), shquote(exe), args)
-	switch {
-	case os.Getenv("TMUX") != "":
-		// Return to the existing one rather than stacking another.
-		if tmuxFocusWindow(title) {
-			return nil
-		}
-		return exec.Command("tmux", "new-window", "-n", title, inner).Run()
-	case goruntime.GOOS == "darwin":
-		return openMacTerminal(inner)
-	case goruntime.GOOS == "windows":
-		return openWindowsTerminal(exe, strings.TrimSpace("github connect"+args), "", "", title, nil, m.activeHost)
-	default:
-		return fmt.Errorf("open-in-new-window needs tmux, macOS, or Windows — run `dejima github connect` in another terminal")
-	}
-}
-
 // openWSLSetupWindow launches `dejima wsl setup` in a separate window/tab — the
 // guided "make this Windows box a real Dejima host" flow, offered from the
 // connection switcher when picking `local` fails on Windows.
