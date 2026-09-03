@@ -81,9 +81,39 @@ what the gate is looking for. What no longer counts is a sentence about it.
 
 When a command genuinely cannot be invoked in a test — it installs software,
 downloads gigabytes, or waits for a browser — waive it and say which of those it
-is, naming the tests that cover the logic underneath. Four commands are in that
-position today (`local install`, `local pull`, `voice install`, `github
-connect`).
+is, naming the tests that cover the logic underneath.
+
+Check WHERE the side effect lives before writing that waiver. `local install`
+and `local pull` were waived on the grounds that they install Ollama and
+download models; they don't. Both are plain HTTP calls to the daemon, so a stub
+answering the endpoint invokes them with no side effect at all
+(`cmd/dejima/local_cli_test.go`), and the waiver belonged on the API operations
+behind them, where the side effect actually is. Two commands remain waived —
+`voice install` (runs the package manager in-process) and `github connect` (its
+token path makes a real call to api.github.com, which `apiBase` hardcodes).
+
+### A route needs a test that can REACH it
+
+The same rule one surface over. A path in a string literal is how a Go test
+reaches a route — and also how a test asserts which URL a *client* built with
+nothing behind it. So a route is credited only from a file that could reach it:
+one that builds the server, uses a fixture that does (`newTestServer`,
+`wakeServer`, `cliEnv`), registers the handler on a mux, or is a live shell
+suite driving a real daemon.
+
+Found the moment `local_cli_test.go` landed: it drives the CLI against a **stub**
+daemon and asserts the path, which marked `api POST /v1/local/install` a stale
+waiver — a demand to delete the waiver on a handler with no test anywhere.
+
+The harness list is a whitelist, and it errs the safe way. Too narrow and a real
+test's route reads as uncovered — loud, and someone resolves it. Too broad and a
+handler is credited to a test that never runs it, silently. A new harness costs
+one line in `serverBuilder`.
+
+One consequence worth knowing: build the path with `fmt.Sprintf`, not
+concatenation. `"…/agents/"+id+"/gateway-ready"` breaks the match across the
+quotes, which is why that route was credited to a client-side test that merely
+named it until `gateway_ready_test.go` was made legible.
 
 `TestCoverageGateIgnoresComments` is the control: prose does not count, code
 still does, a `//` inside a string literal survives (the Go scanner decides, not

@@ -161,10 +161,13 @@ daemon then:
 
 - materializes the chosen provider's key into a **read-only** mount at
   `/opt/host/llm/<provider>.env` (mode 0600) — the key is **never** a container
-  env var, so it never appears in `docker inspect` or logs. The mount is
-  **always present**, even on an island with no provider yet, so a provider
-  registered later reaches the container that already exists instead of needing
-  a recreate to gain the mount;
+  env var, so it never appears in `docker inspect` or logs. The mount is added
+  **unconditionally**, even for an island with no provider yet, so a provider
+  registered later reaches a running container instead of needing a recreate to
+  gain the mount. Like every credential mount it is decided once, at container
+  create, so this applies to containers created by a daemon carrying `8b850d1`
+  or later; an older one has no such bind and needs `dejima upgrade` (the
+  `credentials` report on `/v1/islands/{name}/grants` names those islands);
 - injects three non-secret env vars, resolved **per agent at launch** (each
   agent gets its own provider, not the primary's, and a provider registered
   after the container was created is picked up by an agent restart):

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -30,7 +31,14 @@ func readinessFor(t *testing.T, agentType string, dial func(context.Context, str
 	if err := json.Unmarshal(do(t, h, http.MethodGet, "/v1/islands/alpha", "").Body.Bytes(), &isl); err != nil {
 		t.Fatal(err)
 	}
-	rr := do(t, h, http.MethodGet, "/v1/islands/alpha/agents/"+isl.Agents[0].ID+"/gateway-ready", "")
+	// fmt.Sprintf, not concatenation, so the route is legible to the coverage
+	// gate: it matches a path with each {param} standing in for one segment, and
+	// `"…/agents/"+id+"/gateway-ready"` breaks that match across the quotes. The
+	// route was credited to a CLIENT-side test that merely named it, which is
+	// the accident this makes unnecessary — the test that actually calls the
+	// handler is this one.
+	rr := do(t, h, http.MethodGet,
+		fmt.Sprintf("/v1/islands/alpha/agents/%s/gateway-ready", isl.Agents[0].ID), "")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("gateway-ready: %d %s", rr.Code, rr.Body.String())
 	}
