@@ -190,6 +190,15 @@ func TestTheRestartNoteNamesTheAgentAndRulesOutTheRest(t *testing.T) {
 	if !strings.Contains(low, "upgrade") {
 		t.Errorf("the note must name the recreate for an island with no llm mount, got %q", note)
 	}
+	// BOTH CAUSES, not just the obvious one. An island also lacks the mount when
+	// it was created with no agent that NEEDED a provider key — claude-code and
+	// codex do not — so one that started claude-code-only and later grew a goose
+	// agent has the same hole with providers configured throughout. Naming only
+	// "created before any provider existed" tells that operator the note is not
+	// about them.
+	if !strings.Contains(low, "no agent that needed one") {
+		t.Errorf("the note names only one cause of a missing mount, got %q", note)
+	}
 	if strings.Contains(low, "no island recreate") {
 		t.Errorf("the note still claims no recreate is ever needed, which is false for an "+
 			"island created before any provider existed: %q", note)

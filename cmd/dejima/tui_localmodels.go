@@ -163,10 +163,15 @@ func localModelActions(ls *localmodel.Status) []localAction {
 //
 // The /opt/host/llm bind is CONDITIONAL AT CONTAINER CREATE (server.go, binds
 // are appended only when islandLLMConfigDir returns a non-empty dir), and it
-// returns "" when no key-requiring agent resolved a provider at the time. So an
-// island created before any provider was configured has NO llm mount at all —
-// and that is exactly the operator on this page, because having no provider is
-// why they came here. For them, registerLocalProvider writes into a host
+// returns "" when no key-requiring agent resolved a provider at the time.
+//
+// TWO WAYS TO LAND THERE, and the second is d3's correction to my first draft,
+// which named only the first. An island has no llm mount if it was created
+// before any provider existed — the operator on this page, since having none is
+// why they came — OR if it was created with no agent that NEEDED one:
+// claude-code and codex require no provider key, so an island that started
+// claude-code-only and later grew a goose agent has the same hole with
+// providers configured the whole time. For them, registerLocalProvider writes into a host
 // directory nothing in the container is looking at, and restarting the agent
 // re-reads a path that does not exist in its filesystem. It changes nothing,
 // silently, having followed the instruction exactly.
@@ -198,7 +203,7 @@ func localModelsAppliedNote(ls *localmodel.Status) string {
 	}
 	return "to use it from an agent — no daemon restart is involved either way:\n" +
 		"  · restart the agent, so it re-reads its environment:  [s] on the agent → Restart\n" +
-		"  · if that changes nothing, the island was created BEFORE any provider existed and\n" +
-		"    has no LLM config mount to read at all — it needs a recreate: `dejima upgrade <island>`.\n" +
-		"    This page cannot tell which islands those are."
+		"  · if that changes nothing, the island has no LLM config mount to read — created before\n" +
+		"    any provider existed, or with no agent that needed one. It needs a recreate:\n" +
+		"    `dejima upgrade <island>`.  This page cannot tell which islands those are."
 }
