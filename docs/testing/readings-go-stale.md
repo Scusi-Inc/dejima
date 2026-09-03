@@ -143,10 +143,36 @@ Stale reassurance fails open and is obviously dangerous; stale caution fails
 closed and looks responsible. Both are the same defect, and the second is the one
 that survives review, because nobody challenges an abundance of care.
 
-**Ask for:** the same discriminator as instance 8 — `git tag --contains` at the
-moment of writing, and the as-of clause. What is different is the review
-instinct: re-check the caveats you are proudest of, because they are the ones
-nobody else will.
+#### The relay is where it gets laundered
+
+The sentence travelled two hops from the person who measured it. d2 wrote "on
+master, in no tagged build"; d5 put it in `fit.txt`; d4 relayed it to the
+operator — in the same message as the shortlist item saying the local-model seam
+is the most valuable untested path we have. By the last hop it had become an
+instruction not to run the test.
+
+**The hop inverts who is likely to check.** Whoever first measured a thing knows
+it was a measurement and has some instinct for its half-life. A relayer receives
+it as a *fact*, from someone they trust, already in the past tense — and
+re-deriving it feels like doubting the colleague rather than doubting the
+reading. Staleness gets laundered into confidence at exactly the point where
+nobody is being careless.
+
+The same reading also cost different amounts at different hops: in a file that
+evaluators read at their own pace, it was a wrong sentence; delivered to the one
+person holding the machine, at the moment they were deciding what to run, it was
+a withdrawn capability.
+
+**Ask for:** `git tag --contains <sha>`. Ten seconds, no judgement required, and
+it answers precisely the question the relay loses. Run it on the SHAs before
+passing a version claim on, not before writing one — the writer usually did
+check.
+
+*(An earlier draft of this entry said this instance had no mechanical fix, only a
+review instinct. That was wrong, and d4 corrected it: the version-claim subclass
+— which is most of these — has the discriminator above. The instinct is what is
+left over for the rest: re-check the caveats you are proudest of, because they
+are the ones nobody else will.)*
 
 ## Why this is hard to see from inside
 
