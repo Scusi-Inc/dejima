@@ -448,7 +448,7 @@ func diagnoseWSLDaemon(distro string, rep *wsl.Report, probeErr error) daemonDia
 		d.Cause = "this profile points at a WSL distro (" + quoteDistro(distro) +
 			"), but WSL exists only on Windows — so this target can never connect from here."
 		d.Steps = []string{
-			"switch to a different profile:  dejima profile use <name>   (list them: dejima profile ls)",
+			"switch to a different profile:  dejima profile switch <name>   (list them: dejima profile ls)",
 			"or point at the host directly:  DEJIMA_HOST=<host:port>",
 		}
 		return d
