@@ -8,100 +8,121 @@ import (
 	"testing"
 )
 
-// The dial must resolve $HOME itself, because nothing else will.
+// The dial command must carry NOTHING the WSL channel can lose.
 //
-// `wsl.exe -d <distro> -- sh -c …` does not pass HOME, and /bin/sh on Ubuntu is
-// dash, which does not synthesise it from the passwd entry. Dial ran socketExpr
-// bare, so $HOME was empty and the client looked for the daemon at
-// /.dejima/dejimad.sock — a path nothing creates. It waited its five seconds and
-// reported the host as not answering.
+// An operator's client failed with
 //
-// What made it survive is that the check and the dial disagreed and only one was
-// tested. `dejima wsl status` goes through run(), which DOES prepend
-// homePreamble, so an operator saw:
+//	socat E connect(, AF=1 "<anon>", 2): Invalid argument
 //
-//	socket:  OK    up (~/.dejima/dejimad.sock)
-//	ready — connect with:  dejima profile switch wsl
+// AF=1 is AF_UNIX and length 2 is a sockaddr with an EMPTY path — socat was
+// asked to connect to "". Not a missing socket (ENOENT would say so) but an
+// argument that arrived blank, while the daemon was up and serving and the same
+// socat command run by hand inside the distro returned an HTTP response.
 //
-// with the daemon's own log confirming it was listening on
-// /root/.dejima/dejimad.sock, while every dial from that same client failed.
+// The dial script had a shell variable in it. This file's history records two
+// other things this channel ate: a counter that produced `sh: 18: [: Illegal
+// number:` because "the variable arrived empty with its quotes intact", and an
+// unset HOME that produced `mkdir: cannot create directory ”`.
 //
-// AND THE EXISTING COLD-BOOT TEST COULD NOT CATCH IT, because its fixture sets
-// HOME in the environment it runs socketExpr under. It supplied the exact thing
-// whose absence is the bug. So this one runs with HOME UNSET — the shape
-// wsl.exe actually hands the script.
-func TestDialResolvesHomeWithoutOneInTheEnvironment(t *testing.T) {
-	sh := "/bin/sh"
-	if _, err := os.Stat(sh); err != nil {
-		t.Skipf("no %s here", sh)
+// startDaemonInWSL already drew the conclusion and wrote it down — "no shell
+// variables anywhere. Paths are read once and interpolated in Go" — and start
+// has been reliable since. The dial never got the same treatment, which is how
+// `dejima wsl status` and `dejima wsl start` both worked on a machine where
+// nothing could connect.
+//
+// So this asserts the ABSENCE of the whole class rather than that one variable
+// resolves. A test that HOME expands correctly passes on a channel that mangles
+// something else; a test that there is nothing to expand does not.
+func TestTheDialCommandCarriesNothingExpandable(t *testing.T) {
+	script := dialScript("/root/.dejima/dejimad.sock")
+	for _, bad := range []struct{ frag, why string }{
+		{"$", "a shell variable or command substitution"},
+		{"`", "a backquoted command substitution"},
+		{"\n", "a newline, which this channel has split before"},
+		{"\"", "a double quote, which arrives inconsistently"},
+		{"'", "a single quote, which arrives inconsistently"},
+	} {
+		if strings.Contains(script, bad.frag) {
+			t.Errorf("the dial command contains %s (%q) — this channel has lost each "+
+				"of these on a real machine, and the failure surfaces as socat "+
+				"connecting to an empty path:\n%s", bad.why, bad.frag, script)
+		}
 	}
+	if !strings.Contains(script, "/root/.dejima/dejimad.sock") {
+		t.Errorf("the socket path is not in the command at all, so there is nothing "+
+			"for the assertions above to be about:\n%s", script)
+	}
+}
 
-	// A stub socat that records the path it was asked to connect to. The bug is
-	// entirely about which path that is.
+// And the command must still work: connect to the socket it names, after waiting
+// for a socket that shows up late.
+//
+// The control for the test above. "Contains no $" is satisfied by the empty
+// string, so without this a dial that does nothing at all passes.
+func TestTheDialCommandStillWaitsAndConnects(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skipf("no /bin/sh here")
+	}
+	dir := shortHome(t)
+	sock := filepath.Join(dir, ".dejima", "dejimad.sock")
+	if err := os.MkdirAll(filepath.Dir(sock), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	bin := t.TempDir()
 	record := filepath.Join(bin, "target")
 	write(t, filepath.Join(bin, "socat"),
 		"#!/bin/sh\nprintf '%s' \"$2\" > "+record+"\nexit 0\n")
 
-	cmd := exec.Command(sh, "-c", dialExpr)
-	// NO HOME. This is the whole point: wsl.exe does not pass one.
+	cmd := exec.Command("/bin/sh", "-c", dialScript(sock))
+	// A deliberately hostile environment: no HOME at all. The point of resolving
+	// the path in Go is that the in-distro environment stops mattering.
 	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the dial script failed outright: %v\n%s", err, out)
+		t.Fatalf("the dial command failed outright: %v\n%s", err, out)
 	}
-
 	b, err := os.ReadFile(record)
 	if err != nil {
-		t.Fatalf("socat never ran, so nothing was dialled at all: %v", err)
+		t.Fatalf("socat never ran, so nothing was dialled: %v", err)
 	}
 	got := strings.TrimPrefix(string(b), "UNIX-CONNECT:")
-
-	// THE BUG, asserted on every platform. An empty $HOME puts the socket at the
-	// filesystem root, which is where the operator's client sat waiting.
-	if got == "/.dejima/dejimad.sock" {
-		t.Fatalf("the dial resolved $HOME to the empty string and looked for the "+
-			"daemon at %s — the exact path an operator's client sat waiting on "+
-			"while `dejima wsl status` reported the socket up", got)
+	if got == "" {
+		t.Fatal("socat was asked to connect to an EMPTY path — this is the operator's " +
+			"failure exactly: AF_UNIX, sockaddr length 2, \"Invalid argument\"")
 	}
-
-	// WHICH home it resolves to is platform-dependent, and only the first
-	// assertion is about the defect. homePreamble reads the passwd entry with
-	// `getent`, which is glibc and absent on macOS — so a darwin runner correctly
-	// takes the /root fallback. That fallback is right for the WSL default user,
-	// and this expression only ever runs inside a Linux distro in production.
-	//
-	// So the exact path is checked where getent exists and NOT skipped where it
-	// doesn't: the assertion above still runs everywhere, because a guard that
-	// skips its whole subject on one CI platform is a guard that platform does
-	// not have.
-	if _, err := exec.LookPath("getent"); err != nil {
-		t.Logf("no getent here, so the passwd lookup falls back to /root (got %q); "+
-			"the empty-HOME assertion above still ran", got)
-		return
-	}
-	realHome, err := os.UserHomeDir()
-	if err != nil || realHome == "" || realHome == "/" {
-		t.Logf("no usable passwd home to compare against (%q, %v)", realHome, err)
-		return
-	}
-	if want := filepath.Join(realHome, ".dejima", "dejimad.sock"); got != want {
-		t.Errorf("dialled %q, want %q", got, want)
+	if got != sock {
+		t.Errorf("dialled %q, want %q", got, sock)
 	}
 }
 
-// The status check and the dial must resolve HOME the same way.
+// An unusable HOME must be reported as an unusable HOME, not turned into a path.
 //
-// They did not, and that disagreement is why every other signal said fine. This
-// asserts the two share one derivation rather than each carrying its own — a
-// second copy would pass this test on the day it was written and drift after.
-func TestTheDialAndTheStatusCheckShareOneHomeDerivation(t *testing.T) {
-	if !strings.Contains(dialExpr, homePreamble) {
-		t.Error("the dial does not use homePreamble, so it resolves HOME by some " +
-			"other means than run() — which is exactly the split that let `dejima " +
-			"wsl status` report ready while every dial failed")
-	}
-	if !strings.Contains(dialExpr, socketExpr) {
-		t.Error("the dial no longer contains socketExpr, so the cold-boot wait that " +
-			"file tests is not on the path Dial actually runs")
+// The old code built "$HOME/.dejima/dejimad.sock" and handed the result to
+// socat whatever it came out as, so an empty HOME surfaced as a socat error
+// about an anonymous address — naming the tool, three layers from the cause.
+func TestAnUnusableHomeIsNamedNotPapered(t *testing.T) {
+	prev := execCommand
+	t.Cleanup(func() { execCommand = prev })
+	for _, tc := range []struct{ name, out string }{
+		{"empty", ""},
+		{"not absolute", "root"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			socketPathMu.Lock()
+			delete(socketPathCache, "d")
+			socketPathMu.Unlock()
+			execCommand = func(_ string, _ ...string) *exec.Cmd {
+				return exec.Command("/bin/sh", "-c", "printf '%s' "+shQuoteForTest(tc.out))
+			}
+			_, err := socketPathFor(t.Context(), "d")
+			if err == nil {
+				t.Fatal("an unusable HOME produced a socket path instead of an error")
+			}
+			if !strings.Contains(err.Error(), "HOME") {
+				t.Errorf("the error does not name HOME, so it points at the wrong "+
+					"layer: %v", err)
+			}
+		})
 	}
 }
+
+func shQuoteForTest(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
