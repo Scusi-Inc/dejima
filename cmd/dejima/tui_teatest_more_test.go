@@ -352,7 +352,8 @@ func TestWindowLabelManualNames(t *testing.T) {
 }
 
 // TestTUISettingsLocalModelsPage: the Settings overlay's "Local models" row
-// (index 7) opens a read-only status sub-page, and esc returns to the top page.
+// (index 7) opens the status sub-page, and esc returns to the top page. What
+// the page can DO once the status lands is TestTUILocalPageRunsAction.
 func TestTUISettingsLocalModelsPage(t *testing.T) {
 	// Open global Dejima settings (`,` — `s` on a row is now the contextual menu),
 	// move to the "Local models" row (8th, index 7), and select it.

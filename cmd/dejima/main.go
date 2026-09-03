@@ -49,8 +49,26 @@ func main() {
 		// Cobra already printed the error. If it's a can't-reach-the-daemon
 		// failure on a machine pointed at a host, offer a one-shot troubleshooter.
 		maybeOfferConnectionHelp(err)
+		pauseAfterRun()
 		os.Exit(1)
 	}
+	pauseAfterRun()
+}
+
+// pauseAfterRun holds the terminal until Enter when DEJIMA_PAUSE_AFTER is set.
+// The TUI sets it for the commands it hands the terminal to (tea.ExecProcess,
+// e.g. the Local models page running `dejima local install`): the dashboard
+// repaints the whole screen the instant the child exits, so without this the
+// installer's summary — or the error explaining why it stopped — is wiped
+// before it can be read. It lives here, after Execute, because cobra prints a
+// RunE error only once RunE has returned. A no-op for anyone running the CLI
+// by hand, and for a non-interactive stdin (EOF returns straight away).
+func pauseAfterRun() {
+	if os.Getenv("DEJIMA_PAUSE_AFTER") == "" {
+		return
+	}
+	fmt.Fprint(os.Stderr, "\npress Enter to return to the dashboard… ")
+	stdinReader.ReadString('\n')
 }
 
 // maybeOfferConnectionHelp surfaces help when a command can't reach the daemon.
@@ -1821,8 +1839,18 @@ func waitForWorkspaceReady(ctx context.Context, c *api.Client, name string) (clo
 func cloneFailureHint(name, reason string) string {
 	switch reason {
 	case "auth":
+		// `dejima github connect` and NOT the token-push path. Both work; they
+		// have different prerequisites, and this message is read by someone who
+		// has just discovered they have no identity at all.
+		//
+		// connect is a guided device flow: it prints a code, the operator
+		// approves it in a browser, and the daemon captures the token. auth push
+		// requires an ALREADY-CONFIGURED `gh` on the client to push from — so
+		// pointing a new operator at it names the path with more prerequisites,
+		// exactly when they have fewest. An operator hit this after
+		// `github connect` had already succeeded elsewhere.
 		return fmt.Sprintf("clone failed (auth) — this island can't authenticate to the git remote. "+
-			"Push a GitHub token (`dejima auth push --github`), then `dejima upgrade %s` to re-clone.", name)
+			"Connect a GitHub identity (`dejima github connect`), then `dejima upgrade %s` to re-clone.", name)
 	case "not-found":
 		return fmt.Sprintf("clone failed (not-found) — the repo couldn't be reached or found. "+
 			"Check the URL and that the island's identity can see it (private repos need a token with access), then `dejima upgrade %s`.", name)

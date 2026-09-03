@@ -765,8 +765,8 @@ missing field, a returned error — already tell you.
 The question to ask: *if this check quietly stopped working, would anything look
 different?* If the honest answer is no, write the control.
 
-**And some failure modes here have no control at all.** Two turned up on one day,
-on the same fix. d5 read 298aa48 — which stopped treating `wsl.exe`'s exit code
+**And some failure modes here have no control at all.** Two turned up on the same
+day, on unrelated fixes. d5 read 298aa48 — which stopped treating `wsl.exe`'s exit code
 as an answer, because the stub replies either way — and then wrote "skip this if
 `wsl --status` already reports a version" onto the website: presence as verdict,
 the exact defect that commit corrects. d1 spent an afternoon fixing a classifier
