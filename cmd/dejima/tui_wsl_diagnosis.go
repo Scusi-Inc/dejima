@@ -40,3 +40,18 @@ func probeWSLDiagnosisCmd(host string) tea.Cmd {
 		return wslDiagnosisMsg{host: host, diagnosis: diagnoseWSLDaemon(distro, repp, err)}
 	}
 }
+
+// daemonRestartRemedy names how to restart the daemon on THIS transport.
+//
+// A WSL host frequently has no systemd, so there is no service manager for the
+// daemon to restart into — restartDaemon's exec fails, the old process keeps
+// serving, and `systemctl restart dejimad` is a circle. The daemon already knows
+// this (restartFailureHint) and says it in its own log; the client said nothing,
+// so the operator saw a green success and a banner that had not moved.
+func daemonRestartRemedy(host string) string {
+	if wsl.IsHost(host) {
+		d := wsl.Distro(host)
+		return "Restart it here:  wsl -d " + d + " -- pkill -x dejimad   then   dejima wsl start"
+	}
+	return "Restart the daemon service on the host, then reconnect."
+}
