@@ -171,6 +171,24 @@ jobs:
       - name: Containment claims on the website are unchanged
         run: python3 scripts/site-claim-check.py
 
+  # An index is a READING of the docs tree, and readings go stale the way
+  # docs/testing/readings-go-stale.md describes: silently, while still looking
+  # authoritative. An index that has quietly stopped listing a third of the docs
+  # is worse than no index, because a reader who finds none knows to go looking
+  # and a reader who finds an incomplete one does not.
+  #
+  # No `paths:` filter, same reasoning as the two jobs above and for the same
+  # reason it matters more here: the commit most likely to break this is one that
+  # ADDS a doc, and a `paths: ['docs/**']` filter would catch that but a
+  # `['**.go']` one would not — so rather than reason about which filter is safe,
+  # run a dependency-free python script on every push.
+  docs-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: docs/README.md indexes every doc, and every link resolves
+        run: python3 scripts/docs-index-check.py
+
   # The installer's "is anyone home?" logic, exercised under a real pty. This is
   # the only automated coverage the fresh-install path has: the clean-Mac runner
   # was torn down, so nothing else executes any of it. Runs anywhere — it stubs

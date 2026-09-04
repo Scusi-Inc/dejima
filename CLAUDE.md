@@ -43,3 +43,19 @@ will not notice. Use the heredoc.
 
 Be useful. Be specific. Commit as you go; don't accumulate large uncommitted
 changes.
+
+## Where the knowledge is
+
+`docs/README.md` maps all 88 docs by the question you arrived with. Two are
+worth reading before you diagnose anything or write a guard:
+`docs/testing/guards-need-controls.md` (does this check have a SUBJECT?) and
+`docs/testing/readings-go-stale.md` (is this reading CURRENT?).
+
+**A lesson that recurs twice becomes a check, not a third comment.** On
+2026-09-03 five pieces of knowledge failed to propagate; every one was already
+documented, correctly, and three were in the SAME FILE as the code that got them
+wrong — one of them twenty lines above the edit. Proximity is not the fix,
+because the reader is not failing to find the rule, they have a specific correct
+belief that makes it feel inapplicable. If you are about to write a fourth
+paragraph about something that keeps happening, write a gate instead;
+`scripts/` has five and they work.
