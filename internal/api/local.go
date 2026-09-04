@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/aoos/dejima/internal/localmodel"
 	"github.com/aoos/dejima/internal/providercreds"
@@ -89,6 +90,31 @@ func (s *Server) registerLocalProvider() error {
 	return nil
 }
 
+// startThenRegister brings the server UP and then registers the provider.
+//
+// An install that finishes with nothing listening is not a finished install. The
+// operator got "install finished", a green tick, and a status line reading
+// `installed (not running)` — with no command on any surface to start it. The
+// backend was there and unusable, which is the same shape as a materialized key
+// behind a missing mount: every signal says yes except the one that matters.
+//
+// A failed START does not fail the install and does not block registration. The
+// install DID succeed, the provider config IS correct, and refusing to register
+// would leave an operator with a working backend they cannot reach. It is
+// reported in the stream instead, and `dejima local status` shows the truth.
+func (s *Server) startThenRegister(w io.Writer) func() error {
+	return func() error {
+		be := s.localBackend()
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		if err := be.Start(ctx); err != nil {
+			fmt.Fprintf(w, "the backend is installed but did not start: %v\n", err)
+			fmt.Fprintln(w, "start it and re-run `dejima local install` to finish.")
+		}
+		return s.registerLocalProvider()
+	}
+}
+
 func (s *Server) handleLocalStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.localStatus(r.Context()))
 }
@@ -110,7 +136,7 @@ func (s *Server) handleLocalInstall(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "%s is already installed on this host — registering the `local` provider.\n",
 			s.localBackend().Name())
-		if err := s.registerLocalProvider(); err != nil {
+		if err := s.startThenRegister(w)(); err != nil {
 			fmt.Fprintf(w, "provider registration failed: %v\n", err)
 			return
 		}
@@ -125,7 +151,7 @@ func (s *Server) handleLocalInstall(w http.ResponseWriter, r *http.Request) {
 	defer stream.Close()
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	streamProgress(w, stream, localInstallOKMarker, s.registerLocalProvider)
+	streamProgress(w, stream, localInstallOKMarker, s.startThenRegister(w))
 }
 
 // handleLocalPull streams `<backend> pull`. The {name} may be a curated alias or

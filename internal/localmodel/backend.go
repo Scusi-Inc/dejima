@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/aoos/dejima/internal/paths"
 )
 
 // In-island wiring for the default (Ollama) backend. Islands reach the host's
@@ -68,6 +71,11 @@ type LocalBackend interface {
 	Remove(ctx context.Context, ref string) error
 	// Install streams a best-effort install of the backend on the host.
 	Install(ctx context.Context) (io.ReadCloser, error)
+	// Start brings the server up if it is not already answering, and waits for
+	// it to answer. On the interface because an installed-but-stopped backend is
+	// a state the daemon must be able to leave — it is where an operator landed
+	// with no command on any surface to get out.
+	Start(ctx context.Context) error
 }
 
 // Ollama is the default LocalBackend: the daemon shells out to the host `ollama`
@@ -240,11 +248,7 @@ func (o *Ollama) installDarwin(ctx context.Context) (io.ReadCloser, error) {
 func darwinBrewScript(brew string) string {
 	return fmt.Sprintf(`set -e
 %[1]q install ollama
-%[1]q services start ollama || {
-  echo "brew services could not start ollama here; starting the server directly"
-  nohup "$(%[1]q --prefix)/bin/ollama" serve >/dev/null 2>&1 &
-  sleep 2
-}
+%[1]q services start ollama || echo "brew services could not start it here; the daemon will start the server itself"
 echo "ollama installed via Homebrew"`, brew)
 }
 
@@ -271,6 +275,109 @@ var findBrew = func() (string, bool) {
 // running as root — the branch would otherwise only ever execute on a machine
 // nobody runs the suite on.
 var geteuid = os.Geteuid
+
+// Start launches the backend server DETACHED and waits for it to answer.
+//
+// An install that leaves nothing listening is the shape this package keeps
+// producing: the operator gets "install finished" and a status line reading
+// `installed (not running)`, with no command anywhere to fix it.
+//
+// Detached because the daemon that starts it may itself be restarted, and
+// because `brew services` cannot always be used: on a Mac reached over SSH,
+// `launchctl enable gui/501/...` fails with "Domain does not support specified
+// action" (exit 125), which is what an operator actually hit. Starting it
+// ourselves is the fallback that has to work, so it uses setsid and releases the
+// process rather than nohup-and-hope.
+//
+// A no-op when the server is already answering, so it is safe to call on every
+// install and from a `start` that an operator runs twice.
+func (o *Ollama) Start(ctx context.Context) error {
+	if _, running := o.Detect(ctx); running {
+		return nil
+	}
+	exe, ok := o.resolveExe()
+	if !ok {
+		return errors.New("the backend is not installed, so there is nothing to start")
+	}
+	// STDIO MUST BE DETACHED, always. Left nil, the child inherits ours — and a
+	// server that outlives us then holds our stdout open forever. That is not
+	// theoretical: it hung `go test` on the first run of this code, because the
+	// harness waits for the pipe rather than for the process.
+	//
+	// The daemon's stdout is its log; a released child writing there, or holding
+	// it open across a daemon restart, is the same defect with worse blast
+	// radius. A log file when we can open one, /dev/null when we cannot.
+	logPath, logFile := serverLog()
+	if logFile == nil {
+		var err error
+		if logFile, err = os.OpenFile(os.DevNull, os.O_WRONLY, 0); err != nil {
+			return fmt.Errorf("cannot detach the server's output: %w", err)
+		}
+		logPath = ""
+	}
+	defer logFile.Close()
+
+	// NOT CommandContext. ctx bounds how long we WAIT for the server, not how
+	// long the server lives — binding the process to it would kill the thing we
+	// just started the moment this function returns.
+	cmd := exec.Command(exe, "serve")
+	cmd.SysProcAttr = detachAttrs()
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s serve: %w", exe, err)
+	}
+	// Release, so this process is not the child's parent for wait purposes and
+	// the server outlives us.
+	_ = cmd.Process.Release()
+
+	// Wait for it to ANSWER, not merely to have been spawned. "I started a
+	// process" and "the backend is up" are different claims, and reporting the
+	// first as the second is how `installed (not running)` reached a screen that
+	// had just said the install finished.
+	// A real deadline. This was `deadline := time.Now().After` — a METHOD VALUE
+	// bound to the instant it was created, so every later call compared against
+	// that same frozen `now` and the loop could not expire. It reads like a
+	// clock and is a snapshot. Caught by the never-answers test hanging until the
+	// harness killed it, which is the only reason it was not shipped.
+	deadline := time.Now().Add(serverStartBudget)
+	for time.Now().Before(deadline) {
+		if _, running := o.Detect(ctx); running {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(serverStartPoll):
+		}
+	}
+	if logPath != "" {
+		return fmt.Errorf("started %s but it did not answer within %s — its output is in %s",
+			exe, serverStartBudget, logPath)
+	}
+	return fmt.Errorf("started %s but it did not answer within %s", exe, serverStartBudget)
+}
+
+// Injectable so the timeout path is testable without waiting out a real budget.
+var (
+	serverStartBudget = 30 * time.Second
+	serverStartPoll   = time.Second
+)
+
+// serverLog opens the backend's log beside the daemon's own state, so a server
+// that dies on startup leaves something to read. Best-effort: no log is worse
+// than a log, but it is not a reason to refuse to start.
+func serverLog() (string, *os.File) {
+	root, err := paths.Root()
+	if err != nil {
+		return "", nil
+	}
+	p := filepath.Join(root, "ollama-server.log")
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return "", nil
+	}
+	return p, f
+}
 
 // parseOllamaList turns `ollama list` tabular output into InstalledModels.
 // Format: "NAME  ID  SIZE  MODIFIED" header then rows; NAME is field 0, and
