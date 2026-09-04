@@ -36,12 +36,26 @@ func HostMemoryBytes() uint64 {
 func readHostMemory() uint64 {
 	switch runtime.GOOS {
 	case "darwin":
-		out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
-		if err != nil {
-			return 0
+		// ABSOLUTE PATH FIRST. A launchd daemon inherits a bare PATH, and the
+		// dejimad plist narrows it further, so `exec.Command("sysctl", …)` can
+		// fail to resolve on a Mac that plainly has sysctl. It returns 0, which
+		// every surface renders as "host RAM unknown" — an operator picking a
+		// local model was shown "needs 8 GiB · host RAM unknown" on every row and
+		// had to go and read `sysctl` themselves.
+		//
+		// Third time this exact fix has been needed in this area: resolveExe for
+		// the ollama binary, findBrew for Homebrew, and now this. PATH is not a
+		// reliable way for a daemon to find anything.
+		for _, exe := range []string{"/usr/sbin/sysctl", "sysctl"} {
+			out, err := exec.Command(exe, "-n", "hw.memsize").Output()
+			if err != nil {
+				continue
+			}
+			if n, perr := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64); perr == nil && n > 0 {
+				return n
+			}
 		}
-		n, _ := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
-		return n
+		return 0
 	case "linux":
 		b, err := os.ReadFile("/proc/meminfo")
 		if err != nil {

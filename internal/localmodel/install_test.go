@@ -52,13 +52,7 @@ func TestTheDarwinInstallScriptInstallsAndStarts(t *testing.T) {
 	script := darwinBrewScript("/opt/homebrew/bin/brew")
 	for _, want := range []string{
 		"install ollama",        // the install itself
-		"services start ollama", // and it must end up RUNNING, not merely present
-		// The fallback, for a daemon with no launchd user domain to bootstrap
-		// into. Matched on the pieces rather than on "ollama serve": the path is
-		// a quoted command substitution, so the literal reads `/bin/ollama" serve`
-		// and a naive substring would pass only by accident of formatting.
-		"nohup",
-		`/bin/ollama" serve`,
+		"services start ollama", // and it should end up RUNNING, not merely present
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("the install script does not %q:\n%s", want, script)
@@ -70,6 +64,10 @@ func TestTheDarwinInstallScriptInstallsAndStarts(t *testing.T) {
 	if !strings.Contains(script, `"/opt/homebrew/bin/brew"`) {
 		t.Errorf("the brew path is not quoted, so a path with a space splits:\n%s", script)
 	}
+	// Starting is NOT this script's job any more. `brew services` is attempted
+	// because it survives a reboot, but the reliable start is Start(), which uses
+	// setsid and waits for an answer. See TestTheInstallScriptDoesNotBackgroundAServer.
+	//
 	// No sudo. That is the entire premise: Homebrew refuses to run under it, and
 	// the daemon has no terminal to type a password at.
 	if strings.Contains(script, "sudo") {
