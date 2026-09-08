@@ -25,7 +25,7 @@ func TestAgentRowStatusAligned(t *testing.T) {
 	}
 	col := -1
 	for _, a := range rows {
-		bare := plain(agentRowText(a, false))
+		bare := plain(agentRowText(a, false, 0))
 		i := strings.Index(bare, "working")
 		if i < 0 {
 			t.Fatalf("no status word in row: %q", bare)
@@ -49,7 +49,7 @@ func TestAgentRowOverflowGap(t *testing.T) {
 	// A disambiguated name + a long type pushes the meta past agentStatusCol.
 	a := api.AgentInfo{ID: "a2", Type: "claude-code", State: "running",
 		CreatedAt: time.Now().Add(-40 * time.Minute), AgentState: &api.AgentStateInfo{Latest: ""}}
-	row := plain(agentRowText(a, true)) // ambiguous → wide name
+	row := plain(agentRowText(a, true, 0)) // ambiguous → wide name
 	i := strings.Index(row, "working")
 	if i < 0 {
 		t.Fatalf("no status word: %q", row)
