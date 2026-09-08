@@ -96,10 +96,38 @@ func TestTheTreeStaysAlignedAtEveryWidth(t *testing.T) {
 // is useful and "acme-client-ap…" with the count cut off is not — the count is
 // the only thing on that row saying the island holds more than one agent.
 func TestTheAgentCountSurvivesTruncation(t *testing.T) {
-	m := seededModel(t, island("a-really-long-island-name", "a1", "a2", "a3"))
+	const long = "a-really-long-island-name"
+	m := seededModel(t, island(long, "a1", "a2", "a3"))
 	out, _ := m.renderList(41) // narrow: the name must give way, not the count
 	if !strings.Contains(plain(out), "(3)") {
 		t.Errorf("the agent count was truncated away on a narrow pane:\n%s", plain(out))
+	}
+
+	// AND THE PAIR MUST STILL FIT THE COLUMN. Presence alone is too weak: giving
+	// the name the FULL width and appending " (3)" also leaves the count on
+	// screen — it just pushes the status four columns right, out of line with
+	// every other row. A mutation doing exactly that survived the presence check.
+	//
+	// So compare against a single-agent island at the same width: the status has
+	// to start in the same place on both.
+	single := seededModel(t, island("short", "a1"))
+	sOut, _ := single.renderList(41)
+	statusCol := func(rendered string) int {
+		for _, ln := range strings.Split(plain(rendered), "\n") {
+			if i := strings.Index(ln, "running"); i >= 0 {
+				return runewidth.StringWidth(ln[:i])
+			}
+		}
+		return -1
+	}
+	withCount, without := statusCol(out), statusCol(sOut)
+	if withCount < 0 || without < 0 {
+		t.Fatalf("no status row found (with=%d without=%d)", withCount, without)
+	}
+	if withCount != without {
+		t.Errorf("a counted island puts its status at column %d and an uncounted one at %d — "+
+			"the name and the count together must fit the column, not overflow it",
+			withCount, without)
 	}
 	if got := nameColumnAgentCountWidth(41); got != nameColMin-4 {
 		t.Errorf("the count costs 4 columns, so the name gets %d, got %d", nameColMin-4, got)
