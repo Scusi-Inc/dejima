@@ -157,23 +157,48 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 	// a shared host spawns a daemon that COLLIDES with the operator's already
 	// running on :7273/:7274. Route first; then ask only what the chosen branch
 	// needs (join → paste an invite; set up → proceed).
+	// THREE DESTINATIONS, NAMED, IN THE ORDER PEOPLE WANT THEM.
+	//
+	// This asked one question ("set up here, or join?") and then, on a fresh Mac,
+	// a second one whose options were "provision this host" or "just the generic
+	// setup walkthrough". Between them those cover three real destinations —
+	// local, host, client — but only two were ever on screen at once, and the
+	// LOCAL one was wearing the label "generic setup walkthrough", which reads
+	// like a fallback rather than a choice.
+	//
+	// So an operator who wanted a daemon on her own Mac saw "set up here", said
+	// yes, and landed in host provisioning: never-sleep power settings, Homebrew,
+	// and a Tailscale check she had no use for — which then reconnected the
+	// remote profile she was trying to get away from. She reported it as two
+	// options where there should have been three.
+	//
+	// Local first because it is the common case and the least destructive; host
+	// second because provisioning a shared always-on server is a bigger
+	// commitment; client last because it needs an invite the user may not have
+	// yet. Nothing here installs anything until the branch is chosen.
 	fmt.Println()
-	fmt.Println(bold("First time — set up Dejima on this machine, or join one that already exists?"))
+	fmt.Println(bold("First time — how do you want to run Dejima?"))
 	fmt.Println()
 	if kind == firstRunWindowsClient {
 		// Be honest about the shape of "here" on Windows: the daemon can't run on
-		// Windows itself, so "set up here" means WSL2. Saying that up front beats
-		// letting the user pick "s" and then discovering the constraint.
-		fmt.Println("    s) Set up Dejima on this machine — in WSL2 (Windows can't run the daemon directly)")
+		// Windows itself, so local means WSL2. Saying it up front beats letting
+		// someone choose and then discover the constraint.
+		fmt.Println("    l) Local  — a daemon on this machine, in WSL2 (Windows can't run it directly)")
 	} else {
-		fmt.Println("    s) Set up Dejima on this machine (run a daemon here)")
+		fmt.Println("    l) Local  — a daemon on this machine, just for you")
+		fmt.Println("               (Docker + the daemon; no tailnet, no always-on power settings)")
 	}
-	fmt.Println("    j) Join an existing server — paste an invite from your team")
+	fmt.Println("    h) Host   — provision this machine as an always-on server for a team")
+	fmt.Println("               (never-sleep, Homebrew, Tailscale, Docker, daemon — one walkthrough)")
+	fmt.Println("    c) Client — connect to a server that already exists (paste an invite)")
 	fmt.Println("    n) Not now — ask me again next time")
 	fmt.Println("    N) Never ask again")
 	fmt.Println()
-	switch readSingleKey("Choice [s/j/n/N]: ") {
-	case "j", "J", "join":
+	switch readSingleKey("Choice [l/h/c/n/N]: ") {
+	case "c", "C", "j", "J", "join", "client":
+		// `j` stays accepted: it was the documented key for this branch, and a
+		// muscle-memory keystroke landing somewhere else would be worse than a
+		// slightly wider case list.
 		return firstRunJoin(ctx)
 	case "N", "never":
 		fmt.Println("Got it. Re-engage anytime with `dejima onboard`.")
@@ -182,8 +207,20 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 	case "n", "no", "later", "":
 		fmt.Println("OK — opening the dashboard. Run `dejima onboard` anytime.")
 		return true, nil
-	case "s", "S", "set", "setup", "y", "Y", "yes":
-		// fall through to the set-up branch below
+	case "h", "H", "host":
+		return firstRunSetUpHost(ctx, kind)
+	case "l", "L", "local", "s", "S", "set", "setup", "y", "Y", "yes":
+		// `s`/`y` land on LOCAL, not host. They used to mean "set up here", which
+		// then asked a second question; local is the answer that second question
+		// defaulted people toward wanting, and it is the one that installs least.
+		if kind == firstRunWindowsClient {
+			return firstRunSetUpWSL(ctx)
+		}
+		if err := runOnboarding(ctx); err != nil {
+			return false, err
+		}
+		markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up
+		return true, nil
 	default:
 		// An unrecognized key is non-committal: open the dashboard rather than
 		// guess a destructive default (installing a daemon on a shared host is the
@@ -191,21 +228,6 @@ func firstRunPrompt(ctx context.Context) (bool, error) {
 		fmt.Println("Didn't catch that — opening the dashboard. Re-run `dejima onboard` anytime.")
 		return true, nil
 	}
-
-	// Set-up branch, dispatched to the context-specific flow: a fresh Mac gets the
-	// richer host-provisioning sub-choice; anything else gets the generic
-	// walkthrough.
-	if kind == firstRunFreshHost {
-		return firstRunSetUpHost(ctx)
-	}
-	if kind == firstRunWindowsClient {
-		return firstRunSetUpWSL(ctx)
-	}
-	if err := runOnboarding(ctx); err != nil {
-		return false, err
-	}
-	markSetupDoneIfHealthy(ctx) // dismiss only if dejimad is actually up
-	return true, nil
 }
 
 // firstRunSetUpWSL is the "set up here" branch on Windows. dejimad needs a Unix
@@ -262,13 +284,27 @@ func firstRunSetUpWSL(ctx context.Context) (bool, error) {
 // provisioning (power settings + Homebrew/Tailscale/Docker + daemon) or just the
 // generic walkthrough. Reached only after the router's "set up" choice, so it no
 // longer re-asks the set-up-vs-join question.
-func firstRunSetUpHost(ctx context.Context) (bool, error) {
+func firstRunSetUpHost(ctx context.Context, kind firstRunContext) (bool, error) {
+	// Windows cannot BE an always-on host: dejimad needs a Unix host with Docker.
+	// Say so and offer the thing that is actually achievable here, rather than
+	// walking someone into a provisioning flow that cannot finish.
+	if kind == firstRunWindowsClient {
+		fmt.Println()
+		fmt.Println("  Windows can't run the daemon directly, so it can't be provisioned as a")
+		fmt.Println("  host. WSL2 on this machine can — that's the Local option.")
+		fmt.Println()
+		if confirmDefault("Set up the daemon in WSL2 now?", true) {
+			return firstRunSetUpWSL(ctx)
+		}
+		fmt.Println("OK — opening the dashboard. Run `dejima onboard` anytime.")
+		return true, nil
+	}
 	fmt.Println()
 	fmt.Println("  Provision this Mac into a secure, always-on Dejima host? That sets never-sleep")
 	fmt.Println("  power settings, Homebrew/Tailscale/Docker, and the daemon — one walkthrough.")
 	fmt.Println()
 	fmt.Println("    y) Yes, provision this host (dejima onboard --provision-host)")
-	fmt.Println("    g) Just the generic setup walkthrough")
+	fmt.Println("    g) Just the local setup walkthrough instead (no tailnet, no power settings)")
 	fmt.Println("    n) Not now")
 	fmt.Println()
 	switch readSingleKey("Choice [y/g/n]: ") {
