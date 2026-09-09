@@ -162,7 +162,12 @@ type tuiModel struct {
 	// daemon-unreachable failure (why dejimad isn't up + how to fix it). Computed
 	// once when the connection error arrives — service.Detect() shells out, so it
 	// must not run per render — and cleared the moment a list load succeeds.
-	daemonHelp     *daemonDiagnosis
+	daemonHelp *daemonDiagnosis
+	// sshHelp shows the full-pane façade setup guidance. A PANE, not a footer
+	// line: renderFooterLeft truncates lastError at 60 chars, and the condensed
+	// steps are ~180, so the guidance an operator got when opening an OpenClaw
+	// console was cut off mid-command. See sshFacadeHelpPane.
+	sshHelp        bool
 	lastNotice     string // transient success hint (e.g. ssh setup); shown until replaced
 	sshHost        string // resolved SSH-façade host (cached from overview; see overviewMsg)
 	sshPort        string // resolved SSH-façade port
@@ -2030,6 +2035,15 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.restartPane != nil {
 		return m.restartKey(msg)
 	}
+	// The façade-setup pane owns keys while shown. Any dismissing key closes it;
+	// nothing else is bound, so a stray keypress can't act on the island behind it.
+	if m.sshHelp {
+		switch msg.String() {
+		case "esc", "ctrl+[", "q", "enter", "?":
+			m.sshHelp = false
+		}
+		return m, nil
+	}
 	// The help overlay owns keys while shown.
 	if m.help {
 		switch msg.String() {
@@ -2277,7 +2291,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// host exists) and a local editor CLI.
 		if name := m.selectedName(); name != "" {
 			if m.overview == nil || m.overview.SSHAddr == "" {
-				m.lastError = "ssh façade is off — press m → SSH setup, or start dejimad with --ssh"
+				// Same prerequisite as the gateway UI, so the same full guidance —
+				// and the old one-liner pointed at "m → SSH setup", which the menu
+				// does not build until the façade is already on.
+				m.sshHelp = true
 				return m, nil
 			}
 			if err := openInEditor("dejima-"+name, m.editor); err != nil {
@@ -3685,7 +3702,10 @@ const openAllConfirmThreshold = 4
 // it — the actionable nudge instead of a raw error.
 func (m tuiModel) openAgentGatewayUI(name, agentID string) (tea.Model, tea.Cmd) {
 	if m.overview == nil || m.overview.SSHAddr == "" {
-		m.lastError = sshFacadeSetupStepsTUI()
+		// The PANE, not lastError: the footer truncates at 60 chars and these
+		// steps are ~180, so routing them through it showed the operator a red
+		// bar cut off mid-command — a named prerequisite and no way to act on it.
+		m.sshHelp = true
 		return m, nil
 	}
 	// HELD IN-PROCESS, not in a spawned window. The window used to own the ssh
@@ -4004,6 +4024,16 @@ func (m tuiModel) View() string {
 	}
 	if m.agentAdder != nil {
 		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(m.agentAdder.view())
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+	if m.sshHelp {
+		enable, exact := enableFacadeCommand()
+		label := m.activeLabel
+		if label == "" {
+			label = m.activeHost
+		}
+		content := sshFacadeHelpPane(label, m.activeHost != "", enable, exact)
+		body := stylePane.Width(m.width - 2).Height(m.height - hh - 2).Render(content)
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 	if m.help {

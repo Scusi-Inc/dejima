@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The façade address belongs to the DAEMON HOST, which is routinely not the
 // machine typing.
@@ -38,5 +41,71 @@ func TestSSHAddrFallsThroughWhenThereIsNoHost(t *testing.T) {
 		if got := sshAddrFromDaemonHost(host); got != "" {
 			t.Errorf("sshAddrFromDaemonHost(%q) = %q, want \"\" so the caller falls back", host, got)
 		}
+	}
+}
+
+// The façade guidance must be a PANE, and must survive being read.
+//
+// It was routed through m.lastError, which renderFooterLeft truncates at 60
+// characters. The condensed steps are ~180, so pressing ⏎ on an OpenClaw agent
+// produced a red bar cut off mid-command:
+//
+//	⚠ gateway UI needs the SSH façade. 1) on the daemon host: su
+//
+// A named prerequisite and no way to act on it.
+func TestFacadeGuidanceSurvivesTheFooterTruncation(t *testing.T) {
+	if got := len(sshFacadeSetupStepsTUI()); got <= 60 {
+		t.Skipf("the one-line form is now %d chars and would survive the footer; "+
+			"this test's premise no longer holds", got)
+	}
+	pane := sshFacadeHelpPane("100.89.51.27:7273", true,
+		"sudo dejima service install --system --ssh 100.89.51.27:2222", false)
+
+	// The whole command has to be present, not a prefix of it.
+	if !strings.Contains(pane, "--ssh 100.89.51.27:2222") {
+		t.Errorf("the enable command is incomplete in the pane:\n%s", pane)
+	}
+	if len(pane) <= 60 {
+		t.Errorf("the pane is footer-sized, so it is still the truncated form:\n%s", pane)
+	}
+}
+
+// The two steps are on two different machines, and a remote daemon has to say
+// so — a laptop driving a Mac mini is not the machine step 1 runs on.
+func TestFacadeGuidanceNamesWhichMachine(t *testing.T) {
+	remote := sshFacadeHelpPane("100.89.51.27:7273", true, "sudo dejima service install --ssh x:2222", false)
+	if !strings.Contains(remote, "DAEMON HOST") {
+		t.Errorf("step 1 does not name the machine it runs on:\n%s", remote)
+	}
+	if !strings.Contains(remote, "not this one") {
+		t.Errorf("nothing rules out the machine reading it, which is the whole "+
+			"wrong-machine failure:\n%s", remote)
+	}
+	if !strings.Contains(remote, "100.89.51.27:7273") {
+		t.Errorf("the daemon host is not identified:\n%s", remote)
+	}
+
+	// On the host itself, "not this one" would be a lie.
+	local := sshFacadeHelpPane("local", false, "sudo dejima service install --ssh x:2222", true)
+	if strings.Contains(local, "not this one") {
+		t.Errorf("a local daemon was described as a different machine:\n%s", local)
+	}
+}
+
+// Step 2 points at a menu entry that DOES NOT EXIST until step 1 is done — the
+// action is gated on overview.SSHAddr. An operator who goes looking for it early
+// finds nothing and concludes the instructions are wrong, so the pane has to say
+// it is a sequence.
+func TestFacadeGuidanceExplainsTheMissingMenuEntry(t *testing.T) {
+	pane := sshFacadeHelpPane("100.89.51.27:7273", true, "sudo dejima service install --ssh x:2222", false)
+	if !strings.Contains(pane, "SSH setup") {
+		t.Errorf("step 2 does not name the action to take:\n%s", pane)
+	}
+	if !strings.Contains(pane, "after step 1") {
+		t.Errorf("the pane does not say the entry appears only after step 1, so a "+
+			"reader who checks the menu now finds a dead end:\n%s", pane)
+	}
+	if !strings.Contains(pane, "esc") {
+		t.Errorf("no way out of the pane is named:\n%s", pane)
 	}
 }

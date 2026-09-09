@@ -40,20 +40,30 @@ func TestAgentGatewayPortDetection(t *testing.T) {
 // Opening a gateway UI needs the SSH façade. Without it, the TUI must give an
 // actionable nudge — not spawn a window that just fails — so the operator knows
 // the one thing to enable.
+//
+// It opens the PANE rather than setting lastError, and that is the fix rather
+// than a refactor: renderFooterLeft truncates lastError at 60 characters, and
+// the steps are ~180, so the operator's actual screen was a red bar cut off
+// mid-command. Asserted here as "the pane is open"; its contents are held down
+// by TestFacadeGuidance* in ssh_setup_addr_test.go.
 func TestGatewayUIRequiresSSHFacade(t *testing.T) {
 	m := gwModel()
 	m.overview = &api.OverviewResponse{} // SSHAddr empty → façade off
 
 	out, _ := m.openAgentGatewayUI("home", "o1")
-	got := out.(tuiModel).lastError
-	if !strings.Contains(got, "SSH façade") {
-		t.Errorf("should point at enabling the SSH façade; got %q", got)
+	got := out.(tuiModel)
+	if !got.sshHelp {
+		t.Fatal("no guidance shown for a gateway UI with the façade off")
 	}
-	// The nudge uses the shared TUI steps: host command + the in-TUI enroll.
-	if !strings.Contains(got, "service install") {
-		t.Errorf("should name the host enable command; got %q", got)
+	if strings.Contains(got.lastError, "service install") {
+		t.Error("the steps went to lastError, which the footer truncates at 60 " +
+			"chars — the enable command reaches the operator cut in half")
 	}
-	if !strings.Contains(got, "SSH setup") {
-		t.Errorf("should point at the in-TUI enroll (m → SSH setup); got %q", got)
+	// The pane the operator will actually read must carry both steps.
+	pane := sshFacadeHelpPane("100.89.51.27:7273", true, "sudo dejima service install --ssh x:2222", false)
+	for _, want := range []string{"SSH façade", "service install", "SSH setup"} {
+		if !strings.Contains(pane, want) {
+			t.Errorf("the guidance pane is missing %q", want)
+		}
 	}
 }

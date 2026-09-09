@@ -118,8 +118,89 @@ func sshFacadeSetupSteps() string {
 
 // sshFacadeSetupStepsTUI is the condensed form for a TUI notice — the client
 // step points at the in-TUI enroll (m → SSH setup) rather than the CLI.
+//
+// KEEP IT SHORT. The footer truncates, and this is the one-line form; the full
+// guidance is sshFacadeHelpPane.
 func sshFacadeSetupStepsTUI() string {
 	enable, _ := enableFacadeCommand()
 	return fmt.Sprintf("gateway UI needs the SSH façade. 1) on the daemon host: %s   "+
 		"2) here: press m → SSH setup to enroll this device", enable)
+}
+
+// sshFacadeHelpPane is the full-pane guidance shown when an operator tries to
+// open a gateway UI and the façade is off.
+//
+// IT IS A PANE BECAUSE THE FOOTER TRUNCATES AT 60 CHARACTERS. The condensed
+// form above is ~180, so pressing ⏎ on an OpenClaw agent produced
+//
+//	⚠ gateway UI needs the SSH façade. 1) on the daemon host: su
+//
+// cut off mid-command. There was, in practice, no guidance at all — the
+// operator saw a red bar naming a prerequisite and nothing about what to do.
+//
+// THE TWO STEPS ARE ON TWO DIFFERENT MACHINES, and that is the thing this has to
+// get across. Step 1 runs on the daemon host, which for a laptop driving a Mac
+// mini is not the machine reading the message.
+//
+// STEP 2 DOES NOT EXIST YET WHEN THIS IS SHOWN. The "SSH setup" action is gated
+// on overview.SSHAddr — the menu builds it only once the daemon reports a
+// façade — so an operator who goes looking for it before finishing step 1 finds
+// nothing and reasonably concludes the instructions are wrong. Saying so is the
+// difference between a sequence and a dead end.
+// STYLE ONE LINE AT A TIME, never a string containing "\n". lipgloss pads a
+// rendered block to its widest line and carries that padding across the
+// newlines inside it, so a single multi-line Render indents everything written
+// after it. The first draft did exactly that and produced a staircase — caught
+// by printing the pane, not by the assertions, which were all still green.
+func sshFacadeHelpPane(daemonLabel string, remote bool, enableCmd string, exact bool) string {
+	var b strings.Builder
+	line := func(s string) { b.WriteString(s + "\n") }
+	muted := func(s string) { line(styleMuted.Render(s)) }
+
+	line(styleTitle.Render("Gateway UI needs the SSH façade"))
+	line("")
+	muted("OpenClaw, Letta and Goose serve a web console from inside the island.")
+	muted("Dejima reaches it by tunnelling over the daemon's SSH façade, which")
+	muted("is off unless dejimad was started with --ssh.")
+	line("")
+	// Only claim two machines when there are two. On a local daemon both steps
+	// are here, and saying otherwise sends the reader looking for another box.
+	if remote {
+		line("Two one-time steps, on two different machines.")
+	} else {
+		line("Two one-time steps, both on this machine.")
+	}
+	line("")
+
+	if remote {
+		line(styleAccent.Render(" 1  ") + "On the " + styleWaiting.Render("DAEMON HOST") +
+			" — the machine running dejimad")
+		line("    (" + daemonLabel + "), " + styleWaiting.Render("not this one") + ". In a terminal there:")
+	} else {
+		line(styleAccent.Render(" 1  ") + "On the " + styleWaiting.Render("DAEMON HOST") +
+			" — this machine. In a terminal there:")
+	}
+	line("")
+	line("      " + styleAccent.Render(enableCmd))
+	if !exact {
+		muted("      (keep any flags you already pass to dejimad)")
+	}
+	muted("      This restarts the daemon; islands keep running.")
+	line("")
+
+	line(styleAccent.Render(" 2  ") + "Back " + styleWaiting.Render("HERE") +
+		", after step 1, once this dashboard reconnects:")
+	line("")
+	line("      press " + styleAccent.Render("m") + " → " + styleAccent.Render(`"SSH setup"`) +
+		" to authorize this device")
+	// The honest caveat. Without it the obvious move is to go press m NOW, find
+	// nothing, and conclude the instructions are wrong.
+	muted("      That entry appears only after step 1 — the menu builds it from")
+	muted("      the façade address the daemon reports, so it is genuinely not")
+	muted("      there yet. This is a sequence, not a missing button.")
+	line("")
+	line("Then press " + styleAccent.Render("⏎") + " on the agent again to open its console.")
+	line("")
+	muted("esc to close")
+	return b.String()
 }
