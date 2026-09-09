@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"strings"
+
+	"github.com/aoos/dejima/internal/wsl"
 )
 
 // The SSH-façade setup steps, in one place so every surface that needs them —
@@ -12,10 +15,44 @@ import (
 // hits this once. The guidance used to be terse, scattered, and in one place
 // outdated; this keeps it consistent and actionable.
 
-// suggestedSSHAddr returns the address to prefill in the enable command. The
-// host's own tailnet IP is exactly what a remote client dials, so prefer it;
-// fall back to a placeholder when Tailscale isn't resolvable here.
+// sshAddrFromDaemonHost derives the façade bind address from the daemon host we
+// are connected to, or "" when it cannot (local socket, wsl://, malformed).
+//
+// The port is replaced, not reused: 7273 is the API listener, 2222 the façade.
+func sshAddrFromDaemonHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || wsl.IsHost(host) {
+		return "" // no address to speak of; the local paths below apply
+	}
+	h, _, err := net.SplitHostPort(host)
+	if err != nil || strings.TrimSpace(h) == "" {
+		return ""
+	}
+	return net.JoinHostPort(strings.TrimSpace(h), "2222")
+}
+
+// suggestedSSHAddr returns the address to prefill in the enable command.
+//
+// THE ADDRESS BELONGS TO THE DAEMON HOST, WHICH MAY NOT BE THIS MACHINE. The
+// command it lands in is run with sudo ON THE HOST, and the address is what the
+// façade BINDS. Asking the local `tailscale ip -4` answers for whatever device
+// is typing — correct when that is the host, and wrong in a way that cannot
+// work when it is not.
+//
+// It was reached the wrong way: a Mac driving a Mac mini over the tailnet got
+// setup steps telling it to bind the MINI's façade to the LAPTOP's tailnet IP.
+// Same shape as the `ollama serve` advice — a command for one machine, composed
+// from facts about another.
+//
+// When the daemon is remote we already know its address: it is the host we are
+// talking to. Prefer that over any local probe, and keep the local tailnet IP
+// only for the case it was always right for — being on the host.
 func suggestedSSHAddr() string {
+	if host, _, source := resolveTarget(); source != "local" {
+		if addr := sshAddrFromDaemonHost(host); addr != "" {
+			return addr
+		}
+	}
 	if ip, ok := tailscaleIPv4(); ok {
 		return ip + ":2222"
 	}
