@@ -24,15 +24,20 @@
 cli auth push         # pushes host Claude/GitHub creds — needs a logged-in host
 cli service uninstall # removes the launchd/systemd daemon service (tier3)
 
-# Local-model endpoints that shell out to the backend CLI (ollama / install
-# script) — side-effectful, so not hit in surface tests. THIS is the half that
-# would need an injectable LocalBackend on the server; the CLI commands in front
-# of them are invoked against a stub daemon in local_cli_test.go and must not be
-# read as covering these. Backend logic is covered by internal/localmodel unit
-# tests; the read-only GETs and /off are exercised in TestSurfaceLocalModels.
+# `local install` runs the backend's real installer (a curl|sh, or Homebrew) on
+# this host — side-effectful in the handler itself, so not hit in surface tests.
+# The CLI command in front of it is invoked against a stub daemon in
+# local_cli_test.go and must not be read as covering this; backend logic is
+# covered by internal/localmodel unit tests, and the read-only GETs and /off are
+# exercised in TestSurfaceLocalModels.
+#
+# The pull/rm entries that were here are GONE, and the note that stood above them
+# said what would remove them: "THIS is the half that would need an injectable
+# LocalBackend on the server." It is now a field (Server.localBE) — added because
+# those two endpoints were reaching a stopped backend and relaying its own
+# unfollowable error, and no hermetic test could see that state. See
+# internal/api/local_test.go.
 api POST /v1/local/install
-api POST /v1/local/models/{name}/pull
-api DELETE /v1/local/models/{name}
 
 # Relaunches a real tmux session in the container (kill + re-create) — needs a
 # live island, so not hit in surface tests. Covered by the restart-checklist TUI

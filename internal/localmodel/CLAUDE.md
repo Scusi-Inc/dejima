@@ -30,4 +30,14 @@ false of Homebrew, which refuses to run as root and installs into a user-owned
 prefix. The message sent operators to run by hand the command the daemon could
 have run itself.
 
+**5. Never shell out to the backend CLI without `EnsureRunning`.** Every command
+here is a CLIENT of a server, so a stopped backend fails them all — and rule 3's
+gap is routine, not rare (any host reboot). `install` called `Start`; `pull` and
+`rm`, which operators run far more often, went straight to the CLI and relayed
+its `run 'ollama serve'` to a WINDOWS operator whose backend was on a Mac mini.
+That is rule 4 arriving by a different door: **a message we pass through is a
+message we send**, and it must be true of the machine that reads it. Guarded by
+`TestLocalPull*` in `internal/api` (via the `Server.localBE` seam) and
+`TestEnsureRunning*` here.
+
 Background: [docs/local-models.md](../../docs/local-models.md).

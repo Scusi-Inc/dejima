@@ -78,6 +78,51 @@ type LocalBackend interface {
 	Start(ctx context.Context) error
 }
 
+// EnsureRunning brings the backend up before an operation that needs a live
+// server, and — when it cannot — says so in terms of the machine the backend is
+// actually ON.
+//
+// Every write path here shells out to a CLI that is a CLIENT of a server. With
+// the server down, `ollama pull` does not download anything; it prints its own
+//
+//	Error: could not connect to ollama server, run 'ollama serve' to start it
+//
+// which the daemon streamed verbatim to an operator on WINDOWS whose backend
+// lives on a Mac mini. The advice was unfollowable on the machine reading it:
+// there is no ollama there to serve. That is the same wrong-machine failure
+// ErrInstallNeedsTerminal was rewritten to stop making, arriving through a
+// different door — a message we pass through is still a message we send.
+//
+// And the remedy already existed. Start is idempotent, waits for the server to
+// answer, and its doc comment says it is on the interface because
+// installed-but-stopped "is a state the daemon must be able to leave — it is
+// where an operator landed with no command on any surface to get out." Install
+// called it. Pull and Remove, the two commands an operator reaches for far more
+// often, did not: they went straight to the backend CLI. So the one state the
+// method was written to escape was still a dead end on the surfaces that hit it.
+//
+// A stopped backend is the NORMAL state, not an edge case: `brew services` fails
+// where the daemon has no launchd user domain to bootstrap into, and any host
+// reboot leaves the binary installed with nothing listening.
+func EnsureRunning(ctx context.Context, be LocalBackend) error {
+	installed, running := be.Detect(ctx)
+	if running {
+		return nil
+	}
+	if !installed {
+		return fmt.Errorf("no %s backend is installed on the daemon host — the machine "+
+			"running dejimad, not the one you are typing on. Install it with `dejima local install`", be.Name())
+	}
+	if err := be.Start(ctx); err != nil {
+		return fmt.Errorf("%s is installed on the daemon host but not running, and starting "+
+			"it from the daemon failed: %w\n"+
+			"the backend runs on the DAEMON HOST, not the machine you are typing on — start "+
+			"it there, or re-run `dejima local install` (on an installed backend it only "+
+			"starts it and re-registers the provider)", be.Name(), err)
+	}
+	return nil
+}
+
 // Ollama is the default LocalBackend: the daemon shells out to the host `ollama`
 // CLI. It's the simplest path and Mac-friendly (Metal); vLLM is the better
 // default on a Linux/GPU daemon and can implement this same interface later.

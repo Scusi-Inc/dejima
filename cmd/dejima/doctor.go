@@ -299,9 +299,14 @@ func checkDaemon(ctx context.Context, r *doctorReport) {
 				fmt.Sprintf("%s backend not installed (optional)", st.Backend),
 				"`dejima local install` to run open-weights models on this host")
 		case !st.Running:
+			// NOT "e.g. `ollama serve`". doctor runs on the machine the operator is
+			// typing on; the backend runs on the DAEMON HOST, which is routinely a
+			// different one (a Windows box driving a Mac mini is the reported case).
+			// `dejima local install` reaches the right machine and, on a backend that
+			// is already there, does nothing but start it and re-register.
 			r.add("System", "local models", "WARN",
-				fmt.Sprintf("%s installed but not responding", st.Backend),
-				"start it (e.g. `ollama serve`), or reinstall with `dejima local install`")
+				fmt.Sprintf("%s installed on the daemon host but not responding", st.Backend),
+				"`dejima local install` — on an installed backend it only starts it")
 		case len(st.Models) == 0:
 			r.add("System", "local models", "INFO",
 				fmt.Sprintf("%s running, no models pulled", st.Backend), "`dejima local pull <model>`")

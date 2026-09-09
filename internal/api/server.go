@@ -26,6 +26,7 @@ import (
 	"github.com/aoos/dejima/internal/islandimage"
 	"github.com/aoos/dejima/internal/ledger"
 	"github.com/aoos/dejima/internal/link"
+	"github.com/aoos/dejima/internal/localmodel"
 	"github.com/aoos/dejima/internal/mailbox"
 	"github.com/aoos/dejima/internal/paths"
 	"github.com/aoos/dejima/internal/porttoken"
@@ -109,6 +110,13 @@ type Server struct {
 	// setup), surfaced in AgentInfo so failures aren't silent.
 	agentErrMu  sync.Mutex
 	agentErrors map[string]agentErrInfo
+
+	// The host inference backend, swapped in tests. nil is the default (Ollama).
+	// A seam because the local-model handlers' interesting behavior is what they
+	// do when the backend is installed-but-stopped, and a test box has no ollama
+	// on it at all — so without this the only reachable state is "not installed"
+	// and every guard here would be asserting against the wrong subject.
+	localBE localmodel.LocalBackend
 
 	// Per-island bounded event log (for `dejima status` recent-events display
 	// and the GET /v1/islands/:name/events endpoint).

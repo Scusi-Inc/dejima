@@ -85,6 +85,33 @@ Installing a backend **auto-registers a provider** named `local`
 appears in the `v` model editor and `dejima provider ls` with zero manual steps,
 and **auto-grants island egress** to just that endpoint.
 
+### A stopped backend is a normal state, and every surface must leave it
+
+`installed` and `running` are separate facts, and the gap between them is where
+operators land — `brew services` cannot always bootstrap into the daemon's
+launchd domain, and any host reboot leaves the binary present with nothing
+listening.
+
+The backend CLI is a **client** of that server. `ollama pull` against a stopped
+one downloads nothing and prints its own advice:
+
+```
+Error: could not connect to ollama server, run 'ollama serve' to start it
+```
+
+which is unfollowable for the operator who reads it, because **the backend is on
+the daemon host and they are usually not sitting at it** — the reported case was
+a Windows box driving a Mac mini, where no `ollama` exists to serve. Relaying a
+message is sending it.
+
+So `pull` and `rm` go through `localmodel.EnsureRunning` first: it starts the
+backend (`Start` is idempotent and waits for the server to *answer*) and, when it
+cannot, fails with an error that names the machine. Nothing on these paths may
+shell out to the backend CLI without it. `dejima local install` is the manual
+equivalent — against an already-installed backend it does nothing but start it
+and re-register the provider, which is why `doctor` and `local status` point
+there rather than at a `serve` command for the wrong computer.
+
 ---
 
 ## Part C — The management surface (TUI · CLI · SDK · API)

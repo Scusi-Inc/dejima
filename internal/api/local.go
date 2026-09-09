@@ -32,7 +32,12 @@ type LocalModelsResponse struct {
 
 // localBackend returns the configured host inference backend. Stateless (it just
 // shells out to the host CLI), so a fresh value per call is fine.
-func (s *Server) localBackend() localmodel.LocalBackend { return localmodel.NewOllama() }
+func (s *Server) localBackend() localmodel.LocalBackend {
+	if s.localBE != nil {
+		return s.localBE
+	}
+	return localmodel.NewOllama()
+}
 
 // hostRAMGiB reports host RAM in whole GiB (0 when unknown), for model sizing.
 func hostRAMGiB() int {
@@ -157,10 +162,19 @@ func (s *Server) handleLocalInstall(w http.ResponseWriter, r *http.Request) {
 // handleLocalPull streams `<backend> pull`. The {name} may be a curated alias or
 // a raw backend ref; ResolveRef validates it. On success it (re)registers the
 // provider so a freshly-pulled model's endpoint is wired up.
+//
+// The pull needs a RUNNING server, not just an installed binary — `ollama pull`
+// is a client. Without EnsureRunning this streamed the backend's own
+// "run 'ollama serve'" at an operator on a different machine entirely. See
+// localmodel.EnsureRunning.
 func (s *Server) handleLocalPull(w http.ResponseWriter, r *http.Request) {
 	ref, _, err := localmodel.ResolveRef(r.PathValue("name"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := localmodel.EnsureRunning(r.Context(), s.localBackend()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	stream, err := s.localBackend().Pull(r.Context(), ref)
@@ -174,10 +188,17 @@ func (s *Server) handleLocalPull(w http.ResponseWriter, r *http.Request) {
 	streamProgress(w, stream, localPullOKMarker, s.registerLocalProvider)
 }
 
+// handleLocalRemove deletes a pulled model. `<backend> rm` is a client of the
+// same server the pull is, so it fails the same way against a stopped backend —
+// with the same unfollowable advice.
 func (s *Server) handleLocalRemove(w http.ResponseWriter, r *http.Request) {
 	ref, _, err := localmodel.ResolveRef(r.PathValue("name"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := localmodel.EnsureRunning(r.Context(), s.localBackend()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	if err := s.localBackend().Remove(r.Context(), ref); err != nil {

@@ -104,6 +104,94 @@ func TestStartWithNoBackendInstalledSaysSo(t *testing.T) {
 	}
 }
 
+// EnsureRunning must actually START an installed-but-stopped backend.
+//
+// This is the state `dejima local pull` hit, and pull went straight to the
+// backend CLI — which is a CLIENT of the server, so it downloaded nothing and
+// printed its own "run 'ollama serve'". Start already existed and already did
+// this; nothing on the pull path called it.
+//
+// Driven through the real Ollama backend rather than a mock: the defect was a
+// missing call on a real path, and a mock backend would prove only that
+// EnsureRunning calls a method on an interface.
+func TestEnsureRunningStartsAStoppedBackend(t *testing.T) {
+	exe, _ := fakeServer(t)
+	o := &Ollama{bin: exe}
+
+	if _, running := o.Detect(context.Background()); running {
+		t.Fatal("the fixture answers before anything started it, so the assertion " +
+			"below would pass without EnsureRunning doing anything")
+	}
+	if err := EnsureRunning(context.Background(), o); err != nil {
+		t.Fatalf("EnsureRunning on an installed-but-stopped backend: %v", err)
+	}
+	if _, running := o.Detect(context.Background()); !running {
+		t.Error("EnsureRunning returned success while the backend still does not answer — " +
+			"the next `ollama pull` fails exactly as before")
+	}
+}
+
+// Already answering: no error, and no server started underneath it.
+func TestEnsureRunningIsANoOpWhenAlreadyRunning(t *testing.T) {
+	exe, marker := fakeServer(t)
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureRunning(context.Background(), &Ollama{bin: exe}); err != nil {
+		t.Fatalf("EnsureRunning on a live backend must be a no-op: %v", err)
+	}
+}
+
+// Nothing installed points at the install command, not at a start.
+func TestEnsureRunningWithNothingInstalledSaysInstall(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	orig := ollamaKnownPaths
+	ollamaKnownPaths = []string{filepath.Join(t.TempDir(), "nope")}
+	t.Cleanup(func() { ollamaKnownPaths = orig })
+
+	err := EnsureRunning(context.Background(), &Ollama{})
+	if err == nil {
+		t.Fatal("a missing backend reported ready")
+	}
+	if !strings.Contains(err.Error(), "dejima local install") {
+		t.Errorf("the error names no way forward: %v", err)
+	}
+}
+
+// When the backend cannot be started, the message must locate the problem on the
+// DAEMON HOST.
+//
+// The reported failure was an operator on Windows reading `run 'ollama serve'`
+// — passed through verbatim from the backend on a Mac mini. There is no ollama
+// on the machine that printed it, so the one instruction on screen could not be
+// followed, and the error looked like the operator's own box was broken. A
+// message we relay is a message we send.
+func TestEnsureRunningFailureNamesTheDaemonHost(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "ollama")
+	// Installed (the binary is there), never answers.
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\ncase \"$1\" in serve) sleep 5 ;; esac\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prevB, prevP := serverStartBudget, serverStartPoll
+	serverStartBudget, serverStartPoll = 300*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { serverStartBudget, serverStartPoll = prevB, prevP })
+
+	err := EnsureRunning(context.Background(), &Ollama{bin: exe})
+	if err == nil {
+		t.Fatal("a backend that never answers reported ready")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "DAEMON HOST") {
+		t.Errorf("the error does not say WHICH MACHINE is stuck, which is the whole "+
+			"defect — an operator on another box cannot act on it: %v", err)
+	}
+	if !strings.Contains(msg, "not the machine you are typing on") {
+		t.Errorf("nothing rules out the machine reading the message, so the natural "+
+			"reading is still 'my box is broken': %v", err)
+	}
+}
+
 // The install script must not try to background a server itself.
 //
 // It did, with nohup, which only ignores SIGHUP — it does not leave the session,

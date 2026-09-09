@@ -69,6 +69,15 @@ func runLocalStatus(cmd *cobra.Command) error {
 		printRecommend(st.Recommend)
 		return nil
 	}
+	// `installed (not running)` used to be a terminal reading: the line stated a
+	// broken state and named nothing that would fix it, and the backend is on the
+	// daemon host, so the obvious guess (`ollama serve`) is a command for a
+	// machine the operator may not be sitting at. `pull` recovers on its own now
+	// (localmodel.EnsureRunning); this is for anyone who looked at status first.
+	if !st.Running {
+		fmt.Println("\nstart it with `dejima local install` — on an installed backend it only " +
+			"starts it and re-registers the provider, on the daemon host.")
+	}
 	if len(st.Models) == 0 {
 		fmt.Println("\nno models pulled yet — `dejima local pull <model>`")
 	} else {
