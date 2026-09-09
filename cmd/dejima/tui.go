@@ -5389,7 +5389,18 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		b.WriteString("usage:     " + styleMuted.Render("n/a — no usage reported yet") + "\n")
 	}
 	if a.Error != "" {
-		b.WriteString("error:     " + styleErrored.Render(truncate(a.Error, 50)) + "\n")
+		// EVERY LINE, not truncate(…, 50). An orchestration error is the one field
+		// here that carries a REMEDY — a broken agent binary reports the command
+		// that fixes it — and 50 characters cuts that off before the verb. The
+		// façade guidance failed exactly this way in the footer; same lesson, and
+		// this pane has the room the footer does not.
+		for i, ln := range agentErrorLines(a.Error) {
+			label := "error:     "
+			if i > 0 {
+				label = "           "
+			}
+			b.WriteString(label + styleErrored.Render(ln) + "\n")
+		}
 	}
 	if len(a.Attached) > 0 {
 		// Per agent we show who's attached and for how long (island view omits the
