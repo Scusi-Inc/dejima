@@ -477,3 +477,40 @@ func TestSwitcherDeleteConfirmation(t *testing.T) {
 		}
 	})
 }
+
+// Switching targets while DEJIMA_HOST is exported has to say so.
+//
+// resolveTarget ranks the env var ABOVE the saved profile, so the switch is
+// real for this process and the profile it persists is ignored on the next
+// launch. The operator gets the old server back, silently, having explicitly
+// chosen otherwise — reported as "local setup is still showing the mac mini"
+// after an earlier tailnet session left the export behind.
+func TestSwitchingWarnsWhenDejimaHostWillOverrideIt(t *testing.T) {
+	t.Setenv("DEJIMA_HOST", "100.89.51.27:7273")
+
+	note := envOverrideNote("local")
+	if note == "" {
+		t.Fatal("switching under an exported DEJIMA_HOST said nothing, so the choice " +
+			"silently reverts next launch")
+	}
+	// It must name the culprit AND the remedy; naming only the culprit is what
+	// the header already did, and it left the operator with nowhere to go.
+	if !strings.Contains(note, "DEJIMA_HOST") {
+		t.Errorf("the note does not name what overrides the choice: %q", note)
+	}
+	if !strings.Contains(note, "unset DEJIMA_HOST") {
+		t.Errorf("the note diagnoses without prescribing — the header already did "+
+			"that much: %q", note)
+	}
+	if !strings.Contains(note, "100.89.51.27:7273") {
+		t.Errorf("the note does not say which host wins: %q", note)
+	}
+}
+
+// With nothing exported the choice sticks, so warning would be a lie.
+func TestSwitchingIsSilentWithNoEnvOverride(t *testing.T) {
+	t.Setenv("DEJIMA_HOST", "")
+	if note := envOverrideNote("local"); note != "" {
+		t.Errorf("warned about an override that does not exist: %q", note)
+	}
+}

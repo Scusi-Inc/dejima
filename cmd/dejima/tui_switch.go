@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"unicode"
 
@@ -191,7 +192,41 @@ func (m tuiModel) switcherActivate() (tea.Model, tea.Cmd) {
 	m.selected = 0
 	m.lastError = ""
 	m.switcher = nil
+	// SAY SO WHEN THE CHOICE WILL NOT SURVIVE THIS SESSION.
+	//
+	// resolveTarget ranks DEJIMA_HOST ABOVE the saved profile, so an export left
+	// in a shell rc from an earlier remote session wins on every launch. The
+	// switch above is real — this process is now talking to the chosen target —
+	// but the profile it just persisted will be ignored next time, silently, and
+	// the operator gets the old server back with no indication their choice was
+	// overridden. Reported as "local setup is still showing the mac mini".
+	//
+	// The header already marks an env-sourced target with "via $DEJIMA_HOST".
+	// That is the diagnosis and it is on screen the whole time; what was missing
+	// is the remedy, at the one moment the operator has demonstrated they want a
+	// different target.
+	if note := envOverrideNote(m.activeLabel); note != "" {
+		m.lastNotice = note
+	}
 	return m, tea.Batch(m.fetchListCmd(), m.fetchOverviewCmd())
+}
+
+// envOverrideNote warns that DEJIMA_HOST will outrank a just-saved profile on
+// the next launch, or "" when nothing is exported and the choice will stick.
+//
+// Pure so the wording and the condition are assertable without a live TUI.
+func envOverrideNote(chosen string) string {
+	env := strings.TrimSpace(os.Getenv("DEJIMA_HOST"))
+	if env == "" {
+		return ""
+	}
+	if chosen == "" {
+		chosen = "local"
+	}
+	return fmt.Sprintf("switched to %s for now — but DEJIMA_HOST=%s is exported and "+
+		"outranks the saved profile, so the next launch goes back to it. "+
+		"`unset DEJIMA_HOST` (and drop it from your shell rc) to make this stick.",
+		chosen, env)
 }
 
 // switcherConfirmDeleteKey gates removal behind an explicit "y". Enter is
