@@ -10,7 +10,10 @@
 // captured informally in docs/agent-adapters.md and folded in over later phases.
 package handlers
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // Kind distinguishes how an agent runs inside an island.
 type Kind string
@@ -115,6 +118,34 @@ func (h Handler) LaunchFor(resume bool) string {
 
 // Attachable reports whether clients can attach to this handler's agents.
 func (h Handler) Attachable() bool { return h.Kind == KindInteractive }
+
+// PreinstalledBinary is the executable a BUNDLED handler expects the island
+// image to have already provided — or "" when there is nothing to check.
+//
+// Only bundled handlers get an answer, and that is the whole point of the
+// distinction. Bundled means the image promised this binary exists; a tier-2
+// handler's Launch is shaped `command -v X || install X`, so a missing binary
+// there is the normal first-run state and probing it would report a defect on
+// every fresh island.
+//
+// It also returns "" for a Launch that starts with a shell rather than the agent
+// itself (the self-installing lines are all `bash -lc '…'`): the first word
+// would be `bash`, which always runs and would make the probe a guard with the
+// wrong subject — passing forever while proving nothing about the agent.
+func (h Handler) PreinstalledBinary() string {
+	if !h.Bundled || !h.Attachable() {
+		return ""
+	}
+	fields := strings.Fields(h.Launch)
+	if len(fields) == 0 {
+		return ""
+	}
+	switch fields[0] {
+	case "bash", "sh", "env", "exec":
+		return ""
+	}
+	return fields[0]
+}
 
 // NeedsProviderKey reports whether this handler requires an LLM provider key.
 func (h Handler) NeedsProviderKey() bool { return h.RequiresProviderKey }

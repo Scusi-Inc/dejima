@@ -2649,6 +2649,14 @@ func (s *Server) ensureAgentSession(ctx context.Context, p *project.Project, a *
 	// a delivered cross-island message). The shim is idempotent, so re-running it
 	// is safe.
 	s.runAgentShim(ctx, p, a)
+	// A bundled agent whose binary cannot run must fail HERE, with a reason.
+	// Handing tmux a command that dies on exec still exits 0 — tmux reports on
+	// the fork, not on the program — so without this the daemon records a healthy
+	// agent and the operator attaches to a bare shell prompt. Reported twice from
+	// agent creation now. See agent_binary.go.
+	if err := s.verifyPreinstalledBinary(ctx, p, a); err != nil {
+		return err
+	}
 	// Both interactive and headless agents run inside a tmux session (the host
 	// process), scoped to DEJIMA_AGENT_ID via sh so we don't depend on a specific
 	// tmux version's `new-session -e`. Headless agents are marked non-attachable,

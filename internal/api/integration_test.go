@@ -205,6 +205,10 @@ type fakeRuntime struct {
 	// (stdout, stderr, exitCode); returning handled=false falls through to the
 	// default behavior. Lets a test drive e.g. git-status output.
 	execHook func(cmd []string) (stdout, stderr string, code int, handled bool)
+	// execErr, when set, fails every Exec at the transport level — the "could not
+	// look" case, which is different from a command that ran and returned
+	// non-zero. Some checks must not treat the two the same.
+	execErr error
 }
 
 func (f *fakeRuntime) record(cmd []string) {
@@ -322,6 +326,9 @@ func (f *fakeRuntime) UpdateResources(_ context.Context, name, memory string) er
 }
 func (f *fakeRuntime) Exec(_ context.Context, _ string, cmd []string) (string, string, int, error) {
 	f.record(cmd)
+	if f.execErr != nil {
+		return "", "", 0, f.execErr
+	}
 	if f.execHook != nil {
 		if stdout, stderr, code, handled := f.execHook(cmd); handled {
 			return stdout, stderr, code, nil
