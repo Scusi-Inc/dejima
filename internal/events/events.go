@@ -62,6 +62,12 @@ const (
 	// host-side; the payload NAMES the source island so a surprise capture is
 	// obvious. Never carries the secret.
 	TypeCredentialsAutoSeeded Type = "credentials.claude.autoseeded"
+
+	// TypeAgentBinaryRepaired: a bundled agent's binary could not run and the
+	// daemon reinstalled it in place so the agent could start. The IMAGE is still
+	// broken — this is a patch on one container — so the event is how an operator
+	// finds out they owe a rebuild.
+	TypeAgentBinaryRepaired Type = "agent.binary-repaired"
 )
 
 // catalog is every event type a subscriber can filter on, in display order.

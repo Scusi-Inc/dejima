@@ -78,6 +78,24 @@ type Handler struct {
 	// codex): no first-use install wait. Tier-2 agents (Bundled=false) self-install
 	// on first launch instead — see InstallCmd and the self-installing Launch line.
 	Bundled bool
+	// RepairCmd reinstalls a BUNDLED agent in place when the image's copy cannot
+	// run at all. Empty means there is nothing to try.
+	//
+	// DELIBERATELY NOT UpdateCmd, which stays empty for bundled agents on
+	// purpose: agent_update.go refuses them because "a bundled agent's version IS
+	// the island image's", and that distinction is worth keeping. Update means
+	// "get something newer than the image gives me" and is the operator's call.
+	// Repair means "the image's copy is broken and the agent cannot start" and is
+	// recovery, run only when a probe has already proved the binary is dead.
+	//
+	// It exists because `npm install -g` treats a failed OPTIONAL platform
+	// dependency as non-fatal, so an image can build green around a codex with no
+	// executable under its wrapper. Re-running the install is exactly what fixes
+	// that, and it is the same command the binary's own error suggests.
+	//
+	// A repair is a patch on a running container, NOT a fix to the image: the
+	// next container built from that image is broken again. Callers must say so.
+	RepairCmd []string
 	// UpdateCmd upgrades an already-installed agent IN PLACE, inside the island.
 	//
 	// It exists because the self-installing Launch lines are all shaped
@@ -154,7 +172,8 @@ func (h Handler) NeedsProviderKey() bool { return h.RequiresProviderKey }
 // treated as generic interactive agents (the image's start.sh `*)` fallback
 // runs the type string as a command); see Lookup.
 var registry = map[string]Handler{
-	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", ResumeLaunch: "claude --continue", StateDir: "/home/dejima/.claude", Bundled: true},
+	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", ResumeLaunch: "claude --continue", StateDir: "/home/dejima/.claude", Bundled: true,
+		RepairCmd: []string{"npm", "install", "-g", "@anthropic-ai/claude-code@latest"}},
 	// `--sandbox danger-full-access`, NOT `--sandbox-policy=no-sandbox`. The latter
 	// is not a Codex flag — it exits 2 with "unexpected argument", the tmux session
 	// dies on the spot, and attaching lands the operator on a bare shell prompt
@@ -167,7 +186,8 @@ var registry = map[string]Handler{
 	// to fail on every command. init.sh writes the same setting into config.toml;
 	// passing it here too keeps the agent working when the operator has supplied
 	// their own config, which init.sh deliberately leaves alone.
-	"codex": {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox danger-full-access", StateDir: "/home/dejima/.codex", Bundled: true},
+	"codex": {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox danger-full-access", StateDir: "/home/dejima/.codex", Bundled: true,
+		RepairCmd: []string{"npm", "install", "-g", "@openai/codex@latest"}},
 	// Aider: the open, model-agnostic tier-1 anchor (interactive). Its diff-based
 	// edit loop tolerates weaker LOCAL models far better than a tool-call-heavy
 	// agent — so it's the natural pairing for `dejima local`. Self-installs on

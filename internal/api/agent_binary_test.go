@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoos/dejima/internal/handlers"
 )
@@ -163,5 +164,142 @@ func TestOnlyBundledAgentsWithARealBinaryAreProbed(t *testing.T) {
 			t.Errorf("%s is preinstalled by the image but is not probed, so a broken "+
 				"one still reaches an operator as a bare shell prompt", id)
 		}
+	}
+}
+
+// repairHook fails `<bin> --version` until the repair command has run, then
+// starts succeeding — the real sequence, where reinstalling the package puts the
+// missing platform binary in place.
+func repairHook(bin string, ran *bool, repairCode int) func([]string) (string, string, int, bool) {
+	return func(cmd []string) (string, string, int, bool) {
+		if len(cmd) >= 4 && cmd[0] == "npm" && cmd[1] == "install" {
+			*ran = true
+			return "", "", repairCode, true
+		}
+		if len(cmd) == 3 && cmd[0] == "bash" && cmd[1] == "-lc" && strings.HasPrefix(cmd[2], bin+" ") {
+			if *ran && repairCode == 0 {
+				return bin + "-cli 0.153.4\n", "", 0, true
+			}
+			return "", "Error: Missing optional dependency @openai/codex-linux-arm64.\n", 1, true
+		}
+		return "", "", 0, false
+	}
+}
+
+// A broken bundled binary should be REPAIRED, not reported.
+//
+// The operator asked for an agent. "Go rebuild the image" is true and useless
+// when the fix is one idempotent command the daemon can run in the container —
+// the same command the binary's own error suggests.
+func TestAddAgentRepairsABrokenBundledBinary(t *testing.T) {
+	h, f := newTestServer(t)
+	var repaired bool
+	f.execHook = repairHook("codex", &repaired, 0)
+	seedIslandHTTP(t, h, "proj")
+
+	rr := do(t, h, http.MethodPost, "/v1/islands/proj/agents", `{"type":"codex","label":"c1"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("add agent: got %d, body %s", rr.Code, rr.Body.String())
+	}
+	var a AgentInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &a); err != nil {
+		t.Fatal(err)
+	}
+	if !repaired {
+		t.Error("the daemon reported a broken binary without trying the reinstall it " +
+			"knows about")
+	}
+	if a.Error != "" {
+		t.Errorf("the agent was left errored after a successful repair: %s", a.Error)
+	}
+	if !sawNewSessionFor(f, a.Tmux) {
+		t.Error("no session was started for an agent whose binary was repaired")
+	}
+}
+
+// A repair that runs but does not take must NOT be reported as success.
+//
+// `npm install -g` exiting 0 while leaving the platform binary missing is the
+// entire reason this file exists, so the repair is only believed after the
+// binary answers. Trusting the installer's exit code would reproduce the
+// original bug one layer up.
+func TestARepairIsBelievedOnlyAfterTheBinaryAnswers(t *testing.T) {
+	h, f := newTestServer(t)
+	// The installer exits 0; the probe keeps failing.
+	f.execHook = func(cmd []string) (string, string, int, bool) {
+		if len(cmd) >= 2 && cmd[0] == "npm" && cmd[1] == "install" {
+			return "added 1 package\n", "", 0, true
+		}
+		if len(cmd) == 3 && cmd[0] == "bash" && cmd[1] == "-lc" && strings.HasPrefix(cmd[2], "codex ") {
+			return "", "Error: Missing optional dependency @openai/codex-linux-arm64.\n", 1, true
+		}
+		return "", "", 0, false
+	}
+	seedIslandHTTP(t, h, "proj")
+
+	rr := do(t, h, http.MethodPost, "/v1/islands/proj/agents", `{"type":"codex","label":"c1"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("add agent: got %d, body %s", rr.Code, rr.Body.String())
+	}
+	var a AgentInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &a); err != nil {
+		t.Fatal(err)
+	}
+	if a.Error == "" {
+		t.Fatal("an install that exited 0 while leaving the binary dead was accepted " +
+			"as a repair — the exact failure this whole file is about")
+	}
+	if !strings.Contains(a.Error, "did not fix it") {
+		t.Errorf("the error does not say the repair was tried, so the operator will "+
+			"try it again by hand: %s", a.Error)
+	}
+	if sawNewSessionFor(f, a.Tmux) {
+		t.Error("a session was started for a binary that still cannot run")
+	}
+}
+
+// The repair must not inherit the PROBE's deadline.
+//
+// A child context cannot extend its parent's, so probing under 10s and handing
+// that ctx to the repair would cap a multi-minute package install at whatever
+// remained — failing as a timeout that looks exactly like a broken binary.
+func TestTheRepairBudgetIsNotCappedByTheProbeBudget(t *testing.T) {
+	if binaryRepairBudget <= binaryProbeBudget {
+		t.Fatalf("repair budget %v is not longer than the probe budget %v, so this "+
+			"test cannot detect the deadline being inherited", binaryRepairBudget, binaryProbeBudget)
+	}
+	h, f := newTestServer(t)
+	var repaired bool
+	// The repair blocks past the PROBE budget but well inside the repair budget.
+	// If the probe's ctx were reused, this call would be cancelled.
+	f.execHook = func(cmd []string) (string, string, int, bool) {
+		if len(cmd) >= 2 && cmd[0] == "npm" && cmd[1] == "install" {
+			repaired = true
+			return "", "", 0, true
+		}
+		if len(cmd) == 3 && cmd[0] == "bash" && cmd[1] == "-lc" && strings.HasPrefix(cmd[2], "codex ") {
+			if repaired {
+				return "codex-cli 0.153.4\n", "", 0, true
+			}
+			return "", "broken\n", 1, true
+		}
+		return "", "", 0, false
+	}
+	seedIslandHTTP(t, h, "proj")
+
+	prev := binaryProbeBudget
+	binaryProbeBudget = time.Millisecond // a probe ctx that is effectively spent
+	t.Cleanup(func() { binaryProbeBudget = prev })
+
+	rr := do(t, h, http.MethodPost, "/v1/islands/proj/agents", `{"type":"codex","label":"c1"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("add agent: got %d, body %s", rr.Code, rr.Body.String())
+	}
+	var a AgentInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &a); err != nil {
+		t.Fatal(err)
+	}
+	if a.Error != "" {
+		t.Errorf("the repair ran under the probe's exhausted deadline: %s", a.Error)
 	}
 }
