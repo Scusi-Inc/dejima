@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"testing"
 	"time"
 )
 
@@ -128,7 +129,7 @@ func ApplyReleaseSelf(ctx context.Context, ver string, out io.Writer) error {
 			return fmt.Errorf("replace %s: %w", self, err)
 		}
 		fmt.Fprintf(out, "install dir isn't writable; installing with sudo…\n")
-		if serr := elevatedInstall(ctx, staged, self); serr != nil {
+		if serr := elevatedInstall(ctx, staged, self, out); serr != nil {
 			return fmt.Errorf("replace %s: %w (and elevated install failed: %v)", self, err, serr)
 		}
 	}
@@ -370,19 +371,68 @@ func ElevationAdvice() string {
 // matches arguments positionally, so the flags, their order, and the target
 // must be exact or the grant does not apply. -n because the daemon has no TTY
 // to answer a password prompt on: better a clear error than a silent hang.
-func elevatedInstall(ctx context.Context, src, target string) error {
+func elevatedInstall(ctx context.Context, src, target string, out io.Writer) error {
 	if runtime.GOOS == "windows" {
 		return errors.New("no elevation path on Windows")
 	}
+	// Passwordless first: the NOPASSWD rule `dejima service install --system`
+	// writes, and the only path a daemon can take at all.
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "/usr/bin/install", "-m", "0755", src, target)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("sudo install %s: %s — %s", target, msg, ElevationAdvice())
+	if err := cmd.Run(); err == nil {
+		return nil
 	}
-	return nil
+	quiet := strings.TrimSpace(stderr.String())
+
+	// NO RULE, BUT MAYBE A PERSON. `-n` is right for the daemon and wrong for the
+	// operator standing in a terminal: it makes sudo refuse to prompt, so an
+	// ordinary `dejima update` on a Mac died with
+	//
+	//   sudo: a password is required — re-run as `sudo dejima update`
+	//
+	// telling someone who was already at the keyboard to run the same command
+	// again. They can simply type it. So when there is a controlling terminal,
+	// ask on it.
+	if tty := openTTY(); tty != nil {
+		defer tty.Close()
+		fmt.Fprintf(out, "%s is root-owned — sudo needs your password to replace the binary:\n",
+			filepath.Dir(target))
+		ask := exec.CommandContext(ctx, "sudo", "/usr/bin/install", "-m", "0755", src, target)
+		ask.Stdin, ask.Stdout, ask.Stderr = tty, out, out
+		if err := ask.Run(); err == nil {
+			return nil
+		} else if quiet == "" {
+			quiet = err.Error()
+		}
+	}
+	if quiet == "" {
+		quiet = "sudo failed"
+	}
+	return fmt.Errorf("sudo install %s: %s — %s", target, quiet, ElevationAdvice())
+}
+
+// openTTY returns the controlling terminal, or nil when there is nobody to ask.
+//
+// Mirrors cmd/dejima/sudo.go's openTTY, including the rule that matters most:
+// A TEST BINARY NEVER GETS ONE, however real its terminal is. That file records
+// what happens otherwise — `go test ./...` printing "[sudo] password for …"
+// onto the developer's screen mid-suite, reading input from it, with nothing
+// naming which test was asking, and the suite still reporting PASS. CI never
+// saw it, because a runner has no controlling terminal; it appears only where a
+// person is watching.
+//
+// Not term.IsTerminal(stdin): piped stdin does not mean nobody is present, and
+// /dev/tty is the question actually being asked.
+//
+// A var so a test can drive the interactive branch without one.
+var openTTY = func() *os.File {
+	if testing.Testing() {
+		return nil
+	}
+	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return nil // ENXIO with no controlling terminal, ENOENT on Windows
+	}
+	return f
 }

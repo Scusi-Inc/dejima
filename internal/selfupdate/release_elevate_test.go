@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -99,5 +100,36 @@ func TestElevationIsNotGatedOnTheRenameErrno(t *testing.T) {
 	if shouldElevate(false, errors.New("disk full")) {
 		t.Error("a non-permission failure in a WRITABLE dir was sent to sudo, which " +
 			"cannot fix it and buries the real cause")
+	}
+}
+
+// A TEST BINARY MUST NEVER GET A TERMINAL, however real the one it is running
+// on. This is the guard, not a formality.
+//
+// cmd/dejima/sudo.go records what happens without it: `go test ./...` printed
+// "[sudo] password for …" onto the developer's screen mid-suite, read input
+// from it, with nothing naming which test was asking — and the suite still
+// reported PASS. CI never saw it, because a runner has no controlling terminal.
+// It shows up only where a person is watching.
+//
+// This package grew its own openTTY (it cannot import cmd/dejima), so it needs
+// its own copy of that guard and its own proof.
+func TestATestBinaryNeverGetsATerminal(t *testing.T) {
+	if openTTY() != nil {
+		t.Fatal("openTTY handed a test binary a terminal — elevatedInstall will " +
+			"prompt for a password on whoever's screen is running the suite, and " +
+			"the suite will still pass")
+	}
+}
+
+// The interactive branch is gated on openTTY and nothing else, so with no
+// terminal the caller still gets the advice that names a command they can run.
+func TestWithNoTerminalTheAdviceStillNamesACommand(t *testing.T) {
+	orig := openTTY
+	openTTY = func() *os.File { return nil }
+	t.Cleanup(func() { openTTY = orig })
+
+	if adv := ElevationAdvice(); !strings.Contains(adv, "sudo dejima update") {
+		t.Errorf("the fallback advice no longer names a runnable command: %q", adv)
 	}
 }
