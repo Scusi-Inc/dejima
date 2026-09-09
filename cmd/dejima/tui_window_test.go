@@ -30,6 +30,37 @@ func TestWindowsRunCommandAgentPlacement(t *testing.T) {
 	}
 }
 
+// A spawned window running a command that FINISHES has to outlive it.
+//
+// `auth push` takes ~150ms. Exec'd with nothing after it, the window's process
+// is gone that fast, and Ghostty reports a child that exited that quickly as a
+// command it could not launch:
+//
+//	Ghostty failed to launch the requested command: … Runtime: 170 ms
+//
+// So a successful credential push was reported to the operator as a failure —
+// with the real success lines visible directly above it. And the output of this
+// command IS the point of running it; unheld, it was discarded either way.
+func TestAuthPushWindowOutlivesTheCommand(t *testing.T) {
+	inner := authPushInner("100.89.51.27:7273", "/usr/local/bin/dejima", "auth-push")
+
+	if strings.Contains(inner, "exec ") {
+		t.Errorf("the window execs, so the shell is REPLACED and nothing survives the "+
+			"push to hold the window: %q", inner)
+	}
+	if !strings.Contains(inner, "read _") {
+		t.Errorf("nothing waits after the push, so the window dies in ~150ms and "+
+			"Ghostty calls a successful run a failed launch: %q", inner)
+	}
+	// The command still has to be the one we meant to run, on the right daemon.
+	if !strings.Contains(inner, "auth push") {
+		t.Errorf("the window no longer runs auth push: %q", inner)
+	}
+	if !strings.Contains(inner, "100.89.51.27:7273") {
+		t.Errorf("the active host is not passed, so the push targets the wrong daemon: %q", inner)
+	}
+}
+
 // openAgents assigned m.lastError inside its fan-out loop, so each failure
 // overwrote the previous one: N broken windows reported a single message naming
 // only the LAST agent, which reads as one unlucky agent rather than a systemic

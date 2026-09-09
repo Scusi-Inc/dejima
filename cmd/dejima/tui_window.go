@@ -474,6 +474,36 @@ func appleStr(s string) string {
 	return `"` + s + `"`
 }
 
+// authPushInner is the shell command a spawned auth-push window runs.
+//
+// IT MUST HOLD THE WINDOW OPEN, AND MUST NOT `exec`. `auth push` is the only
+// spawn in this file that FINISHES — every other one attaches to a session or
+// holds a tunnel and lives as long as its window. Exec'd, the shell is replaced,
+// the push completes in ~150ms, and the window's process is simply gone.
+//
+// Ghostty reads a child that exited that fast as a command it could not start,
+// and paints:
+//
+//	Ghostty failed to launch the requested command:
+//	/usr/bin/login -flp <user> /bin/sh -c … dejima auth push
+//	Runtime: 170 ms
+//
+// It is reporting a SUCCESSFUL push as a launch failure, and the runtime it
+// prints is the tell. The operator's screenshot had the success lines —
+// "pushed Claude credentials (from keychain)" — sitting directly above that
+// error.
+//
+// Which is the second reason to hold: those lines, and the note about existing
+// islands keeping their own copy, are the entire output of the command. They
+// were being thrown away in well under a second whether it succeeded or failed.
+//
+// Pure and separate so the shape is assertable — spawning a real terminal in a
+// test is not something CI can do.
+func authPushInner(host, exe, title string) string {
+	return fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s %s auth push; printf '\n[press Enter to close]'; read _",
+		shquote(host), shquote(title), shquote(exe))
+}
+
 // openAuthPushWindow runs `dejima auth push` in its own window.
 //
 // Its own window because it may prompt, and because on a machine where the
@@ -485,8 +515,7 @@ func (m tuiModel) openAuthPushWindow() error {
 		exe = "dejima"
 	}
 	title := "auth-push"
-	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s auth push",
-		shquote(m.activeHost), shquote(title), shquote(exe))
+	inner := authPushInner(m.activeHost, exe, title)
 	switch {
 	case os.Getenv("TMUX") != "":
 		if tmuxFocusWindow(title) {
