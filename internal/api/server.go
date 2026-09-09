@@ -776,6 +776,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("GET /v1/healthz", s.healthz)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
+	mux.HandleFunc("PUT /v1/credentials/codex", s.handlePushCodexCreds)
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
 	mux.HandleFunc("GET /v1/credentials/github", s.handleGitHubIdentities)
 	mux.HandleFunc("PUT /v1/credentials/github/{name}", s.handlePutGitHubIdentity)
@@ -942,6 +943,36 @@ func (s *Server) handlePushClaudeCreds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("claude credentials pushed by client")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handlePushCodexCreds stores a Codex login pushed from a client machine, so
+// islands inherit it the same way they inherit Claude's.
+//
+// It writes auth.json into the seed dir, which credentialBindMounts serves at
+// /opt/host/codex — the path every island's codex shim already copies from. So
+// this reaches islands built long before it, without an image change.
+func (s *Server) handlePushCodexCreds(w http.ResponseWriter, r *http.Request) {
+	var req PushCredentialsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	blob := []byte(req.CredentialsJSON)
+	if err := agentcreds.ValidateCodex(blob); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	dir, err := paths.CodexSeedDir()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if _, err := agentcreds.WriteCodexSeed(dir, blob); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.log.Info("codex credentials pushed by client")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -3744,12 +3775,37 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		}
 	}
 
-	codexDir, err := paths.HostCodexDir()
-	if err == nil {
-		if _, statErr := os.Stat(codexDir); statErr == nil {
+	// Codex: a PUSHED login wins over the daemon host's own ~/.codex, and it is
+	// mounted at THE SAME PATH rather than beside it.
+	//
+	// That path choice is the whole point. Every island's codex shim already
+	// copies /opt/host/codex/auth.json into the agent's ~/.codex — it has for a
+	// long time — so serving the pushed credential at that path makes it reach
+	// islands built from images that predate any of this. A new mount point would
+	// have needed a new shim, which ships in the image, which does not reach the
+	// containers already on disk. That is the trap this repo keeps re-learning,
+	// and here it is avoidable for free.
+	//
+	// The push takes precedence because it is the more DELIBERATE of the two: an
+	// operator who ran `dejima auth push` on a logged-in machine said which
+	// account islands should use, where the host's ~/.codex is whatever happens
+	// to be on the daemon box.
+	codexMounted := false
+	if seedDir, err := paths.CodexSeedDir(); err == nil {
+		if _, statErr := os.Stat(filepath.Join(seedDir, agentcreds.CodexAuthFile)); statErr == nil {
 			binds = append(binds, runtime.BindMount{
-				HostPath: codexDir, ContainerPath: "/opt/host/codex", ReadOnly: true,
+				HostPath: seedDir, ContainerPath: "/opt/host/codex", ReadOnly: true,
 			})
+			codexMounted = true
+		}
+	}
+	if !codexMounted {
+		if codexDir, err := paths.HostCodexDir(); err == nil {
+			if _, statErr := os.Stat(codexDir); statErr == nil {
+				binds = append(binds, runtime.BindMount{
+					HostPath: codexDir, ContainerPath: "/opt/host/codex", ReadOnly: true,
+				})
+			}
 		}
 	}
 

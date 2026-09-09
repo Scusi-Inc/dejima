@@ -120,3 +120,91 @@ func WriteSeed(dir string, blob []byte) (string, error) {
 	}
 	return path, nil
 }
+
+// --- Codex ------------------------------------------------------------------
+//
+// Codex keeps its OAuth blob in a plain file, ~/.codex/auth.json — no keychain
+// on any platform, which makes this the simple half of what LoadClaude does.
+//
+// It exists because the island shim ALREADY copies /opt/host/codex/auth.json
+// into the agent's ~/.codex, and credentialBindMounts ALREADY mounts the host's
+// ~/.codex there. So a dejima-level codex account works — as long as the login
+// is on the DAEMON HOST. An operator logged in on the laptop they are typing at,
+// driving a daemon on a Mac mini, has no path at all: the mini's ~/.codex is
+// empty and nothing can fill it remotely. `dejima auth push` solved exactly that
+// for Claude and did not cover Codex.
+
+// CodexAuthFile is the credential file's name, in the host dir and in the seed
+// dir alike. The name matters: the island shim copies it BY NAME, so a seed
+// written under any other name is invisible to every island already built.
+const CodexAuthFile = "auth.json"
+
+// ErrCodexNotFound means this machine has no Codex login to push.
+var ErrCodexNotFound = errors.New(
+	"no Codex credentials found (run `codex` and log in on this machine first)")
+
+// LoadCodex returns this host's Codex auth blob.
+func LoadCodex() ([]byte, Source, error) {
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, "", ErrCodexNotFound
+	}
+	blob, err := os.ReadFile(filepath.Join(dir, ".codex", CodexAuthFile))
+	if err != nil {
+		return nil, "", ErrCodexNotFound
+	}
+	if err := ValidateCodex(blob); err != nil {
+		return nil, "", err
+	}
+	return blob, SourceFile, nil
+}
+
+// ValidateCodex rejects a blob that is not the credential file, so a push
+// cannot store a truncated read or an unrelated file and have every island
+// silently inherit it.
+func ValidateCodex(blob []byte) error {
+	if len(bytes.TrimSpace(blob)) == 0 {
+		return errors.New("codex credentials are empty")
+	}
+	var probe map[string]any
+	if err := json.Unmarshal(blob, &probe); err != nil {
+		return fmt.Errorf("codex credentials are not JSON: %w", err)
+	}
+	if len(probe) == 0 {
+		return errors.New("codex credentials are an empty JSON object")
+	}
+	return nil
+}
+
+// WriteCodexSeed stores a pushed Codex blob in the daemon's seed dir, as
+// auth.json, atomically — an island starting mid-write must never read half a
+// credential through the bind mount.
+func WriteCodexSeed(dir string, blob []byte) (string, error) {
+	if err := ValidateCodex(blob); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, ".auth-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if _, err := tmp.Write(blob); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, CodexAuthFile)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return "", err
+	}
+	return path, nil
+}

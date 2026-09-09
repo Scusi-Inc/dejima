@@ -270,6 +270,13 @@ func (c *Client) PushClaudeCredentials(ctx context.Context, credentialsJSON []by
 	return c.do(ctx, http.MethodPut, "/v1/credentials/claude", req, nil)
 }
 
+// PushCodexCredentials stores a Codex auth blob on the daemon host as the seed
+// for islands, mirroring PushClaudeCredentials.
+func (c *Client) PushCodexCredentials(ctx context.Context, authJSON []byte) error {
+	req := PushCredentialsRequest{CredentialsJSON: string(authJSON)}
+	return c.do(ctx, http.MethodPut, "/v1/credentials/codex", req, nil)
+}
+
 // ClaudeCredentialsStatus reports whether the daemon can seed islands with
 // Claude credentials, and from where.
 func (c *Client) ClaudeCredentialsStatus(ctx context.Context) (*ClaudeCredentialsStatus, error) {

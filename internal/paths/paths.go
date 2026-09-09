@@ -425,6 +425,24 @@ func HostCodexDir() (string, error) {
 	return filepath.Join(home, ".codex"), nil
 }
 
+// CodexSeedDir returns ~/.dejima/secrets/codex — where a pushed Codex login is
+// stored so islands can inherit it.
+//
+// SEPARATE FROM THE OPERATOR'S ~/.codex on purpose: a push must never write into
+// the account the operator is using on this machine, and on a headless daemon
+// host there is no ~/.codex to write into anyway.
+func CodexSeedDir() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, "secrets", "codex")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // HostGitConfig returns the user's ~/.gitconfig path (may not exist).
 func HostGitConfig() (string, error) {
 	home, err := os.UserHomeDir()

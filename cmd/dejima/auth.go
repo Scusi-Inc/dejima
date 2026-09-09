@@ -84,6 +84,27 @@ func newAuthPushCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("pushed Claude credentials (from %s) — new islands will use them\n", source)
+			// CODEX TOO, and best-effort: a machine logged into one and not the
+			// other is the normal case, so a missing Codex login must not fail a
+			// Claude push that just succeeded.
+			//
+			// This is the half that was missing. The island shim has always copied
+			// /opt/host/codex/auth.json into the agent's ~/.codex, and the daemon
+			// has always mounted the host's ~/.codex there — so a dejima-level
+			// Codex account worked, PROVIDED the login was on the daemon host. An
+			// operator logged in on the laptop they are typing at, driving a Mac
+			// mini, had no path: the mini's ~/.codex is empty and nothing could
+			// fill it remotely. `auth push` solved that for Claude and stopped.
+			switch cblob, csource, cerr := agentcreds.LoadCodex(); {
+			case cerr != nil:
+				fmt.Println("no Codex login on this machine — skipped (run `codex` and log in, then re-run)")
+			default:
+				if err := c.PushCodexCredentials(cmd.Context(), cblob); err != nil {
+					fmt.Printf("⚠ Codex credentials found but the push failed: %v\n", err)
+				} else {
+					fmt.Printf("pushed Codex credentials (from %s) — new islands will use them\n", csource)
+				}
+			}
 			fmt.Println("note: existing islands keep their own copy; `dejima reset <name>` re-seeds one")
 			return nil
 		},

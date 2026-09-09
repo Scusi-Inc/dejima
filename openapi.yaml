@@ -1606,6 +1606,25 @@ paths:
       responses:
         "204": { description: Stored }
         "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/credentials/codex:
+    put:
+      tags: [credentials]
+      summary: Push a Codex auth blob as the seed islands inherit
+      description: >-
+        Stored as auth.json in the daemon's seed dir and served to islands at
+        /opt/host/codex — the path every island's codex shim already copies
+        from, so a pushed login reaches islands built before this endpoint
+        existed. A pushed credential takes precedence over the daemon host's own
+        ~/.codex.
+      operationId: pushCodexCredentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PushCredentialsRequest" }
+      responses:
+        "204": { description: Stored }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /v1/credentials/github:
     get:
       tags: [credentials]
