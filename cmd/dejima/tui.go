@@ -5113,6 +5113,15 @@ func (m tuiModel) renderDetail(width int) string {
 		b.WriteString(fmt.Sprintf("agent:     %s\n", styleAccent.Render(d.Agent)))
 	}
 	b.WriteString(fmt.Sprintf("state:     %s\n", coloredStateText(d)))
+	// A container running an older image than its tag now points at. Shown HERE
+	// and not only in `ls`/`doctor` because this is the pane an operator is
+	// looking at when an agent misbehaves, and the stale image is the thing that
+	// explains it. Absent (nil) means we could not determine it — say nothing
+	// rather than nag about an island that may be current.
+	if d.ImageStale != nil && *d.ImageStale {
+		b.WriteString("image:     " + styleWaiting.Render(
+			"older than the current island image — dejima upgrade "+d.Name) + "\n")
+	}
 	if d.Owner != "" {
 		b.WriteString(fmt.Sprintf("owner:     %s\n", styleMuted.Render(d.Owner)))
 	}
@@ -5280,6 +5289,16 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 		state = styleErrored.Render("exited — agent process died (shell prompt remains)")
 	}
 	b.WriteString(fmt.Sprintf("session:   %s\n", state))
+	// A dead agent in an island running an old image is almost always the old
+	// image: agents share the island's ONE container, so the binary they launch
+	// is whatever that image installed. Saying so here is what stops the next
+	// hour going into deleting and re-adding the agent — which cannot work, for
+	// exactly that reason, and looks like the obvious thing to try.
+	if a.State == "exited" && d.ImageStale != nil && *d.ImageStale {
+		b.WriteString("           " + styleWaiting.Render(
+			"this island runs an older image, so its agent binaries are the old "+
+				"ones — dejima upgrade "+d.Name) + "\n")
+	}
 	if a.Restarts > 0 {
 		note := fmt.Sprintf("%d (supervised — auto-restarts on crash)", a.Restarts)
 		if a.Restarts >= 3 {

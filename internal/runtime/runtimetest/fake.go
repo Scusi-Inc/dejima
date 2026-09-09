@@ -37,6 +37,13 @@ type Fake struct {
 	// DialFn backs DialContainerPort. Nil makes every dial fail, which is the
 	// safe default: a test that needs a gateway has to say so.
 	DialFn func(ctx context.Context, name, host string, port int) (net.Conn, error)
+	// ImageIDVal / ContainerImageIDVal override the image-identity pair, and
+	// ContainerImageErr forces the container side to fail — the "couldn't look"
+	// path, which must not be reported as a stale island. Both empty means the
+	// two match: the container is on the current image.
+	ImageIDVal          string
+	ContainerImageIDVal string
+	ContainerImageErr   error
 	// lastCreate records the most recent CreateContainer so ContainerMounts can
 	// answer consistently with what the server actually asked for.
 	lastCreate runtime.CreateRequest
@@ -202,6 +209,30 @@ func (f *Fake) ExecStream(context.Context, string, []string) (io.ReadCloser, err
 	return io.NopCloser(strings.NewReader("")), nil
 }
 func (f *Fake) ImageExists(context.Context, string) (bool, error) { return true, nil }
+
+// ImageID / ContainerImageID default to the SAME id, i.e. "this island is on the
+// current image" — the healthy state, so no existing test starts reporting a
+// spurious upgrade prompt. Set ImageIDVal / ContainerImageIDVal to drive a skew.
+func (f *Fake) ImageID(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ImageIDVal != "" {
+		return f.ImageIDVal, nil
+	}
+	return "sha256:current", nil
+}
+
+func (f *Fake) ContainerImageID(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ContainerImageErr != nil {
+		return "", f.ContainerImageErr
+	}
+	if f.ContainerImageIDVal != "" {
+		return f.ContainerImageIDVal, nil
+	}
+	return "sha256:current", nil
+}
 func (f *Fake) BuildImage(context.Context, string, string, string, map[string]string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }

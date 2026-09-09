@@ -93,6 +93,17 @@ type IslandInfo struct {
 	// empty for islands created before version stamping (provenance unknown).
 	BuiltVersion    string `json:"built_version,omitempty"`
 	UpgradedVersion string `json:"upgraded_version,omitempty"`
+	// ImageStale reports whether this island's CONTAINER is running an image
+	// other than the one its tag resolves to now — the direct question the
+	// version stamps above only approximate. The stamps track the daemon's
+	// version, so `dejima image build` alone moves the image while every stamp
+	// stays level; an operator hit exactly that and had no signal anywhere.
+	//
+	// A POINTER because absent means "could not determine" — an engine that
+	// won't answer knows nothing about staleness, and rendering that as
+	// "upgrade" would nag about an island that may be current. Detail endpoint
+	// only (it costs two engine inspects).
+	ImageStale *bool `json:"image_stale,omitempty"`
 	// NeverHeardFrom is the zero-heartbeat liveness flag: true when the island's
 	// container is running yet NO agent has emitted a single agent-state event
 	// since boot, and the island is past a short grace window (so a just-started

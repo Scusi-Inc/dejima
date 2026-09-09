@@ -209,6 +209,12 @@ type fakeRuntime struct {
 	// look" case, which is different from a command that ran and returned
 	// non-zero. Some checks must not treat the two the same.
 	execErr error
+	// containerImageID overrides the image the container reports being built
+	// from (default: the same id ImageID returns, i.e. up to date).
+	// containerImageErr forces the lookup to fail — "couldn't look", which must
+	// never render as "stale".
+	containerImageID  string
+	containerImageErr error
 }
 
 func (f *fakeRuntime) record(cmd []string) {
@@ -226,8 +232,28 @@ func (f *fakeRuntime) calls() [][]string {
 }
 
 func (f *fakeRuntime) ImageExists(context.Context, string) (bool, error) { return true, nil }
-func (f *fakeRuntime) EnsureVolume(context.Context, string) error        { return nil }
-func (f *fakeRuntime) RemoveVolume(context.Context, string, bool) error  { return nil }
+
+// The image-identity pair defaults to MATCHING — the healthy "this island is on
+// the current image" state — so no existing test grows a spurious upgrade
+// prompt. containerImageID / containerImageErr drive the skew and the
+// couldn't-look path.
+func (f *fakeRuntime) ImageID(context.Context, string) (string, error) {
+	return "sha256:current", nil
+}
+
+func (f *fakeRuntime) ContainerImageID(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.containerImageErr != nil {
+		return "", f.containerImageErr
+	}
+	if f.containerImageID != "" {
+		return f.containerImageID, nil
+	}
+	return "sha256:current", nil
+}
+func (f *fakeRuntime) EnsureVolume(context.Context, string) error       { return nil }
+func (f *fakeRuntime) RemoveVolume(context.Context, string, bool) error { return nil }
 func (f *fakeRuntime) CopyVolumeData(_ context.Context, src, dst, _ string) error {
 	f.mu.Lock()
 	f.volumeCopies = append(f.volumeCopies, [2]string{src, dst})

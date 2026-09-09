@@ -177,6 +177,19 @@ type Runtime interface {
 	// ImageExists reports whether the runtime has the named image locally.
 	ImageExists(ctx context.Context, image string) (bool, error)
 
+	// ImageID returns the immutable id of the image a TAG currently points at,
+	// and ContainerImageID the id of the image a CONTAINER was actually created
+	// from. Comparing the two is the only honest way to ask "is this container
+	// running the current image?" — a tag is a moving pointer, so a container and
+	// `dejima/island:latest` can both be "latest" and be different images.
+	//
+	// Like ContainerMounts and unlike Inspect, a failure is RETURNED rather than
+	// flattened to an empty string: "these differ" and "I could not look" are
+	// different answers, and reporting the second as the first would put a
+	// spurious upgrade prompt on screen.
+	ImageID(ctx context.Context, image string) (string, error)
+	ContainerImageID(ctx context.Context, name string) (string, error)
+
 	// BuildImage builds tag from the build context at contextDir (dockerfile
 	// is relative to it), streaming combined build output. A failed build
 	// surfaces as a non-EOF error from the stream's final Read.

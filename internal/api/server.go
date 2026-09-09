@@ -3375,6 +3375,10 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	info.GitHubIdentity = p.GitHubIdentity
 	info.BuiltVersion = p.BuiltVersion
 	info.UpgradedVersion = p.UpgradedVersion
+	// The direct image question, which the version stamps above only proxy for.
+	// See image_staleness.go: `dejima image build` moves the image without
+	// touching either stamp, so an island can be behind while both read level.
+	info.ImageStale = s.imageStale(ctx, p)
 	// Zero-heartbeat liveness: a running island that has never emitted a single
 	// agent-state event, past a short grace window, is the direct broken-shim
 	// signal (a stale socket→TCP notify hook no-ops silently). We use the rollup

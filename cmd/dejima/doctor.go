@@ -232,6 +232,17 @@ func runDoctor(ctx context.Context) *doctorReport {
 							if f := diagnoseOrphanReaping(d.ReapsOrphans, info.Name); f.status != "" {
 								r.add("Projects", info.Name, f.status, f.detail, f.fix)
 							}
+							// The container is on an older image than its tag now
+							// resolves to. Distinct from the version-stamp skew
+							// above, which tracks the DAEMON's version and so stays
+							// level through a plain `dejima image build` — the case
+							// that reached an operator as a dead agent with no
+							// signal anywhere.
+							if d.ImageStale != nil && *d.ImageStale {
+								r.add("Projects", info.Name, "WARN",
+									"container is running an older image than the current island image",
+									fmt.Sprintf("dejima upgrade %s", info.Name))
+							}
 							for _, a := range d.Agents {
 								if a.State == "exited" {
 									r.add("Projects", info.Name+"/"+a.ID, "WARN",

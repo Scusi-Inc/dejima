@@ -230,6 +230,27 @@ func (d *Docker) ImageExists(ctx context.Context, image string) (bool, error) {
 	return strings.Contains(out, image) || strings.TrimSpace(out) != "[]", nil
 }
 
+// ImageID resolves a tag to the image id it currently points at.
+func (d *Docker) ImageID(ctx context.Context, image string) (string, error) {
+	out, stderr, err := d.run(ctx, "image", "inspect", "-f", "{{.Id}}", image)
+	if err != nil {
+		return "", fmt.Errorf("inspect image %s: %w: %s", image, err, strings.TrimSpace(stderr))
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ContainerImageID reports the image a container was actually created from.
+//
+// `.Image` on a container inspect is the resolved ID, not the tag it was named
+// with — which is the whole point: the tag has moved on, the container has not.
+func (d *Docker) ContainerImageID(ctx context.Context, name string) (string, error) {
+	out, stderr, err := d.run(ctx, "inspect", "-f", "{{.Image}}", name)
+	if err != nil {
+		return "", fmt.Errorf("inspect container image for %s: %w: %s", name, err, strings.TrimSpace(stderr))
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func (d *Docker) Status(ctx context.Context, name string) (ContainerStatus, error) {
 	out, _, err := d.run(ctx, "inspect", "-f", "{{.State.Status}}", name)
 	if err != nil {
