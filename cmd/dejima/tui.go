@@ -3970,6 +3970,20 @@ var (
 	styleErrored   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
 	styleWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
 	styleNeedsYou  = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Bold(true) // the one call-to-action state — bold so it pops out of a quiet fleet
+	// styleFirstRun is "+ Set up your first island" on an empty fleet: the
+	// call-to-action gold of styleNeedsYou, on the selected row's background.
+	//
+	// GOLD because on this screen it is not one option among rows — it is the
+	// only thing to do, which is the same claim styleNeedsYou makes about an
+	// agent waiting on you. Reusing that color keeps "this wants you" a single
+	// visual idea rather than two.
+	//
+	// THE BACKGROUND STAYS. The row is genuinely selected and Enter already
+	// works; without the highlight it read as decoration and people didn't know
+	// it was the thing to press. Color adds emphasis here, it does not replace
+	// the selection signal.
+	styleFirstRun = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Bold(true).
+			Background(lipgloss.Color("#1c3358"))
 	// styleSubAgent renders agent-spawned sub-agent rows: dimmer than styleMuted
 	// and italic, so a transient sub-agent reads as subordinate to its spawner.
 	styleSubAgent = lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7a90")).Italic(true)
@@ -4569,7 +4583,7 @@ func (m tuiModel) renderList(width int) (string, int) {
 		// Render it as a SELECTED row, not a heading. The row genuinely is
 		// selected — Enter already worked — but with no ▶ and no highlight it
 		// read as decoration, so people didn't know it was the thing to press.
-		body := styleSelected.Render("▶ + Set up your first island") + "\n\n" +
+		body := styleFirstRun.Render("▶ + Set up your first island") + "\n\n" +
 			styleAccent.Render("Press ⏎ to start") + styleMuted.Render(" — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
 		// Nudge missing Claude creds before the first island, so a claude-code
 		// agent doesn't start unauthenticated and fail at first attach.
