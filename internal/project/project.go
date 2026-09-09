@@ -3,6 +3,7 @@ package project
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -630,15 +631,58 @@ func Load(name string) (*Project, error) {
 	return &p, nil
 }
 
+// LegacyHostOwner is what HostOwner used to return: a literal handle, shipped
+// as the default tenant id for every install. Kept only so islands stamped with
+// it are still recognised as the host's own — see IsHostOwner.
+const LegacyHostOwner = "aoos"
+
 // HostOwner is the tenant id attributed to the host operator: the owner of
 // islands created via the trusted local socket or a RoleOwner token, and the
 // backfill value for islands that predate ownership. Configurable via
-// DEJIMA_HOST_OWNER; defaults to "aoos".
+// DEJIMA_HOST_OWNER.
+//
+// It derives from THIS HOST, and used to be the literal string "aoos".
+//
+// Ownership is stamped server-authoritatively — deliberately never from the
+// create request, since a teammate could forge that — so this function is the
+// only thing that names the operator, and it named one specific person on
+// everybody's machine. Someone else's install reported every island they made
+// as `owner: aoos`, which is not a cosmetic default: Owner is documented as a
+// "free-form creator label (e.g. alice@laptop)" for attributing islands per
+// person, and it was attributing all of them to a stranger.
+//
+// user@hostname matches that documented shape and the CLI's own defaultOwner.
+// Where the daemon runs as root it yields "root@host" — still true of the
+// machine, which the old value never was — and DEJIMA_HOST_OWNER remains the
+// way to say something better.
 func HostOwner() string {
 	if v := strings.TrimSpace(os.Getenv("DEJIMA_HOST_OWNER")); v != "" {
 		return v
 	}
-	return "aoos"
+	name := "unknown"
+	if u, err := user.Current(); err == nil && strings.TrimSpace(u.Username) != "" {
+		name = strings.TrimSpace(u.Username)
+	}
+	if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
+		return name + "@" + strings.TrimSpace(host)
+	}
+	return name
+}
+
+// IsHostOwner reports whether an owner label denotes THIS host's operator.
+//
+// It accepts LegacyHostOwner as well as the current value, because islands
+// created before HostOwner derived from the host carry the old literal — and a
+// gate that stopped matching them would silently change behavior for every
+// island that already exists (the failure mode this repo keeps hitting: a fix
+// that only reaches things created after it). Callers comparing an island's
+// Owner against the host MUST use this rather than == HostOwner().
+func IsHostOwner(owner string) bool {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return false
+	}
+	return strings.EqualFold(owner, HostOwner()) || strings.EqualFold(owner, LegacyHostOwner)
 }
 
 // Delete removes the project's on-host config directory.

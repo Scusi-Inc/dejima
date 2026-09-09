@@ -1,6 +1,8 @@
 package project
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,12 +40,57 @@ func TestOwnershipMigrationOnLoad(t *testing.T) {
 	}
 }
 
-func TestHostOwnerConfigurable(t *testing.T) {
-	if HostOwner() != "aoos" {
-		t.Errorf("default host owner = %q, want aoos", HostOwner())
+// The default host owner must describe THIS HOST — not a literal handle.
+//
+// It used to return "aoos". Ownership is stamped server-authoritatively (never
+// from the create request, which a teammate could forge), so this function is
+// the only thing that names the operator, and it named one specific person on
+// every install. Someone else's machine reported every island they created as
+// `owner: aoos` — while Owner is documented as a "free-form creator label (e.g.
+// alice@laptop)" for attributing islands per person.
+//
+// Asserted as a PROPERTY, not against this runner's username: pinning the exact
+// string would just re-pin a constant, which is the bug.
+func TestHostOwnerDescribesThisHost(t *testing.T) {
+	got := HostOwner()
+	if got == "" {
+		t.Fatal("host owner is empty; islands would be stamped with nothing")
 	}
+	if strings.EqualFold(got, LegacyHostOwner) {
+		t.Errorf("host owner is still the hardcoded %q — every operator's islands "+
+			"are attributed to one person who is probably not them", LegacyHostOwner)
+	}
+	// user@hostname is the documented shape and what the CLI's defaultOwner uses.
+	if host, err := os.Hostname(); err == nil && host != "" {
+		if !strings.HasSuffix(got, "@"+host) {
+			t.Errorf("host owner %q does not identify this host (%q)", got, host)
+		}
+	}
+}
+
+func TestHostOwnerConfigurable(t *testing.T) {
 	t.Setenv("DEJIMA_HOST_OWNER", "acme")
 	if HostOwner() != "acme" {
 		t.Errorf("DEJIMA_HOST_OWNER override = %q, want acme", HostOwner())
+	}
+}
+
+// Islands stamped before the host label derived from the host carry the old
+// literal. A gate that compared == HostOwner() would stop matching every one of
+// them — a fix that only reaches things created after it, which is the shape
+// this repo keeps re-learning. IsHostOwner is what callers must use.
+func TestIsHostOwnerAcceptsTheLegacyStamp(t *testing.T) {
+	if !IsHostOwner(LegacyHostOwner) {
+		t.Errorf("an island stamped %q is no longer recognised as the host's own; "+
+			"owner-gated behavior silently changed for every existing island", LegacyHostOwner)
+	}
+	if !IsHostOwner(HostOwner()) {
+		t.Error("the current host owner is not recognised as the host's own")
+	}
+	if IsHostOwner("someone-else@their-laptop") {
+		t.Error("a teammate's island was claimed as host-owned")
+	}
+	if IsHostOwner("") || IsHostOwner("   ") {
+		t.Error("an unstamped island must not be claimed as host-owned")
 	}
 }

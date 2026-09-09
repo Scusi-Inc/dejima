@@ -110,8 +110,11 @@ func (s *Server) maybeAutoSeedClaudeFrom(ctx context.Context, p *project.Project
 	if s.autoSeedDone() {
 		return
 	}
-	// OWNER GATE — only the operator's own islands.
-	if !strings.EqualFold(strings.TrimSpace(p.Owner), project.HostOwner()) {
+	// OWNER GATE — only the operator's own islands. IsHostOwner, not a compare
+	// against HostOwner(): the host label now derives from user@hostname, and
+	// islands stamped before that carry the old literal. A direct compare would
+	// quietly stop seeding from every island that already exists.
+	if !project.IsHostOwner(p.Owner) {
 		return
 	}
 	// NO CLOBBER + self-disable — if the host is already seeded there's nothing to
