@@ -4629,7 +4629,7 @@ func (m tuiModel) renderList(width int) (string, int) {
 				indent := "   " + strings.Repeat("  ", row.depth)
 				line = indent + styleMuted.Render("└ ") + subAgentRowText(a)
 			} else {
-				line = "   " + styleMuted.Render("├ ") + agentRowText(a, labelIsAmbiguous(isl.Agents, a))
+				line = "   " + styleMuted.Render("├ ") + agentRowText(a, labelIsAmbiguous(isl.Agents, a), width)
 			}
 		default: // rowIsland
 			isl, ok := byName[row.island]
@@ -4640,9 +4640,13 @@ func (m tuiModel) renderList(width int) (string, int) {
 			if m.islandExpanded(isl) {
 				caret = "▾"
 			}
-			label := truncate(islandDisplay(isl), 14)
+			// Sized from the pane, not pinned at 14 — see tui_namecol.go for why
+			// widening it unconditionally would have eaten the status column.
+			nameW := nameColumnWidth(width)
+			label := truncate(islandDisplay(isl), nameW)
 			if len(isl.Agents) > 1 {
-				label = truncate(islandDisplay(isl), 10) + fmt.Sprintf(" (%d)", len(isl.Agents))
+				label = truncate(islandDisplay(isl), nameColumnAgentCountWidth(width)) +
+					fmt.Sprintf(" (%d)", len(isl.Agents))
 			}
 			// Per-island visual identity: a stable color+glyph (idStyle/idGlyph)
 			// marks the island and tints its name, so it and its agent group stand
@@ -4650,7 +4654,7 @@ func (m tuiModel) renderList(width int) (string, int) {
 			idStyle, idGlyph := islandVisual(isl)
 			line = fmt.Sprintf("%s %s %s  %s  %s",
 				caret, glyphFor(isl), idStyle.Render(idGlyph),
-				idStyle.Render(fmt.Sprintf("%-14s", label)),
+				idStyle.Render(fmt.Sprintf("%-*s", nameW, label)),
 				shortStatus(isl, m.dirtyOps[isl.Name]))
 			// In the all-islands lens, tag each row with its owner so the host owner
 			// can tell whose island is whose. Omitted in the your-islands lens (they're
@@ -4958,12 +4962,16 @@ func (m tuiModel) bandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // unless ambiguous is set, meaning another agent in the same island shares this
 // display name, in which case the muted id is appended so the two rows aren't
 // indistinguishable.
-func agentRowText(a api.AgentInfo, ambiguous bool) string {
-	name := fmt.Sprintf("%-14s", truncate(agentDisplayName(a), 14))
+// paneWidth sizes the name column; it comes from the caller so the agent name
+// lines up with the island name above it. Both start at column 9 and both get
+// nameColumnWidth — see tui_namecol.go.
+func agentRowText(a api.AgentInfo, ambiguous bool, paneWidth int) string {
+	nameW := nameColumnWidth(paneWidth)
+	name := fmt.Sprintf("%-*s", nameW, truncate(agentDisplayName(a), nameW))
 	if ambiguous {
 		// rare: append the disambiguating id. The trailing columns shift for
 		// these rows, which is fine — they're deliberately distinct.
-		name = truncate(agentDisplayName(a), 10) + " " + styleMuted.Render(a.ID)
+		name = truncate(agentDisplayName(a), nameColumnAgentCountWidth(paneWidth)) + " " + styleMuted.Render(a.ID)
 	}
 	// Muted meta: the agent type, plus uptime/age unless the session is known to
 	// be down. (State is unprobed in the list, so we show age there too; the
@@ -5058,7 +5066,10 @@ func labelIsAmbiguous(agents []api.AgentInfo, a api.AgentInfo) bool {
 	return n > 1
 }
 
-func (m tuiModel) renderDetail(_ int) string {
+// width is the detail pane's inner width. It was discarded until the name column
+// became width-derived; the agent list at the bottom of this pane uses it so its
+// names follow the same rule as the tree's. See tui_namecol.go.
+func (m tuiModel) renderDetail(width int) string {
 	// The trailing "+ new island" row has no island behind it.
 	if m.currentRow().kind == rowNewIsland {
 		return styleTitle.Render("+ New island") + "\n\n" +
@@ -5220,7 +5231,11 @@ func (m tuiModel) renderDetail(_ int) string {
 		b.WriteString(styleHeader.Render("Agents"))
 		b.WriteString("\n")
 		for _, a := range d.Agents {
-			b.WriteString("  " + agentRowText(a, labelIsAmbiguous(d.Agents, a)) + "\n")
+			// The detail pane's own width, not the list's. Its rows have a shorter
+			// prefix so this is slightly conservative — names truncate a little
+			// earlier here than they strictly must — which costs nothing and keeps
+			// one rule for both panes rather than a second constant to drift.
+			b.WriteString("  " + agentRowText(a, labelIsAmbiguous(d.Agents, a), width) + "\n")
 		}
 		b.WriteString(styleMuted.Render("  [+] add   [X] remove (on an agent)") + "\n")
 	}
