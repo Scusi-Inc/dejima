@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -488,7 +489,7 @@ func newCpCmd() *cobra.Command {
 					return err
 				}
 				defer rc.Close()
-				out, err := os.Create(dst)
+				out, err := os.Create(hostCpDest(dst, srcPath))
 				if err != nil {
 					return err
 				}
@@ -501,7 +502,7 @@ func newCpCmd() *cobra.Command {
 					return err
 				}
 				defer in.Close()
-				return c.WriteFile(cmd.Context(), dstIsland, dstPath, in)
+				return c.WriteFile(cmd.Context(), dstIsland, islandCpDest(dstPath, src), in)
 			default:
 				return fmt.Errorf("exactly one of src/dst must be an island path (e.g. foo:/workspace/file)")
 			}
@@ -522,6 +523,54 @@ func splitIslandPath(s string) (island, path string, isRemote bool) {
 		return "", s, false
 	}
 	return s[:idx], s[idx+1:], true
+}
+
+// A destination naming a DIRECTORY means "into it, under the source's own
+// name". That is cp(1), and it is what this command's own help text has always
+// advertised — `dejima cp foo:/workspace/README.md ./`. Neither direction
+// resolved it, and they failed differently:
+//
+//	island -> host: `./` went straight to os.Create, which reports
+//	                "open ./: is a directory". A real error, blaming the
+//	                destination for being what the help text told you to pass.
+//	host -> island: a trailing-slash path went to `docker cp`, which then
+//	                supplies the SOURCE basename — and the source at that point
+//	                is the daemon's temp file. The bytes land as
+//	                /home/dejima/intake/dejima-cp-1234567 and the command
+//	                reports success.
+//
+// The second is the dangerous one: nothing errors, and the operator finds a
+// correctly-sized file under a name nothing will ever look for. Resolving the
+// name CLIENT-side fixes both, because the daemon then receives a full path and
+// never gets to choose one.
+//
+// TestCLICp passed over all of this by using a full file path for dst — the
+// only shape the code handled. The example in --help was the untested row.
+func hostCpDest(dst, srcPath string) string {
+	if info, err := os.Stat(dst); err == nil && info.IsDir() {
+		return filepath.Join(dst, pathpkg.Base(srcPath))
+	}
+	// A trailing separator is a directory the operator MEANT even if it does not
+	// exist yet; joining makes the failure name the missing directory instead of
+	// reporting "is a directory" about a path that isn't one. Both separators are
+	// checked because the caller may be a Windows shell, where `./` is as common
+	// as `.\` and os.PathSeparator only covers the latter.
+	if strings.HasSuffix(dst, "/") || strings.HasSuffix(dst, string(os.PathSeparator)) {
+		return filepath.Join(dst, pathpkg.Base(srcPath))
+	}
+	return dst
+}
+
+// islandCpDest is the same rule pointed the other way, with one less signal to
+// work from: there is no stat endpoint for an island path, so a trailing slash
+// is the ONLY way the operator can say "this is a directory" and the only thing
+// we can honour. A bare /home/dejima/intake is therefore still taken as a file
+// name — as it must be, since it is also exactly how you name a new file.
+func islandCpDest(dstPath, src string) string {
+	if strings.HasSuffix(dstPath, "/") {
+		return pathpkg.Join(dstPath, filepath.Base(src))
+	}
+	return dstPath
 }
 
 // --- logs -----------------------------------------------------------------
