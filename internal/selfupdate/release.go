@@ -87,7 +87,12 @@ func ApplyReleaseSelf(ctx context.Context, ver string, out io.Writer) error {
 	// "open /usr/local/bin/.dejimad.update: permission denied" and made
 	// self-update impossible for the standard install layout.
 	staged := filepath.Join(dir, "."+binName+".update")
-	if !dirWritable(dir) {
+	// stagedOutside records that the install dir REFUSED us, which decides how a
+	// failed replace is read further down. Staging elsewhere is not a detail of
+	// where a temp file lives: it is the moment we learned the rename that
+	// follows cannot succeed on its own.
+	stagedOutside := !dirWritable(dir)
+	if stagedOutside {
 		tmp, err := os.MkdirTemp("", "dejima-update-")
 		if err != nil {
 			return fmt.Errorf("stage update: %w", err)
@@ -104,7 +109,22 @@ func ApplyReleaseSelf(ctx context.Context, ver string, out io.Writer) error {
 	if err := ReplaceExecutable(staged, self); err != nil {
 		// A root-owned install dir is the normal layout, not an edge case, so
 		// try the elevated path the service install already provisions for.
-		if !isPermission(err) {
+		//
+		// ELEVATE ON ANY FAILURE ONCE WE STAGED OUTSIDE, not only on a permission
+		// error. dirWritable already PROVED this directory rejects us, so the
+		// rename could never have worked unaided — and the errno it fails with is
+		// not ours to predict. It came back as a CROSS-DEVICE rename on a Mac
+		// client: staging lands in $TMPDIR (/var/folders/…), which need not share a
+		// filesystem with /usr/local/bin, and EXDEV is not a permission error. So
+		// isPermission said no, the one remedy that works was skipped, and the
+		// operator got a raw
+		//
+		//   replace /usr/local/bin/dejima: rename /var/folders/b5/…
+		//
+		// — the update refusing itself over a detail of where it had put its own
+		// temp file. Gating the remedy on WHY the rename failed was the mistake;
+		// what matters is that we already knew it would.
+		if !shouldElevate(stagedOutside, err) {
 			return fmt.Errorf("replace %s: %w", self, err)
 		}
 		fmt.Fprintf(out, "install dir isn't writable; installing with sudo…\n")
@@ -295,6 +315,28 @@ func dirWritable(dir string) bool {
 // isPermission reports whether err is (or wraps) a permission failure.
 func isPermission(err error) bool {
 	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
+}
+
+// shouldElevate decides whether a failed replace is worth retrying with sudo.
+//
+// Split out and pure for the same reason ElevationAdvice is: the decision has to
+// be assertable WITHOUT invoking sudo. A test that shelled out here would pass
+// or fail on the runner's sudoers file rather than on this logic.
+//
+// stagedOutside alone is sufficient, and that is the correction. It means
+// dirWritable already proved the install dir rejects us, so the rename into it
+// was never going to work unaided and the errno is beside the point. Gating on
+// isPermission assumed we could predict that errno; a Mac client returned
+// CROSS-DEVICE instead — $TMPDIR (/var/folders/…) need not share a filesystem
+// with /usr/local/bin — and the one remedy that works was skipped.
+//
+// The permission clause stays for the other layout: a dir that PASSED the
+// writability probe and still denied the rename (a race, a mount going
+// read-only, an ACL the probe's temp file did not trip). There, elevation is a
+// real answer to a real denial. Any OTHER failure in a writable dir is not
+// something sudo fixes, and retrying it under root would only obscure it.
+func shouldElevate(stagedOutside bool, err error) bool {
+	return stagedOutside || isPermission(err)
 }
 
 // ElevationAdvice is what to tell someone whose update could not elevate.
