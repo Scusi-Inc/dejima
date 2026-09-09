@@ -45,6 +45,12 @@ type Fake struct {
 	// only that an error came back, which is also what a refusal issued halfway
 	// through a transfer looks like.
 	copies int
+	// copyDests records the destination of every CopyToContainer, for the same
+	// reason execCalls records argument lists: a COUNT cannot tell a file that
+	// landed where it was asked for from one that landed beside it under the
+	// daemon's temp name. Both are one copy, and only the path distinguishes
+	// them.
+	copyDests []string
 	// CopyErrOn makes CopyToContainer fail for any destination containing this
 	// substring. Staging a MID-TRANSFER failure is otherwise impossible against a
 	// fake that always succeeds, and "some files crossed and some did not" is a
@@ -73,6 +79,14 @@ func (f *Fake) CopyCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.copies
+}
+
+// CopyDests returns the container-side destination of every CopyToContainer,
+// in order.
+func (f *Fake) CopyDests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.copyDests...)
 }
 
 // New returns a Fake that reports its containers as running.
@@ -198,6 +212,7 @@ func (f *Fake) CopyToContainer(_ context.Context, _, _, dst string) error {
 		return errors.New("simulated copy failure")
 	}
 	f.copies++
+	f.copyDests = append(f.copyDests, dst)
 	return nil
 }
 func (f *Fake) CopyFromContainer(context.Context, string, string, string) error { return nil }
