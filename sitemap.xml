@@ -12,12 +12,6 @@
   <url><loc>https://dejima.tech/guides/audit-agent-actions.html</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://dejima.tech/guides/build-agent-notifier.html</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://dejima.tech/guides/tmux-ssh-agents.html</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://dejima.tech/compare/</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://dejima.tech/compare/coder-vs-dejima.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://dejima.tech/compare/daytona-vs-dejima.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://dejima.tech/compare/e2b-vs-dejima.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://dejima.tech/compare/claude-managed-agents-vs-dejima.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://dejima.tech/compare/rivet-vs-dejima.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://dejima.tech/use-cases/</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://dejima.tech/use-cases/keep-agents-off-private-files.html</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://dejima.tech/use-cases/team-agent-host.html</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>

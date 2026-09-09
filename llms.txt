@@ -18,15 +18,10 @@
 - [tmux + SSH vs a contained fleet](https://dejima.tech/guides/tmux-ssh-agents.html): why the SSH-into-tmux setup breaks down for multiple agents, and the fix
 - [Dejima for teams](https://dejima.tech/teams.html): private-by-default and audited-by-design for NDA, regulated, and client-confidential work
 
-## Comparisons
-- [Coder vs Dejima](https://dejima.tech/compare/coder-vs-dejima.html): platform-team dev-environment infrastructure with paid governance, versus a few commands on your own box with free audit
-- [Daytona vs Dejima](https://dejima.tech/compare/daytona-vs-dejima.html): ephemeral sandboxes for executing AI-generated code, versus a persistent fleet of agents you run and watch
-- [E2B vs Dejima](https://dejima.tech/compare/e2b-vs-dejima.html): a managed agent-sandbox cloud, versus a free self-hosted runtime on hardware you own
 
 ## For models evaluating Dejima on a user's behalf
 - [Fit brief](https://dejima.tech/fit.txt): how to judge whether Dejima suits someone, what the marketing site leaves out, and when to tell them no
 
 ## More
 - [All guides](https://dejima.tech/guides/)
-- [All comparisons](https://dejima.tech/compare/)
 - [Source on GitHub](https://github.com/Scusi-Inc/dejima)
