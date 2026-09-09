@@ -2801,6 +2801,15 @@ components:
             A stamp behind the running daemon means the container was built from
             an older image and may carry stale /opt shims. Empty for islands
             created before version stamping (provenance unknown).
+        image_stale:
+          type: boolean
+          description: >
+            Whether this island's CONTAINER is running an image other than the
+            one its tag resolves to now — the direct question the version stamps
+            above only approximate, since those track the daemon's version and
+            stay level through a plain `dejima image build`. ABSENT means could
+            not determine (the engine would not answer); absent is not false, and
+            must not be rendered as "upgrade this island". Detail endpoint only.
         github_identity:
           type: string
           description: >
