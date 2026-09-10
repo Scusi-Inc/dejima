@@ -79,13 +79,56 @@ func (d *Docker) EnsureVolume(ctx context.Context, name string) error {
 // CopyVolumeData copies the contents of src into dst via a throwaway container
 // that mounts both volumes (src read-only) and runs `cp -a`. image must provide
 // a POSIX sh + cp (the island image does). Used by island clone.
+//
+// IT IS NAMED, AND IT IS CLEANED UP ON FAILURE. This ran with neither.
+//
+// An unnamed `docker run` gets one of Docker's random names, so the container
+// was untrackable the moment it existed — Dejima looks for `dejima-<island>`
+// and finds nothing. `--rm` looked like enough, but it fires when the container
+// EXITS: a copy that hangs, or whose client is killed when the daemon's context
+// is cancelled, leaves the container running and the flag unfired.
+//
+// That is not theoretical. An operator found `peaceful_mclaren` — the island
+// image, RUNNING, three weeks old — holding two volumes, invisible to every
+// dejima surface, and untouched by purge, which only ever removes containers it
+// can name. They reported it as "purge needs to do a more thorough job"; purge
+// could not have known this existed.
+//
+// So: a deterministic name (findable, and re-runnable — a leftover from a
+// previous attempt is cleared first), a label so an orphan sweep can identify
+// dejima's own workers by something better than a name convention, and an
+// explicit force-remove when the run does not come back clean.
 func (d *Docker) CopyVolumeData(ctx context.Context, src, dst, image string) error {
-	_, err := d.runOK(ctx, "run", "--rm",
+	name := volumeCopyContainer(dst)
+	// A leftover from an interrupted previous attempt would otherwise collide on
+	// the name. Best-effort: usually nothing to remove.
+	_, _, _ = d.run(ctx, "rm", "-f", name)
+
+	_, err := d.runOK(ctx, "run", "--rm", "--name", name,
+		"--label", VolumeCopyLabel,
 		"-v", src+":/from:ro",
 		"-v", dst+":/to",
 		image, "sh", "-c", "cp -a /from/. /to/")
+	if err != nil {
+		// A FRESH context, deliberately. The usual reason we are here is that ctx
+		// was cancelled or timed out — and cleanup issued on a dead context is not
+		// cleanup, it is the same leak with an apology. Bounded so a wedged engine
+		// cannot hang the caller in the error path.
+		rmCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _, _ = d.run(rmCtx, "rm", "-f", name)
+	}
 	return err
 }
+
+// VolumeCopyLabel marks the throwaway containers CopyVolumeData creates, so an
+// orphan sweep can find dejima's own workers without pattern-matching names.
+const VolumeCopyLabel = "dejima.role=volume-copy"
+
+// volumeCopyContainer names the worker after its DESTINATION volume: unique per
+// copy, stable across retries of the same copy, and legible in `docker ps` as
+// something dejima made rather than a random pair of words.
+func volumeCopyContainer(dst string) string { return "dejima-copy-" + dst }
 
 func (d *Docker) RemoveVolume(ctx context.Context, name string, force bool) error {
 	args := []string{"volume", "rm"}
