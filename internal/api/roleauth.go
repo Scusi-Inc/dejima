@@ -274,8 +274,22 @@ func (s *Server) visibleTo(ctx context.Context, p *project.Project) bool {
 	if !ok || id.OwnsAll() {
 		return true
 	}
+	// IsHostOwner on BOTH sides, not a raw ==. The host-owner label changed from
+	// the constant "aoos" to a host-derived one, so an island stamped before that
+	// and a caller identified after it are the same tenant wearing two names. The
+	// load-time migration re-stamps the island, and this makes the window between
+	// a daemon upgrade and that island's next Load harmless rather than a fleet
+	// that disappears from a teammate's view.
+	if IsHostOwnerLabel(p.Owner) && IsHostOwnerLabel(id.Owner) {
+		return true
+	}
 	return p.Owner == id.Owner
 }
+
+// IsHostOwnerLabel reports whether an owner string denotes this host's operator,
+// accepting the legacy literal alongside the current value. Thin wrapper so the
+// api package states the intent at its call sites.
+func IsHostOwnerLabel(owner string) bool { return project.IsHostOwner(owner) }
 
 // RequireToken makes the operator surface reject anonymous (no-token) requests
 // with 401, turning bearer tokens into a hard boundary rather than opt-in

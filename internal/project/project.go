@@ -617,6 +617,33 @@ func Load(name string) (*Project, error) {
 		p.Owner = HostOwner()
 		changed = true
 	}
+	// Re-stamp the LEGACY host-owner literal onto the current host owner.
+	//
+	// HostOwner used to return the constant "aoos" for every install; it now
+	// derives from this host. Islands created before that carry the old string,
+	// and NOTHING RECONCILES THE TWO — every owner comparison in the codebase is
+	// a raw ==, so the daemon says the caller is "aoos@minion" while the islands
+	// say "aoos", and they stop being the same tenant.
+	//
+	// That is not theoretical and it is not cosmetic. The dashboard's ownership
+	// lens defaults to your-islands-only and filters on exactly that equality, so
+	// an operator's entire fleet vanished from the TUI while `dejima ls` — which
+	// has no lens — still listed it, and the footer still counted it. They
+	// reported every island and agent as missing.
+	//
+	// MIGRATING THE DATA, rather than teaching each comparison to tolerate both,
+	// is deliberate: the tolerant version has to be added everywhere and stay
+	// added (it was already missed in visibleTo and in the TUI lens), and it
+	// cannot help a client that is already installed — this repairs the fleet for
+	// the clients people are running RIGHT NOW.
+	//
+	// Safe because the old value was the DEFAULT FOR EVERY INSTALL: wherever it
+	// appears it meant "the host owner", which is what it is being rewritten to.
+	// An island a teammate owns carries their own tenant id and is untouched.
+	if strings.EqualFold(strings.TrimSpace(p.Owner), LegacyHostOwner) {
+		p.Owner = HostOwner()
+		changed = true
+	}
 	// Deny-by-default cutover for the host operator's gh credential. Runs AFTER
 	// the ownership backfill above, which it depends on to tell a host island
 	// from a tenant one.
