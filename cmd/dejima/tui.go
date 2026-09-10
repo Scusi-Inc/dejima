@@ -4576,6 +4576,29 @@ func (m tuiModel) renderList(width int) (string, int) {
 			}
 			return styleErrored.Render("error: "+m.lastError) + "\n\n" + styleMuted.Render("(daemon unreachable?)"), -1
 		}
+		// AN EMPTY LIST IS NOT PROOF OF AN EMPTY FLEET. The overview counts the
+		// same projects the list enumerates, so the two disagreeing means the list
+		// is wrong — and rendering that as "set up your first island" tells an
+		// operator with a running fleet that they have none, which is the
+		// reassuring-direction failure this codebase keeps paying for.
+		//
+		// It happened: a daemon restarted mid-update served an empty list for a
+		// moment. listMsg applies a successful reply and clears lastError, so the
+		// empty array arrived looking exactly like a fresh install — first-run
+		// prompt, no error, two islands still running on the host. The operator
+		// reasonably read it as having lost everything.
+		//
+		// The overview is the cross-check we already have. Say the two disagree.
+		if m.overview != nil && m.overview.TotalIslands > 0 {
+			return styleWaiting.Render(fmt.Sprintf(
+				"⚠ the daemon reports %d island(s) but returned none",
+				m.overview.TotalIslands)) + "\n\n" +
+				styleMuted.Render("Nothing has been deleted — this is the LIST that came back empty,\n"+
+					"not your fleet. It usually means the daemon restarted mid-request\n"+
+					"(an update), and the next poll normally fixes it.\n\n"+
+					"If it persists: `dejima ls` from a terminal reads the same API, and\n"+
+					"`dejima doctor` checks the daemon."), -1
+		}
 		// First-run: no islands yet. The "+ new island" row is already selected
 		// (visibleRows always ends with it), so Enter creates one — but say so,
 		// since a bare empty pane gave no hint that the TUI itself can set one up
