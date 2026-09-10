@@ -105,10 +105,17 @@ func (p *presenceTracker) RevokeAll() int {
 }
 
 // SessionEnvelope is the JSON framing on the websocket. Three message types:
-//   - {"type":"hello","attached":[...]}   server → client on connect
+//   - {"type":"hello","attached":[...],"title":"…"} server → client on connect
 //   - {"type":"data","b64":"..."}         both directions
 //   - {"type":"resize","rows":N,"cols":N} client → server
 //   - {"type":"presence","attached":[...]} server → client when others join/leave
+//   - {"type":"title","title":"…"}        server → client when the name changes
+//
+// Title carries the tab title the client should show: the island's display name
+// and the agent's. It rides on hello so a reconnect re-asserts it, and is pushed
+// on its own when an island is renamed or an agent relabelled — the client set
+// its tab title once at attach and nothing ever corrected it, so a rename left
+// every ALREADY-OPEN tab showing the old name while new tabs showed the new one.
 //
 // Term/ColorTerm ride along on the FIRST resize (the client's opening message)
 // and are ignored on later ones — they describe the client's terminal, which
@@ -123,6 +130,7 @@ type SessionEnvelope struct {
 	Term      string          `json:"term,omitempty"`
 	ColorTerm string          `json:"colorterm,omitempty"`
 	Attached  []PresenceEntry `json:"attached,omitempty"`
+	Title     string          `json:"title,omitempty"`
 }
 
 // presenceKey is the composite map key for an (island, agent) presence tracker.
@@ -211,25 +219,103 @@ const statusRestart = websocket.StatusServiceRestart
 // allocates every &struct{}{} to the same address).
 type sessionConnHandle struct{ _ byte }
 
-// registerSessionConn adds a live session websocket to the restart registry and
-// returns its handle. Every session/terminal websocket (agent sessions, host
-// terminals, island shells) registers on Accept and unregisters on close, so
+// sessionConn is what the registry holds for one live websocket: the conn every
+// broadcast writes to, plus enough about WHAT it is attached to to re-derive the
+// client's tab title after a rename.
+//
+// island is empty for connections that are not an island agent session (host
+// terminals, in-island shells). Those are still closed on a daemon restart —
+// that is what the registry was for — but never retitled: their titles are
+// composed client-side and there is no island name in them to go stale.
+type sessionConn struct {
+	conn    *websocket.Conn
+	island  string
+	agentID string
+	// showAgent mirrors what the CLIENT asked for: an attach that named an agent
+	// keeps the agent in its tab title even when that agent has no label, and a
+	// bare `dejima connect <island>` shows the island alone. Composing a suffix
+	// the client never had would rename the tab on a rename of something else.
+	showAgent bool
+}
+
+// registerSessionConn adds a live session websocket to the registry and returns
+// its handle. Every session/terminal websocket (agent sessions, host terminals,
+// island shells) registers on Accept and unregisters on close, so
 // CloseSessionsForRestart can reach each one. If a restart is already in flight
 // when a late connection registers, it is closed immediately with the restart
 // code (it would otherwise miss the broadcast and hang until its own teardown).
-func (s *Server) registerSessionConn(conn *websocket.Conn) *sessionConnHandle {
+//
+// island/agentID identify an island agent session for broadcastIslandTitle;
+// pass "" for anything else.
+func (s *Server) registerSessionConn(conn *websocket.Conn, island, agentID string, showAgent bool) *sessionConnHandle {
 	s.restartMu.Lock()
 	if s.sessionConns == nil {
-		s.sessionConns = map[*sessionConnHandle]*websocket.Conn{}
+		s.sessionConns = map[*sessionConnHandle]sessionConn{}
 	}
 	restarting := s.restarting
 	h := &sessionConnHandle{}
-	s.sessionConns[h] = conn
+	s.sessionConns[h] = sessionConn{conn: conn, island: island, agentID: agentID, showAgent: showAgent}
 	s.restartMu.Unlock()
 	if restarting {
 		_ = conn.Close(statusRestart, "dejimad restarting")
 	}
 	return h
+}
+
+// islandTabTitle composes the tab title for one attached agent session: the
+// island's cosmetic Title (falling back to its durable slug) and the agent's
+// Label (falling back to its id, but only for an attach that named an agent).
+//
+// This mirrors the TUI's windowLabel deliberately. The dashboard names a tab
+// when it spawns it and the daemon renames it afterwards; if the two rules
+// disagreed, every attach would silently rewrite a tab title the operator had
+// just watched the dashboard choose.
+func islandTabTitle(p *project.Project, agentID string, showAgent bool) string {
+	island := p.Name
+	if p.Title != "" {
+		island = p.Title
+	}
+	spec, ok := p.AgentByID(agentID)
+	if !ok {
+		return island
+	}
+	suffix := spec.Label
+	if suffix == "" {
+		if !showAgent {
+			return island
+		}
+		suffix = spec.ID
+	}
+	return island + "/" + suffix
+}
+
+// broadcastIslandTitle pushes a fresh tab title to every live session attached
+// to one island. Called after a rename (island Title) or an agent relabel.
+//
+// Best-effort and bounded: a client that has stopped reading must not hold the
+// rename request open, and a failed push is not a reason to fail the rename —
+// the title re-asserts itself on that session's next hello.
+func (s *Server) broadcastIslandTitle(ctx context.Context, p *project.Project) {
+	s.restartMu.Lock()
+	targets := make([]sessionConn, 0, len(s.sessionConns))
+	for _, sc := range s.sessionConns {
+		if sc.island == p.Name {
+			targets = append(targets, sc)
+		}
+	}
+	s.restartMu.Unlock()
+
+	for _, sc := range targets {
+		wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := sendEnvelope(wctx, sc.conn, SessionEnvelope{
+			Type:  "title",
+			Title: islandTabTitle(p, sc.agentID, sc.showAgent),
+		})
+		cancel()
+		if err != nil {
+			s.log.Debug("title push", "island", p.Name, "agent", sc.agentID, "err", err)
+		}
+	}
 }
 
 // unregisterSessionConn drops a connection from the restart registry (deferred
@@ -260,8 +346,8 @@ func (s *Server) CloseSessionsForRestart() int {
 	s.restartMu.Lock()
 	s.restarting = true
 	conns := make([]*websocket.Conn, 0, len(s.sessionConns))
-	for _, c := range s.sessionConns {
-		conns = append(conns, c)
+	for _, sc := range s.sessionConns {
+		conns = append(conns, sc.conn)
 	}
 	s.restartMu.Unlock()
 	for _, c := range conns {
@@ -358,7 +444,7 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 
 	// Register with the restart registry so a daemon shutdown can reach this
 	// live conn and close it with a reconnect-triggering code.
-	connHandle := s.registerSessionConn(conn)
+	connHandle := s.registerSessionConn(conn, name, spec.ID, agentID != "")
 	defer s.unregisterSessionConn(connHandle)
 
 	// Per-session cancel so `dejima sessions revoke` can forcibly drop us.
@@ -469,8 +555,15 @@ func (s *Server) sessionWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sess.Close()
 
-	// Send initial hello with the existing client list.
-	_ = sendEnvelope(ctx, conn, SessionEnvelope{Type: "hello", Attached: others})
+	// Send initial hello with the existing client list and the tab title. Title
+	// rides on hello (not only on the rename push) so a reconnect re-asserts it:
+	// a client that was away during the rename would otherwise keep the stale
+	// name for the life of the tab.
+	_ = sendEnvelope(ctx, conn, SessionEnvelope{
+		Type:     "hello",
+		Attached: others,
+		Title:    islandTabTitle(p, spec.ID, agentID != ""),
+	})
 
 	// Replay a non-resize first envelope (rare; see above).
 	if pending != nil {
@@ -570,7 +663,9 @@ func (s *Server) serveTmuxWS(
 		}
 	}()
 
-	connHandle := s.registerSessionConn(conn)
+	// Host terminals and in-island shells are registered for the restart close
+	// only: they carry no island name in their title, so nothing to retitle.
+	connHandle := s.registerSessionConn(conn, "", "", false)
 	defer s.unregisterSessionConn(connHandle)
 
 	ctx, cancel := context.WithCancel(r.Context())

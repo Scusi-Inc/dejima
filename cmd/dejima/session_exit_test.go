@@ -53,7 +53,7 @@ func TestRunOneSessionConn_ExitEnvelopeEndsClean(t *testing.T) {
 	got := make(chan sessReason, 1)
 	go func() {
 		got <- runOneSessionConn(ctx, conn, int(pr.Fd()),
-			make(chan []byte), make(chan struct{}), false, nil)
+			make(chan []byte), make(chan struct{}), false, nil, nil)
 	}()
 
 	select {

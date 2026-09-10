@@ -106,7 +106,7 @@ func TestRegisterSessionConn_ClosesLateJoinerDuringRestart(t *testing.T) {
 		if err != nil {
 			return
 		}
-		h := s.registerSessionConn(conn)
+		h := s.registerSessionConn(conn, "", "", false)
 		defer s.unregisterSessionConn(h)
 		// Block on a read; the immediate restart-close should unblock it.
 		_, _, _ = conn.Read(r.Context())

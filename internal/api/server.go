@@ -15,8 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coder/websocket"
-
 	"github.com/aoos/dejima/internal/agentcreds"
 	"github.com/aoos/dejima/internal/capability"
 	"github.com/aoos/dejima/internal/egress"
@@ -72,7 +70,7 @@ type Server struct {
 	// terminal instead of reconnecting.
 	restartMu    sync.Mutex
 	restarting   bool
-	sessionConns map[*sessionConnHandle]*websocket.Conn
+	sessionConns map[*sessionConnHandle]sessionConn
 	events       *events.Manager
 	mailbox      *mailbox.Store // intra-island agent message ring (Lane 5, Phase 1)
 	linkQueue    *link.Queue    // pending cross-island action approvals (Lane 5, Phase 3; in-memory, fail-closed)
@@ -1623,7 +1621,42 @@ func (s *Server) updateIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// A rename has to REACH the places already showing the old name. Saving it
+	// only changed what the next reader would compose: an operator who renamed
+	// "playbook-internal" to "playbook" watched new tabs open as "playbook" while
+	// every tab already attached — and the island's own tmux status bar — kept
+	// the old name until the tab was closed and the container recreated.
+	if req.Title != nil {
+		s.broadcastIslandTitle(r.Context(), p)
+		s.pushIslandTitleToTmux(r.Context(), p)
+	}
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
+}
+
+// pushIslandTitleToTmux updates the display name the island's own tmux status
+// bar shows. image/tmux.conf renders DEJIMA_PROJECT_TITLE when set and falls
+// back to DEJIMA_PROJECT_NAME (the durable slug), and both are seeded into the
+// container's environment at create — so without this a rename was invisible
+// inside the island until the container was recreated.
+//
+// Best-effort: a hibernated island has no tmux to talk to, and a rename must not
+// fail because of it. The value is re-seeded at the next container create, so a
+// missed push corrects itself rather than persisting.
+func (s *Server) pushIslandTitleToTmux(ctx context.Context, p *project.Project) {
+	if status, err := s.rt.Status(ctx, p.ContainerName()); err != nil || status != runtime.StatusRunning {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	// set-environment -g reaches the format the status line reads; refresh-client
+	// -S redraws the status bar of clients already attached, which is the whole
+	// point (they would otherwise redraw on their own next activity).
+	if _, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
+		[]string{"tmux", "set-environment", "-g", "DEJIMA_PROJECT_TITLE", p.Title}); err != nil || code != 0 {
+		s.log.Debug("push island title to tmux", "island", p.Name, "err", err, "stderr", strings.TrimSpace(stderr))
+		return
+	}
+	_, _, _, _ = s.rt.Exec(ctx, p.ContainerName(), []string{"tmux", "refresh-client", "-S"})
 }
 
 // updateIslandResources changes an island's memory limit and/or OOM priority
@@ -1754,6 +1787,9 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// The agent's label is the second half of every attached tab's title, so a
+	// relabel goes stale in exactly the way an island rename does. Same push.
+	s.broadcastIslandTitle(r.Context(), p)
 	for _, ai := range s.agentInfos(r.Context(), p, s.agentsLive(r.Context(), p)) {
 		if ai.ID == id {
 			writeJSON(w, http.StatusOK, ai)
@@ -2449,6 +2485,12 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	env := map[string]string{
 		"DEJIMA_PROJECT_NAME": p.Name,
 		"DEJIMA_REPO_URL":     p.RepoURL,
+		// The cosmetic display name, for the island's own tmux status bar. It is
+		// SEPARATE from DEJIMA_PROJECT_NAME on purpose: the slug is the durable
+		// handle `dejima msg` and `dejima link` address the island by, so a
+		// rename must not overwrite it. Empty when no title is set — tmux.conf
+		// treats that as unset and shows the slug.
+		"DEJIMA_PROJECT_TITLE": p.Title,
 	}
 	// A Home Island hosts an assistant brain; let it self-identify so it can
 	// drive the Port (intake/export) and spawn work islands via the daemon API.
