@@ -155,8 +155,29 @@ func ProjectConfigPathRead(name string) (string, error) {
 	return filepath.Join(root, "projects", name, "config.toml"), nil
 }
 
+// TokenPathRead is TokenPath for readers: the same path, creating nothing.
+//
+// The same defect #347 fixed for ProjectConfigPath, left standing on this path.
+// porttoken.Load is a pure READ — "does this island have a token?" — and it
+// resolved through ProjectDir, which MkdirAlls. So asking about an island that
+// does not exist BROUGHT ITS DIRECTORY INTO BEING and then answered "no".
+//
+// Observed as purge leftovers: an operator who purged several islands found
+// ~/.dejima/projects still holding a directory per purged name, each empty, each
+// skipped by project.List — so they were invisible to every surface while
+// looking exactly like islands that had failed to delete. A read that creates is
+// not a read.
+func TokenPathRead(name string) (string, error) {
+	root, err := rootPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "projects", name, "token"), nil
+}
+
 // TokenPath returns ~/.dejima/projects/<name>/token — the per-island bearer
 // token for the authenticated in-island → dejimad path (macOS autonomy route).
+// Creates the island's dir, so it is for WRITERS; readers want TokenPathRead.
 func TokenPath(name string) (string, error) {
 	dir, err := ProjectDir(name)
 	if err != nil {

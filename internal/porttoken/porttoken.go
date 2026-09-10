@@ -43,8 +43,13 @@ func Ensure(island string) (string, error) {
 }
 
 // Load returns the island's stored token, or "" if none is set.
+//
+// TokenPathRead, not TokenPath: this is a read, and TokenPath creates the
+// island's directory on the way to answering. Asking about a purged island then
+// recreated it — empty, skipped by project.List, invisible to every surface, and
+// indistinguishable from a delete that failed.
 func Load(island string) (string, error) {
-	p, err := paths.TokenPath(island)
+	p, err := paths.TokenPathRead(island)
 	if err != nil {
 		return "", err
 	}
