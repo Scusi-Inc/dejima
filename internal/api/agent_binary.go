@@ -129,7 +129,18 @@ func (s *Server) repairPreinstalledBinary(
 	if len(repair) == 0 {
 		return false, nil
 	}
-	rctx, cancel := context.WithTimeout(ctx, binaryRepairBudget)
+	// DETACHED FROM THE CALLER'S CANCELLATION, on purpose.
+	//
+	// A half-run `npm install -g` is worse than one never started: it leaves the
+	// package tree in exactly the broken state this function exists to repair, so
+	// the next attempt re-probes, re-installs, and gets cut at the same point. That
+	// is not hypothetical — it is what a 30s client timeout did to a 3m repair,
+	// reported as an agent stuck in `error` that no retry could clear.
+	//
+	// The operator hanging up is not a reason to abandon an idempotent fix
+	// mid-write; the budget below is the bound, and WithoutCancel keeps the
+	// request's values (auth, trace) while dropping only the cancellation.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), binaryRepairBudget)
 	defer cancel()
 	stdout, stderr, code, err := s.rt.Exec(rctx, p.ContainerName(), repair)
 	if err != nil {
