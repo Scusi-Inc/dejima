@@ -277,6 +277,13 @@ func (c *Client) PushCodexCredentials(ctx context.Context, authJSON []byte) erro
 	return c.do(ctx, http.MethodPut, "/v1/credentials/codex", req, nil)
 }
 
+// PushMuseCredentials stores this machine's Muse login on the daemon, so every
+// island inherits it instead of each one needing its own device login.
+func (c *Client) PushMuseCredentials(ctx context.Context, authJSON []byte) error {
+	req := PushCredentialsRequest{CredentialsJSON: string(authJSON)}
+	return c.do(ctx, http.MethodPut, "/v1/credentials/muse", req, nil)
+}
+
 // ClaudeCredentialsStatus reports whether the daemon can seed islands with
 // Claude credentials, and from where.
 func (c *Client) ClaudeCredentialsStatus(ctx context.Context) (*ClaudeCredentialsStatus, error) {
