@@ -1143,6 +1143,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.ticks++
+		// Say that a gateway is still arriving, and retract it when it stops
+		// being true. The forward can be minutes out on a first launch and the
+		// dashboard used to show nothing for the whole of it.
+		if m.tunnels != nil {
+			if note := m.tunnels.waitingNotice(); note != "" {
+				m.lastNotice = note
+			} else if strings.HasPrefix(m.lastNotice, gatewayWaitNoticePrefix) {
+				m.lastNotice = ""
+			}
+		}
 		if m.demo {
 			m.demoTick++ // advance the synthetic fleet so agent states churn on screen
 		}
@@ -3773,7 +3783,7 @@ type gatewayOpenedMsg struct {
 func (m tuiModel) openGatewayCmd(island, agentID string) tea.Cmd {
 	c, tunnels := m.client, m.tunnels
 	return func() tea.Msg {
-		fwd, err := tunnels.openGatewayForAgent(context.Background(), c, island, agentID, nil)
+		fwd, err := tunnels.openGatewayForAgent(context.Background(), c, island, agentID)
 		if err != nil {
 			return gatewayOpenedMsg{island: island, agentID: agentID, err: err}
 		}

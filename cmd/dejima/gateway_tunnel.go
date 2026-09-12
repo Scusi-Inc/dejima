@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/aoos/dejima/internal/api"
@@ -41,12 +43,27 @@ type tunnelManager struct {
 	// Preferring the previous port means a stale tab recovers on reload, which is
 	// exactly what a person does when a page fails.
 	lastPort map[string]int
+	// waiting holds the agents whose gateway did not answer on the first probe,
+	// so the dashboard can SAY SO while it waits. gatewayReadyBudget is five
+	// minutes — sized for the npm install a first launch runs inside the
+	// container — and without this the dashboard showed nothing for all of it
+	// and then an error, which reads as a broken island rather than a slow
+	// install. The CLI has printed that notice since #356; the TUI had the hook
+	// and passed nil, so the surface most operators actually use was the one
+	// left silent.
+	waiting map[string]bool
 }
+
+// gatewayWaitNoticePrefix marks the notice as ours so a tick can retract it when
+// the wait ends. Without a marker the "still waiting" line would outlive the
+// wait and sit under a success or a failure that contradicts it.
+const gatewayWaitNoticePrefix = "gateway: waiting for "
 
 func newTunnelManager() *tunnelManager {
 	return &tunnelManager{
 		tunnels:  map[string]*gatewayForward{},
 		lastPort: map[string]int{},
+		waiting:  map[string]bool{},
 	}
 }
 
@@ -134,9 +151,51 @@ func (m *tunnelManager) CloseAll() {
 	}
 }
 
+// markWaiting / clearWaiting record that an agent's gateway has not answered
+// yet. Set from startGatewayForward's first-miss callback, read by the
+// dashboard's tick.
+func (m *tunnelManager) markWaiting(island, agentID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.waiting[tunnelKey(island, agentID)] = true
+}
+
+func (m *tunnelManager) clearWaiting(island, agentID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.waiting, tunnelKey(island, agentID))
+}
+
+// waitingNotice is the line the dashboard shows while a gateway is still
+// arriving, or "" when nothing is waiting. It names the reason, because the
+// operator's question is not "is it slow" but "is it broken".
+func (m *tunnelManager) waitingNotice() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.waiting) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m.waiting))
+	for k := range m.waiting {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // stable line across ticks; a churning notice reads as breakage
+	who := keys[0]
+	if len(keys) > 1 {
+		who = fmt.Sprintf("%d agents", len(keys))
+	}
+	return gatewayWaitNoticePrefix + who +
+		" — a first launch installs the framework inside the island, which can take a few minutes (this is normal)"
+}
+
 // openGatewayForAgent returns a live forward for the agent, reusing an existing
 // one when there is one. The caller opens fwd.URL.
-func (m *tunnelManager) openGatewayForAgent(ctx context.Context, c *api.Client, island, agentRef string, notify func()) (*gatewayForward, error) {
+//
+// It takes NO notify callback. It used to, and the dashboard — the one caller,
+// and the surface where silence hurts most — passed nil, so a five-minute wait
+// showed nothing at all. An optional hook that one caller must remember to wire
+// is a hook that will be nil again; building it here means it cannot be.
+func (m *tunnelManager) openGatewayForAgent(ctx context.Context, c *api.Client, island, agentRef string) (*gatewayForward, error) {
 	t, err := resolveGatewayTarget(ctx, c, island, agentRef)
 	if err != nil {
 		return nil, err
@@ -148,7 +207,12 @@ func (m *tunnelManager) openGatewayForAgent(ctx context.Context, c *api.Client, 
 	}
 	// Prefer the port this agent used last, so a browser tab left open from a
 	// previous forward recovers on reload instead of staying broken.
-	fwd, err := startGatewayForward(ctx, t, m.portFor(t.Island, t.AgentID), notify)
+	// Cleared on BOTH paths: a wait that ended in failure must not leave the
+	// dashboard claiming it is still waiting, under an error saying it is not.
+	defer m.clearWaiting(t.Island, t.AgentID)
+	fwd, err := startGatewayForward(ctx, t, m.portFor(t.Island, t.AgentID), func() {
+		m.markWaiting(t.Island, t.AgentID)
+	})
 	if err != nil {
 		return nil, err
 	}
