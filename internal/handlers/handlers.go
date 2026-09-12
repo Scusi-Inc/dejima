@@ -207,6 +207,41 @@ var registry = map[string]Handler{
 		InstallCmd:          []string{"pipx", "install", "aider-chat"},
 		UpdateCmd:           []string{"pipx", "upgrade", "aider-chat"},
 	},
+	// Muse Code — Meta's terminal coding agent. INTERACTIVE, like claude-code
+	// and codex, not a headless assistant: you attach and drive it. It gets
+	// confused with Meta's consumer "Muse" assistant, which is OpenClaw-shaped
+	// and has a hosted runtime with its own client apps — that one cannot run in
+	// an island at all, and is not this.
+	//
+	// Self-installs on first launch (kept out of the base image, like openclaw).
+	// The install script only plants a LAUNCHER at $MUSE_INSTALL_DIR/muse, which
+	// fetches and checksum-verifies the real runtime on use — so the install is
+	// small and the version floats with Meta rather than with our image.
+	//
+	// MUSE_AUTH_PATH IS THE WHOLE INTEGRATION, and it is why this agent needs no
+	// shim in the island image. The launcher resolves its credential to
+	// $MUSE_AUTH_PATH, else $XDG_CONFIG_HOME/muse/auth.json, else
+	// ~/.config/muse/auth.json. Pointing that variable at the mounted seed means
+	// the contract lives on THIS LINE, which ships with the daemon, instead of in
+	// a script baked into the image. Codex could not do that — its shim copies
+	// /opt/host/codex/auth.json by name — and the cost there is that a change
+	// needs a rebuilt image to reach islands that already exist. Here a recreate
+	// (`dejima upgrade <island>`) is enough, because only the bind mount is new.
+	//
+	// MUSE_NO_AUTO_UPDATE is set deliberately. The launcher self-updates in the
+	// background; inside a supervised island that means a long task can have its
+	// runtime swapped underneath it, and the operator sees a failure they cannot
+	// reproduce. Updates go through UpdateCmd, where they are an explicit act.
+	"muse": {ID: "muse", Kind: KindInteractive,
+		Launch: "bash -lc 'export MUSE_NO_AUTO_UPDATE=1; " +
+			"export PATH=\"$HOME/.local/bin:$PATH\"; " +
+			"[ -f /opt/host/muse/auth.json ] && export MUSE_AUTH_PATH=/opt/host/muse/auth.json; " +
+			"command -v muse >/dev/null 2>&1 || curl -fsSL https://dev.meta.ai/install.sh | bash; " +
+			"exec muse'",
+		StateDir:   "/home/dejima/.config/muse",
+		InstallCmd: []string{"bash", "-lc", "curl -fsSL https://dev.meta.ai/install.sh | bash"},
+		UpdateCmd:  []string{"bash", "-lc", "MUSE_SYNC_UPDATE=1 muse --version"},
+	},
 	Shell: {ID: Shell, Kind: KindInteractive, Launch: "bash -l", StateDir: "/home/dejima"},
 	// OpenClaw: a first-class headless assistant. Self-installs on first launch
 	// (kept out of the base image to avoid bloating every island) and runs its

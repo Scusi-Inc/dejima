@@ -464,6 +464,42 @@ func CodexSeedDir() (string, error) {
 	return dir, nil
 }
 
+// HostMuseDir returns the user's ~/.config/muse dir (may not exist).
+//
+// XDG-aware because the muse launcher is: it resolves its credential to
+// $XDG_CONFIG_HOME/muse/auth.json and falls back to ~/.config/muse/auth.json.
+// Reading the same variable means a push finds the login on a host that sets
+// it, rather than reporting "no muse login" at a machine that plainly has one.
+func HostMuseDir() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "muse"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "muse"), nil
+}
+
+// MuseSeedDir returns ~/.dejima/secrets/muse — where a pushed Muse login is
+// stored so islands can inherit it.
+//
+// Separate from the operator's own ~/.config/muse for the same reason
+// CodexSeedDir is separate from ~/.codex: a push must never write into the
+// account the operator is using on this machine, and a headless daemon host has
+// no such directory to write into anyway.
+func MuseSeedDir() (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, "secrets", "muse")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // HostGitConfig returns the user's ~/.gitconfig path (may not exist).
 func HostGitConfig() (string, error) {
 	home, err := os.UserHomeDir()

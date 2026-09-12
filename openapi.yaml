@@ -1625,6 +1625,28 @@ paths:
       responses:
         "204": { description: Stored }
         "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/credentials/muse:
+    put:
+      tags: [credentials]
+      summary: Push a Muse auth blob as the seed islands inherit
+      description: >-
+        Stored as auth.json in the daemon's seed dir and served to islands at
+        /opt/host/muse. Muse authenticates by OIDC device code, so without this
+        every island means another browser round-trip. Unlike the Codex seed the
+        mount path is not a contract with a script in the island image: the muse
+        agent's launch line exports MUSE_AUTH_PATH at that path. A pushed
+        credential takes precedence over the daemon host's own ~/.config/muse.
+        Islands created before this endpoint existed need `dejima upgrade` to
+        pick up the bind mount.
+      operationId: pushMuseCredentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PushCredentialsRequest" }
+      responses:
+        "204": { description: Stored }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /v1/credentials/github:
     get:
       tags: [credentials]

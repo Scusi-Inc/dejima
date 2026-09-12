@@ -775,6 +775,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("PUT /v1/credentials/claude", s.handlePushClaudeCreds)
 	mux.HandleFunc("PUT /v1/credentials/codex", s.handlePushCodexCreds)
+	mux.HandleFunc("PUT /v1/credentials/muse", s.handlePushMuseCreds)
 	mux.HandleFunc("GET /v1/credentials/claude", s.handleClaudeCredsStatus)
 	mux.HandleFunc("GET /v1/credentials/github", s.handleGitHubIdentities)
 	mux.HandleFunc("PUT /v1/credentials/github/{name}", s.handlePutGitHubIdentity)
@@ -971,6 +972,36 @@ func (s *Server) handlePushCodexCreds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("codex credentials pushed by client")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handlePushMuseCreds stores a Muse login pushed from a client machine, so
+// islands inherit it instead of each one needing its own device login.
+//
+// Muse authenticates by OIDC device code, so the per-island alternative is a
+// browser round-trip every time an island is created — which is the per-island
+// account `dejima auth push` exists to avoid.
+func (s *Server) handlePushMuseCreds(w http.ResponseWriter, r *http.Request) {
+	var req PushCredentialsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+	blob := []byte(req.CredentialsJSON)
+	if err := agentcreds.ValidateMuse(blob); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	dir, err := paths.MuseSeedDir()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if _, err := agentcreds.WriteMuseSeed(dir, blob); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.log.Info("muse credentials pushed by client")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -3846,6 +3877,37 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 			if _, statErr := os.Stat(codexDir); statErr == nil {
 				binds = append(binds, runtime.BindMount{
 					HostPath: codexDir, ContainerPath: "/opt/host/codex", ReadOnly: true,
+				})
+			}
+		}
+	}
+
+	// Muse: same precedence rule as Codex — a PUSHED login wins over the daemon
+	// host's own ~/.config/muse, because the push is the more deliberate of the
+	// two. An operator who ran `dejima auth push` on a logged-in machine said
+	// which account islands should use; the host's own config is whatever
+	// happens to be on the daemon box.
+	//
+	// UNLIKE CODEX, the mount path is not a contract with a script in the image.
+	// The muse handler's launch line exports MUSE_AUTH_PATH=/opt/host/muse/auth.json,
+	// and that line ships with the daemon — so the path can move later without a
+	// rebuilt image. What still does NOT reach an existing island is the bind
+	// mount itself: binds are assembled at container CREATE, so an island made
+	// before this needs `dejima upgrade <island>` to see it. One step, not two.
+	museMounted := false
+	if seedDir, err := paths.MuseSeedDir(); err == nil {
+		if _, statErr := os.Stat(filepath.Join(seedDir, agentcreds.MuseAuthFile)); statErr == nil {
+			binds = append(binds, runtime.BindMount{
+				HostPath: seedDir, ContainerPath: "/opt/host/muse", ReadOnly: true,
+			})
+			museMounted = true
+		}
+	}
+	if !museMounted {
+		if museDir, err := paths.HostMuseDir(); err == nil {
+			if _, statErr := os.Stat(museDir); statErr == nil {
+				binds = append(binds, runtime.BindMount{
+					HostPath: museDir, ContainerPath: "/opt/host/muse", ReadOnly: true,
 				})
 			}
 		}
