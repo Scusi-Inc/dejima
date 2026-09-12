@@ -15,10 +15,18 @@ func adderFor(gap map[string]bool) tuiModel {
 	return m
 }
 
-// pickOpenClaw moves the picker to openclaw (4th: shell, claude-code, codex,
-// openclaw) and selects it.
-func pickOpenClaw(m tuiModel) {
-	for _, k := range []string{"down", "down", "down", "enter"} {
+// pickAgent moves the adder's picker to typ and selects it, deriving the walk
+// from agentTypeOptions (see downsTo) rather than counting "down"s against a
+// list order copied into a comment.
+//
+// What that buys here is specific: these tests turn on WHICH agent was picked —
+// one with a key gap routes through the key step, one without goes straight to
+// the label. A reorder that silently pointed a hardcoded walk at a different
+// agent would leave every assertion below passing, about an agent whose key
+// requirement is the opposite of the one the test is named for.
+func pickAgent(t *testing.T, m tuiModel, typ string) {
+	t.Helper()
+	for _, k := range append(downsTo(t, typ), "enter") {
 		m.agentAdderKey(key(k))
 	}
 }
@@ -29,7 +37,7 @@ func TestAddAgentGuidesProviderKey(t *testing.T) {
 	m := adderFor(map[string]bool{"openclaw": true})
 	a := m.agentAdder
 
-	pickOpenClaw(m)
+	pickAgent(t, m, "openclaw")
 	if a.phase != adderKey {
 		t.Fatalf("openclaw with no key: phase = %v, want adderKey", a.phase)
 	}
@@ -65,7 +73,7 @@ func TestAddAgentSkipsKeyWhenSatisfied(t *testing.T) {
 	m := adderFor(map[string]bool{}) // no gap → key already set
 	a := m.agentAdder
 
-	pickOpenClaw(m)
+	pickAgent(t, m, "openclaw")
 	if a.phase != adderLabel {
 		t.Errorf("a satisfied agent should skip the key step: phase = %v, want adderLabel", a.phase)
 	}
@@ -76,7 +84,7 @@ func TestAddAgentOrdinaryNoKeyStep(t *testing.T) {
 	m := adderFor(map[string]bool{"openclaw": true})
 	a := m.agentAdder
 
-	m.agentAdderKey(key("enter")) // first option is shell
+	pickAgent(t, m, "shell")
 	if a.phase != adderLabel {
 		t.Errorf("shell should go straight to the label step: phase = %v", a.phase)
 	}
