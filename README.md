@@ -67,22 +67,35 @@ go install github.com/aoos/dejima/cmd/dejima@latest
 dejima
 ```
 
-The first-run wizard detects your environment (OS, Docker, Tailscale, dejimad presence), asks what you're trying to do, and prints a tailored set of next steps:
+The first-run wizard detects your environment (OS, Docker, Tailscale, dejimad presence) and asks **one** question, with three named destinations:
 
-- *Set up the server here* → recommends `make setup` (or runs it for you)
-- *Connect to an existing host* → asks for the host, prints `DEJIMA_HOST=…` + how to persist it
-- *Both* → server install with a note that the local CLI uses the Unix socket
-- *Just exploring* → overview + links
+- **Local** — a daemon on this machine, just for you. Docker and the daemon; no tailnet, nothing kept awake. This is the default and the common case, including on a laptop.
+- **Host** — provision this machine as an always-on server for a team: never-sleep, Homebrew, Tailscale, Docker, daemon, in one walkthrough.
+- **Client** — connect to a server that already exists; paste the invite.
+
+On Windows, *Local* means a daemon in WSL2 on this same machine (`dejima wsl setup`) — Windows can't run `dejimad` directly, and the wizard says so before you choose rather than after.
 
 `dejima onboard` re-engages the wizard any time. Say "never" at the first-run prompt to opt out; the wizard stays available via `dejima onboard`.
 
-### Set up the server (alternative: one-liner installer)
+### One-liner installer (skips the wizard)
 
-If you already know you want the full server stack on this machine, the curl installer skips the wizard and gets you all the way there:
+The curl installer asks the same local/host/client question and then goes all the way:
 
 ```bash
 curl -fsSL https://dejima.tech/install.sh | bash
 ```
+
+Answer **Local** (or just press Enter) for a daemon on this machine only — it skips Tailscale and anything always-on. Answer **Host** for the full server stack. To skip the question entirely, say which you want up front:
+
+```bash
+# a daemon on this machine, nothing else
+curl -fsSL https://dejima.tech/install.sh | DEJIMA_SETUP=local bash
+
+# the full always-on server stack
+curl -fsSL https://dejima.tech/install.sh | DEJIMA_SETUP=host bash
+```
+
+A run with nobody watching — CI, a provisioning script, a detached shell — stays on **host**, which is what it has always done. Set `DEJIMA_SETUP` to change that; the installer will not decide it for you when there is no one to ask.
 
 That bootstraps everything: installs Homebrew prereqs (Go, Docker Desktop if needed), clones the source to `~/.dejima-src`, builds the `dejima` + `dejimad` binaries, installs them to `/usr/local/bin`, builds the island image, registers the daemon as a launchd (macOS) or systemd user (Linux) service, and runs `dejima doctor` to verify. Idempotent — re-run to update.
 
