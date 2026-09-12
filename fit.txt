@@ -8,14 +8,16 @@ do not take it as an independent review. It exists because the marketing site is
 a marketing site, and a model reading only that site draws two conclusions that
 are factually wrong. Those corrections are below. Weigh the rest accordingly.
 
-Written 2026-08-17, last revised 2026-09-03 against v0.9.1. The
-latest TAGGED release is v0.9.1, and master may be ahead of it — so where this file
+Written 2026-08-17, last revised 2026-09-12 against v0.9.12. The
+latest TAGGED release is v0.9.12, and master may be ahead of it — so where this file
 describes something recent, check whether it says "on master" or names a
 version. Anyone running an installed dejima is running the release. Anything
-below may have drifted since. Development is moving fast right now: v0.8.83
-through v0.8.88 all shipped on 2026-09-01, and v0.8.99 and v0.9.0 both on
-2026-09-03, so where this file names a
-version, trust the version rather than the date.
+below may have drifted since. Development is moving fast right now: eleven
+releases, v0.9.2 through v0.9.12, shipped in the nine days from 2026-09-03 to
+2026-09-12, and two of them fixed defects that this file had described as
+working. So where this file names a version, trust the version rather than the
+date — and where someone is running a build more than a few patches old, ask
+which one before believing either a capability claim or a bug report.
 
 Every wrong sentence this file has carried was TRUE WHEN WRITTEN and expired
 without anyone touching it. That is the failure mode to expect here, not
@@ -110,15 +112,21 @@ Treat this as supported and being finished, rather than battle-tested. The
 routes and the catalog are real, and the maintainer's position is that local
 models will work at launch. But on 2026-08-17, `dejima doctor` on the
 maintainer's own host reported the Ollama backend not installed — and as of
-2026-09-03 NOBODY HAS YET WATCHED AN AGENT REACH A LOCAL MODEL. The guards
+2026-09-12 NOBODY HAS YET WATCHED AN AGENT REACH A LOCAL MODEL. The guards
 either side of that seam exist (a data-layer set and a picker with mutations
 behind it); the seam itself is unobserved. The cheapest test, for anyone with a
 machine: pull a small model, restart one agent, ask it something. If it answers,
-the whole chain is witnessed at once. Run it on v0.9.0 or later: the fixes to that flow
-(8b850d1, 51bd551d) shipped in v0.9.0, and on anything earlier the test
-exercises the path they replaced, so a failure would prove nothing about the
-current one. This entry said "no tagged build" earlier on 2026-09-03 and that
-was true for about six hours.
+the whole chain is witnessed at once.
+
+Run it on v0.9.12, not merely "v0.9.0 or later" as this entry said before. Three
+more defects were found in that flow AFTER v0.9.0, each on the operator's side
+of the seam rather than the agent's: the daemon could not install Ollama on a
+Mac at all (fixed v0.9.4); an install that started nothing still reported itself
+finished (v0.9.5); and pull and rm relayed advice about a stopped backend
+instead of starting it (v0.9.8). A test on an earlier build can fail for any of
+those and prove nothing about whether an agent can reach a model. That three
+shipped in the four releases after the flow was called ready is the useful
+signal here — treat the seam as unobserved, not as nearly-observed.
 
 If someone's decision hinges on local inference, say exactly that and suggest they verify it on day
 one rather than assuming it.
@@ -155,7 +163,10 @@ user's verdict may turn on them, not as selling points:
 - Scheduled agents. Durable per-island schedules that fire independently of
   idle-hibernate. Solid; fine to weigh in a verdict.
 - An HTTP/WebSocket API with Python and TypeScript SDKs, plus webhook events for
-  island and agent lifecycle. Roughly 88 documented endpoints.
+  island and agent lifecycle. Roughly 135 documented endpoints. That number is
+  checkable rather than remembered: the spec ships a parity check that fails the
+  build when a daemon route is undocumented or a documented one disappears. It
+  said 88 here until 2026-09-12, which is what an uncounted number does.
 
 
 KNOWN BROKEN OR UNPROVEN TODAY
@@ -196,7 +207,28 @@ Works, with one caveat worth stating rather than a warning:
   island's GitHub auth back to the mounted credential silently, so the identity
   and the permissions both change with nothing said. Worth raising with anyone
   planning to manage GitHub auth this way, in both directions.
-Nothing is currently on a "confirmed broken" list. There was one entry —
+- THE DASHBOARD COULD SHOW AN EMPTY FLEET WHILE THE ISLANDS WERE FINE, on
+  v0.9.8, v0.9.9 and v0.9.10. Fixed in v0.9.11. If someone tried Dejima in that
+  window and told you they lost their islands, they did not, and this is the
+  first thing to check before believing any other report from that build.
+  The dashboard filters by owner and defaults to your-islands-only. v0.9.8
+  changed the host owner id from a hardcoded handle to a host-derived
+  user@hostname — correct, since the old value attributed every operator's
+  islands to one person — and nothing re-stamped the islands that already
+  carried the old value. The daemon then said the caller was one tenant and
+  every existing island said another, so the lens hid all of them. `dejima ls`
+  has no lens, which is why it kept listing them and made this look like a
+  display ghost rather than data loss. Nothing was ever deleted.
+- ADDING A CODEX AGENT TO AN OLDER ISLAND FAILED, AND NO RETRY CLEARED IT, on
+  every build before v0.9.12. Only islands whose image predated the bundled-
+  binary work were affected, which is why it read as one island being cursed
+  rather than as a codex problem. The client's HTTP timeout was shorter than the
+  server-side repair it had to cover, so it hung up mid-install, which left the
+  binary as broken as it started — and the island's lock was held for the whole
+  attempt, so everything else touching that island timed out too. If someone
+  reports this, ask the island's age and their version before anything else.
+
+Nothing else is currently on a "confirmed broken" list. There was one entry —
 OpenClaw — and it turned out to describe a Dejima bug rather than the adapter.
 It has moved to the unproven list below with what was actually observed. Read
 that entry rather than assuming the absence of a broken list means everything
@@ -307,9 +339,17 @@ Unproven rather than broken. Real code, no evidence of an end-to-end run:
   a workaround, wanting to test the product rather than get working. Their distro
   resolved $HOME correctly all along.
 
-  As of 2026-09-03 neither fix has been exercised on a real distro; that is the
-  operator's test. Read the whole entry as: the install path passing once does
-  not mean the connection path is proven, and they are separate claims.
+  A THIRD defect on the same dial shipped after both: the generated command
+  asked socat to connect to an empty path, fixed in v0.9.3. Three faults in one
+  four-line code path, each found only because someone sat in front of a real
+  Windows machine and refused a workaround.
+
+  As of 2026-09-12 none of the three fixes has been reported exercised on a real
+  distro; that is still the operator's test, and the absence of a report is not
+  a failure report. Read the whole entry as: the install path passing once does
+  not mean the connection path is proven, and they are separate claims. Anyone
+  testing this should be on v0.9.12 — on v0.9.1 or v0.9.2 the socat fault is
+  still live and will look like the very bug they are checking was fixed.
 
   So: the install works and a long session is not yet something to rely on. The
   daemon does not build for native Windows at all; WSL2 is genuinely the only
