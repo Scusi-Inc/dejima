@@ -153,6 +153,13 @@ type tuiModel struct {
 	callerOwner string
 	callerRole  string // "owner" | "operator" | "viewer" | "" (unknown)
 
+	// localModels are the open-weights models actually pulled on the daemon host,
+	// by curated alias. The header reads them (see localHeaderNote); the settings
+	// sub-page keeps its own copy of the full status because it renders more than
+	// the names. Fetched once at Init and refreshed by every localStatusMsg, so a
+	// pull made on the settings page shows up on the header without a restart.
+	localModels []string
+
 	tipTick   int // advances each overview poll; drives the rotating header Tip line (see currentTip)
 	ownerLens int // lensOwn (default) | lensAll
 	width     int
@@ -465,7 +472,7 @@ func terminalIndex(v string) int {
 }
 
 // settingsTopLen is the number of rows on the top preferences page.
-const settingsTopLen = 10 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models · provider keys · terminal
+const settingsTopLen = 11 // editor · group-by-repo · connection target · github · team · check-for-updates · update · local models · provider keys · terminal · ssh access
 // NB: voice dictation was row 6; it is roadmapped, not wired — see docs/roadmap.md.
 
 func (m tuiModel) openSettings() tuiModel {
@@ -566,6 +573,9 @@ func (m tuiModel) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				s.page, s.sel = settingsLocal, 0
 				s.localStatus, s.localErr = nil, ""
 				return m, m.fetchLocalStatusCmd()
+			case 10: // SSH access → the same account-wide setup the [H] menu arms
+				m.settings = nil
+				return m.startSSHSetup()
 			}
 			return m, nil
 		case settingsTerminal:
@@ -962,7 +972,11 @@ func (m tuiModel) Init() tea.Cmd {
 		// fleet, polled on the tick so it animates. Keeps recordings clean.
 		return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchPendingActionsCmd(), tickCmd())
 	}
-	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchObservedCmd(), m.fetchSetupReadinessCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
+	// fetchLocalStatusCmd is here, not on the tick: what is pulled on the host
+	// changes when someone pulls a model, and the two ways that happens from here
+	// (the settings page, `dejima local pull`) both end in a localStatusMsg. Once
+	// at startup is enough, and it keeps a per-tick shell-out off the daemon.
+	return tea.Batch(tea.SetWindowTitle("dejima"), m.fetchListCmd(), m.fetchOverviewCmd(), m.fetchObservedCmd(), m.fetchSetupReadinessCmd(), m.fetchLocalStatusCmd(), fetchLatestReleaseCmd(), tickCmd(), releaseTickCmd())
 }
 
 // latestReleaseMsg carries the newest published release tag, or the reason the
@@ -1370,6 +1384,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchSetupReadinessCmd()
 
 	case localStatusMsg:
+		// The header's copy is updated whoever asked for the status and wherever
+		// the settings overlay happens to be — this message is the ONLY place the
+		// names change, so gating it on the sub-page being open is how the header
+		// would come to show a model list from before the last pull.
+		if msg.err == nil {
+			m.localModels = pulledModelNames(msg.status)
+		}
 		// Land the status in the settings sub-page only if it's still open on it.
 		if s := m.settings; s != nil && s.page == settingsLocal {
 			if msg.err != nil {
@@ -4353,26 +4374,32 @@ func (m tuiModel) renderHeader() string {
 	}
 	logo := strings.Join(logoLines, "\n")
 
-	// server: <label>  ·  [C] switch  [·  ssh <addr>]
+	// server: <label>  ·  [C] switch  [·  local: <model>]
 	// [C] opens the connection switcher (also at Settings → Connection target).
 	// It said [s] until `s` became the row menu, at which point the header was
 	// pointing the operator at a menu for the island they happened to be on —
 	// so the key named here and the key that switches must stay the same one,
-	// which TestHeaderSwitchKeyActuallySwitches holds down. The ssh hint appears
-	// only when the daemon has the SSH-façade listener on (--ssh);
-	// `dejima ssh config <island> --install` resolves the full address.
+	// which TestHeaderSwitchKeyActuallySwitches holds down.
+	//
+	// WHAT EARNS A PLACE HERE is a property of the server you are pointed at
+	// that changes what you would do next. `[I] team` and the ssh address did
+	// not: team is an occasional administrative errand, and the ssh address is
+	// a value you copy once when wiring up an editor and never read again. Both
+	// sat on every redraw of every session. They now live in Settings (Team &
+	// invites; SSH access), which is where the rest of the once-in-a-while
+	// configuration already is — nothing was removed, only moved off the line
+	// you read constantly. The [I] key itself still works.
+	//
+	// The local-model note replaces them because it IS decision-shaping: it is
+	// the difference between an agent you pay per token for and one you do not,
+	// and it was previously invisible outside a settings sub-page.
 	serverLine := styleMuted.Render("server: ") + styleAccent.Render(label)
 	if m.activeSource == "env" {
 		serverLine += styleMuted.Render(" via $DEJIMA_HOST")
 	}
 	serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("["+switchKey+"]") + styleMuted.Render(" switch")
-	// Team controls are owner-only; surface the hint unless we know the caller is
-	// a teammate (fail-open before the daemon reports identity, matching the lens).
-	if m.callerRole == "" || m.callerRole == "owner" {
-		serverLine += styleMuted.Render("  ·  ") + styleAccent.Render("[I]") + styleMuted.Render(" team")
-	}
-	if m.overview != nil && m.overview.SSHAddr != "" {
-		serverLine += styleMuted.Render("  ·  ssh ") + styleAccent.Render(m.overview.SSHAddr)
+	if note := localHeaderNote(m.localModels); note != "" {
+		serverLine += styleMuted.Render("  ·  ") + styleAccent.Render(note)
 	}
 
 	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
@@ -6212,6 +6239,18 @@ func (m tuiModel) renderSettings() string {
 	row(7, "", "Local models              "+styleMuted.Render("shared open-weights models (Ollama)")+styleMuted.Render("  →"))
 	row(8, "", "Provider keys             "+styleMuted.Render("Anthropic / OpenAI / Google API keys")+styleMuted.Render("  →"))
 	row(9, "", "Default terminal          "+styleMuted.Render("which terminal new windows open in")+styleMuted.Render("  →"))
+	// SSH access came off the header's server line, which printed the address on
+	// every redraw of every session for a value you copy once when wiring up an
+	// editor. It is not gone — it is here, WITH the address, beside the setup
+	// action that makes it usable. "off" is stated rather than left blank: an
+	// empty row cannot be told apart from one that failed to load.
+	sshRow := "SSH access                "
+	if m.overview != nil && m.overview.SSHAddr != "" {
+		sshRow += styleMuted.Render(m.overview.SSHAddr+" · authorize this machine") + styleMuted.Render("  →")
+	} else {
+		sshRow += styleMuted.Render("off — start dejimad with --ssh")
+	}
+	row(10, "", sshRow)
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("↑/↓ move · ⏎ select · esc close"))
 	return b.String()

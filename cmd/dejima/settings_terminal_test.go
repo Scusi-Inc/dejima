@@ -42,8 +42,8 @@ func TestTerminalRowAppearsOnTheTopPage(t *testing.T) {
 	if out := m.renderSettings(); !strings.Contains(out, "Default terminal") {
 		t.Errorf("no Default terminal row on the preferences page:\n%s", out)
 	}
-	if settingsTopLen != 10 {
-		t.Errorf("settingsTopLen = %d; the terminal row makes it 10, and a cursor that "+
-			"cannot reach the last row is the row not existing", settingsTopLen)
+	if settingsTopLen != 11 {
+		t.Errorf("settingsTopLen = %d; the terminal and SSH-access rows make it 11, and a "+
+			"cursor that cannot reach the last row is the row not existing", settingsTopLen)
 	}
 }
