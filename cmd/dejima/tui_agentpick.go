@@ -348,7 +348,7 @@ type adderKeySetMsg struct {
 // addAgentSpecCmd posts a new agent to an island and reports the outcome.
 func (m tuiModel) addAgentSpecCmd(name string, req api.AgentSpecRequest) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), api.AddAgentBudget)
 		defer cancel()
 		ag, err := m.client.AddAgent(ctx, name, req)
 		if err != nil {

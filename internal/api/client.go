@@ -1583,10 +1583,29 @@ func (c *Client) RestartAgent(ctx context.Context, name, id string, resume bool)
 		map[string]bool{"resume": resume}, nil)
 }
 
+// AddAgentBudget is the deadline every AddAgent caller must allow. Adding an
+// agent is usually sub-second, but a bundled agent whose binary is broken gets
+// REPAIRED in-band — a `npm install -g` inside the island, bounded by
+// binaryRepairBudget — and that repair runs while the operator waits.
+//
+// So this is not a guess about how slow the server might be, it is the server's
+// own worst case plus headroom, and addagent_budget_test.go fails if it ever
+// stops exceeding it. Callers pass it rather than inventing their own number,
+// because inventing one is how this broke: the TUI chose 60s, which was both
+// larger than the 30s that actually applied and smaller than the 3m it needed.
+const AddAgentBudget = 5 * time.Minute
+
 // AddAgent adds an agent to an island.
+//
+// doLong, not do: the 30s default client timeout is a HARD cap that overrides
+// the context, and a first-time codex add on an island with a stale image spends
+// up to binaryRepairBudget (3m) reinstalling the binary before it can answer.
+// Under do() that add could not succeed — the client hung up at 30s, which
+// cancelled the request context, which killed the npm install mid-flight and
+// left the agent in `error`. Retrying repeated it exactly. See AddAgentBudget.
 func (c *Client) AddAgent(ctx context.Context, name string, req AgentSpecRequest) (*AgentInfo, error) {
 	var out AgentInfo
-	if err := c.do(ctx, http.MethodPost, "/v1/islands/"+name+"/agents", req, &out); err != nil {
+	if err := c.doLong(ctx, http.MethodPost, "/v1/islands/"+name+"/agents", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

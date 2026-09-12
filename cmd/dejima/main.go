@@ -3047,7 +3047,11 @@ func newAgentAddCmd() *cobra.Command {
 			if sb == "" {
 				sb = strings.TrimSpace(os.Getenv("DEJIMA_AGENT_ID"))
 			}
-			a, err := c.AddAgent(cmd.Context(), args[0], api.AgentSpecRequest{
+			// A first add on an island with a stale image repairs the agent binary
+			// in-band; api.AddAgentBudget covers that worst case.
+			actx, cancel := context.WithTimeout(cmd.Context(), api.AddAgentBudget)
+			defer cancel()
+			a, err := c.AddAgent(actx, args[0], api.AgentSpecRequest{
 				Type: typ, Label: label, Provider: provider, Model: model,
 				Ephemeral: ephemeral, SpawnedBy: sb,
 			})
