@@ -252,6 +252,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		HostTerminalsEnabled: s.hostTerminals,
 		SSHAddr:              s.sshAddr,
 		SSHHostKey:           s.sshHostKey,
+		TokenAddr:            s.tokenAddr,
+		TokenBindKind:        s.tokenBindKind,
 		DaemonVersion:        version.Version,
 		APIVersion:           version.APIVersion,
 		Panicked:             panicEngaged(),

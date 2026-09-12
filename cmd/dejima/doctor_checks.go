@@ -201,26 +201,73 @@ func checkStateOwnership(r *doctorReport) {
 }
 
 // checkListenerExposure is a security-posture line: confirm the in-island
-// autonomy listener is bound host-internal (loopback), not somewhere the LAN can
-// reach it. Reads the system daemon's plist (world-readable); only meaningful for
-// a launchd-system install.
-func checkListenerExposure(r *doctorReport) {
+// autonomy listener is bound host-internal, not somewhere the LAN can reach it.
+//
+// It ASKS THE DAEMON, because nothing else can answer. This used to read
+// --token-tcp out of the system LaunchDaemon plist and call an absent flag
+// "off", which was wrong in both directions:
+//
+//   - The listener is ON BY DEFAULT (dejimad falls back to defaultTokenAddr when
+//     the flag is absent — it is the only in-island path now the control socket
+//     isn't mounted into containers). So the common case for a WORKING autonomy
+//     path was reported as no autonomy path at all. Observed on Minion: the row
+//     read "token-TCP off (no in-island autonomy path)" while five islands on
+//     that host were reaching the daemon through it.
+//   - Even with the flag absent, hostInternalBind relocates a loopback default
+//     onto the docker bridge gateway on a native engine, so the plist names an
+//     address the daemon is not on.
+//
+// The second point is also why the daemon reports a KIND and not just an
+// address. A relocated bind is non-loopback and completely correct; judging by
+// address alone would raise "reachable beyond this host" on every native-Linux
+// host, and a security check that cries wolf on the correct configuration gets
+// switched off.
+//
+// The operator-API row stays plist-derived: --tcp has no default, so its absence
+// really does mean off.
+// autonomyListenerVerdict turns the daemon's reported bind into a row. Pure, so
+// the judgement is testable without a daemon — and so the bridge-gateway case
+// has somewhere to be asserted, which is the one a naive loopback test gets
+// wrong. An empty status means "report nothing".
+func autonomyListenerVerdict(addr, kind string) (status, detail, fix string) {
+	switch {
+	case kind == "":
+		// A daemon predating this field. Say nothing: an unverified claim about a
+		// security boundary is worse than no line at all, and guessing from the
+		// plist is exactly what this replaced.
+		return "", "", ""
+	case kind == "bind-failed":
+		return "WARN",
+			"the in-island autonomy listener is not bound — islands cannot reach the daemon",
+			"usually a port clash on the token listener; free the port or pick another with " +
+				"`dejima service install --system --token-tcp 127.0.0.1:<port> …`, then restart dejimad"
+	case kind == "bridge-gateway":
+		return "OK",
+			addr + " — the docker bridge gateway (host-internal: on a native engine a container can't reach the host's loopback)", ""
+	case isLoopbackAddr(addr):
+		return "OK", addr + " — host-internal (loopback)", ""
+	default:
+		return "WARN",
+			addr + " — the bearer-token listener is NOT host-internal; it's reachable beyond this host",
+			"rebind host-internal: `dejima service install --system --token-tcp 127.0.0.1:7274 …`"
+	}
+}
+
+func checkListenerExposure(ctx context.Context, r *doctorReport) {
+	if c, err := client(); err == nil {
+		if o, oErr := c.Overview(ctx); oErr == nil {
+			if status, detail, fix := autonomyListenerVerdict(o.TokenAddr, o.TokenBindKind); status != "" {
+				r.add("Security", "autonomy listener", status, detail, fix)
+			}
+		}
+	}
+
 	if service.Detect().Mode != "launchd-system" {
 		return
 	}
 	args, err := systemDaemonArgs()
 	if err != nil {
 		return
-	}
-	switch tokenBind := flagValue(args, "--token-tcp"); {
-	case tokenBind == "":
-		r.add("Security", "autonomy listener", "INFO", "token-TCP off (no in-island autonomy path)", "")
-	case isLoopbackAddr(tokenBind):
-		r.add("Security", "autonomy listener", "OK", tokenBind+" — host-internal (loopback)", "")
-	default:
-		r.add("Security", "autonomy listener", "WARN",
-			tokenBind+" — the bearer-token listener is NOT loopback; it's reachable beyond this host",
-			"rebind host-internal: `dejima service install --system --token-tcp 127.0.0.1:7274 …`")
 	}
 	if tcp := flagValue(args, "--tcp"); tcp != "" {
 		r.add("Security", "operator API", "OK", tcp+" — tailnet peers only (non-tailnet sources refused)", "")

@@ -254,7 +254,18 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 	// will actually listen on. A relocation that happened afterwards would be
 	// unguarded, which is how a wildcard eventually slips past a check that only
 	// ever inspected the default.
+	tokenDefaultAddr := tokenAddr
 	tokenAddr = hostInternalBind(context.Background(), log, tokenAddr, tokenExplicit)
+	// Why the listener ended up where it did. A client cannot infer this: a
+	// relocated bind is non-loopback yet still host-internal, and would read as
+	// LAN exposure to anything judging by address alone.
+	tokenBindKind := "loopback"
+	switch {
+	case tokenExplicit:
+		tokenBindKind = "explicit"
+	case tokenAddr != tokenDefaultAddr:
+		tokenBindKind = "bridge-gateway"
+	}
 	var tokenSrv *http.Server
 	var tokenLn net.Listener
 	if err := assertHostInternalBind(log, "token listener", "--token-tcp", tokenAddr); err != nil {
@@ -273,6 +284,7 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 			return fmt.Errorf("token-tcp listen %s: %w", tokenAddr, err)
 		}
 		log.Warn("default token listener bind failed; in-island telemetry/autonomy disabled (set --token-tcp to choose another address)", "addr", tokenAddr, "err", err)
+		server.SetTokenListener("", "bind-failed")
 	} else {
 		defer tokenLn.Close()
 		tokenSrv = &http.Server{
@@ -280,6 +292,9 @@ func run(log *slog.Logger, tcpAddr, tokenAddr, autonomyDial, egressAddr, egressD
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		server.EnableAutonomy(dial)
+		// The listener's own address, not the one we asked for: a ":0" or
+		// otherwise adjusted bind must report what it actually got.
+		server.SetTokenListener(tokenLn.Addr().String(), tokenBindKind)
 		log.Info("autonomy enabled", "token_listener", tokenAddr, "container_dials", dial)
 	}
 

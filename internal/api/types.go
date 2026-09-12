@@ -400,6 +400,18 @@ type OverviewResponse struct {
 	// API rather than TOFU, and a rotated key self-heals instead of failing with
 	// "REMOTE HOST IDENTIFICATION HAS CHANGED". Empty on daemons predating this.
 	SSHHostKey string `json:"ssh_host_key,omitempty"`
+	// TokenAddr is the address the in-island token listener is ACTUALLY bound
+	// to, and TokenBindKind is why it is there: "loopback" (the default),
+	// "bridge-gateway" (relocated, because on a native engine a container
+	// cannot reach the host's loopback), "explicit" (the operator set
+	// --token-tcp), or "bind-failed" (nothing is listening). Both are reported
+	// because no client can derive this: the listener is ON BY DEFAULT, so an
+	// absent flag in the service definition means running, not off — and a
+	// relocated bind is non-loopback yet still host-internal, so the address
+	// alone cannot tell a correct config from an exposed one. Empty
+	// TokenBindKind means a daemon predating this field.
+	TokenAddr     string `json:"token_addr,omitempty"`
+	TokenBindKind string `json:"token_bind_kind,omitempty"`
 	// DaemonVersion / APIVersion let a client detect skew against the daemon.
 	// APIVersion is 0 from daemons predating version reporting.
 	DaemonVersion string `json:"daemon_version,omitempty"`

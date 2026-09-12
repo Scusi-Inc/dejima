@@ -165,6 +165,12 @@ type Server struct {
 	// reported alongside sshAddr so a client can pin it in a known_hosts file it
 	// manages itself — making a rotated host key self-heal.
 	sshHostKey string
+	// tokenAddr / tokenBindKind are the in-island token listener's effective
+	// bind and the reason for it, recorded via SetTokenListener once dejimad
+	// knows the outcome of its listen. Reporting only; the listener is owned by
+	// dejimad/main.
+	tokenAddr     string
+	tokenBindKind string
 
 	// hostTerminals gates the operator host-terminal feature (uncontained shells
 	// on the daemon host). Off unless dejimad is started with --host-terminals.
@@ -240,6 +246,16 @@ func (s *Server) HostTerminalsEnabled() bool { return s.hostTerminals }
 // host.docker.internal:<port>). Call only when the token listener is bound; an
 // empty dial is a no-op.
 func (s *Server) EnableAutonomy(dial string) { s.autonomyDial = dial }
+
+// SetTokenListener records the in-island token listener's effective bind and
+// the reason for it, so /v1/overview can report the daemon's real autonomy
+// posture. Call it on every outcome INCLUDING a failed bind (addr "", kind
+// "bind-failed"): a client cannot otherwise distinguish "this daemon has no
+// listener" from "this daemon is too old to say", and reporting only successes
+// would leave the failure silent — which is the state most worth surfacing.
+func (s *Server) SetTokenListener(addr, kind string) {
+	s.tokenAddr, s.tokenBindKind = addr, kind
+}
 
 // EnableEgress wires the island egress proxy: dial is the host:port islands
 // reach the proxy at (injected as HTTPS_PROXY into new containers), log is where

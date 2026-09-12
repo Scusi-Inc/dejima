@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -36,9 +38,12 @@ const (
 	triNo
 )
 
-// unattendedHostVerdict decides what to report from the two facts. Pure, so the
-// decision is testable on any platform — the Mac-only part is the LOOKING, and
-// the part worth getting right is the JUDGING.
+// unattendedHostVerdict is the DOCKER DESKTOP judgement — its two facts are
+// Docker Desktop's own start-at-login setting and macOS automatic login, and
+// its remedy names Docker Desktop's menus, so it must only be reached on a host
+// actually running it. colimaUnattendedVerdict is the sibling for colima. Pure,
+// so the decision is testable on any platform: the Mac-only part is the
+// LOOKING, and the part worth getting right is the JUDGING.
 func unattendedHostVerdict(dockerAutoStart, autoLogin tristate) (status, detail, fix string) {
 	const remedy = "Docker Desktop → Settings → General → \"Start Docker Desktop when you sign in\", " +
 		"AND System Settings → Users & Groups → Automatic login. " +
@@ -62,6 +67,84 @@ func unattendedHostVerdict(dockerAutoStart, autoLogin tristate) (status, detail,
 	}
 }
 
+// dockerEngine names the container engine backing this host. It matters here
+// because the two halves of "survives a reboot" are engine-specific, and the
+// original check knew only Docker Desktop: on Minion, a colima host, it read
+// Docker Desktop's settings store, found nothing, and printed
+// "couldn't confirm …" with a remedy pointing at Docker Desktop → Settings →
+// General — a menu that does not exist on that machine. Advice for software the
+// operator is not running is worse than no advice: it sends them looking for a
+// checkbox instead of at the real gap.
+type dockerEngine string
+
+const (
+	engineUnknown       dockerEngine = ""
+	engineDockerDesktop dockerEngine = "Docker Desktop"
+	engineColima        dockerEngine = "colima"
+	engineOrbStack      dockerEngine = "OrbStack"
+)
+
+// detectDockerEngine asks the docker CLI which context is active — the actual
+// source of truth for which engine commands reach — and falls back to Docker
+// Desktop's settings store only as a positive signal. When neither answers it
+// returns unknown rather than assuming, because assuming Docker Desktop is the
+// bug this replaces.
+func detectDockerEngine(ctx context.Context) dockerEngine {
+	if out, err := exec.CommandContext(ctx, "docker", "context", "inspect", "--format", "{{.Name}}").Output(); err == nil {
+		switch name := strings.TrimSpace(string(out)); {
+		case name == "desktop-linux":
+			return engineDockerDesktop
+		case strings.HasPrefix(name, "colima"):
+			return engineColima
+		case name == "orbstack":
+			return engineOrbStack
+		}
+	}
+	if dockerAutoStartSetting(ctx) != triUnknown {
+		return engineDockerDesktop
+	}
+	return engineUnknown
+}
+
+// colimaBootJob reports what, if anything, starts colima without a human. The
+// distinction is the whole point: `brew services start colima` installs a
+// PER-USER LaunchAgent, which needs a login session, while a system
+// LaunchDaemon does not — so the agent alone has exactly the Docker Desktop
+// failure mode this file was written for.
+func colimaBootJob() (system, agent bool) {
+	if m, _ := filepath.Glob("/Library/LaunchDaemons/*colima*.plist"); len(m) > 0 {
+		system = true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if m, _ := filepath.Glob(filepath.Join(home, "Library", "LaunchAgents", "*colima*.plist")); len(m) > 0 {
+			agent = true
+		}
+	}
+	return system, agent
+}
+
+// colimaUnattendedVerdict is the colima half of the judgement. Pure, for the
+// same reason unattendedHostVerdict is: the looking is platform-bound, the
+// judging is what has to be right.
+func colimaUnattendedVerdict(systemJob, agentJob bool, autoLogin tristate) (status, detail, fix string) {
+	const remedy = "`brew services start colima` so the VM starts at login, AND System Settings → " +
+		"Users & Groups → Automatic login. Both are needed: Homebrew's colima service is a per-user " +
+		"LaunchAgent, so it never fires on a Mac that reboots to a login screen."
+
+	switch {
+	case systemJob:
+		return "OK", "colima starts at boot via a system LaunchDaemon — no sign-in needed", ""
+	case agentJob && autoLogin == triYes:
+		return "OK", "this host restarts into a working Docker unattended (colima login agent + automatic login)", ""
+	case agentJob:
+		return "WARN", "colima's start-at-login agent never fires — this Mac reboots to a login screen", remedy
+	case autoLogin == triYes:
+		return "WARN", "nothing starts colima after a reboot, so islands stay down until someone runs `colima start`", remedy
+	default:
+		return "WARN", "a reboot will leave this host with no Docker and no sign-in — islands stay down until someone notices", remedy
+	}
+}
+
 func checkUnattendedHost(ctx context.Context, r *doctorReport) {
 	if runtime.GOOS != "darwin" {
 		return
@@ -71,8 +154,28 @@ func checkUnattendedHost(ctx context.Context, r *doctorReport) {
 	if _, remote := daemonElsewhere(); remote {
 		return
 	}
-	status, detail, fix := unattendedHostVerdict(dockerAutoStartSetting(ctx), autoLoginSetting(ctx))
-	r.add("System", "unattended restart", status, detail, fix)
+	autoLogin := autoLoginSetting(ctx)
+	switch engine := detectDockerEngine(ctx); engine {
+	case engineColima:
+		systemJob, agentJob := colimaBootJob()
+		status, detail, fix := colimaUnattendedVerdict(systemJob, agentJob, autoLogin)
+		r.add("System", "unattended restart", status, detail, fix)
+	case engineDockerDesktop:
+		status, detail, fix := unattendedHostVerdict(dockerAutoStartSetting(ctx), autoLogin)
+		r.add("System", "unattended restart", status, detail, fix)
+	default:
+		// OrbStack, or an engine we do not recognise. The question still matters;
+		// we just do not know this engine's answer. Name what we cannot see and
+		// give engine-neutral guidance rather than another vendor's menu path.
+		name := string(engine)
+		if name == "" {
+			name = "this host's container engine"
+		}
+		r.add("System", "unattended restart", "INFO",
+			"couldn't confirm "+name+" restarts unattended",
+			"make sure the engine starts without a sign-in (a system LaunchDaemon), or pair its "+
+				"own start-at-login setting with System Settings → Users & Groups → Automatic login")
+	}
 }
 
 // autoLoginSetting reads the system-wide automatic-login user. Absent or empty

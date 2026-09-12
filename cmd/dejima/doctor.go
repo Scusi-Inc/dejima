@@ -186,7 +186,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkConnection(r)
 	checkInstallMeta(r)
 	checkStateOwnership(r)
-	checkListenerExposure(r)
+	checkListenerExposure(ctx, r)
 	checkEgressProxy(r)
 
 	// --- Projects -------------------------------------------------------
@@ -332,7 +332,23 @@ func checkDaemon(ctx context.Context, r *doctorReport) {
 // reboot?" — not just "is it reachable?". It flags an orphan (reachable but
 // unsupervised), a per-boot/login-gated supervisor that won't come back on a
 // headless host, and a system plist that's installed but not loaded.
+//
+// All of which are facts about the machine RUNNING the daemon, and service.Detect()
+// can only see THIS one. From a client — a laptop driving a Mac mini, or an agent
+// inside an island reaching the daemon over host.docker.internal — it inspects the
+// wrong host's launchd/systemd and presents the answer as the daemon's. An island
+// has no supervisor at all, so a correctly installed LaunchDaemon on the host read
+// back as "unsupervised (hand-run) — it won't survive a reboot", with a
+// `dejima service install` the caller cannot run and an operator who believed it.
+//
+// checkDocker and checkIslandImage hit this first and ask the daemon instead.
+// Nothing in the overview carries supervision, so the honest answer here is to
+// say we cannot see it — the same shape, one step short.
 func checkSupervision(ctx context.Context, r *doctorReport) {
+	if where, remote := daemonElsewhere(); remote {
+		r.add("System", "supervision", "INFO", "runs on the daemon host ("+where+"), not here", "")
+		return
+	}
 	reachable := false
 	if c, err := client(); err == nil {
 		reachable = c.Health(ctx) == nil
