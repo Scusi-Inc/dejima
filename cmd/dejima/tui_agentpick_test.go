@@ -61,11 +61,50 @@ func feed(p *agentPicker, keys ...string) pickerResult {
 	return r
 }
 
-// An interactive AI type resolves on Enter with no command (claude-code is the
-// second option now that the terminal leads the list).
-func TestAgentPickerInteractive(t *testing.T) {
+// downsTo is the navigation that reaches the option for typ, DERIVED from
+// agentTypeOptions rather than counted by hand.
+//
+// Every test below used to walk a hardcoded number of "down"s with the list
+// order copied into a comment ("openclaw (index 3)", "5th: shell, claude-code,
+// codex, openclaw, headless"). Those comments are scar tissue — the list has
+// already been reordered twice, once to put the terminal in front and once to
+// insert openclaw — and each reorder rewrote them by hand.
+//
+// The reason to stop doing that is not tidiness. A reorder does not FAIL a
+// hardcoded walk; it points it at a DIFFERENT option. The assertion still runs,
+// against something nobody meant to test, and a picker test that passes while
+// selecting the wrong agent is worth less than no test.
+//
+// The lookup is the control on the helper itself: a typ that is not in the list
+// is a test naming an option that no longer exists, which must stop the test
+// rather than silently resolve to index 0.
+func downsTo(t *testing.T, typ string) []string {
+	t.Helper()
+	for i, o := range agentTypeOptions {
+		if o.typ == typ {
+			keys := make([]string, i)
+			for k := range keys {
+				keys[k] = "down"
+			}
+			return keys
+		}
+	}
+	t.Fatalf("no %q in agentTypeOptions — the picker no longer offers what this test names", typ)
+	return nil
+}
+
+// pickerOn returns a picker sitting on typ, ready for the key that selects it.
+func pickerOn(t *testing.T, typ string) agentPicker {
+	t.Helper()
 	p := newAgentPicker()
-	if r := feed(&p, "down", "enter"); r != pickerDone {
+	feed(&p, downsTo(t, typ)...)
+	return p
+}
+
+// An interactive AI type resolves on Enter with no command.
+func TestAgentPickerInteractive(t *testing.T) {
+	p := pickerOn(t, "claude-code")
+	if r := feed(&p, "enter"); r != pickerDone {
 		t.Fatalf("interactive enter = %v, want pickerDone", r)
 	}
 	if p.typ() != "claude-code" {
@@ -78,8 +117,8 @@ func TestAgentPickerInteractive(t *testing.T) {
 
 // The shell (terminal) type is interactive — resolves on Enter with no command.
 func TestAgentPickerShell(t *testing.T) {
-	p := newAgentPicker()
-	if r := feed(&p, "enter"); r != pickerDone { // shell leads the list (index 0)
+	p := pickerOn(t, "shell")
+	if r := feed(&p, "enter"); r != pickerDone {
 		t.Fatalf("shell enter = %v, want pickerDone", r)
 	}
 	if p.typ() != "shell" {
@@ -93,8 +132,8 @@ func TestAgentPickerShell(t *testing.T) {
 // OpenClaw is a baked-launch headless type — picked like an interactive option
 // (no command step), resolving on Enter.
 func TestAgentPickerOpenclaw(t *testing.T) {
-	p := newAgentPicker()
-	if r := feed(&p, "down", "down", "down", "enter"); r != pickerDone { // → openclaw (index 3)
+	p := pickerOn(t, "openclaw")
+	if r := feed(&p, "enter"); r != pickerDone {
 		t.Fatalf("openclaw enter = %v, want pickerDone", r)
 	}
 	if p.typ() != "openclaw" {
@@ -104,10 +143,9 @@ func TestAgentPickerOpenclaw(t *testing.T) {
 
 // Selecting headless requires a command before the picker resolves.
 func TestAgentPickerHeadlessNeedsCmd(t *testing.T) {
-	p := newAgentPicker()
-	// Move to the headless option (5th: shell, claude-code, codex, openclaw,
-	// headless), then Enter → command step.
-	if r := feed(&p, "down", "down", "down", "down", "enter"); r != pickerOngoing {
+	p := pickerOn(t, api.AgentHeadless)
+	// Enter on headless → command step, not a resolve.
+	if r := feed(&p, "enter"); r != pickerOngoing {
 		t.Fatalf("headless enter = %v, want pickerOngoing (awaiting cmd)", r)
 	}
 	if p.typ() != api.AgentHeadless {
@@ -155,8 +193,8 @@ func TestAgentAdderLabelStep(t *testing.T) {
 // Esc on the command step returns to type selection (not a cancel); esc on the
 // type step backs out.
 func TestAgentPickerEscape(t *testing.T) {
-	p := newAgentPicker()
-	feed(&p, "down", "down", "down", "down", "enter") // into the headless command step
+	p := pickerOn(t, api.AgentHeadless)
+	feed(&p, "enter") // into the headless command step
 	if r := p.handleKey(key("esc")); r != pickerOngoing || p.phase != pickType {
 		t.Fatalf("esc on cmd step: result=%v phase=%v, want ongoing/pickType", r, p.phase)
 	}

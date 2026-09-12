@@ -143,6 +143,43 @@ func localModelActions(ls *localmodel.Status) []localAction {
 	return acts
 }
 
+// pulledModelNames lists what is actually on the host, preferring the curated
+// alias over the raw backend ref — `qwen-coder-7b` is the handle the operator
+// pulled by and the one every other surface names.
+func pulledModelNames(ls *localmodel.Status) []string {
+	if ls == nil {
+		return nil
+	}
+	names := make([]string, 0, len(ls.Models))
+	for _, m := range ls.Models {
+		if m.Alias != "" {
+			names = append(names, m.Alias)
+		} else if m.Ref != "" {
+			names = append(names, m.Ref)
+		}
+	}
+	return names
+}
+
+// localHeaderNote is the header's local-models fragment, or "" when there is
+// nothing true to say.
+//
+// SILENT WHEN NOTHING IS PULLED, rather than "local: none". The header is a
+// statement of what this server HAS; an absence is not news, and a permanent
+// "none" on a fleet that will never use local models is the kind of standing
+// noise that trains people to stop reading the line. Absence is discoverable
+// where it is actionable — Settings → Local models.
+func localHeaderNote(models []string) string {
+	switch len(models) {
+	case 0:
+		return ""
+	case 1:
+		return "local: " + models[0]
+	default:
+		return fmt.Sprintf("local: %d models", len(models))
+	}
+}
+
 // localModelsAppliedNote is what the page says after a model has been pulled.
 //
 // THE QUESTION IT ANSWERS is the one an operator asks next and the docs answer
