@@ -1943,6 +1943,22 @@ func sanitizeTitle(title string) string {
 	}, title)
 }
 
+// tabTitler returns the callback a session hands its envelope dispatch to apply
+// a daemon-supplied tab title.
+//
+// titled is whether this session took the tab title at all: a piped or
+// non-interactive client writes no OSC sequence, and must not start writing one
+// just because the daemon offered a name. An empty title is what an OLDER daemon
+// sends (it knows nothing of the field), so it leaves the local title standing
+// rather than blanking the tab.
+func tabTitler(titled bool, set func(string)) func(string) {
+	return func(title string) {
+		if titled && title != "" {
+			set(title)
+		}
+	}
+}
+
 // sessionTitle builds the tab title for an island/agent attach: "island/agent",
 // or just "island" when no specific agent is named.
 func sessionTitle(name, agentID string) string {
@@ -2129,6 +2145,10 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 	}
 
 	stdinFd := int(os.Stdin.Fd())
+	// The daemon re-asserts the tab title on every hello and pushes a fresh one
+	// when the island is renamed, so the tab tracks the name instead of freezing
+	// at whatever it was called when this client attached.
+	retitle := tabTitler(term.IsTerminal(stdinFd), setTerminalTitle)
 	if term.IsTerminal(stdinFd) {
 		hint := "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. " +
 			"Session keeps running; this client auto-reconnects if the link drops."
@@ -2195,7 +2215,7 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 	immediate := 0
 	for {
 		attached := time.Now()
-		switch runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone, summonable, paste) {
+		switch runOneSessionConn(ctx, conn, stdinFd, stdinCh, stdinDone, summonable, paste, retitle) {
 		case sessReconnect:
 			// fall through to the reconnect path below
 		case sessExitSummon:
@@ -2289,7 +2309,9 @@ func reconnectSession(ctx context.Context, dial func(context.Context) (*websocke
 // runOneSessionConn pumps one connection until it ends, returning why. The
 // websocket is closed on return; stdin/resize are owned by the caller's
 // long-lived reader, so a reconnect resumes without re-reading the terminal.
-func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}, summonable bool, bridge *sessionPaste) sessReason {
+// retitle applies a daemon-supplied tab title (empty and non-TTY are no-ops);
+// see runSessionLoop, which owns whether this session titled its tab at all.
+func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, stdinCh <-chan []byte, stdinDone <-chan struct{}, summonable bool, bridge *sessionPaste, retitle func(string)) sessReason {
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer conn.Close(websocket.StatusNormalClosure, "")
@@ -2344,8 +2366,19 @@ func runOneSessionConn(ctx context.Context, conn *websocket.Conn, stdinFd int, s
 			switch env.Type {
 			case "hello":
 				printPresence("attached", env.Attached)
+				// The daemon's title wins over the one composed locally: it is the
+				// only one that knows about a rename that happened after this tab
+				// was opened. An older daemon sends none and the local title stands.
+				if retitle != nil {
+					retitle(env.Title)
+				}
 			case "presence":
 				printPresence("now attached", env.Attached)
+			case "title":
+				// The island was renamed (or the agent relabelled) while attached.
+				if retitle != nil {
+					retitle(env.Title)
+				}
 			case "data":
 				if raw, derr := base64StdDecode(env.B64); derr == nil {
 					altScreen.observe(raw)
