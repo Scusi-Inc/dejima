@@ -3868,6 +3868,11 @@ components:
         Client → server: `{type: data, b64}` for keystrokes and
         `{type: resize, rows, cols}` to resize the PTY.
 
+        `{type: presence, attached}` is pushed when another client attaches or
+        detaches, and `{type: title, title}` when the island is renamed or an
+        agent relabelled — the tab title is set once at attach, so without the
+        push a rename leaves every already-open tab showing the old name.
+
         `{type: exit}` is the server's application-level end signal: the bridged
         terminal itself ended (a detach, an `exit`, a tmux that died on start).
         A client must stop on it rather than treat the websocket close as a
@@ -3875,7 +3880,7 @@ components:
         can't escape. An abnormal close WITHOUT an `exit` is a dropped link and
         should be reconnected through; the tmux session survives it.
       properties:
-        type: { type: string, enum: [hello, data, resize, error, exit] }
+        type: { type: string, enum: [hello, data, resize, error, exit, presence, title] }
         b64: { type: string, description: base64-encoded PTY bytes (plaintext for type=error) }
         rows: { type: integer }
         cols: { type: integer }
@@ -3891,3 +3896,11 @@ components:
         attached:
           type: array
           items: { $ref: "#/components/schemas/PresenceEntry" }
+        title:
+          type: string
+          description: >
+            The tab title the client should show, composed by the daemon from the
+            island's display name and the agent's (island `title` else slug, agent
+            `label` else id). Rides on `hello` so a reconnect re-asserts it, and is
+            pushed on its own as `{type: title}` when an island is renamed or an
+            agent relabelled.
