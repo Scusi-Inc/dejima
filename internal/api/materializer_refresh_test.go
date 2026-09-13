@@ -94,6 +94,29 @@ func TestEveryMaterializerHasARefreshPath(t *testing.T) {
 		return c["WriteFile"] || c["Rename"] || c["Create"]
 	}
 
+	// The one shape this guard must NOT demand a refresh path from: a
+	// materializer whose output the OPERATOR owns, written once and never
+	// rewritten on purpose.
+	//
+	// The bugs above were all "the store changed and the island kept the old
+	// value". That needs a store. islandHarnessPolicyDir has none — the host
+	// file IS the source of truth, it is mounted as a DIRECTORY so the container
+	// resolves it per read, and an operator edit therefore reaches the island
+	// with no daemon involvement at all. Adding the refresh path this guard asks
+	// for would rewrite that file on every container create, which is precisely
+	// the behaviour TestHarnessPolicyKeepsAnOperatorEdit exists to forbid: an
+	// operator who opts an island out would find it silently back on after the
+	// next `dejima upgrade`. The two requirements are in direct conflict and the
+	// operator's edit wins.
+	//
+	// Exempt by NAME, and checked below, so this cannot rot into a hole: if the
+	// exempted function stops being a materializer (renamed, or it no longer
+	// writes a file) the exemption is stale and the guard says so rather than
+	// quietly covering one less function than it claims.
+	exempt := map[string]string{
+		"islandHarnessPolicyDir": "operator-owned policy file; see harness_policy.go and docs/harness-peer-isolation.md",
+	}
+
 	var materializers []string
 	for name := range calls(bindMounts) {
 		fd, known := funcBody[name]
@@ -104,6 +127,23 @@ func TestEveryMaterializerHasARefreshPath(t *testing.T) {
 	}
 	sort.Strings(materializers)
 
+	for name := range exempt {
+		found := false
+		for _, m := range materializers {
+			if m == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s is exempted from the refresh-path rule but is no longer a "+
+				"materializer reachable from credentialBindMounts. Either it was "+
+				"renamed (update the exemption) or it stopped writing a file (drop "+
+				"it) — as it stands the exemption covers nothing and hides whatever "+
+				"took its place.", name)
+		}
+	}
+
 	if len(materializers) == 0 {
 		t.Fatal("found no materializers at all — credentialBindMounts no longer calls " +
 			"anything that writes a file, or the AST walk is broken. Either way this " +
@@ -111,6 +151,10 @@ func TestEveryMaterializerHasARefreshPath(t *testing.T) {
 	}
 
 	for _, m := range materializers {
+		if why, ok := exempt[m]; ok {
+			t.Logf("%s: exempt from the refresh-path rule — %s", m, why)
+			continue
+		}
 		callers := 0
 		for name, fd := range funcBody {
 			if name == m {

@@ -99,6 +99,16 @@ func credentialMounts() []credentialMount {
 		// answers a question about intent, when the question was about the
 		// running container. That is the divergence this whole file exists for.
 		{"LLM provider keys", LLMCredentialMountPath},
+		// Not a credential — a POLICY file (harness peer isolation). It is in
+		// this list anyway because the drift question is identical and the
+		// danger is worse. Every island created before this shipped reports
+		// configured-but-not-mounted, which is exactly true: the policy exists
+		// on the host and the running container is NOT subject to it until it
+		// is recreated. That is the one state an operator must not have to
+		// infer, and the file's opening comment is about precisely this shape —
+		// a containment surface that under-reports reassures instead of
+		// failing. Rename the type if a third non-credential lands here.
+		{"harness peer policy", HarnessPolicyMountPath},
 	}
 }
 

@@ -1,6 +1,6 @@
 # The docs, mapped
 
-87 files, grouped by the question you arrived with. Every `.md` under `docs/` is
+88 files, grouped by the question you arrived with. Every `.md` under `docs/` is
 listed here exactly once, and `scripts/docs-index-check.py` fails the build if
 that stops being true or if a link here points at a file that does not exist.
 
@@ -107,6 +107,10 @@ Deny-all is the default. Everything here is an explicit, audited exception.
 - [secure-island-routing.md](secure-island-routing.md) ·
   [managed-island-files.md](managed-island-files.md) ·
   [host-terminals.md](host-terminals.md)
+- [harness-peer-isolation.md](harness-peer-isolation.md) — the crossing Dejima
+  does NOT broker: the agent harness's own account-wide session channel. What
+  gates it, what cannot be ledgered, and why "we don't pass the flag" was not a
+  fix.
 
 ## "Who is allowed to do what, and what was recorded?"
 
