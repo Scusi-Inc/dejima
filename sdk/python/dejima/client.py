@@ -411,6 +411,27 @@ class Client:
         """List the repositories a GitHub identity can access (fetched daemon-side)."""
         return self._json("GET", f"/v1/credentials/github/{self._seg(name)}/repos")
 
+    def create_github_repo(
+        self, name: str, repo: str, *, private: bool, description: str = ""
+    ) -> Dict[str, Any]:
+        """Create a repository on GitHub as this identity, with an initial commit.
+
+        ``private`` is keyword-only and has no default on purpose: this call
+        publishes code when it is False, and a positional bool at a call site
+        reads as nothing at all. Check ``["repo"]["private"]`` in the result
+        rather than assuming the request was honoured — an organization policy
+        can force a repository public.
+
+        There is no delete counterpart; removing a repository stays a deliberate
+        trip to GitHub.
+        """
+        body: Dict[str, Any] = {"name": repo, "private": private}
+        if description:
+            body["description"] = description
+        return self._json(
+            "POST", f"/v1/credentials/github/{self._seg(name)}/repos", body
+        )
+
     def list_providers(self) -> Dict[str, Any]:
         """List the daemon's LLM provider credentials (masked hint only, no keys)."""
         return self._json("GET", "/v1/credentials/providers")

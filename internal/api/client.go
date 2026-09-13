@@ -662,6 +662,21 @@ func (c *Client) ListGitHubRepos(ctx context.Context, name string) (repos []gith
 	return out.Repos, out.Capped, nil
 }
 
+// CreateGitHubRepo creates a repository on GitHub as the named identity and
+// returns what GitHub actually made.
+//
+// Run daemon-side for the same reason listing is: the credential lives on the
+// daemon, so a phone or a fresh laptop can do this with no gh installed. The
+// returned Repo is authoritative — check its Private field rather than assuming
+// the request was honoured.
+func (c *Client) CreateGitHubRepo(ctx context.Context, identity string, req CreateGitHubRepoRequest) (githubid.Repo, error) {
+	var out CreateGitHubRepoResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/credentials/github/"+url.PathEscape(identity)+"/repos", req, &out); err != nil {
+		return githubid.Repo{}, err
+	}
+	return out.Repo, nil
+}
+
 // Health returns nil if dejimad is reachable and healthy.
 func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/v1/healthz", nil, nil)

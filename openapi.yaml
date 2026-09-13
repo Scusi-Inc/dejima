@@ -1693,6 +1693,35 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+    post:
+      tags: [credentials]
+      summary: Create a repository on GitHub as this identity
+      description: >-
+        Creates a repository owned by the identity's own account, with an initial
+        commit so an island can clone it. The response carries what GitHub
+        actually made, which is not always what was asked for: an organization
+        policy can force a repository public when private was requested, so read
+        repo.private rather than assuming the request was honoured. The action is
+        recorded in the daemon's ledger. There is no corresponding delete.
+      operationId: createGitHubRepo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateGitHubRepoRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateGitHubRepoResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: GitHub refused to create the repository
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/credentials/github/device-flow/start:
     post:
       tags: [credentials]
@@ -3575,6 +3604,25 @@ components:
         url: { type: string }
         description: { type: string }
         private: { type: boolean }
+    CreateGitHubRepoRequest:
+      type: object
+      required: [name, private]
+      properties:
+        name:
+          type: string
+          description: Repository name (letters, digits, '.', '-', '_'; max 100 characters)
+        description:
+          type: string
+        private:
+          type: boolean
+          description: >-
+            Always send this field. It is not optional in practice: JSON's missing
+            bool is false, so an omitted value creates a PUBLIC repository.
+      additionalProperties: false
+    CreateGitHubRepoResponse:
+      type: object
+      properties:
+        repo: { $ref: "#/components/schemas/GitHubRepo" }
     GitHubReposResponse:
       type: object
       properties:

@@ -929,6 +929,27 @@ type GitHubReposResponse struct {
 	Capped bool            `json:"capped,omitempty"`
 }
 
+// CreateGitHubRepoRequest is the body of POST /v1/credentials/github/:name/repos.
+//
+// Private has no omitempty and is not a pointer, which is a deliberate pair of
+// choices. The zero value of this request creates a PUBLIC repository, so the
+// field must always be on the wire: a client that forgets it, or a proxy that
+// strips empty fields, would otherwise publish a repo the operator asked to keep
+// private, and nothing in the response would look wrong.
+type CreateGitHubRepoRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Private     bool   `json:"private"`
+}
+
+// CreateGitHubRepoResponse carries the repository GitHub actually created —
+// its answer, not an echo of the request. An org policy can force visibility and
+// GitHub can normalize a name, so the caller must read what came back rather
+// than assume it got what it asked for.
+type CreateGitHubRepoResponse struct {
+	Repo githubid.Repo `json:"repo"`
+}
+
 // PortScopeRequest is the body of POST /v1/islands/:name/port/scopes.
 type PortScopeRequest struct {
 	HostPath string `json:"host_path"`

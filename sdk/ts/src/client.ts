@@ -418,6 +418,32 @@ export class Client {
     return this.json("GET", `/v1/credentials/github/${this.seg(name)}/repos`);
   }
 
+  /**
+   * Create a repository on GitHub as this identity, with an initial commit so an
+   * island can clone it.
+   *
+   * `private` is a required field of the options object, not an optional flag:
+   * omitting it would create a PUBLIC repository, and that is not a mistake
+   * anything downstream can catch. Read `repo.private` from the result rather
+   * than assuming the request was honoured — an organization policy can force a
+   * repository public.
+   *
+   * There is no delete counterpart; removing a repository stays a deliberate
+   * trip to GitHub.
+   */
+  createGitHubRepo(
+    name: string,
+    opts: { name: string; private: boolean; description?: string },
+  ): Promise<any> {
+    return this.json("POST", `/v1/credentials/github/${this.seg(name)}/repos`, {
+      json: {
+        name: opts.name,
+        private: opts.private,
+        ...(opts.description ? { description: opts.description } : {}),
+      },
+    });
+  }
+
   listProviders(): Promise<any> {
     return this.json("GET", "/v1/credentials/providers");
   }
