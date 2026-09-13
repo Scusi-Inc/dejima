@@ -34,8 +34,6 @@ const (
 	stepGitHubGate                         // create refused: private repo needs a GitHub identity — guided connect
 	stepGitHubPreflight                    // pasted a GitHub URL with no identity connected — warn BEFORE building
 	stepFromDir                            // type the host folder to seed /workspace from
-	stepNewRepo                            // name a repo to CREATE on GitHub
-	stepNewRepoConfirm                     // confirm account + visibility before creating it
 )
 
 // ghBrowsePhase tracks the two steps of the daemon-backed GitHub browser.
@@ -90,17 +88,6 @@ type creatorModel struct {
 	ghCapped           bool // identity sees more repos than the page we fetched
 	ghLoading          bool
 	ghHint             string // shown when the daemon has no identities
-
-	// Creating a NEW repo on GitHub. newRepoPrivate starts true: this wizard can
-	// publish code to the internet, and the safe side of that choice is the one
-	// that should survive an operator hitting enter too fast. The confirm step
-	// shows it and makes changing it one key, so defaulting private costs a
-	// keystroke and defaulting public costs a disclosure.
-	newRepoName    string
-	newRepoDesc    string
-	newRepoPrivate bool
-	newRepoField   int  // 0 = name, 1 = description
-	newRepoBusy    bool // create in flight — GitHub is being called
 
 	// source-divergence prompt
 	pendingPath   string
@@ -181,13 +168,6 @@ type ghIdentitiesMsg struct {
 	identities []githubid.Meta
 	err        error
 }
-
-// ghRepoCreatedMsg carries the repository GitHub made — or the reason it did not.
-type ghRepoCreatedMsg struct {
-	repo githubid.Repo
-	err  error
-}
-
 type ghReposMsg struct {
 	repos  []githubid.Repo
 	capped bool
@@ -413,10 +393,6 @@ func (m tuiModel) creatorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.creatorGitHubGateKey(msg)
 	case stepFromDir:
 		return m.creatorFromDirKey(msg)
-	case stepNewRepo:
-		return m.creatorNewRepoKey(msg)
-	case stepNewRepoConfirm:
-		return m.creatorNewRepoConfirmKey(msg)
 	}
 	return m, nil // stepCreate: ignore input while provisioning
 }
@@ -866,156 +842,13 @@ func (m tuiModel) creatorGitHubRepoKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if c.ghRepoCur < len(c.ghRepos)-1 {
 			c.ghRepoCur++
 		}
-	case "n": // not "N": ESC O N is a function key on some terminals
-		return m.creatorEnterNewRepo()
 	case "enter":
 		if len(c.ghRepos) == 0 {
-			// An identity with no repos is the likeliest place to WANT a new one,
-			// so enter offers it rather than doing nothing and looking broken.
-			return m.creatorEnterNewRepo()
+			return m, nil
 		}
 		return m.creatorSelectGitHub(c.ghRepos[c.ghRepoCur])
 	}
 	return m, nil
-}
-
-// creatorEnterNewRepo opens the create-a-repo branch for the identity already
-// chosen at ghPickIdentity. That identity is the "account" half of the
-// confirmation: the repo is made on it, so it has to be picked before this
-// screen and shown on it.
-func (m tuiModel) creatorEnterNewRepo() (tea.Model, tea.Cmd) {
-	c := m.creator
-	c.step, c.err = stepNewRepo, ""
-	c.newRepoName, c.newRepoDesc = "", ""
-	c.newRepoField, c.newRepoBusy = 0, false
-	c.newRepoPrivate = true // see the field comment: safe side survives a fast enter
-	return m, nil
-}
-
-// onGhRepoCreated lands the result of the create and, on success, walks straight
-// into the flow an EXISTING repo takes — same resolution, same agent picker.
-// A repo that was just made is not a special kind of repo, and giving it its own
-// path is how the two drift.
-//
-// The visibility check is not decoration. An org policy can force a repo public
-// when private was asked for, and GitHub reports that only in the response. The
-// operator is told, loudly, at the one moment they can still do something about
-// it; silently proceeding would mean the first time they learn their code is
-// public is when someone else reads it.
-func (m tuiModel) onGhRepoCreated(msg ghRepoCreatedMsg) (tea.Model, tea.Cmd) {
-	c := m.creator
-	c.newRepoBusy = false
-	if msg.err != nil {
-		c.err = msg.err.Error()
-		c.step = stepNewRepoConfirm
-		return m, nil
-	}
-	if c.newRepoPrivate && !msg.repo.Private {
-		m.lastNotice = "⚠ " + msg.repo.NameWithOwner + " was created PUBLIC — GitHub or an org policy overrode the private setting"
-	} else {
-		m.lastNotice = "created " + msg.repo.NameWithOwner
-	}
-	return m.creatorSelectGitHub(msg.repo)
-}
-
-// creatorGitHubIdentity returns the chosen identity's metadata, for screens that
-// must show WHICH GitHub account is about to be acted on. Returns false when the
-// name no longer matches anything the daemon reported, which is not a normal
-// state and must not be rendered as a blank account line.
-func (c *creatorModel) creatorGitHubIdentity() (githubid.Meta, bool) {
-	for _, id := range c.ghIdentities {
-		if id.Name == c.ghIdentity {
-			return id, true
-		}
-	}
-	return githubid.Meta{}, false
-}
-
-// creatorNewRepoKey drives the two text fields. Validation runs on enter rather
-// than per keystroke: rejecting a character as it is typed makes a legal name
-// that passes through an illegal prefix impossible to type.
-func (m tuiModel) creatorNewRepoKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	c := m.creator
-	switch msg.String() {
-	case "esc", "ctrl+[":
-		c.step, c.err = stepGitHub, ""
-	case "tab", "down":
-		c.newRepoField = 1
-	case "shift+tab", "up":
-		c.newRepoField = 0
-	case "enter":
-		if c.newRepoField == 0 && strings.TrimSpace(c.newRepoName) == "" {
-			return m, nil
-		}
-		if err := githubid.ValidateRepoName(c.newRepoName); err != nil {
-			c.err = err.Error()
-			return m, nil
-		}
-		c.err, c.step = "", stepNewRepoConfirm
-	case "backspace":
-		if c.newRepoField == 0 {
-			if c.newRepoName != "" {
-				c.newRepoName = c.newRepoName[:len(c.newRepoName)-1]
-			}
-		} else if c.newRepoDesc != "" {
-			c.newRepoDesc = c.newRepoDesc[:len(c.newRepoDesc)-1]
-		}
-	default:
-		if len(msg.String()) == 1 {
-			if c.newRepoField == 0 {
-				c.newRepoName += msg.String()
-			} else {
-				c.newRepoDesc += msg.String()
-			}
-		}
-	}
-	return m, nil
-}
-
-// creatorNewRepoConfirmKey is the last stop before something exists on GitHub
-// that did not before.
-//
-// Enter is the only key that creates, and there is no "create and don't ask
-// again": this wizard otherwise only ever reads from GitHub, so the one action
-// that writes to it gets an explicit screen naming the account and the
-// visibility. Toggling visibility here rather than on the name screen is
-// deliberate — it puts the choice on the screen the operator is actually reading
-// when they commit.
-func (m tuiModel) creatorNewRepoConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	c := m.creator
-	if c.newRepoBusy {
-		return m, nil // GitHub call in flight; ignore input rather than double-create
-	}
-	switch msg.String() {
-	case "esc", "ctrl+[":
-		c.step, c.err = stepNewRepo, ""
-	case "p": // not "P": ESC O P is F1
-		c.newRepoPrivate = !c.newRepoPrivate
-	case "enter":
-		c.newRepoBusy, c.err = true, ""
-		return m, c.createRepoCmd()
-	}
-	return m, nil
-}
-
-// createRepoCmd asks the daemon to create the repo. The daemon holds the
-// credential, so this works from a device with no gh — the same reason browsing
-// is daemon-side.
-func (c *creatorModel) createRepoCmd() tea.Cmd {
-	client := c.client
-	identity, name, desc, private := c.ghIdentity, strings.TrimSpace(c.newRepoName), strings.TrimSpace(c.newRepoDesc), c.newRepoPrivate
-	return func() tea.Msg {
-		// Longer than the browse timeout: this one waits on GitHub CREATING
-		// something, and a create that times out client-side may still have
-		// happened. Cutting it short would leave the operator staring at a
-		// failure next to a repo that exists.
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		repo, err := client.CreateGitHubRepo(ctx, identity, api.CreateGitHubRepoRequest{
-			Name: name, Description: desc, Private: private,
-		})
-		return ghRepoCreatedMsg{repo: repo, err: err}
-	}
 }
 
 // creatorSelectIdentity records the chosen identity and loads its repos.
@@ -1338,10 +1171,6 @@ func (c *creatorModel) view(width int) string {
 		}
 	case stepFromDir:
 		c.viewFromDir(&b)
-	case stepNewRepo:
-		c.viewNewRepo(&b)
-	case stepNewRepoConfirm:
-		c.viewNewRepoConfirm(&b)
 	case stepGitHubPreflight:
 		if c.ghLoading {
 			b.WriteString(styleMuted.Render("checking your GitHub identities…"))
@@ -1452,9 +1281,7 @@ func (c *creatorModel) viewGitHub(b *strings.Builder) {
 	b.WriteString(styleMuted.Render("Repos for ") + styleAccent.Render(c.ghIdentity))
 	b.WriteString("\n\n")
 	if len(c.ghRepos) == 0 {
-		b.WriteString(styleMuted.Render("no repositories found."))
-		b.WriteString("\n\n  " + styleAccent.Render("[n]") + " Create a new repo on GitHub\n")
-		b.WriteString("  " + styleMuted.Render("[esc] back"))
+		b.WriteString(styleMuted.Render("no repositories found.\n\n[esc] back"))
 		return
 	}
 	// Window the list so a large account doesn't overflow the pane.
@@ -1489,7 +1316,7 @@ func (c *creatorModel) viewGitHub(b *strings.Builder) {
 	} else if c.ghCapped {
 		b.WriteString(styleMuted.Render(fmt.Sprintf("  showing the first %d — more exist (refine on GitHub)\n", len(c.ghRepos))))
 	}
-	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [n] new repo on GitHub   [esc] back"))
+	b.WriteString("\n" + styleMuted.Render("[↑/↓] move   [⏎] select   [esc] back"))
 }
 
 // repoMeta renders the dimmed right-hand detail for a repo row: remote, working
@@ -1601,83 +1428,6 @@ func (c *creatorModel) viewAgents(b *strings.Builder) {
 		c.writeChoice(b, false, line)
 	}
 	b.WriteString("\n" + styleMuted.Render("[a] add another   [d] remove last   [⏎] create & connect   [esc] start over"))
-}
-
-// viewNewRepo takes the name and description. The account is on screen here too,
-// not only on the confirm step: an operator who picked the wrong identity should
-// find that out while typing, not after.
-func (c *creatorModel) viewNewRepo(b *strings.Builder) {
-	owner := c.ghIdentity
-	if id, ok := c.creatorGitHubIdentity(); ok {
-		owner = id.Login
-	}
-	b.WriteString(styleMuted.Render("New repository on ") + styleAccent.Render(owner))
-	b.WriteString("\n\n")
-
-	nameLine := c.newRepoName
-	descLine := c.newRepoDesc
-	if c.newRepoField == 0 {
-		nameLine += "_"
-	} else {
-		descLine += "_"
-	}
-	b.WriteString("  name         " + styleAccent.Render(nameLine) + "\n")
-	if descLine == "" {
-		b.WriteString("  description  " + styleMuted.Render("(optional)") + "\n")
-	} else {
-		b.WriteString("  description  " + styleAccent.Render(descLine) + "\n")
-	}
-	b.WriteString("\n" + styleMuted.Render("  it will be created with a README so the island has something to clone"))
-	b.WriteString("\n\n" + styleMuted.Render("[⇥] switch field   [⏎] next: confirm   [esc] back"))
-}
-
-// viewNewRepoConfirm is the screen that has to be right.
-//
-// It names the ACCOUNT and the VISIBILITY, because those are the two facts that
-// are expensive to get wrong and invisible afterwards — a repo on the wrong
-// account is a nuisance, a private repo that was made public is a disclosure.
-// Both are rendered as full sentences rather than field labels, so skimming
-// still lands on the meaning.
-func (c *creatorModel) viewNewRepoConfirm(b *strings.Builder) {
-	account, host := c.ghIdentity, ""
-	if id, ok := c.creatorGitHubIdentity(); ok {
-		account, host = id.Login, id.Host
-	}
-	full := account + "/" + strings.TrimSpace(c.newRepoName)
-
-	if c.newRepoBusy {
-		b.WriteString(styleAccent.Render("creating " + full + " on GitHub…"))
-		return
-	}
-
-	b.WriteString(styleWaiting.Render("This creates a repository on GitHub."))
-	b.WriteString("\n\n")
-
-	acct := account
-	if host != "" {
-		acct += "@" + host
-	}
-	b.WriteString("  account     " + styleAccent.Render(acct) + "\n")
-	b.WriteString("  repository  " + styleAccent.Render(full) + "\n")
-	if c.newRepoPrivate {
-		b.WriteString("  visibility  " + styleAccent.Render("private") + styleMuted.Render("  — only you and collaborators can see it") + "\n")
-	} else {
-		// Deliberately the loud one. Public is the choice that cannot be quietly
-		// undone: the code is on the internet the moment it is pushed, and a
-		// later flip to private does not un-read it.
-		b.WriteString("  visibility  " + styleErrored.Render("PUBLIC") + styleMuted.Render("  — anyone on the internet can read it") + "\n")
-	}
-	if d := strings.TrimSpace(c.newRepoDesc); d != "" {
-		b.WriteString("  description " + styleMuted.Render(truncate(d, 50)) + "\n")
-	}
-	b.WriteString("\n  " + styleAccent.Render("[p]") + " switch to ")
-	if c.newRepoPrivate {
-		b.WriteString("public\n")
-	} else {
-		b.WriteString("private\n")
-	}
-	b.WriteString("  " + styleAccent.Render("[⏎]") + " Create it and build the island\n")
-	b.WriteString("  " + styleMuted.Render("[esc] back — nothing has been created yet"))
 }
 
 func (c *creatorModel) viewName(b *strings.Builder) {

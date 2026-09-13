@@ -73,60 +73,6 @@ If you don't name one, the island uses the daemon's **default** identity, or —
 when no identities are configured — the host's `~/.config/gh`. Naming an
 identity that doesn't exist is rejected up front.
 
-## Creating a new repo while creating the island
-
-There is often no repo to pick yet. From the repo list (**Browse GitHub**),
-`[n]` creates one on the identity you already chose, then builds the island
-against it — the same path an existing repo takes, because a repo made thirty
-seconds ago is not a different kind of repo.
-
-The confirm step names the two facts that are expensive to get wrong and
-invisible afterwards:
-
-```
-  account     octocat@github.com
-  repository  octocat/newthing
-  visibility  private  — only you and collaborators can see it
-
-  [p] switch to public
-  [⏎] Create it and build the island
-  [esc] back — nothing has been created yet
-```
-
-Things worth knowing before you use it:
-
-- **Private is the default**, and public is rendered loudly. This is the one
-  default in the wizard whose wrong value is a disclosure rather than an
-  inconvenience — an operator hitting enter through the flow should not publish
-  their code.
-- **The repo is created with a README.** A bare repository has no commit and no
-  default branch: the island clones it with a warning, and the first
-  `git switch -c work origin/main` an agent runs fails against a ref that does
-  not exist. One commit costs nothing and makes the island behave normally.
-- **GitHub's answer wins over the request.** An org policy can force a repo
-  public when you asked for private. Dejima reads what GitHub returns and says
-  so — `⚠ … was created PUBLIC` — rather than reporting the request back to you.
-- **A token without the `repo` scope is refused before the call.** Such a token
-  authenticates and lists repos perfectly and cannot create one; GitHub answers
-  that with a 403 about "resources" that names nothing actionable. Fine-grained
-  tokens report no scopes at all and are allowed through, because "not
-  introspectable" is not "no permissions" — see `ScopeNote`.
-- **It is ledgered**, allowed or denied. This is the daemon acting on your
-  GitHub account, so it belongs in your audit trail alongside the island
-  crossings.
-- **There is no delete.** A wizard that creates repos and a wizard that destroys
-  them are different risk objects, and only the first was asked for.
-
-The repo is created on the identity's **own account**. Creating into an
-organization is not wired up; pick or create it on GitHub and use the repo list.
-
-CLI and SDK equivalents:
-
-```sh
-# SDK (python)
-client.create_github_repo("work", "newthing", private=True)
-```
-
 ## How it reaches the island
 
 At container creation the daemon resolves the island's identity and writes a

@@ -1906,12 +1906,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case ghRepoCreatedMsg:
-		if m.creator != nil {
-			return m.onGhRepoCreated(msg)
-		}
-		return m, nil
-
 	case agentAddedMsg:
 		if m.agentAdder != nil {
 			if msg.err != nil {

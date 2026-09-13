@@ -184,12 +184,6 @@ type Server struct {
 	// can be covered without reaching GitHub.
 	reposFetch func(ctx context.Context, id githubid.Identity, limit int) (githubid.RepoList, error)
 
-	// repoCreate creates a repository for an identity. Defaults to
-	// githubid.CreateRepo (a live GitHub call that makes something real on the
-	// operator's account); tests inject a stub so the handler is covered without
-	// creating repositories on anyone's GitHub.
-	repoCreate func(ctx context.Context, id githubid.Identity, spec githubid.NewRepo) (githubid.Repo, error)
-
 	// anonCloneFn probes whether a repo URL is reachable WITHOUT credentials (the
 	// public-repo check behind the create-time identity gate). Defaults to
 	// repoAnonCloneable (a real git ls-remote); tests inject a stub so the gate is
@@ -333,7 +327,6 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 		events_:     map[string][]events.Event{},
 		eventsCap:   50,
 		reposFetch:  githubid.ListRepos,
-		repoCreate:  githubid.CreateRepo,
 		anonCloneFn: repoAnonCloneable,
 		startedAt:   time.Now().UTC(),
 	}
@@ -788,7 +781,6 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("POST /v1/credentials/github/{name}/default", s.handleSetGitHubDefault)
 	mux.HandleFunc("DELETE /v1/credentials/github/{name}", s.handleDeleteGitHubIdentity)
 	mux.HandleFunc("GET /v1/credentials/github/{name}/repos", s.handleGitHubRepos)
-	mux.HandleFunc("POST /v1/credentials/github/{name}/repos", s.handleCreateGitHubRepo)
 	mux.HandleFunc("POST /v1/credentials/github/device-flow/start", s.handleGitHubDeviceStart)
 	mux.HandleFunc("POST /v1/credentials/github/device-flow/poll", s.handleGitHubDevicePoll)
 	mux.HandleFunc("GET /v1/credentials/providers", s.handleListProviderCreds)
@@ -1170,77 +1162,6 @@ func (s *Server) handleGitHubRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, GitHubReposResponse{Repos: res.Repos, Capped: res.Capped})
-}
-
-// handleCreateGitHubRepo creates a repository on GitHub as one of the daemon's
-// identities.
-//
-// This is the only handler in this file that makes something OUTSIDE the
-// operator's machine, and it is not undoable from here — there is no
-// corresponding delete, on purpose, because a wizard that can create repos and
-// a wizard that can destroy them are different risk objects and only the first
-// was asked for. Deleting stays a deliberate trip to GitHub.
-//
-// Two consequences follow. It is ledgered whether it succeeds or fails, so the
-// operator's own audit trail shows what their daemon did with their account
-// rather than only what crossed an island wall. And the response carries
-// GitHub's answer, never an echo of the request, so a repo that came back public
-// under an org policy is visible as such to whoever has to decide whether to go
-// on and build the island.
-func (s *Server) handleCreateGitHubRepo(w http.ResponseWriter, r *http.Request) {
-	var req CreateGitHubRepoRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode request: %w", err))
-		return
-	}
-	store, err := githubid.Load()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	owner, _ := s.callerGHScope(r.Context())
-	idName := r.PathValue("name")
-	id, ok := store.ResolveForIsland(owner, idName)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("no such github identity %q", idName))
-		return
-	}
-	// Validate before the ledger entry and before the network: a rejected name is
-	// not an attempt to create anything, and recording it as one would make the
-	// audit trail noisier than the account's own history.
-	if err := githubid.ValidateRepoName(req.Name); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	visibility := "public"
-	if req.Private {
-		visibility = "private"
-	}
-	repo, err := s.repoCreate(r.Context(), id, githubid.NewRepo{
-		Name: req.Name, Description: req.Description, Private: req.Private,
-	})
-	if err != nil {
-		s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
-			Type: "github.repo.create", Scope: idName, Path: id.Login + "/" + strings.TrimSpace(req.Name),
-			Mode: visibility, Detail: err.Error(), Decision: "denied",
-		})
-		writeError(w, http.StatusBadGateway, err)
-		return
-	}
-	// What GitHub actually made, which is not always what was asked for.
-	made := "public"
-	if repo.Private {
-		made = "private"
-	}
-	detail := "created " + made + " repository"
-	if made != visibility {
-		detail = "created " + made + " repository — " + visibility + " was requested (GitHub or an org policy overrode it)"
-	}
-	s.ledgerAppend(ledger.ProvenanceBrokered, ledger.Entry{
-		Type: "github.repo.create", Scope: idName, Path: repo.NameWithOwner,
-		Mode: made, Detail: detail, Decision: "allowed",
-	})
-	writeJSON(w, http.StatusCreated, CreateGitHubRepoResponse{Repo: repo})
 }
 
 func (s *Server) listIslands(w http.ResponseWriter, r *http.Request) {
