@@ -3077,6 +3077,12 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	if dir, err := paths.LLMIslandConfigPath(p.Name); err == nil {
 		_ = os.RemoveAll(dir)
 	}
+	// The island's harness policy. No key material, but it is per-island state
+	// outside the project dir, and leaving it behind would silently re-apply a
+	// deleted island's operator edits to the next island that reuses the name.
+	if dir, err := paths.HarnessPolicyIslandPath(p.Name); err == nil {
+		_ = os.RemoveAll(dir)
+	}
 	// Per-island secrets: values (keychain entries) AND the metadata + the
 	// materialized mount file. Scoped to the island, so they must not outlive
 	// it — and keychain entries would otherwise persist with nothing pointing
@@ -3788,6 +3794,18 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		binds = append(binds, runtime.BindMount{
 			HostPath:      filepath.Join(secretsPath, secretsFileName),
 			ContainerPath: legacySecretsMountPath, ReadOnly: true,
+		})
+	}
+
+	// Harness peer-isolation policy. Mounted read-only so the island's agent —
+	// which has passwordless root in the container — cannot loosen it, and
+	// unconditionally so an island that gains a Claude Code agent later is
+	// already covered. See harness_policy.go for why this exists at all.
+	if policyDir, err := islandHarnessPolicyDir(p); err != nil {
+		return nil, err
+	} else if policyDir != "" {
+		binds = append(binds, runtime.BindMount{
+			HostPath: policyDir, ContainerPath: HarnessPolicyMountPath, ReadOnly: true,
 		})
 	}
 

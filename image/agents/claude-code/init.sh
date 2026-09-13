@@ -147,6 +147,33 @@ else
 EOF
 fi
 
+# --- harness peer isolation (fallback default) -----------------------------
+# The real gate is /etc/claude-code/managed-settings.json, bind-mounted READ-ONLY
+# from the host by the daemon (internal/api/harness_policy.go). Managed settings
+# outrank user settings, and the mount is unwritable even to root in here, so on
+# a container created by a current daemon this block changes nothing.
+#
+# It exists for the containers that ALREADY EXIST. `dejima upgrade` recreates a
+# container against whatever image is on the host; an island created before the
+# mount shipped has no /etc/claude-code until someone recreates it. Same trap
+# legacySecretsMountPath documents — a fix that ships in the daemon does not
+# reach the containers already on disk. So set the user-settings equivalent too,
+# where it is a default rather than a gate (an agent with root can edit this
+# file; that is the whole reason the mount is the real answer).
+#
+# NON-CLOBBERING: only written when the key is absent. An operator who
+# deliberately sets it false in an island's settings.json keeps that choice.
+# `isolatePeerMachines` requires explicit approval before an agent here messages
+# a Claude session on ANOTHER MACHINE via Remote Control. It leaves Remote
+# Control itself, operator steering, and in-island messaging alone.
+if command -v jq >/dev/null 2>&1 && [[ -f "$SETTINGS" ]] && jq -e . "$SETTINGS" >/dev/null 2>&1; then
+    if isolated=$(jq 'if has("isolatePeerMachines") then . else . + {isolatePeerMachines: true} end' "$SETTINGS" 2>/dev/null) \
+        && [[ -n "$isolated" ]]; then
+        tmp="$SETTINGS.dejima.tmp"
+        printf '%s\n' "$isolated" >"$tmp" && mv -f "$tmp" "$SETTINGS"
+    fi
+fi
+
 # --- island primer ---------------------------------------------------------
 # Install the "you're in a Dejima island" primer into Claude Code's GLOBAL
 # memory (~/.claude/CLAUDE.md) — additive to any repo CLAUDE.md, idempotent,

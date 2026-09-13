@@ -56,6 +56,23 @@ ROOT = Path(__file__).resolve().parent.parent
 #         satisfied by reverting.
 CLAIMS = [
     {
+        "file": "teams.html",
+        "text": ("Run AI coding agents on infrastructure your team controls. Host files, host "
+                 "actions, MCP servers and cross-island messaging are each deny-all by default, "
+                 "and every crossing Dejima brokers is written to a tamper-evident ledger."),
+        "count": 1,
+        "why": ("SCOPED to the crossings Dejima brokers, and that scope is the whole point. This "
+                "sentence used to read 'every privileged action is brokered and recorded. Nothing "
+                "\u2014 not your code, not your agents \u2014 leaves your boundary.' Both halves "
+                "were false: an agent harness can carry its own vendor channel Dejima is not on "
+                "(Claude Code's Remote Control reaches every session on the account), so agent "
+                "traffic DOES leave the boundary and is neither brokered nor ledgered. See "
+                "docs/harness-peer-isolation.md. If you are widening this back to an absolute "
+                "\u2014 'every action', 'nothing leaves' \u2014 you are restoring the bug. The "
+                "unqualified form is only true if Dejima is on every channel the agent has, and "
+                "it is not."),
+    },
+    {
         "file": "llms.txt",
         "text": ("Each project runs sandboxed in its own container, called an island, isolated "
                  "from your machine and from your other projects. An island can hold several "

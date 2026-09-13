@@ -472,3 +472,35 @@ func HostGitConfig() (string, error) {
 	}
 	return filepath.Join(home, ".gitconfig"), nil
 }
+
+// HarnessPolicyIslandPath returns the per-island harness policy dir path
+// WITHOUT creating it — for cleanup when an island is torn down.
+func HarnessPolicyIslandPath(name string) (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "policy", "harness", "islands", name), nil
+}
+
+// HarnessPolicyIslandDir returns the per-island harness policy dir the daemon
+// materializes and mounts READ-ONLY over the agent harness's managed-settings
+// location. Created 0755, not 0700: unlike the secrets/ dirs this holds no key
+// material — only policy the operator is meant to read and edit — and the
+// island's agent uid must be able to traverse it to read the file.
+//
+// It lives under policy/ rather than secrets/ for that reason, and because the
+// operator editing it by hand is the SUPPORTED way to opt an island out. That
+// is the whole boundary: the file is writable by the operator on the host and
+// unwritable by the agent in the container, which is what makes it a gate
+// rather than a convention.
+func HarnessPolicyIslandDir(name string) (string, error) {
+	dir, err := HarnessPolicyIslandPath(name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
