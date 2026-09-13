@@ -48,15 +48,16 @@
 
 <section class="hero">
   <h1 class="hero-h">Up and running in minutes</h1>
-  <p class="lede">A few commands to install, one word to run. The installer handles Tailscale, Docker, and the background service for you, so there's no infrastructure to build.</p>
+  <p class="lede">A few commands to install, one word to run. The installer handles Docker, the background service, and — if you're setting up a server for other machines to reach — Tailscale, so there's no infrastructure to build.</p>
 </section>
 
 <h2 id="start">Get started</h2>
-<p>Two ways to run it. Most people want the first one.</p>
+<p>Three ways to run it. Most people want the first one.</p>
 
 <div class="scenario-jump">
   <a class="btn-ghost" href="#run-local">Run it locally →</a>
   <a class="btn-ghost" href="#run-server">Set up a server →</a>
+  <a class="btn-ghost" href="#run-client">Join a server →</a>
   <a class="btn-ghost jump-help" href="#help">Need help?</a>
 </div>
 
@@ -83,11 +84,12 @@
           <li>
             <p>Install Dejima.</p>
         <div class="cmd">
-          <pre><code>curl -fsSL https://dejima.tech/install.sh | bash</code></pre>
+          <pre><code>curl -fsSL https://dejima.tech/install.sh | DEJIMA_SETUP=local bash</code></pre>
           <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         </div>
-        <p class="small">Sets up Tailscale, the island image, and the background daemon (and Docker, on macOS).
-          Idempotent, so it's safe to re-run.</p>
+        <p class="small">Sets up Docker (on macOS), the island image, and the background daemon. No Tailscale and
+          nothing kept awake — that's what <code>DEJIMA_SETUP=local</code> means. Drop it and the installer asks;
+          local is the default answer. Idempotent, so it's safe to re-run.</p>
         <details class="disclose">
           <summary>First time on a Mac?</summary>
           <div class="disclose-body">
@@ -276,9 +278,35 @@ dejima profile switch mini</code></pre>
               </div>
             </div>
           </details>
-          <p class="small">Joining a teammate's server instead? They send you an invite and you run <code>dejima join &lt;invite&gt;</code>. See <a href="connect/">connect to a server</a> for that flow, including Tailscale MagicDNS so the invite carries a stable name.</p>
+          <p class="small">Joining a teammate's server instead? That's <a href="#run-client">the third option below</a>.</p>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Scenario 3: someone else already runs the server -->
+  <div class="scenario" id="run-client">
+    <div class="scenario-head">
+      <h3>Join a server someone else runs</h3>
+    </div>
+    <p class="scenario-sub">A teammate — or your own Mac mini — is already running Dejima, and you want to drive it from this computer. Nothing is installed here but the CLI: no Docker, no daemon, no island image.</p>
+
+    <div class="step">
+      <p class="step-label step-label-plain">Install the CLI</p>
+      <div class="cmd">
+        <pre><code>brew install aoos/dejima/dejima</code></pre>
+        <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+      </div>
+      <p class="small">Or <code>npm install -g dejima</code>, which also covers Windows. Don't use the curl installer for this — it builds a server you don't need.</p>
+    </div>
+
+    <div class="step">
+      <p class="step-label step-label-plain">Point it at the server</p>
+      <div class="cmd">
+        <pre><code>dejima join &lt;invite&gt;</code></pre>
+        <button type="button" class="cmd-copy" aria-label="Copy command" title="Copy"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+      </div>
+      <p class="small">Whoever runs the server mints the invite. It carries the address, the credentials and your role, so there is nothing else to copy. No invite yet? Ask them to run <code>dejima invite</code>. Full flow, including Tailscale MagicDNS so the invite carries a stable name: <a href="connect/">connect to a server</a>.</p>
     </div>
   </div>
 

@@ -10,6 +10,7 @@
 #   NOTIFY_URL=https://… scripts/setup.sh   # auto-subscribe a webhook at the end
 #   AUTO_INSTALL_DOCKER=1 scripts/setup.sh  # don't prompt; install Docker if missing
 #   SKIP_SERVICE=1 scripts/setup.sh         # build only; don't install as a service
+#   DEJIMA_SETUP=local scripts/setup.sh     # skip the question: local | host | client
 
 set -euo pipefail
 
@@ -22,6 +23,12 @@ SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SETUP_DIR/lib/tty.sh"
 # shellcheck source=scripts/lib/transcript.sh
 . "$SETUP_DIR/lib/transcript.sh"
+# The local/host/client decision. In a lib for the same reason tty.sh is: the
+# rest of this file installs Docker and writes /usr/local, so the decision
+# cannot be exercised where it is used. Driven by scripts/lib/dest_test.sh
+# under a real pty, because "nobody is there" is one of its three answers.
+# shellcheck source=scripts/lib/dest.sh
+. "$SETUP_DIR/lib/dest.sh"
 # Docker Desktop's first launch: probing the CLI without leaking the kernel's
 # kill notice, and deciding what to tell an operator watching a screen that may
 # have nothing on it. Tested by scripts/lib/dockerwait_test.sh.
@@ -44,6 +51,62 @@ case "$OS" in
 esac
 
 # ---------------------------------------------------------------------------
+# WHERE IS THIS GOING — local, host, or client — asked before anything installs.
+#
+# This script had no such question: it ran one path, and that path's first step
+# is Tailscale, because it was written for the always-on Mac mini. `dejima
+# onboard` learned to ask (local first, then host, then client) after an
+# operator who wanted a daemon on her own Mac landed in host provisioning —
+# never-sleep power settings, Homebrew, and a tailnet she had no use for.
+#
+# The installer never learned it, and the installer is the path most people
+# actually take: dejima.tech's own "Run it locally" instructions are
+# `curl … | bash`, which lands HERE. So the operator who followed the local
+# instructions got the host install anyway, and the fix in onboard.go never
+# reached her — a fix on one of two doors.
+#
+# Local first for the same reason it is first there: it is the common case and
+# it installs the least. Host is a commitment (always-on, a tailnet, other
+# people's access). Client needs an invite the user may not have yet, and does
+# not want this script at all — a client is a 5 MB CLI from a package manager,
+# not a Go toolchain and an island image, so that answer hands over the right
+# command instead of building the wrong thing.
+#
+# NON-INTERACTIVE RUNS STAY ON HOST. Nobody to ask means nobody to be surprised
+# either, but every existing runbook, CI job and doc that pipes this script
+# expects the host behaviour, and silently making those local would break remote
+# access on machines whose owners never saw a prompt. Scripted callers that want
+# local say so: DEJIMA_SETUP=local.
+# ---------------------------------------------------------------------------
+DEST="$(setup_destination)"
+
+if [[ "$DEST" == "client" ]]; then
+    printf '
+'
+    bold "You want the client only — this script is the wrong tool."
+    info "It builds a daemon, an island image and a Go toolchain; a client is none"
+    info "of those. Install the CLI from a package manager instead:"
+    printf '
+'
+    if [[ "$OS" == "Darwin" ]]; then
+        bold "    brew install aoos/dejima/dejima"
+        info "    (or: npm install -g dejima)"
+    else
+        bold "    npm install -g dejima"
+        info "    (or: brew install aoos/dejima/dejima)"
+    fi
+    printf '
+'
+    info "Then point it at the server you were invited to:"
+    bold "    dejima join <invite>"
+    printf '
+'
+    info "No invite yet? Ask whoever runs the server for one — 'dejima invite'"
+    info "on their machine prints it."
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Tailscale handling — installed early so the DEJIMA_TCP decision later in
 # this script and the service install both see an up-to-date state.
 #
@@ -58,7 +121,6 @@ esac
 #      MagicDNS name into ~/.dejima/host.json so clients have a single
 #      source of truth to copy.
 # ---------------------------------------------------------------------------
-bold "1. Tailscale"
 TAILSCALE_PRESENT=0
 TAILSCALE_RUNNING=0
 TAILSCALE_IP=""
@@ -76,7 +138,16 @@ ts_install_prompt() {
     [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
-if command -v tailscale >/dev/null 2>&1; then
+bold "1. Tailscale"
+if [[ "$DEST" == "local" ]]; then
+    # Not a failure and not a skipped prerequisite — a local install has nothing
+    # to reach it from. Said out loud because the closing section and `dejima
+    # doctor` both report "no remote address", and an operator who did not
+    # choose this would read that as something having gone wrong.
+    ok "skipped — local install, the daemon listens on a Unix socket only"
+    info "Change your mind later: install Tailscale, then re-run this script"
+    info "and answer Host (or: dejima service install --tcp :7273)."
+elif command -v tailscale >/dev/null 2>&1; then
     ok "tailscale CLI found"
     TAILSCALE_PRESENT=1
 else
@@ -541,6 +612,21 @@ info "Then: dejima connect <name>"
 # ended on "Setup complete" with the remote-access section silently absent —
 # nothing told the operator that the thing they need was missing, or why.
 printf '\n'
+if [[ "$DEST" == "local" ]]; then
+    # A local install has no remote address BY CHOICE, so the section below
+    # would report a missing thing nobody asked for. The warning there is
+    # correct for a host run where Tailscale failed and wrong for this one —
+    # same absent value, opposite meanings, which is why it forks on the
+    # destination rather than on whether the address is empty.
+    bold "Running locally — nothing else to connect."
+    info "The daemon listens on a Unix socket in ~/.dejima; this machine is both"
+    info "the server and the client, so there is no address to copy anywhere."
+    printf '\n'
+    info "Want to reach it from your laptop or phone later? Install Tailscale,"
+    info "re-run this script and answer Host — it is additive, nothing here is"
+    info "undone or rebuilt."
+    exit 0
+fi
 bold "To drive this server from another device:"
 if [[ -n "$TAILSCALE_IP" ]]; then
     info "Install the dejima client on the other machine, then set:"
