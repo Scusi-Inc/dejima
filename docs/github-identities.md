@@ -62,6 +62,64 @@ dejima auth status
 GitHub Enterprise hosts are supported — set `host` on the identity (e.g.
 `github.example.com`); the daemon talks to that host's `/api/v3`.
 
+## What the token has to be allowed to do
+
+Three different questions, and Dejima can only answer the first two:
+
+| | classic token | fine-grained token |
+|---|---|---|
+| authenticates | checked at connect | checked at connect |
+| can push / open PRs | checked (`repo` scope) | **not checkable** |
+| can edit `.github/workflows/` | checked (`workflow` scope) | **not checkable** |
+
+**`workflow` is the one that surprises people.** GitHub refuses any push that
+creates or edits a file under `.github/workflows/` unless the token carries it —
+separately from `repo`. So an agent can clone, commit, push a hundred files and
+open pull requests, and still be refused the moment it renames a CI job or bumps
+a Go version in `release.yml`. The refusal arrives at push, with the work
+already done, and it names the scope:
+
+```
+refusing to allow a Personal Access Token to create or update workflow
+`.github/workflows/release.yml` without `workflow` scope
+```
+
+The guided device flow requests `repo read:org` and **not** `workflow` — see
+`deviceScopes` in `internal/api/github_device_flow.go`. That is deliberate:
+`workflow` is account-wide on a classic token, and a workflow file is not an
+ordinary file. It is code GitHub runs on its own machines with your Actions
+secrets, so a token that can write one can write a job that uses them. Granting
+that to every island by default buys one convenience with a standing risk.
+
+If agents in an island need to touch CI, **grant it per identity rather than
+widening the default**:
+
+- **Fine-grained PAT (preferred)** — Contents: Read and write, Workflows: Read
+  and write, on that repository only. Bounded to one repo, and it expires.
+- **Classic PAT** — `repo workflow`. Simpler, and account-wide forever. Worth
+  putting on a *separate* identity used only by islands that need it, rather
+  than on the one every island inherits.
+
+### The blind spot, stated plainly
+
+GitHub sends no `X-OAuth-Scopes` header for fine-grained tokens, so **Dejima
+cannot tell whether one carries the Workflows permission.** `dejima github ls`
+says so rather than staying quiet:
+
+```
+    scopes: fine-grained (per-repo; Contents/Workflows permissions not introspectable from here)
+```
+
+Read that as "unknown", never as "fine". On a fine-grained token the only moment
+the Workflows permission is cheap is while you are on GitHub's token page
+creating it; after that it is a re-issue, and at push time it is a failed run.
+
+For a classic token Dejima *can* see it, and says so on the identity's row:
+
+```
+    scopes: repo, read:org  ⚠ no `workflow` scope: pushes touching .github/workflows/ are refused
+```
+
 ## Selecting an identity per island
 
 - **TUI (`dejima` → new island → Browse GitHub):** pick the identity, then one

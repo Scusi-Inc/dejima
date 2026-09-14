@@ -506,15 +506,38 @@ func ConfigYAML() string {
 //	              access token" inside an island, hours after `github connect`
 //	              reported success — because authenticating and being ABLE TO DO
 //	              THE WORK are different questions and only the first was asked.
+//
+// `workflow` is reported SEPARATELY and never changes canWrite, because it is a
+// different question again. GitHub refuses any push that creates or edits a file
+// under .github/workflows/ unless the token carries that scope — a rename, a Go
+// version bump, a new CI job, all refused at push time with the work already
+// done. A token without it can still clone, push everything else, and open pull
+// requests, so calling it unable to write would condemn a token that mostly
+// works. It is a caveat on a working token, not a verdict.
+//
+// The fine-grained case says so out loud rather than staying quiet. Silence
+// would be read as "nothing to worry about" on exactly the token type this
+// project tells people to prefer — a guard whose blind spot sits over the
+// recommended path is worse than no guard, because it manufactures confidence.
 func ScopeNote(scopes string) (note string, canWrite bool) {
 	s := strings.TrimSpace(scopes)
 	if s == "" {
-		return "fine-grained (per-repo; not introspectable)", true
+		return "fine-grained (per-repo; Contents/Workflows permissions not introspectable from here)", true
 	}
+	hasRepo, hasWorkflow := false, false
 	for _, f := range strings.Split(s, ",") {
-		if strings.TrimSpace(f) == "repo" {
-			return s, true
+		switch strings.TrimSpace(f) {
+		case "repo":
+			hasRepo = true
+		case "workflow":
+			hasWorkflow = true
 		}
 	}
-	return s + "  ⚠ no `repo` scope", false
+	if !hasRepo {
+		return s + "  ⚠ no `repo` scope", false
+	}
+	if !hasWorkflow {
+		return s + "  ⚠ no `workflow` scope: pushes touching .github/workflows/ are refused", true
+	}
+	return s, true
 }

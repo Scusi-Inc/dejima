@@ -90,7 +90,18 @@ func connectGitHubViaToken(ctx context.Context, c *api.Client, name string, toke
 		fmt.Println("  It can authenticate, but it CANNOT push or open pull requests, so an")
 		fmt.Println("  agent will fail with \"Resource not accessible by personal access token\".")
 		fmt.Println("  Re-issue it with the `repo` scope (classic), or grant Contents +")
-		fmt.Println("  Pull requests write (fine-grained), then re-run this command.")
+		fmt.Println("  Pull requests write + Workflows (fine-grained), then re-run this command.")
+	} else if strings.Contains(note, "workflow") && strings.Contains(note, "⚠") {
+		// A working token with one hole in it. Said HERE rather than only in
+		// `github ls`, because this is the moment the operator is on GitHub's
+		// token page and adding the permission is one checkbox — an hour later
+		// it is a re-issue, and at push time it is a failed run with the work
+		// already done.
+		fmt.Println()
+		fmt.Printf("ℹ this token's scopes are: %s\n", note)
+		fmt.Println("  Everything else works. Only commits that add or edit files under")
+		fmt.Println("  .github/workflows/ are refused — a CI rename or a version bump will")
+		fmt.Println("  fail at push. Add the `workflow` scope now if agents here touch CI.")
 	}
 	fmt.Println("islands can now clone and push as this identity.")
 	fmt.Println()
@@ -110,7 +121,8 @@ func promptForToken() (string, error) {
 			"    dejima github connect --token <token>\n" +
 			"    (or pipe it:  echo <token> | dejima github connect --token-stdin)\n\n" +
 			"  Create one at https://github.com/settings/tokens — a fine-grained token\n" +
-			"  with Contents: Read and Write on the repos the islands should reach")
+			"  with Contents: Read and Write on the repos the islands should reach,\n" +
+			"  plus Workflows: Read and Write if agents there edit .github/workflows/")
 	}
 	fmt.Println()
 	fmt.Println("Connect GitHub with a personal access token")
@@ -119,7 +131,10 @@ func promptForToken() (string, error) {
 	fmt.Println("  so paste a token instead. Create one at:")
 	fmt.Println("    https://github.com/settings/tokens")
 	fmt.Println("  A fine-grained token with Contents: Read and Write on the repos your islands")
-	fmt.Println("  should reach is enough (and tighter than the guided flow's scopes).")
+	fmt.Println("  should reach covers cloning and pushing, and is tighter than the guided")
+	fmt.Println("  flow's scopes. Add Workflows: Read and Write too if agents there edit")
+	fmt.Println("  .github/workflows/ — GitHub refuses those pushes without it, and this")
+	fmt.Println("  daemon cannot detect the difference on a fine-grained token.")
 	fmt.Println()
 	fmt.Print("Token (input hidden): ")
 	b, err := term.ReadPassword(int(os.Stdin.Fd()))
