@@ -112,6 +112,16 @@ func TestScopeNoteSeparatesUnknownFromUnable(t *testing.T) {
 		{"classic with repo can write", "repo, read:org", true, "repo"},
 		{"classic without repo cannot", "read:org, gist", false, "no `repo` scope"},
 		{"read-only repo scopes are not repo", "public_repo, read:org", false, "no `repo` scope"},
+		// `workflow` is a caveat on a WORKING token, never a verdict on it: a
+		// token without it clones, pushes and opens PRs fine and is refused only
+		// on .github/workflows/. Flipping canWrite here would condemn a token
+		// that does almost everything, and would block repo creation, which does
+		// not need the scope at all.
+		{"repo without workflow still writes", "repo, read:org", true, "no `workflow` scope"},
+		{"repo with workflow is clean", "repo, workflow, read:org", true, "workflow"},
+		// The blind spot must SAY it is a blind spot. Silence on the token type
+		// this project tells people to prefer would read as reassurance.
+		{"fine-grained cannot be checked for workflows", "", true, "not introspectable"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,5 +133,34 @@ func TestScopeNoteSeparatesUnknownFromUnable(t *testing.T) {
 				t.Errorf("ScopeNote(%q) note = %q, want it to mention %q", tc.scopes, note, tc.contains)
 			}
 		})
+	}
+}
+
+// A clean token must not carry a warning, or the warning means nothing.
+//
+// The control for the workflow caveat above. A guard that decorates every row
+// is a guard nobody reads — and this one renders on `dejima github ls`, next to
+// identities an operator scans rather than studies.
+func TestScopeNoteIsQuietWhenNothingIsWrong(t *testing.T) {
+	note, canWrite := githubid.ScopeNote("repo, workflow, read:org")
+	if !canWrite {
+		t.Fatalf("a repo+workflow token reads as unable to write: %q", note)
+	}
+	if strings.Contains(note, "⚠") {
+		t.Errorf("a fully-scoped token still carries a warning, so the warning is "+
+			"noise on every row: %q", note)
+	}
+}
+
+// The workflow caveat must never gate repository creation.
+//
+// ScopeNote's canWrite is a GATE in githubid.CreateRepo — it refuses before the
+// network call. Creating a repo needs `repo` and has nothing to do with
+// workflows, so if the caveat ever flipped canWrite, `[n]` in the island wizard
+// would start refusing perfectly good tokens with a message about CI files.
+func TestWorkflowCaveatDoesNotBlockRepoCreation(t *testing.T) {
+	if _, canWrite := githubid.ScopeNote("repo, read:org"); !canWrite {
+		t.Fatal("a repo-scoped token without `workflow` is being treated as unable " +
+			"to write — this gates CreateRepo and would refuse a working token")
 	}
 }
