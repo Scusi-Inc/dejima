@@ -167,19 +167,51 @@ matrix automates, the human pass shrinks toward just the go/no-go + real-world/U
 
 ## 🎯 Committed build queue — post-0.1.0 (in order)
 
-The committed forward plan, distilled from the 2026 competitive review (see
-`strategy/competitive-gap-assessment.md`). **We're building all of these**; the
-numbering is priority order. Detail lives in the phase buckets below; the items'
-home is here.
+**Status, verified against master on 2026-09-14: all five have shipped.** This
+section read as a forward plan for weeks after the work landed — a reading that
+was true when written, describing intent as though it were state, in the one
+document someone opens to ask "what is left?". That is
+[`testing/readings-go-stale.md`](testing/readings-go-stale.md) applied to the
+roadmap itself, and the reason each item below now carries the verb or package
+that proves it rather than a promise.
 
-1. **Audit log + read/export + viewer** — the governance moat; lives in Dejima (a tamper-evident record needs engine-level placement). Detail under v1.x. (week+) — **[~] core landed** on `feat/lane1-audit`: opt-in operational log (`api.request` + lifecycle) on the existing hash-chained ledger, optional HMAC keying, a read/filter/export API + `dejima audit` (filters, `--export jsonl|csv`), and a TUI audit pane (`A`). See [`audit.md`](audit.md). Remaining: identity enrichment once Lane 2's who/role lands; live-verify on Minion.
-2. **Team rung** — token auth + 3 built-in roles + per-island scope + an activity feed (who, and which agent, did what). The solo→team conversion bridge. (~3 weeks total)
-3. **Audited MCP brokering** — deny-by-default grants of MCP servers into an island, every call ledgered. Table stakes (MCP is the default agent tool layer) *and* a differentiator (nobody audits it). (weeks)
-4. **Language SDKs (Python + TS) + OpenAPI spec** — `pip install dejima-sdk` / npm. Thin clients over the existing API; generate the request/response client from an OpenAPI spec (API changes = a regen, not hand-edits), hand-write only the PTY-stream ergonomics. Ship now with a "0.x — may change" note; drops example snippets into the API docs for free. (week+ each)
+Distilled from the 2026 competitive review (see
+`strategy/competitive-gap-assessment.md`); the numbering was priority order.
 
-5. **Per-island secrets manager** — managed storage for the access tokens agents' tools need (EAS, npm, API keys), so they stop living in repos, shell profiles, and chat messages. Per-island scope, values never leave the daemon, injected via a parsed (never sourced) read-only mount that rotates live, a deny-list covering loader/interpreter/git execution vectors **and dejima's own `HTTPS_PROXY`** (a secret by that name would silently switch off egress containment), values never displayed after entry, and log masking. Explicitly does NOT hide values from agents in the island — same property as Vault/Doppler/`gh` — and the copy says so. Full design: [`secrets-manager-spec.md`](secrets-manager-spec.md). (days)
+1. **Audit log + read/export + viewer** — the governance moat; lives in Dejima (a tamper-evident record needs engine-level placement). Detail under v1.x. (week+) — **[~] core landed** on `feat/lane1-audit`: opt-in operational log (`api.request` + lifecycle) on the existing hash-chained ledger, optional HMAC keying, a read/filter/export API + `dejima audit` (filters, `--export jsonl|csv`), and a TUI audit pane (`A`). See [`audit.md`](audit.md). Remaining: **identity enrichment — now UNBLOCKED**, because Lane 2's who/role has landed (`roleauth.go` puts role on the request context and `ledger.Entry` already carries `Actor`/`Role`); and live-verify on Minion. This dependency read as blocked for as long as the thing it waited on had been done.
+2. **Team rung** — **[x] SHIPPED.** `dejima token` + `internal/api/tokenauth.go`; `owner`/`operator`/`viewer` in `roleauth.go`; per-island scope; activity feed (`dejima activity`, `cmd/dejima/activity.go`) and the `dejima team` TUI pane.
+3. **Audited MCP brokering** — **[x] SHIPPED.** `dejima mcp` + `internal/mcpbroker`; design in [`mcp-broker-spec.md`](mcp-broker-spec.md).
+4. **Language SDKs (Python + TS) + OpenAPI spec** — **[x] SHIPPED.** `openapi.yaml`, `sdk/python`, `sdk/ts`, with route-parity, field-parity, pytest and tsc all gated in CI. Originally: Thin clients over the existing API; generate the request/response client from an OpenAPI spec (API changes = a regen, not hand-edits), hand-write only the PTY-stream ergonomics. Ship now with a "0.x — may change" note; drops example snippets into the API docs for free. (week+ each)
+
+5. **Per-island secrets manager** — **[x] SHIPPED.** `dejima secret` + `internal/secrets` + the `tui_secrets` pane. Managed storage for the access tokens agents' tools need (EAS, npm, API keys), so they stop living in repos, shell profiles, and chat messages. Per-island scope, values never leave the daemon, injected via a parsed (never sourced) read-only mount that rotates live, a deny-list covering loader/interpreter/git execution vectors **and dejima's own `HTTPS_PROXY`** (a secret by that name would silently switch off egress containment), values never displayed after entry, and log masking. Explicitly does NOT hide values from agents in the island — same property as Vault/Doppler/`gh` — and the copy says so. Full design: [`secrets-manager-spec.md`](secrets-manager-spec.md). (days)
 
 Correctly deferred (NOT in this queue): microVM, multi-tenant SaaS, cross-host orchestration, in-Dejima agent orchestration.
+
+### What is actually open now
+
+The queue above is empty, so this is what a reader arriving at "what's next?"
+should see. **Not a priority order** — nobody has set one since the queue
+emptied, and inventing one here would be the same mistake in the other
+direction.
+
+- **The site and README trail the shipped verbs.** Voice and the secrets manager
+  appear in neither `index.html` nor the feature list; egress is one passing
+  mention. Four separate entries in the website backlog below say the same
+  thing, which is the signal it wants a script rather than a fifth entry.
+- **Audit: identity enrichment.** Unblocked — see item 1. The ledger carries
+  `Actor`/`Role` and Lane 2 fills them; what is missing is the enrichment pass
+  and a live-verify on Minion.
+- **Harness peer isolation follow-ups** (shipped in #427): islands created
+  before it are not subject to the policy until recreated — they report
+  `configured=true / mounted=false` rather than looking fine, but nothing
+  recreates them. And the approval surface has not been checked on a
+  non-terminal client.
+- **`crossSessionInbound`** is deliberately left to the operator per island; see
+  [`harness-peer-isolation.md`](harness-peer-isolation.md) for the measurement
+  that decided against defaulting it.
+
+Everything else open is in the phase buckets below, and the honest summary of
+those is that they are ideas with checkboxes, not committed work.
 
 ### 🛤️ Parallel lanes — up to 4 agents without collisions
 
@@ -578,9 +610,18 @@ nor `index.html`:
       with the microphone (not the daemon host), and that macOS/Linux install
       via `dejima voice install` while Windows needs ffmpeg + whisper.cpp by hand.
       This confused an operator driving a Mac mini from a Windows client.
-- [ ] **Audit ledger + SSH façade** — also shipped, also absent from the site.
-      Worth a sweep of `README.md` § `What you get` against the actual CLI verbs
-      rather than fixing these one at a time as they're noticed.
+- [x] **Audit ledger + SSH façade** — **[x] site copy LANDED** (verified
+      2026-09-14): `index.html` carries an Audit feature bullet, an "Audit trail"
+      section, and two comparison-table rows; SSH appears in the hero and the
+      tmux/SSH guide. The *sweep* this item also asked for is NOT done and is
+      split out below, because it is a different job from these four entries.
+- [ ] **Sweep `README.md` § `What you get` against the actual CLI verbs** — the
+      generalisation of every entry in this section: the site and README drift
+      behind shipped verbs, and they have been fixed one at a time, as noticed,
+      four times. `dejima --help` is the source of truth; diff it against both
+      documents rather than waiting to notice the next gap. Candidate for a
+      script in `scripts/` (this repo's own rule: a lesson that recurs twice
+      becomes a check, not a third comment).
 
 ---
 
@@ -773,10 +814,10 @@ Targeted fixes and quality-of-life additions. Sized in hours unless noted.
 - [ ] **Site: "Is Dejima right for you?" copy-paste prompt** — zero-backend widget on `index.html` that copies a crafted prompt (summarizes Dejima, references the site URL + `api.html` API docs, asks the visitor's situation, asks the model whether Dejima fits) to the clipboard for the visitor to paste into their *own* Claude/ChatGPT. No hosted inference, no bundled weights — honors the no-SaaS / no-weights non-goals. (hours)
 - [ ] **Site messaging refresh** — landing copy lags shipped work. Surface: SSH-façade → VS Code/Cursor Remote-SSH on-ramp, per-daemon GitHub identities, trustworthy self-update, host terminals, capability brokering, `clone`, panic / unpushed-work guards. Strongest under-told narrative: *"turn a Mac mini into a personal agent server you edit in your real IDE."* Diff the recent commits against the site copy and propose edits before applying. (hours)
 - [ ] **Submit to homebrew-core** — eventual `brew install dejima` without the tap prefix. Months of stewardship; defer until v1.x has users. (months)
-- [ ] **`dejima update` epic** — one role-aware command that pulls, installs, and restarts (server + client). Consolidates the four former sub-items below.
+- [x] **`dejima update` epic** — one role-aware command that pulls, installs, and restarts (server + client). Consolidates the four former sub-items below.
   - **V1 (dual-mode, local)** — auto-detect: in a git checkout with Go → *source path* (`git pull` + `make install` + restart); else → *release path* (download the `GOOS/GOARCH` asset, checksum-verify against published `SHA256SUMS`, atomic self-replace via go-update/selfupdate — Windows = rename-aside swap since a running `.exe` can't be overwritten). **Role-aware:** client swaps `dejima` only; server swaps `dejima`+`dejimad` then `dejima service restart` (islands survive via `AdoptExisting`; only live attaches blink). **Flags:** `--check` (dry-run/availability), `--yes`, `--channel stable|edge`, `--notify` (fire a webhook before any daemon restart). Reuses release CI + `SHA256SUMS` + `service restart` + events. ~1–1.5d. **Prereq for the *client* half: a release cadence** (even auto-tagged `v0.x` edge builds from CI) — a binary-only client can't build from source.
   - *folds in:* **self-update** (client download+verify+swap → the release path) · **update-available check** (`--check` / daily-opt-in → `update.available` webhook) · **stable vs edge channels** (`--channel`).
-  - **Deferred (v2): remote daemon update** — GIZMO → Minion daemon self-update over an *authenticated admin endpoint* (process-restart-behind-launchd + authz; ties to the per-island token work). Notify-then-apply, never silent.
+  - **Deferred (v2): remote daemon update** — GIZMO → Minion daemon self-update over an *authenticated admin endpoint* (process-restart-behind-launchd + authz; ties to the per-island token work). Notify-then-apply, never silent. **[x] LANDED** — `dejima update` is a defined CLI verb (`cmd/dejima/update.go`, `internal/selfupdate`).
 - [x] **Self-update restart no longer yanks attached terminals (gate shipped `45de8ef`).** **Symptom diagnosed 2026-06-19:** "terminal tabs keep closing, infrequent, as if daemons restart but not OOM-killed." Root cause was **not** a crash — it was the self-update itself: each TUI `[U]` (and a new `master` commit during dogfooding) runs `dejima service restart`, which kills the daemon and drops **every** attached terminal fleet-wide (containers/tmux survive — `restarts=0`, `oom_kill=0`, clean `shutdown signal received`, version march in `~/Library/Logs/dejima/dejimad.err.log`, no panic). **Fix:** gate the apply server-side in `handleAdminUpdate` — unless `Force`, defer while any client is attached (`s.attachedSessions()`); response carries `Deferred`+`AttachedClients`; the TUI re-prompts to force or detach-and-retry. Gating in the daemon (sole authoritative session count) covers every caller. Also fixed a latent bug surfaced by the test: `presenceHandle` was a zero-size `struct{}`, so every `&presenceHandle{}` aliased `runtime.zerobase` → distinct attaches collided on one map key, silently capping presence (and `RevokeAll`) at one client/agent. **Open follow-ups (NOT high pri — ship-and-see; revisit if the manual retry annoys in practice):**
   - [ ] **Auto-apply a deferred update when the last terminal detaches** (the better of the two). Hook the existing `last-client.detached` event so a queued update applies itself once idle — removes the manual retry. Musts: re-check the attached count at apply time (the gate already does, so it's free), a visible "update pending — applies when idle" indicator, and a cancel. Caveats: the daemon self-restarts unattended (by design; low blast radius since tmux/containers survive), and the pending intent is in-memory (lost across an unrelated daemon restart → next `[U]` re-arms). *Lean: do this one.*
   - [ ] **Extend the gate to the local `dejima update` CLI** (`cmd/dejima/update.go` → `selfupdate.ApplySource`, which bypasses the daemon). *Lean: skip.* It's an explicit foreground command you run and watch, so deferring fights intent; and gating couples the CLI to a reachable/responsive daemon socket — but a wedged daemon is often *why* you're updating by hand. If ever done: warn + `--force` + degrade-open when the socket's unreachable, not a hard gate. Per the logs the churn was the TUI/admin path, not the CLI.
@@ -803,7 +844,7 @@ Targeted fixes and quality-of-life additions. Sized in hours unless noted.
 - [ ] **Default-on attach notifications at install** — `dejima service install --notify <url>` becomes the recommended path; first install prompts for a webhook URL. Awareness without surveillance. (hour)
 - [~] **Audit log + read/export + viewer — the governance moat (pulled forward from v2).** The tamper-evident *Port-crossing* ledger is already shipped (hash-chained, host-side). This extends it to an **operational** audit log (`~/.dejima/ledger.jsonl`: API requests + lifecycle events, opt-in, optional HMAC) **and adds a read/export API + a basic viewer** — not just `dejima audit --verify`. **Core landed** (`feat/lane1-audit`): `dejimad --audit[/-reads/-hmac-key-file]` records `api.request` + curated lifecycle events on the shared chain; `GET /v1/audit` and `dejima audit` gain filters (island/type/actor/decision/since/until/limit) + `--export jsonl|csv` (whole-chain verification preserved); a TUI audit pane opens with `A`. Identity (who/role) on each record is consumed via an `AuditIdentity` context seam that Lane 2 populates; the team activity feed builds on this. Docs: [`audit.md`](audit.md). Remaining: identity enrichment + a live Minion run. **Decided 2026-06-19 that audit lives in Dejima, not the wrapper:** a tamper-evident record can't be delegated to a webhook-fed layer (engine-level placement required), which is why the crossing-ledger is already here. Compliance dashboards / multi-org rollups / retention-as-product stay above. This is the regulated-team wedge and is promised on the site's Teams page. (week+)
 - [ ] **Opt-in trust-on-first-use** for new clients — paranoid mode for users who want stronger-than-tailnet auth. Off by default. (week)
-- [ ] **Opt-in egress allow-list per island** — `network.allow = ["api.anthropic.com", ...]` in project config. Default: open. (day)
+- [x] **Opt-in egress allow-list per island** — `network.allow = ["api.anthropic.com", ...]` in project config. Default: open. (day) **[x] LANDED** — `dejima egress` + `internal/egress`; `doctor_egress.go` checks it.
 
 ---
 
@@ -857,11 +898,11 @@ Read-only V1 shipped & **validated on live Docker** (`scripts/integration.sh` 38
 
 ## Multi-agent — shipped (phases 0–7); follow-ups
 
-- [ ] **TUI: seed multiple agents at create time** — parity with `init --agent X --agent Y`; today the TUI create flow picks one agent, then `a` adds more. UI-only. (hours)
+- [x] **TUI: seed multiple agents at create time** — parity with `init --agent X --agent Y`; today the TUI create flow picks one agent, then `a` adds more. UI-only. (hours) **[x] LANDED** — `stepAgent` seeds the primary then extras, `stepAgents` is the roster; covered by `tui_create_multiagent_test.go`.
 - [x] **Scratch terminal in an island** — built-in `shell` agent type (`handlers.Shell`): a bash login shell on the island's `/workspace` (no isolated worktree), attachable. In the TUI add-agent picker as "Terminal" and via `dejima agent add X --type shell`. Glyphs reworked: `❯` terminal, `◆` AI agent, `■` headless. *(Future nicety: a transient `t`="open terminal here" that doesn't register an agent.)*
 - [ ] **Cross-machine validation** — non-primary-agent attach + resize on Windows-client → macOS-daemon (historically fragile path); dogfood, not code.
 - [ ] **Reassess agent naming / id scheme** *(low priority)* — `a1`/`a2` ids are the stable addressing handle (CLI `connect island/a2`, branch `agent/a2`, worktree `.agents/a2`, tmux `agent-a2`), while the label is optional/renamable. The TUI now leads with the label (falls back to type, id rides along muted). Open question whether the id scheme itself should change — e.g. human-friendly auto-names, or deriving the handle from the label when one's given. Design only; no urgency.
-- [ ] **TUI: create/add launches in a new tab + manual-name tab titles** — the creator (`n`) and add-agent (`+`) flows finish by attaching inline (the dashboard window is taken over); they should open the new island/agent in a **new terminal tab** instead (reuse `openAgentWindow`; graceful fallback to inline attach when not in tmux/macOS/Windows), leaving the dashboard up — same behavior `o`/`⏎` already use. Pair with: window-tab titles use the **manually-set** names (island `Title`→`Name`, agent `Label`→`ID`) instead of `<island>-<agentID>`; the internal tmux session handle `agent-<id>` is left unchanged (stable addressing). (`cmd/dejima/tui_window.go`, `tui_create.go`, `tui_agentpick.go`; hours)
+- [x] **TUI: create/add launches in a new tab + manual-name tab titles** — the creator (`n`) and add-agent (`+`) flows finish by attaching inline (the dashboard window is taken over); they should open the new island/agent in a **new terminal tab** instead (reuse `openAgentWindow`; graceful fallback to inline attach when not in tmux/macOS/Windows), leaving the dashboard up — same behavior `o`/`⏎` already use. Pair with: window-tab titles use the **manually-set** names (island `Title`→`Name`, agent `Label`→`ID`) instead of `<island>-<agentID>`; the internal tmux session handle `agent-<id>` is left unchanged (stable addressing). (`cmd/dejima/tui_window.go`, `tui_create.go`, `tui_agentpick.go`; hours) **[x] LANDED** — `canOpenNewWindow()` / `openInNewWindow()` in `cmd/dejima/tui.go`.
 
 ## v2 — heavier features
 
@@ -874,15 +915,15 @@ Substantial engineering. **Exception:** the team-auth/roles + activity feed, aud
   - **Open questions.** Does the secretary have to be an agent (costs a seat, has judgment) or a daemon-side function (cheap, but summarising is a model job)? How does a room deliver — push into each member's mailbox, or pull on attach, given that unread state across N members is a harder problem than the 1:1 mailbox has already proven to be? And does a room have a *quorum* concept, or is "who is listening" simply whoever is joined? (open design, weeks)
 - [ ] **Per-agent / per-island ACLs within a shared project** — when multiple islands share a workspace, define which agent can read/write which paths. Useful for delegated work streams ("frontend can write under /web, backend under /api, both read /shared"). Wrapper-product territory mostly; primitives may belong here. (open design, week+)
 - [ ] **Trust-on-first-use for new clients** — unfamiliar attaches blocked until user approves via push notification on an already-trusted device. The 2FA-shaped feature. (week)
-- [ ] **Token-based auth (single `owner` role)** — **committed (team rung — see build queue).** `dejima token create --label phone` issues a token; CLI/API consumers carry it via env or header. Doesn't replace Tailscale identity, complements it. Foundation for the wider roles model below. (week)
-- [ ] **Three built-in roles + per-island scope** — **committed (team rung).** `owner` / `operator` (lifecycle but no purge) / `viewer` (read + observe). A token can be limited to specific islands. Lets wrapper products (Scusi, etc.) hold a service token with bounded power. (2 weeks)
+- [x] **Token-based auth (single `owner` role)** — **committed (team rung — see build queue).** `dejima token create --label phone` issues a token; CLI/API consumers carry it via env or header. Doesn't replace Tailscale identity, complements it. Foundation for the wider roles model below. (week) **[x] LANDED** — `dejima token` + `internal/api/tokenauth.go`.
+- [x] **Three built-in roles + per-island scope** — **committed (team rung).** `owner` / `operator` (lifecycle but no purge) / `viewer` (read + observe). A token can be limited to specific islands. Lets wrapper products (Scusi, etc.) hold a service token with bounded power. (2 weeks) **[x] LANDED** — `owner`/`operator`/`viewer` in `internal/api/roleauth.go`, island scoping in `tokenauth.go`, `dejima team` TUI pane.
 - [x] **Activity feed** — **shipped (team rung — closes the build-queue #2 item).** "Who launched what, and which agent did what," across the team — a curated, owner-enriched, human-rendered timeline over the operational audit ledger. `GET /v1/activity` + `dejima activity` (filters: actor/island/owner/kind/decision/since/until/limit; `--json`). Classifies ledger entries into one item per action: `api.request` mutations → operator/human "who did what" (carrying Lane 2's authenticated actor+role), brokered `port/trade/capability/mcp` records → "which agent did what" to the host (always-on, so the feed works even without `--audit`), and `container.crashed`/`daemon.started` → system events; reads, redundant `island.*` lifecycle records, and telemetry are dropped. Viewer-readable (`capRead`), never reachable by an island token. The full who-did-what timeline needs `dejimad --audit` (the response carries an `audit_enabled` hint); the agent↔host broker slice shows regardless. (`internal/api/activity.go`)
 - [ ] **Explicit auth non-goals (won't build inside Dejima)** — multi-tenant user UIs, OAuth/SSO, per-verb fine-grained ACLs, time-windowed tokens. Those belong in wrapper apps. Dejima ships **3 roles + island scope** and stops; anything richer is the wrapper's job. *(Same pattern as Postgres roles + Supabase auth.)*
 - [ ] **(moved)** Operational audit ledger — consolidated into "Audit log + read/export + viewer" under v1.x (pulled forward; see above). It's the moat, so it's no longer a v2 deferral.
 - [ ] **Backup / restore** — `dejima backup <name>` and `dejima restore` with a configurable destination (local path, S3, Backblaze, rsync target). User-configurable. (week)
 - [ ] **microVM backend** — Firecracker/Apple Virtualization framework as an isolation upgrade. Real per-island VM rather than shared kernel. (weeks)
-- [ ] **Audited MCP brokering** — **committed (build queue #3).** Deny-by-default grants of specific MCP (Model Context Protocol) servers into an island, declarative per-project, with **every call ledgered** — the Port/file-broker pattern applied to tools. MCP is now the default agent tool layer (Anthropic CMA and most platforms connect to it), so this is *parity* and a *differentiator* (nobody audits MCP access). (weeks)
-- [ ] **Language SDKs (Python + TS) + OpenAPI spec** — **committed (build queue #4).** `pip install dejima-sdk` (and npm). Thin clients over the *existing* HTTP/WS API — they add ergonomics, not capability (the part they hide is the WebSocket PTY session stream + reconnection). Approach: publish an **OpenAPI spec** and generate the request/response client from it (so an API change is a regen, not hand-edits), then hand-write the small ergonomic layer (the PTY-stream helper). Ship now with a "0.x — may change" note; the CLI is already a Go client to mirror. Drops copy-paste snippets into the API docs for free. (week+ each)
+- [x] **Audited MCP brokering** — **committed (build queue #3).** Deny-by-default grants of specific MCP (Model Context Protocol) servers into an island, declarative per-project, with **every call ledgered** — the Port/file-broker pattern applied to tools. MCP is now the default agent tool layer (Anthropic CMA and most platforms connect to it), so this is *parity* and a *differentiator* (nobody audits MCP access). (weeks) **[x] LANDED** — `dejima mcp` + `internal/mcpbroker`; see `docs/mcp-broker-spec.md`.
+- [x] **Language SDKs (Python + TS) + OpenAPI spec** — **committed (build queue #4).** `pip install dejima-sdk` (and npm). Thin clients over the *existing* HTTP/WS API — they add ergonomics, not capability (the part they hide is the WebSocket PTY session stream + reconnection). Approach: publish an **OpenAPI spec** and generate the request/response client from it (so an API change is a regen, not hand-edits), then hand-write the small ergonomic layer (the PTY-stream helper). Ship now with a "0.x — may change" note; the CLI is already a Go client to mirror. Drops copy-paste snippets into the API docs for free. (week+ each) **[x] LANDED** — `openapi.yaml`, `sdk/python`, `sdk/ts`, all three gated in CI (route + field parity, pytest, tsc).
 - [ ] **Multi-user / RBAC** — team scenario. Auth model, identity, per-user quotas, project ownership. (weeks)
 - [ ] **Manage foreign containers (not just islands)** — extend the daemon from "manage the agents/containers Dejima provisioned" to "be the management layer for arbitrary agent containers already on the host" (adopt/observe/lifecycle containers Dejima didn't create). A real product swing toward Portainer/compose territory that strains the island/containment model; deferred deliberately. The committed direction is the **open-ended handler registry** instead: many first-class agent *types* (claude-code, codex, headless/SDK loops, openclaw, hermes, …) on islands Dejima owns, via a declarative handler descriptor rather than a Go change per agent. (open design, week+)
 - [ ] **Nested containers inside an island (per-island DinD)** — distinct from managing foreign containers: let an agent spawn its *own* containers inside its island (test sandboxes, image builds). Dejima deliberately keeps **no visibility** into these — they live in the island's blast radius and tear down with it. Today an island has no Docker access at all. Enabling it has two doors: mounting the host docker socket (trivial but effectively host-root — a containment break, **rejected**) vs. rootless Docker-in-Docker confined to the island namespace (preserves containment; costs image/privilege plumbing + overhead). If we do it, only the rootless-DinD door. Parked — reconsider on real demand. (open design)
