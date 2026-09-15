@@ -698,6 +698,16 @@ func provPhaseVMRightsize(pc *provCtx) error {
 		fmt.Printf("    Recommended: ~%dGB (~¾ of RAM, leaving ≥4GB for the host). colima can apply this directly.\n", recGB)
 		gb := pc.promptMemoryGB(recGB)
 
+		// Size CORES in the same command. `colima start --memory N` applies the
+		// memory and leaves CPU at colima's 2-core default — so provisioning a
+		// host used to hand the operator a VM that was memory-correct and
+		// CPU-starved, with every check green. That is the state that starved
+		// nine islands on a 10-core host and read as "the Mac mini is too small"
+		// for a day. ResizeTo keeps a CPU count the operator already chose and
+		// recommends one only when there is none or it is undersized.
+		cpu, _ := vmmem.ResizeTo(runtime.NumCPU(), vmmem.HostMemoryBytes(), currentVMCPU(context.Background()), 0)
+		fmt.Printf("    Cores: %d of %d (all but two, so the host keeps something to run on).\n", cpu, runtime.NumCPU())
+
 		// A resize starts colima with the new size; on an already-running VM that
 		// restarts it, bouncing every island. Warn + default-NO before that, but
 		// still proceed under --yes (the scriptable path) with a clear log line.
@@ -706,31 +716,36 @@ func provPhaseVMRightsize(pc *provCtx) error {
 			fmt.Println("    and BOUNCES all islands (every running container restarts).")
 			if pc.yes {
 				fmt.Println("  --yes: proceeding with the resize (this bounces running islands).")
-			} else if !pc.confirm(fmt.Sprintf("  Resize to %dGB now and bounce running islands?", gb), false) {
-				pc.addManualFor(whyHost, fmt.Sprintf("Set the Docker VM memory to %dGB (when islands are idle)", gb), fmt.Sprintf("colima start --memory %d", gb))
+			} else if !pc.confirm(fmt.Sprintf("  Resize to %dGB / %d CPU now and bounce running islands?", gb, cpu), false) {
+				pc.addManualFor(whyHost, fmt.Sprintf("Set the Docker VM to %dGB / %d CPU (when islands are idle)", gb, cpu), vmmem.ColimaResizeCmd(cpu, gb))
 				return nil
 			}
 		}
 
-		// Omit --cpu/--disk so colima keeps its saved values for those.
-		if err := execInteractive("colima", "start", "--memory", strconv.Itoa(gb)); err != nil {
-			fmt.Printf("  ✗ colima start --memory %d: %v\n", gb, err)
-			title, detail := vmRightsizeStep(gb)
+		// --disk is still omitted so colima keeps its saved value. --cpu is NOT:
+		// for a VM that does not exist yet, "colima's saved value" is the 2-core
+		// default, which is exactly the trap this step used to walk into.
+		if err := execInteractive("colima", vmmem.ColimaStartArgs(cpu, gb)...); err != nil {
+			fmt.Printf("  ✗ %s: %v\n", vmmem.ColimaStartCmd(cpu, gb), err)
+			title, detail := vmRightsizeStep(cpu, gb)
 			pc.addManualFor(whyHost, title, detail)
 			return nil
 		}
-		fmt.Printf("  ✓ ran: colima start --memory %d\n", gb)
+		fmt.Printf("  ✓ ran: %s\n", vmmem.ColimaStartCmd(cpu, gb))
 		return nil
 	}
 
 	// Docker Desktop — no CLI resize; point at doctor --fix / the GUI slider.
-	fmt.Printf("    Set Memory to %dGB: Docker Desktop → Settings → Resources → Memory.\n", recGB)
+	// CPU is named here too: Docker Desktop defaults are kinder than colima's 2
+	// cores, but a VM sized for memory alone is the same starved shape either way.
+	recCPU := vmmem.RecommendedCPU(runtime.NumCPU())
+	fmt.Printf("    Set Memory to %dGB and CPUs to %d: Docker Desktop → Settings → Resources.\n", recGB, recCPU)
 	fmt.Println("    (`dejima doctor --fix` scripts the equivalent colima resize.)")
 	if pc.confirm("  Run `dejima doctor --fix` now?", true) {
 		if self, err := os.Executable(); err == nil {
 			if err := execInteractive(self, "doctor", "--fix"); err != nil {
 				fmt.Printf("  ✗ doctor --fix: %v\n", err)
-				title, detail := vmRightsizeStep(recGB)
+				title, detail := vmRightsizeStep(recCPU, recGB)
 				pc.guide(guidedStep{
 					why:    whyHost,
 					title:  title,
@@ -742,7 +757,7 @@ func provPhaseVMRightsize(pc *provCtx) error {
 			}
 		}
 	} else {
-		title, detail := vmRightsizeStep(recGB)
+		title, detail := vmRightsizeStep(recCPU, recGB)
 		pc.addManualFor(whyHost, title, detail)
 	}
 	return nil
@@ -753,9 +768,9 @@ func provPhaseVMRightsize(pc *provCtx) error {
 // operator cannot act on — they are left to work out the figure the wizard
 // already computed. The field note was that it should blatantly say what to set
 // it to, so every path that records this step goes through here.
-func vmRightsizeStep(gb int) (title, detail string) {
-	return fmt.Sprintf("Set the Docker VM memory to %dGB", gb),
-		fmt.Sprintf("Docker Desktop → Settings → Resources → Memory → %dGB\n(or, with colima: colima start --memory %d)", gb, gb)
+func vmRightsizeStep(cpu, gb int) (title, detail string) {
+	return fmt.Sprintf("Set the Docker VM to %dGB / %d CPU", gb, cpu),
+		fmt.Sprintf("Docker Desktop → Settings → Resources → Memory → %dGB, CPUs → %d\n(or, with colima: %s)", gb, cpu, vmmem.ColimaStartCmd(cpu, gb))
 }
 
 // promptMemoryGB asks the user to confirm the recommended VM memory size (in GB)

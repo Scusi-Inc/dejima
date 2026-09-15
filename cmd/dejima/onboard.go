@@ -846,7 +846,11 @@ func printEnvSummary(e *envProbe) {
 				if vm, _ := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64); vm > 0 {
 					line := fmt.Sprintf("%s of %s host", humanBytes(vm), humanBytes(host))
 					if vmmem.Undersized(host, vm) {
-						line += fmt.Sprintf("  ⚠ too small — islands will OOM; run: colima start --memory %d", vmmem.RecommendedGB(host))
+						// Both flags. `colima start --memory N` leaves CPU at the
+						// 2-core default, so printing memory alone here handed the
+						// operator the memory-correct/CPU-starved VM as the remedy.
+						cpu, memGB := vmmem.ResizeTo(runtime.NumCPU(), host, currentVMCPU(context.Background()), vm)
+						line += fmt.Sprintf("  ⚠ too small — islands will OOM; run: %s", vmmem.ColimaResizeCmd(cpu, memGB))
 					}
 					fmt.Printf("  vm ram:    %s\n", line)
 				}

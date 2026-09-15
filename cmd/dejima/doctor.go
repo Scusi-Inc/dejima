@@ -491,22 +491,27 @@ func checkVMMemory(ctx context.Context, r *doctorReport) {
 	}
 	recGB := vmmem.RecommendedGB(host)
 	if vmmem.ColimaAvailable() {
-		cpu := runtime.NumCPU() - 2
-		if cpu < 2 {
-			cpu = 2
-		}
+		// One command, both flags, from the shared rule — and the CPU value is the
+		// VM's CURRENT one, not a recommendation. This repair used to compute
+		// `runtime.NumCPU() - 2` inline and hand it to --cpu, which silently
+		// resized a dimension that had passed its own check: an operator who chose
+		// 8 cores on a 12-core host had them moved to 10 by a memory fix. It was
+		// also a second copy of RecommendedCPU, whose own doc says it was lifted
+		// out of here "so it is a shared rule with a name rather than a number
+		// that happened to live inside one fix" — the extraction landed, this call
+		// site was never repointed.
+		cpu, memGB := vmmem.ResizeTo(runtime.NumCPU(), host, currentVMCPU(ctx), vm)
 		r.addRepair("System", "vm memory", "WARN",
 			fmt.Sprintf("%s — too small; islands share this pool and will OOM (recommend %dGB)", detail, recGB),
-			fmt.Sprintf("colima stop && colima start --memory %d --cpu %d", recGB, cpu),
+			vmmem.ColimaResizeCmd(cpu, memGB),
 			func() (string, error) {
 				if out, err := exec.CommandContext(ctx, "colima", "stop").CombinedOutput(); err != nil {
 					return "", fmt.Errorf("colima stop: %v: %s", err, strings.TrimSpace(string(out)))
 				}
-				if out, err := exec.CommandContext(ctx, "colima", "start",
-					"--memory", strconv.Itoa(recGB), "--cpu", strconv.Itoa(cpu)).CombinedOutput(); err != nil {
+				if out, err := exec.CommandContext(ctx, "colima", vmmem.ColimaStartArgs(cpu, memGB)...).CombinedOutput(); err != nil {
 					return "", fmt.Errorf("colima start: %v: %s", err, strings.TrimSpace(string(out)))
 				}
-				return fmt.Sprintf("VM resized to %dGB / %d CPU — islands auto-restart", recGB, cpu), nil
+				return fmt.Sprintf("VM resized to %dGB / %d CPU — islands auto-restart", memGB, cpu), nil
 			})
 		return
 	}
@@ -549,7 +554,10 @@ func checkVMCPU(ctx context.Context, r *doctorReport) {
 	recCPU := vmmem.RecommendedCPU(hostCPU)
 	// Carry the VM's existing memory through the resize rather than recomputing a
 	// recommendation: the operator may have chosen it deliberately, and this check
-	// is not the place to overrule that.
+	// is not the place to overrule that. vmmem.ResizeTo now states that rule for
+	// both dimensions and both checks; the read stays here because an unreadable
+	// memory figure means "do not offer a scripted repair at all" rather than
+	// "substitute the recommendation".
 	memGB := currentVMMemoryGB(ctx)
 	if !vmmem.ColimaAvailable() || memGB <= 0 {
 		r.add("System", "vm cpu", "WARN",
@@ -559,13 +567,12 @@ func checkVMCPU(ctx context.Context, r *doctorReport) {
 	}
 	r.addRepair("System", "vm cpu", "WARN",
 		fmt.Sprintf("%s — islands share these cores; agent start and cloning will crawl (recommend %d)", detail, recCPU),
-		fmt.Sprintf("colima stop && colima start --cpu %d --memory %d", recCPU, memGB),
+		vmmem.ColimaResizeCmd(recCPU, memGB),
 		func() (string, error) {
 			if out, err := exec.CommandContext(ctx, "colima", "stop").CombinedOutput(); err != nil {
 				return "", fmt.Errorf("colima stop: %v: %s", err, strings.TrimSpace(string(out)))
 			}
-			if out, err := exec.CommandContext(ctx, "colima", "start",
-				"--cpu", strconv.Itoa(recCPU), "--memory", strconv.Itoa(memGB)).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(ctx, "colima", vmmem.ColimaStartArgs(recCPU, memGB)...).CombinedOutput(); err != nil {
 				return "", fmt.Errorf("colima start: %v: %s", err, strings.TrimSpace(string(out)))
 			}
 			return fmt.Sprintf("VM resized to %d CPU / %dGB — islands auto-restart", recCPU, memGB), nil
@@ -575,6 +582,15 @@ func checkVMCPU(ctx context.Context, r *doctorReport) {
 // currentVMMemoryGB reads the VM's memory in whole GiB, for carrying through a
 // CPU resize unchanged. 0 when it can't be read — callers must then decline to
 // offer a scripted repair rather than pass a guessed --memory.
+func currentVMCPU(ctx context.Context) int {
+	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.NCPU}}").Output()
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return n
+}
+
 func currentVMMemoryGB(ctx context.Context) int {
 	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.MemTotal}}").Output()
 	if err != nil {
