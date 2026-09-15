@@ -82,6 +82,8 @@ writing a guard.
 - [custom-agents.md](custom-agents.md) ·
   [agent-adoption.md](agent-adoption.md) ·
   [ambient-agents-design.md](ambient-agents-design.md)
+- [muse-meta-provider-plan.md](muse-meta-provider-plan.md) — what adding `meta`
+  as a provider would cost, and the unverified env var to check first.
 - [multi-agent-spec.md](multi-agent-spec.md) ·
   [multi-agent-impl-plan.md](multi-agent-impl-plan.md) ·
   [island-pid1-unification.md](island-pid1-unification.md)
