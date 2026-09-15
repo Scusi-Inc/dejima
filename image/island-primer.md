@@ -61,9 +61,34 @@ from different devices; your session persists, so pick up where you left off.
 `git push` works (credentials are set up). Commit as you go; don't accumulate
 large uncommitted changes.
 
-**You may not be alone.** An island can hold several agents, each in its own git
-worktree, sharing the repo + credentials. Run `dejima msg poll` to see who else
-is here.
+**You may not be alone, and finding out is not obvious.** An island can hold
+several agents, each in its own git worktree, sharing the repo + credentials.
+
+The authoritative roster is:
+
+    dejima agent ls "$DEJIMA_PROJECT_NAME"
+
+It lists EVERY agent in this island with its TYPE and its WORKTREE. Use it before
+you assume you are alone, and before you conclude a peer is unreachable.
+
+Two ways to get this wrong, both of which have cost real work:
+
+- **`dejima msg poll` is not a roster.** It shows messages addressed to you. An
+  agent that has never written to you does not appear, so an empty poll means
+  "no mail", never "nobody here".
+- **Claude Code's `ListAgents` tool only sees Claude sessions.** An island agent
+  running codex (or any other type) is structurally invisible to it — no row, no
+  warning that the list is partial. On 2026-09-14 an agent read a 5-agent island
+  as 2 agents this way, sent eleven task briefs to the other three over `dejima
+  msg`, got no reply from two of them, and reported a messaging fault. The
+  messages were fine and are still in the mailbox; the two recipients were codex
+  sessions that never polled. Two of four workstreams never started.
+
+**The roster NAME is not the worktree.** A roster of
+manager/architect/frontend/engine/backend says nothing about which `.agents/<id>`
+each one occupies — in the island above, "engine" was in `.agents/e4` doing
+backend work. `dejima agent ls` prints the worktree; that column is the reliable
+identifier, and a name is not.
 
 **Secrets.** Tokens your tools need (an EAS token, `NPM_TOKEN`, an API key) are
 managed by the operator with `dejima secret` and appear as ENVIRONMENT VARIABLES
