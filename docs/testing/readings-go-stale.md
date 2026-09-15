@@ -26,6 +26,7 @@ field in a call you were already making, a flag, a hash:
 | "fixed in #387" | a PR can be open, merged, or reverted | the tag, or the file at that ref |
 | a version claim | master is not what anyone runs | `git tag --contains <sha>` |
 | a `$?` after a job | the job may not have finished | the thing the job wrote |
+| a send that returned `success` | `success` is the handoff, not the outcome | what the receiver got, or the delivery notice |
 
 And the second half, which no discriminator can supply:
 
@@ -43,8 +44,9 @@ does not. Pin to the date, the tag, or the SHA.
 
 ## The instances
 
-Nine, across five people and four different surfaces — git, CI, the Go
-toolchain, and our own messages. None of them is a test.
+Ten, across five people and five different surfaces — git, CI, the Go
+toolchain, our own messages, and the agent harness itself. None of them is a
+test.
 
 ### 1. A cached `go test` pass, of a mutant that never ran
 
@@ -173,6 +175,53 @@ review instinct. That was wrong, and d4 corrected it: the version-claim subclass
 — which is most of these — has the discriminator above. The instinct is what is
 left over for the rest: re-check the caveats you are proudest of, because they
 are the ones nobody else will.)*
+
+### 10. A `SendMessage` that returned `success`, and was refused minutes later
+
+A peer asked, as a deliberate probe, whether their `crossSessionInbound:
+"refuse"` setting blocked same-machine in-island messages or only cross-machine
+ones. The probe was one send and a report of what came back. What came back was:
+
+    {"success":true, ... ,"msg_id":"ba40918c-..."}
+
+Reported as *no deny*. Minutes later, out of band:
+
+    [Cross-session delivery notice] Your message to another session was refused
+    (recipient: uds:/tmp/cc-socks/57.sock): that session is not accepting
+    cross-session messages. Not delivered to that session's Claude.
+
+Both are true of the same send. `success` meant *accepted for delivery*; the
+refusal is what delivery returned. The correct answer is the opposite of the
+reported one — refuse **does** block in-island peers, and the `uds:` recipient
+proves it did so on the local socket rather than the remote path.
+
+This is instance 7's shape on a longer fuse, and the difference is what makes it
+worth its own entry. `setsid`'s 0 is available to be doubted the moment you
+learn it forks; here there is nothing to doubt at send time, because **the
+refusal does not exist yet**. The sender's reading is not premature in any way
+the sender can detect — it is complete, correct about the handoff, and the only
+value the system has to offer until the receiver answers.
+
+**Ask for:** what the receiver got. A send result is a statement about your own
+outbox. When the question is *did this arrive*, the answer is the delivery
+notice, or the recipient saying so — and if neither is available, that is the
+finding, not a detail.
+
+The consequence generalises past this one API. A receiver-side refusal is
+invisible to the sender at the moment of sending and arrives, if at all, later
+and elsewhere. Anything that reads a send result synchronously and moves on —
+a script, a retry loop, an agent writing up a probe — records *delivered*. The
+setting under test here was a candidate default for every island; had the
+sender-side reading stood, it would have shipped, and multi-agent islands would
+have lost messaging between their own agents silently, with every sender still
+seeing `success`.
+
+*(The hedge that saved this one was not method. The first report carried a
+caveat — "success is a statement about my send, not about your transcript" —
+written because the sender could not see the peer's session, not because a late
+refusal was anticipated. It happened to be the right caveat. d1's line about the
+mount bug applies verbatim one surface over: availability is not method, and the
+rule is what you want instead of the luck.)*
 
 ## Why this is hard to see from inside
 
