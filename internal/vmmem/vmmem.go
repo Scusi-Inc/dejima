@@ -9,6 +9,7 @@
 package vmmem
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -163,4 +164,54 @@ func CPUUndersized(hostCPU, vmCPU int) bool {
 		return false
 	}
 	return vmCPU < RecommendedCPU(hostCPU)*3/4
+}
+
+// ResizeTo computes the sizing a `colima start` should apply to BOTH dimensions:
+// the RECOMMENDATION for a dimension that is undersized, and the VM's CURRENT
+// value for one that is not.
+//
+// Both flags, always. Omitting one is the whole bug: `colima start --memory N`
+// applies the memory and leaves CPU at colima's 2-core default, so an operator
+// who fixes an OOM the way we told them to ends up memory-correct and
+// CPU-starved with every check green. That is not a hypothetical — it read as
+// "the Mac mini is too small" for a day on a 10-core host running nine islands.
+//
+// And the value for the HEALTHY dimension is the current one, not the
+// recommendation, because a passing check is not an invitation to resize. The
+// ceilings nag below ¾ of recommended, so a deliberately conservative VM passes
+// on purpose; an operator who chose 8 cores on a 12-core host gets to keep 8.
+// The two doctor checks used to disagree about this — the CPU repair carried the
+// VM's real memory through while the memory repair quietly reset CPU to the
+// recommendation — and disagreeing was the defect, whichever answer won.
+//
+// A current value of zero means "no VM yet, or unreadable", and yields the
+// recommendation: at install time there is no operator choice to preserve.
+func ResizeTo(hostCPU int, hostBytes uint64, vmCPU int, vmBytes uint64) (cpu, memGB int) {
+	cpu = vmCPU
+	if cpu <= 0 || CPUUndersized(hostCPU, vmCPU) {
+		cpu = RecommendedCPU(hostCPU)
+	}
+	memGB = int(vmBytes / (1 << 30))
+	if memGB <= 0 || Undersized(hostBytes, vmBytes) {
+		memGB = RecommendedGB(hostBytes)
+	}
+	return cpu, memGB
+}
+
+// ColimaStartArgs is the argv for a `colima start` that sizes both dimensions.
+// Shared so the command we PRINT and the command we RUN cannot drift apart.
+func ColimaStartArgs(cpu, memGB int) []string {
+	return []string{"start", "--cpu", strconv.Itoa(cpu), "--memory", strconv.Itoa(memGB)}
+}
+
+// ColimaResizeCmd is the operator-facing one-liner for an EXISTING VM. colima
+// cannot resize a running VM, hence the stop.
+func ColimaResizeCmd(cpu, memGB int) string {
+	return fmt.Sprintf("colima stop && colima start --cpu %d --memory %d", cpu, memGB)
+}
+
+// ColimaStartCmd is the same sizing for a VM that does not exist yet, where
+// there is nothing to stop first.
+func ColimaStartCmd(cpu, memGB int) string {
+	return fmt.Sprintf("colima start --cpu %d --memory %d", cpu, memGB)
 }

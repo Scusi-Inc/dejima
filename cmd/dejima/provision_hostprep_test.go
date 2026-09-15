@@ -49,7 +49,7 @@ func TestAutoLoginStepWithoutFileVaultIsVerifiable(t *testing.T) {
 // "Right-size the Docker VM" names the action and withholds the one thing the
 // operator needs: the number. The wizard has already computed it.
 func TestVMRightsizeStepStatesTheTargetSize(t *testing.T) {
-	title, detail := vmRightsizeStep(12)
+	title, detail := vmRightsizeStep(10, 12)
 
 	if !strings.Contains(title, "12GB") {
 		t.Errorf("the title must carry the target size, since the checklist prints titles first: %q", title)
@@ -69,7 +69,7 @@ func TestVMRightsizeStepStatesTheTargetSize(t *testing.T) {
 // a number in it is the bug, wherever it was recorded.
 func TestProvManualRightsizeLineCarriesTheNumber(t *testing.T) {
 	pc := &provCtx{}
-	title, detail := vmRightsizeStep(18)
+	title, detail := vmRightsizeStep(8, 18)
 	pc.addManualFor(whyHost, title, detail)
 	out := renderProvManual(pc)
 
