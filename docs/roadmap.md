@@ -221,6 +221,13 @@ direction.
   - Where the approval renders on a non-terminal client (phone via
     claude.ai/code) is unknown, and matters only once the point above produces
     a prompt at all.
+- **A VM DISK check for `dejima doctor`.** #433 added the CPU ceiling check after
+  a 2-CPU VM starved nine islands on a 10-core host. The same shape almost
+  certainly applies to disk — colima defaults to 60 GB and the fleet host was at
+  ~42 GB on 2026-09-14 — but `docker info` does not carry the capacity, so it
+  needs a different source (`colima list --json` has it, at the cost of being
+  colima-only) and a judgement about when near-full is worth saying. Left out of
+  #433 rather than bundled in half-measured.
 - **`crossSessionInbound`** is deliberately left to the operator per island; see
   [`harness-peer-isolation.md`](harness-peer-isolation.md) for the measurement
   that decided against defaulting it.
