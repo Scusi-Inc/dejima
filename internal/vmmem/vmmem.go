@@ -121,3 +121,46 @@ func ColimaAvailable() bool {
 	_, err := exec.LookPath("colima")
 	return err == nil
 }
+
+// The VM has a CPU ceiling too, and nothing has ever looked at it.
+//
+// Same substrate shape as the memory ceiling and a worse failure, because it is
+// silent in both directions. colima defaults to 2 CPUs; `colima start --memory N`
+// sets memory and LEAVES CPU AT THE DEFAULT. So the ordinary way an operator
+// fixes an OOM — size the memory up, which the doctor tells them to do — produces
+// a VM that is memory-correct and CPU-starved, and every check then passes.
+//
+// Observed 2026-09-14 on a 24 GB / 10-core Mac mini running nine islands and
+// about twenty agents: `docker info` reported `2 cpus / 18818494464 bytes`.
+// Memory was exactly the recommended 18 GiB. Two cores served the lot. Clone,
+// agent start and first paint all crawled, `dejima doctor` reported vm memory OK,
+// and the operator spent a day believing the Mac mini was too small.
+
+// RecommendedCPU is the VM CPU count to suggest for a host: all but two cores,
+// leaving the host itself something to run on, floored at 2. 0 when unknown.
+//
+// The same arithmetic the colima repair in `dejima doctor` already used when it
+// resized for MEMORY — lifted here so it is a shared rule with a name rather than
+// a number that happened to live inside one fix.
+func RecommendedCPU(hostCPU int) int {
+	if hostCPU <= 0 {
+		return 0
+	}
+	rec := hostCPU - 2
+	if rec < 2 {
+		rec = 2
+	}
+	return rec
+}
+
+// CPUUndersized reports whether the VM has meaningfully fewer cores than
+// recommended — below ¾, mirroring Undersized so the two ceilings nag on the
+// same terms and a deliberate, slightly-conservative VM does not.
+//
+// False when either figure is unknown: an unasked question is not a finding.
+func CPUUndersized(hostCPU, vmCPU int) bool {
+	if hostCPU <= 0 || vmCPU <= 0 {
+		return false
+	}
+	return vmCPU < RecommendedCPU(hostCPU)*3/4
+}
