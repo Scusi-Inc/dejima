@@ -169,6 +169,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkSupervision(ctx, r)
 	checkDocker(ctx, r)
 	checkVMMemory(ctx, r)
+	checkVMCPU(ctx, r)
 	checkIslandImage(ctx, r)
 	checkUnattendedHost(ctx, r)
 	checkTailscale(ctx, r)
@@ -512,6 +513,75 @@ func checkVMMemory(ctx context.Context, r *doctorReport) {
 	r.add("System", "vm memory", "WARN",
 		fmt.Sprintf("%s — too small; islands will OOM", detail),
 		fmt.Sprintf("Docker Desktop → Settings → Resources → Memory → %dGB → Apply & Restart", recGB))
+}
+
+// checkVMCPU flags a container-runtime VM with far fewer cores than the host.
+//
+// The sibling of checkVMMemory, and it exists because that check passing is what
+// HIDES this one. colima defaults to 2 CPUs and `colima start --memory N` leaves
+// that default alone — so an operator who fixes an OOM the way the doctor tells
+// them to ends up memory-correct and CPU-starved, with every check green. On a
+// 24 GB / 10-core host running nine islands this read as "the Mac mini is too
+// small" for a day; `docker info` said `2 cpus / 18818494464 bytes`.
+//
+// The repair passes --memory ALONGSIDE --cpu, set from the VM's CURRENT size.
+// colima start applies the flags it is given, and a repair that fixed cores
+// while silently resetting an 18 GB VM to the 2 GB default would be a far worse
+// bug than the one it set out to fix.
+func checkVMCPU(ctx context.Context, r *doctorReport) {
+	hostCPU := runtime.NumCPU()
+	if hostCPU <= 0 {
+		return // can't tell — say nothing rather than guess
+	}
+	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.NCPU}}").Output()
+	if err != nil {
+		return // docker unreachable — checkDocker already covers that
+	}
+	vmCPU, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	if vmCPU <= 0 {
+		return
+	}
+	detail := fmt.Sprintf("VM %d of %d host CPUs", vmCPU, hostCPU)
+	if !vmmem.CPUUndersized(hostCPU, vmCPU) {
+		r.add("System", "vm cpu", "OK", detail, "")
+		return
+	}
+	recCPU := vmmem.RecommendedCPU(hostCPU)
+	// Carry the VM's existing memory through the resize rather than recomputing a
+	// recommendation: the operator may have chosen it deliberately, and this check
+	// is not the place to overrule that.
+	memGB := currentVMMemoryGB(ctx)
+	if !vmmem.ColimaAvailable() || memGB <= 0 {
+		r.add("System", "vm cpu", "WARN",
+			fmt.Sprintf("%s — islands share these cores; agent start and cloning will crawl (recommend %d)", detail, recCPU),
+			fmt.Sprintf("Docker Desktop → Settings → Resources → CPUs → %d → Apply & Restart", recCPU))
+		return
+	}
+	r.addRepair("System", "vm cpu", "WARN",
+		fmt.Sprintf("%s — islands share these cores; agent start and cloning will crawl (recommend %d)", detail, recCPU),
+		fmt.Sprintf("colima stop && colima start --cpu %d --memory %d", recCPU, memGB),
+		func() (string, error) {
+			if out, err := exec.CommandContext(ctx, "colima", "stop").CombinedOutput(); err != nil {
+				return "", fmt.Errorf("colima stop: %v: %s", err, strings.TrimSpace(string(out)))
+			}
+			if out, err := exec.CommandContext(ctx, "colima", "start",
+				"--cpu", strconv.Itoa(recCPU), "--memory", strconv.Itoa(memGB)).CombinedOutput(); err != nil {
+				return "", fmt.Errorf("colima start: %v: %s", err, strings.TrimSpace(string(out)))
+			}
+			return fmt.Sprintf("VM resized to %d CPU / %dGB — islands auto-restart", recCPU, memGB), nil
+		})
+}
+
+// currentVMMemoryGB reads the VM's memory in whole GiB, for carrying through a
+// CPU resize unchanged. 0 when it can't be read — callers must then decline to
+// offer a scripted repair rather than pass a guessed --memory.
+func currentVMMemoryGB(ctx context.Context) int {
+	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.MemTotal}}").Output()
+	if err != nil {
+		return 0
+	}
+	b, _ := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
+	return int(b / (1 << 30))
 }
 
 // daemonElsewhere reports whether dejimad — and therefore Docker and the island
