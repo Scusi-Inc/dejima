@@ -902,8 +902,15 @@ func (s *Server) AdoptExisting(ctx context.Context) {
 			}
 		}
 		// Restore non-primary agent sessions for islands meant to be running.
+		//
+		// Ask the container rather than asserting false: the entrypoint re-reads
+		// the baked DEJIMA_LAUNCH on every start, so an island upgraded at any
+		// point in its life resumes its primary here whatever we intended. This
+		// is the path a host reboot, a `colima start`, or a daemon restart takes
+		// — the most common restart there is, and the one where a hardcoded
+		// false resumed the primary and cold-started every other agent.
 		if p.DesiredState == project.StateRunning {
-			s.reconcileAgentsAsync(p, false)
+			s.reconcileAgentsAsync(p, s.containerResumesPrimary(ctx, p))
 		}
 	}
 }

@@ -138,7 +138,10 @@ func (s *Server) startIslandIfStopped(ctx context.Context, p *project.Project, n
 	}
 	p.DesiredState = project.StateRunning
 	p.LastUsedAt = now.UTC()
-	s.reconcileAgentsAsync(p, false) // the entrypoint relaunches the primary; restore the rest
+	// The entrypoint relaunches the primary; restore the rest — and match the
+	// cold/continue choice it is about to make rather than asserting one, since
+	// the baked DEJIMA_LAUNCH outlives the upgrade that set it.
+	s.reconcileAgentsAsync(p, s.containerResumesPrimary(ctx, p))
 }
 
 // deliverScheduledTask injects a schedule's task into the target agent once it's

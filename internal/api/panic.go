@@ -157,6 +157,11 @@ func (s *Server) restartToRunning(ctx context.Context, p *project.Project) bool 
 			return false
 		}
 	}
-	s.reconcileAgentsAsync(p, false)
+	// The container pre-exists in two of the three branches above (already
+	// running, or started), so its baked DEJIMA_LAUNCH decides what the
+	// entrypoint does with the primary — we do not get to. In the recreate
+	// branch the ask is redundant rather than wrong: createContainerForProject
+	// just baked the cold launch and containerResumesPrimary reads it back.
+	s.reconcileAgentsAsync(p, s.containerResumesPrimary(ctx, p))
 	return true
 }
