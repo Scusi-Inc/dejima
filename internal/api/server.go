@@ -529,6 +529,7 @@ func agentUsageFromPayload(p map[string]any, ts time.Time) (AgentUsage, bool) {
 		TotalTokens:  inputAll + out,
 		Source:       source,
 		AsOf:         ts,
+		Model:        model,
 	}
 	if cost, ok := usage.CostUSD(model, usage.Tokens{
 		Input: in, CacheCreation: cacheCreate, CacheRead: cacheRead, Output: out,

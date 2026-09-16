@@ -3063,6 +3063,7 @@ components:
         cost_usd: { type: number, description: "omitted when the model isn't priced (cost renders n/a; tokens still show)" }
         source: { type: string, description: "reporting adapter, e.g. claude-code" }
         as_of: { type: string, format: date-time }
+        model: { type: string, description: "model id that actually served the agent's most recent turn, as the adapter read it off its own transcript (e.g. claude-opus-5). NOT AgentInfo.model, which is the target Dejima configured for a provider-key framework — an intent, not an observation, and the two can disagree after an in-session model change." }
     PresenceEntry:
       type: object
       properties:
