@@ -85,49 +85,136 @@ is_commit_sha() { [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; }
 bold "Dejima installer"
 
 # --- Which install is this? ----------------------------------------------
-# ASKED FIRST, before Go, Docker, or a clone. This script builds the SERVER
-# stack; install-client.sh drops a ~15MB CLI and nothing else.
+# ASKED FIRST, before Go, Docker, or a clone. Local and Host both build the
+# server stack here; Client is a ~15MB CLI from install-client.sh and nothing
+# else, so it stops this script rather than running it.
 #
 # It used to be one road. Someone who only wanted to drive a server elsewhere
 # was walked through a Go toolchain, a Homebrew Docker Desktop install, an image
 # build and a launchd service — with no signpost that a one-minute script
 # existed. Every failure they could hit was in work they never needed to do, and
 # a fresh-Mac install failed three times in the field that way.
+# THREE answers, not two, and they are the SAME THREE scripts/setup.sh asks for.
+# This script used to offer SERVER or CLIENT while setup.sh — which it execs at
+# the end, via `make setup` — asked again with Local / Host / Client. An operator
+# answered "1 SERVER", waited through a Go toolchain and a clone, and was then
+# asked a different question with different words and a third option that had not
+# been on the menu. dejima.tech documents `DEJIMA_SETUP=local` against THIS url,
+# and this script did not read that variable at all: the local answer survived
+# only because the env var rode through `make` to setup.sh, which did read it.
+# So the wrong menu was cosmetic in that one path and load-bearing in every other.
 #
+# Asking once and passing the answer down is what makes the two agree. DEST is
+# exported below so setup_destination() short-circuits instead of re-asking.
+DEST=""
+case "${DEJIMA_SETUP:-}" in
+    local|host|client) DEST="${DEJIMA_SETUP}" ;;
+    "") ;;
+    # Same strictness as scripts/lib/dest.sh, for the same reason: a caller that
+    # spells out its intent and typos it must not silently get a host install.
+    # No explicit `exit` needed here, unlike dest.sh — that copy of fail() only
+    # prints, this one exits. Worth stating because the two look identical.
+    *) fail "DEJIMA_SETUP must be local, host or client (got '${DEJIMA_SETUP}')" ;;
+esac
+# DEJIMA_ROLE is the older spelling and stays working. Its historical contract
+# was "any non-empty value means don't ask" — which always meant server — so an
+# unrecognised value keeps landing on host rather than becoming a hard failure:
+# the runbooks and CI jobs setting it never agreed on a vocabulary, and breaking
+# them to tidy one up would be a worse trade than honouring what they meant.
+if [[ -z "$DEST" && -n "${DEJIMA_ROLE:-}" ]]; then
+    case "${DEJIMA_ROLE}" in
+        local|LOCAL)   DEST="local" ;;
+        client|CLIENT) DEST="client" ;;
+        *)             DEST="host" ;;
+    esac
+fi
+
 # /dev/tty, not stdin: `curl … | bash` makes stdin a pipe while a person watches
 # from the keyboard, which is exactly the misreading that produced #341. Piped
-# and non-interactive runs fall through to the server path, which is what an
-# unattended installer should do.
+# and non-interactive runs fall through to the host path, which is what an
+# unattended installer should do — and what every runbook piping this expects.
 # `[[ -e /dev/tty ]]` is the WRONG test and this is the third variant of that
 # mistake this week: the device node exists on a process with no controlling
 # terminal, and opening it then fails with ENXIO. Probe by OPENING it, in a
 # subshell so a failed redirect is not fatal under `set -e` — which is exactly
 # what scripts/lib/tty.sh does, for exactly this reason. That library is not
 # available here; the repo has not been cloned yet.
-if [[ -z "${DEJIMA_ROLE:-}" ]] && ( exec </dev/tty ) 2>/dev/null; then
-    echo
-    info "Two ways to run Dejima:"
-    info "  [1] SERVER  — this machine hosts the islands (needs Docker; ~10 min)"
-    info "  [2] CLIENT  — this machine drives a Dejima server somewhere else (~1 min)"
-    echo
-    printf '  Which is this? [1/2] (default 1): '
-    read -r role </dev/tty 2>/dev/null || role=""
-    case "$role" in
-        2)
-            echo
-            bold "That's the client install — this script builds the server."
-            info "Run this instead (no Go, no Docker, no daemon):"
-            echo
-            info "    curl -fsSL https://dejima.tech/install-client.sh | bash"
-            echo
-            info "On Windows, use PowerShell:"
-            info "    irm https://dejima.tech/install-client.ps1 | iex"
-            echo
-            exit 0
-            ;;
-    esac
+if [[ -z "$DEST" ]]; then
+    if ( exec </dev/tty ) 2>/dev/null; then
+        echo
+        bold "How do you want to run Dejima on this machine?"
+        echo
+        info "    l) Local  — just for you, on this machine"
+        info "               (Docker + the daemon; no tailnet, nothing always-on)"
+        info "    h) Host   — an always-on server for a team, reachable from your other devices"
+        info "               (adds Tailscale; this machine stays awake)"
+        info "    c) Client — a server already exists and you have an invite"
+        info "               (no build needed — you want the CLI from a package manager)"
+        echo
+        printf '  Choice [L/h/c]: '
+        read -r reply </dev/tty 2>/dev/null || reply=""
+        # Bare Enter is Local: the least destructive answer, and the one an
+        # operator who did not read the menu most likely wanted. The digits are
+        # accepted because older docs and this script's own previous menu said
+        # "[1/2]", and someone following one of those should not be punished for
+        # it — 2 meant CLIENT there, which is why it is not h.
+        case "${reply:-l}" in
+            h|H|host|HOST)     DEST="host" ;;
+            c|C|client|CLIENT) DEST="client" ;;
+            2)                 DEST="client" ;;
+            *)                 DEST="local" ;;
+        esac
+    else
+        DEST="host"
+    fi
 fi
 
+if [[ "$DEST" == "client" ]]; then
+    echo
+    bold "That's the client install — this script builds the server."
+    info "Run this instead (no Go, no Docker, no daemon):"
+    echo
+    info "    curl -fsSL https://dejima.tech/install-client.sh | bash"
+    echo
+    info "On Windows, use PowerShell:"
+    info "    irm https://dejima.tech/install-client.ps1 | iex"
+    echo
+    exit 0
+fi
+
+# A machine that was a CLIENT keeps `export DEJIMA_HOST=…` in its shell rc, put
+# there by install-client.sh. Install a local daemon on top of that and the CLI
+# still talks to the old server: the new daemon is running, `dejima ls` is empty
+# or someone else's, and nothing says why. Detected and named rather than edited
+# — an rc file is the operator's, and a sed through it is how an installer eats
+# a line somebody wrote by hand.
+if [[ "$DEST" == "local" ]]; then
+    stale_rc=""
+    for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshenv"; do
+        [[ -f "$rc" ]] && grep -q '^[^#]*DEJIMA_HOST' "$rc" 2>/dev/null && stale_rc="${stale_rc} $rc"
+    done
+    if [[ -n "${DEJIMA_HOST:-}" || -n "$stale_rc" ]]; then
+        echo
+        bold "Heads up: this machine is already pointed at a Dejima server."
+        [[ -n "${DEJIMA_HOST:-}" ]] && info "  DEJIMA_HOST=${DEJIMA_HOST} is set in this shell"
+        [[ -n "$stale_rc" ]] && info "  and set in:${stale_rc}"
+        info "A local daemon will start, but the CLI will keep talking to that server"
+        info "until you remove the line and open a new shell. Nothing here edits it."
+        echo
+    fi
+fi
+
+# Hand the answer to setup.sh so it does not ask a second question. This is the
+# whole reason the fork moved here rather than being duplicated.
+export DEJIMA_SETUP="$DEST"
+
+# Say which of the three this run is. The operator has just answered a question
+# whose consequences arrive ten minutes later (Tailscale or not, always-on or
+# not), and an installer that never repeats the answer back gives them nothing
+# to check it against. It is also the line the fork tests assert on: a signal
+# emitted right after the decision, rather than a downstream side effect that
+# only appears if the whole build gets that far.
+info "install type: $DEST"
 info "source:  $SRC_DIR (ref: $REF)"
 info "binaries will be installed to ${PREFIX:-/usr/local}/bin"
 echo
