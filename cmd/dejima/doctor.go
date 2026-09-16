@@ -437,13 +437,36 @@ func checkDocker(ctx context.Context, r *doctorReport) {
 	}
 }
 
+// podmanHint is for the machine that already HAS a container engine and is
+// still told to install one.
+//
+// Dejima shells out to a binary named `docker` (exec.CommandContext, and
+// exec.LookPath in the daemon). A shell ALIAS — `alias docker=podman` in a
+// .bashrc — is invisible to that: aliases live in interactive shells, not in
+// exec. So an operator running podman with a docker alias watches every check
+// fail while `docker version` works perfectly when they type it themselves,
+// which is the most confusing shape this failure has.
+//
+// Reported working on Linux with a symlink or the `podman-docker` package, both
+// of which put a real `docker` on PATH. Stated as a WORKAROUND rather than
+// support: one operator, one platform, and nothing in CI exercises podman — the
+// runtime's `Bin` field can point at it, but nothing wires that up, and the VM
+// sizing checks assume colima. Saying "podman works" on this evidence would be
+// a claim the next person tests for us.
+func podmanHint() string {
+	return ". Using podman? Dejima runs the `docker` BINARY — a shell alias is " +
+		"not enough (aliases do not exist for exec). Reported to work with a real " +
+		"`docker` on PATH: `sudo dnf install podman-docker`, or " +
+		"`sudo ln -s $(command -v podman) /usr/local/bin/docker`. Untested by us"
+}
+
 // dockerInstallHint names the per-OS way to install a container engine.
 func dockerInstallHint() string {
 	switch runtime.GOOS {
 	case "darwin":
 		return "install one: `brew install --cask docker-desktop` — or colima: `brew install colima docker && colima start`"
 	case "linux":
-		return "install Docker engine (Debian/Ubuntu: `sudo apt install docker.io`; Fedora: `sudo dnf install docker`; Arch: `sudo pacman -S docker`), then `sudo systemctl enable --now docker`"
+		return "install Docker engine (Debian/Ubuntu: `sudo apt install docker.io`; Fedora: `sudo dnf install docker`; Arch: `sudo pacman -S docker`), then `sudo systemctl enable --now docker`" + podmanHint()
 	default:
 		return "https://www.docker.com/products/docker-desktop/"
 	}

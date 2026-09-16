@@ -57,11 +57,17 @@ fi
 # A piped, non-interactive run must fall through to the server path rather than
 # hanging on a question nobody can answer — the unattended contract.
 out2="$(printf '' | timeout 20 bash "$ROOT/install.sh" 2>&1 | head -20 || true)"
-if grep -q "Which is this?" <<<"$out2"; then
+if grep -q "Choice \[L/h/c\]" <<<"$out2"; then
     bad "a non-interactive run asked the question anyway:
 $out2"
+elif ! grep -q "install type: host" <<<"$out2"; then
+    # The control. Without it this passes when the script never ran: the absence
+    # of a prompt is satisfied perfectly by producing no output, which is how the
+    # PREVIOUS version of this check survived the prompt text changing under it.
+    bad "a non-interactive run did not land on host:
+$out2"
 else
-    ok "a non-interactive run does not ask"
+    ok "a non-interactive run does not ask, and lands on host"
 fi
 
 # DEJIMA_ROLE must let automation skip the prompt entirely.
@@ -75,7 +81,7 @@ TMPH="$(mktemp -d)"
 printf '' | HOME="$TMPH" DEJIMA_ROLE=server timeout 60 python3 "$ROOT/scripts/lib/ptyrun.py" pipe "$ROOT/install.sh" >/dev/null 2>&1 || true
 out3="$(cat "$TMPH"/dejima-install-*.log 2>/dev/null || true)"
 rm -rf "$TMPH"
-if grep -q "Which is this?" <<<"$out3"; then
+if grep -q "Choice \[L/h/c\]" <<<"$out3"; then
     bad "DEJIMA_ROLE=server still prompted:
 $out3"
 elif ! grep -q "binaries will be installed to" <<<"$out3"; then
@@ -85,6 +91,82 @@ elif ! grep -q "binaries will be installed to" <<<"$out3"; then
 $out3"
 else
     ok "DEJIMA_ROLE skips the prompt and proceeds"
+fi
+
+# --- LOCAL, the third answer -----------------------------------------------
+# It existed in scripts/setup.sh and in `dejima onboard`, and not here — so the
+# door most people come through offered two of the three. Worse, the two scripts
+# asked DIFFERENT questions at different moments: this one SERVER/CLIENT, then
+# setup.sh Local/Host/Client ten minutes later, after the toolchain.
+
+# Bare Enter is Local. An operator who did not read the menu gets the least
+# destructive answer, not a machine provisioned to stay awake.
+TMPL="$(mktemp -d)"
+printf '\n' | HOME="$TMPL" timeout 60 python3 "$ROOT/scripts/lib/ptyrun.py" pipe "$ROOT/install.sh" >/dev/null 2>&1 || true
+outL="$(cat "$TMPL"/dejima-install-*.log 2>/dev/null || true)"
+rm -rf "$TMPL"
+if grep -q "install type: local" <<<"$outL"; then
+    ok "bare Enter selects Local"
+else
+    bad "bare Enter did not select Local:
+$outL"
+fi
+
+# And Local must still BUILD — it is the same server stack as host, minus the
+# tailnet. A Local answer that bounced to the client script (or stopped) would
+# leave the operator with no daemon at all.
+if grep -q "binaries will be installed to" <<<"$outL"; then
+    ok "Local proceeds with the build"
+else
+    bad "Local did not reach the build:
+$outL"
+fi
+
+# DEJIMA_SETUP is what dejima.tech documents against this URL, and what
+# scripts/setup.sh reads. This script ignored it entirely.
+TMPS="$(mktemp -d)"
+printf '' | HOME="$TMPS" DEJIMA_SETUP=local timeout 60 python3 "$ROOT/scripts/lib/ptyrun.py" pipe "$ROOT/install.sh" >/dev/null 2>&1 || true
+outS="$(cat "$TMPS"/dejima-install-*.log 2>/dev/null || true)"
+rm -rf "$TMPS"
+if grep -q "Choice \[L/h/c\]" <<<"$outS"; then
+    bad "DEJIMA_SETUP=local still prompted:
+$outS"
+elif ! grep -q "install type: local" <<<"$outS"; then
+    bad "DEJIMA_SETUP=local did not select Local:
+$outS"
+else
+    ok "DEJIMA_SETUP=local skips the prompt and selects Local"
+fi
+
+# A typo must stop the run. Falling through to host is the one outcome a caller
+# spelling out its intent must never get by accident — dest.sh's rule, and the
+# reason it is duplicated here rather than assumed.
+TMPB="$(mktemp -d)"
+outB="$(printf '' | HOME="$TMPB" DEJIMA_SETUP=lcoal timeout 20 bash "$ROOT/install.sh" 2>&1 | head -20 || true)"
+rm -rf "$TMPB"
+if grep -q "install type:" <<<"$outB"; then
+    bad "a typo'd DEJIMA_SETUP proceeded anyway:
+$outB"
+elif ! grep -q "DEJIMA_SETUP must be" <<<"$outB"; then
+    bad "a typo'd DEJIMA_SETUP gave no usable error:
+$outB"
+else
+    ok "a typo'd DEJIMA_SETUP stops the run and says why"
+fi
+
+# A machine that was a CLIENT keeps DEJIMA_HOST in its shell rc. Install local
+# on top and the CLI keeps talking to the old server — daemon up, `dejima ls`
+# showing somebody else's fleet, nothing saying why.
+TMPR="$(mktemp -d)"
+printf 'export DEJIMA_HOST=old-server:7273\n' > "$TMPR/.zshrc"
+printf '\n' | HOME="$TMPR" timeout 60 python3 "$ROOT/scripts/lib/ptyrun.py" pipe "$ROOT/install.sh" >/dev/null 2>&1 || true
+outR="$(cat "$TMPR"/dejima-install-*.log 2>/dev/null || true)"
+rm -rf "$TMPR"
+if grep -q "already pointed at a Dejima server" <<<"$outR"; then
+    ok "a stale DEJIMA_HOST from a prior client install is named"
+else
+    bad "a local install over a client config said nothing about DEJIMA_HOST:
+$outR"
 fi
 
 echo
