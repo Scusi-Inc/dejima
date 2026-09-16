@@ -84,3 +84,48 @@ func TestMaybeUpdateAgentUsage_RoundTrip(t *testing.T) {
 		t.Error("non-usage event should not create a usage entry")
 	}
 }
+
+// The model id arrived with every usage report from the day the hook was
+// written — agentUsageFromPayload has always read it, to price the turn — and
+// then went nowhere, because AgentUsage had no field to put it in. Nothing was
+// missing upstream; the value was being computed with and discarded.
+//
+// Pinned for both a priced and an UNPRICED model: cost is the only thing that
+// ever consumed this value, so a model we cannot price is exactly where a
+// "derive it from the cost" shortcut would silently lose it again.
+func TestAgentUsageCarriesTheReportedModel(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		model string
+	}{
+		{"a priced model", "claude-opus-4-8"},
+		{"a model with no price table entry", "mystery-llm"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u, ok := agentUsageFromPayload(map[string]any{
+				"input_tokens": float64(10), "output_tokens": float64(5),
+				"model": tc.model, "source": "claude-code",
+			}, time.Now())
+			if !ok {
+				t.Fatal("expected ok (tokens present)")
+			}
+			if u.Model != tc.model {
+				t.Errorf("Model = %q, want %q — the TUI has no other source for "+
+					"which model is actually answering", u.Model, tc.model)
+			}
+		})
+	}
+
+	// An adapter that reports tokens but no model must not invent one. A blank
+	// here renders as the framework name, which is honest; a placeholder would
+	// read as a fact.
+	u, ok := agentUsageFromPayload(map[string]any{
+		"input_tokens": float64(10), "output_tokens": float64(5), "source": "codex",
+	}, time.Now())
+	if !ok {
+		t.Fatal("expected ok (tokens present)")
+	}
+	if u.Model != "" {
+		t.Errorf("Model = %q, want empty — nothing reported a model", u.Model)
+	}
+}

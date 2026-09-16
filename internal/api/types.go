@@ -333,6 +333,19 @@ type AgentUsage struct {
 	CostUSD      *float64  `json:"cost_usd,omitempty"`
 	Source       string    `json:"source"` // reporting adapter, e.g. "claude-code"
 	AsOf         time.Time `json:"as_of"`
+	// Model is the id that ACTUALLY served the agent's most recent turn, as the
+	// adapter read it back off its own transcript (e.g. "claude-opus-5"). It
+	// arrived with every usage report from the start — cost is derived from it —
+	// and was dropped here rather than carried, so nothing could show it.
+	//
+	// NOT the same fact as AgentInfo.Model, and the two must not be merged.
+	// AgentInfo.Model is the target Dejima CONFIGURED for a provider-key
+	// framework; this is what an agent REPORTS having used. For Claude Code the
+	// configured field is empty (it picks its own model), and the two can also
+	// simply disagree — an operator's in-session `/model` changes what runs
+	// without touching what was configured. An intent and an observation that
+	// share a name get read as one fact by whoever arrives later.
+	Model string `json:"model,omitempty"`
 }
 
 // IslandHealth surfaces crash-relevant facts that a remote client can't observe

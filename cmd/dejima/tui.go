@@ -4906,6 +4906,50 @@ func agentDisplayName(a api.AgentInfo) string {
 	return agentDisplay(a.Label, a.ID)
 }
 
+// agentTypeMeta is what the muted meta column leads with: the MODEL when we know
+// which one is answering, and the framework otherwise.
+//
+// The model is the more useful of the two and costs no extra width —
+// `claude-opus-5` against `claude-code` — because it already says which
+// framework it is. "claude-code" told the operator what they chose when they
+// created the agent, which is the one thing they cannot have forgotten; which
+// model is actually serving the session is the thing that changes under them,
+// on a subscription tier flip or an in-session `/model`.
+//
+// Falls back to the framework's own name rather than to an empty column, so a
+// row is never blank while an agent is between its first turn and its first
+// usage report.
+func agentTypeMeta(a api.AgentInfo) string {
+	if m := agentReportedModel(a); m != "" {
+		return m
+	}
+	return agentFrameworkLabel(a.Type)
+}
+
+// agentReportedModel is the model id an agent REPORTED using, else the one
+// Dejima CONFIGURED for it — in that order, because a report is an observation
+// of what ran and the configured value is only ever an intent. They disagree
+// whenever an operator changes model mid-session, and the observation is the one
+// that answers "what is this costing me right now".
+func agentReportedModel(a api.AgentInfo) string {
+	if a.Usage != nil && a.Usage.Model != "" {
+		return a.Usage.Model
+	}
+	return a.Model
+}
+
+// agentFrameworkLabel shortens a handler id for DISPLAY only. The id stays
+// `claude-code` everywhere it is a handle — the registry key, DEJIMA_LAUNCH
+// comparisons, start.sh's case arms, `dejima agent add --type`, the detail
+// pane's `type:` row — because renaming a handle to read nicely is how a
+// display string ends up being compared against a config value.
+func agentFrameworkLabel(t string) string {
+	if t == "claude-code" {
+		return "Claude"
+	}
+	return t
+}
+
 // agentDisplayIn resolves an agent id to its display name (label, else id)
 // within an island the operator can see — for surfaces that carry a bare id
 // (e.g. the action-gate queue's from_agent/to_agent). Falls back to the id when
@@ -5073,10 +5117,11 @@ func agentRowText(a api.AgentInfo, ambiguous bool, paneWidth int) string {
 		// these rows, which is fine — they're deliberately distinct.
 		name = truncate(agentDisplayName(a), nameColumnAgentCountWidth(paneWidth)) + " " + styleMuted.Render(a.ID)
 	}
-	// Muted meta: the agent type, plus uptime/age unless the session is known to
-	// be down. (State is unprobed in the list, so we show age there too; the
-	// state word, not this, is what says whether it's actually running.)
-	meta := a.Type
+	// Muted meta: the model (or framework — see agentTypeMeta), plus uptime/age
+	// unless the session is known to be down. (State is unprobed in the list, so
+	// we show age there too; the state word, not this, is what says whether it's
+	// actually running.)
+	meta := agentTypeMeta(a)
 	if a.State != "stopped" && a.State != "exited" && !a.CreatedAt.IsZero() {
 		meta += "  up " + timeAgo(a.CreatedAt)
 	}
@@ -5116,7 +5161,7 @@ func subAgentRowText(a api.AgentInfo) string {
 	if !a.Attachable {
 		glyph = glyphHeadless
 	}
-	meta := a.Type
+	meta := agentTypeMeta(a)
 	if a.State != "stopped" && a.State != "exited" && !a.CreatedAt.IsZero() {
 		meta += "  up " + timeAgo(a.CreatedAt)
 	}
@@ -5363,6 +5408,17 @@ func (m tuiModel) renderAgentDetail(d *api.IslandInfo, agentID string) string {
 	// .agents/a2); the label/type leads in the title above.
 	b.WriteString(fmt.Sprintf("id:        %s\n", styleMuted.Render(a.ID)))
 	b.WriteString(fmt.Sprintf("type:      %s\n", styleAccent.Render(a.Type)))
+	// The model, with its PROVENANCE, because the two sources mean different
+	// things and the difference is invisible in the value. "reported" is what the
+	// agent said it used on its last turn; "configured" is the target Dejima set
+	// for it and no confirmation that anything ran on it.
+	if mdl := agentReportedModel(a); mdl != "" {
+		prov := "configured"
+		if a.Usage != nil && a.Usage.Model != "" {
+			prov = "reported"
+		}
+		b.WriteString(fmt.Sprintf("model:     %s %s\n", styleAccent.Render(mdl), styleMuted.Render("("+prov+")")))
+	}
 	kind := "terminal — attachable"
 	if !a.Attachable {
 		kind = "headless — background process, logs only"

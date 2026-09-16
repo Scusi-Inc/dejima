@@ -29,7 +29,20 @@ const (
 	nameColMin = 14
 	// nameColMax stops a very wide pane spending everything on names when no
 	// island is called anything like that long. Island names are slugs.
-	nameColMax = 28
+	//
+	// 28 was set before there was a fleet to measure it against, and on a real
+	// one it reads as a gap: the longest island name in use is `playbook-internal`
+	// at 17, and most are 6-13. The ceiling only ever costs something on a WIDE
+	// pane — every column it reserves past the longest actual name is blank space
+	// between the name and the status, which is the complaint.
+	//
+	// 22 rather than 17: an island row can also carry an agent count, and ` (3)`
+	// takes four columns off the top (nameColumnAgentCountWidth), so 21 is the
+	// floor at which today's longest name still renders whole beside its count.
+	// One spare on top of that, because slugs are the operator's to choose and a
+	// ceiling that exactly fits the current fleet would start truncating on the
+	// next island they name.
+	nameColMax = 22
 	// nameColLead is the fixed prefix before the name on both row kinds: the
 	// selection marker plus each row's own glyph furniture.
 	nameColLead = 9

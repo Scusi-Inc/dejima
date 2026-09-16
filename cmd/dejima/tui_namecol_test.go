@@ -81,7 +81,7 @@ func TestTheTreeStaysAlignedAtEveryWidth(t *testing.T) {
 			return runewidth.StringWidth(row[:i])
 		}
 		iCol := col(islandRow, "running")
-		aCol := col(agentRow, "claude-code")
+		aCol := col(agentRow, "Claude") // the meta's first word: model if reported, else framework
 		if iCol < 0 || aCol < 0 {
 			t.Fatalf("width %d: no status on one of the rows:\n%q\n%q", paneWidth, islandRow, agentRow)
 		}
@@ -141,7 +141,11 @@ func TestTheAgentCountSurvivesTruncation(t *testing.T) {
 // A wide pane shows the name that a narrow one had to cut. This is the ask,
 // asserted as behaviour rather than as arithmetic.
 func TestAWidePaneShowsTheWholeIslandName(t *testing.T) {
-	const name = "a-really-long-island-name" // 25 chars: cut at 14, whole at 28
+	// A REAL long island name rather than a synthetic 25-character one. The
+	// ceiling is 22 (see nameColMax), sized to the longest name actually in use;
+	// a fixture longer than any island anyone has is not evidence the column is
+	// too narrow, it is evidence the fixture was chosen to fill the old ceiling.
+	const name = "playbook-internal" // 17 chars: cut at 14, whole at 22
 	m := seededModel(t, island(name, "a1"))
 
 	narrow, _ := m.renderList(41)
