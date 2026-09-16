@@ -1,6 +1,6 @@
 # The docs, mapped
 
-88 files, grouped by the question you arrived with. Every `.md` under `docs/` is
+90 files, grouped by the question you arrived with. Every `.md` under `docs/` is
 listed here exactly once, and `scripts/docs-index-check.py` fails the build if
 that stops being true or if a link here points at a file that does not exist.
 
@@ -65,6 +65,8 @@ writing a guard.
 
 ## "How does someone install and run a host?"
 
+- [install-cli-first.md](install-cli-first.md) — designed, not built: one line
+  installs a CLI, the TUI routes, and `dejima host add <ssh>` provisions a remote.
 - [mac-mini-host-setup.md](mac-mini-host-setup.md) — the reference host.
 - [host-provisioning-plan.md](host-provisioning-plan.md) ·
   [distribution.md](distribution.md) — the channels and their state.

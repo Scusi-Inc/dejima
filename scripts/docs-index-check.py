@@ -63,6 +63,30 @@ def main() -> int:
     missing = sorted(on_disk - linked - set(WAIVED))
     failed = False
 
+    # THE COUNT IN THE PROSE IS ALSO A READING, and it was stale in both places
+    # that carried it: docs/README.md said 88 and CLAUDE.md said 87 against a
+    # real 90. Nothing checked them, so they drifted every time a doc landed —
+    # in the file whose own opening paragraph is about readings that quietly
+    # stop being true.
+    #
+    # Checked rather than corrected a third time, per the standing rule in
+    # CLAUDE.md: a lesson that recurs twice becomes a gate. The number is already
+    # computed here; asserting the prose matches costs nothing and cannot rot.
+    real = len(on_disk) - len(WAIVED)
+    for path, label in ((INDEX, "docs/README.md"), (os.path.join(ROOT, "CLAUDE.md"), "CLAUDE.md")):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                body = fh.read()
+        except OSError:
+            continue  # CLAUDE.md is not load-bearing for this check
+        for claimed in re.findall(r"(\d+)\s+(?:files|docs)\b", body):
+            if int(claimed) != real:
+                failed = True
+                print(f"FAIL: {label} says {claimed} docs; there are {real}.", file=sys.stderr)
+                print("       Update the number. It is a reading of the tree and it\n"
+                      "       goes stale silently — which is what this index is about.",
+                      file=sys.stderr)
+
     if broken:
         failed = True
         print("FAIL: docs/README.md links to files that do not exist:", file=sys.stderr)

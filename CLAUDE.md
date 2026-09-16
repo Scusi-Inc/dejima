@@ -127,7 +127,7 @@ changes.
 
 ## Where the knowledge is
 
-`docs/README.md` maps all 87 docs by the question you arrived with. Three are
+`docs/README.md` maps all 90 docs by the question you arrived with. Three are
 worth reading before you diagnose anything or write a guard:
 `docs/testing/guards-need-controls.md` (does this check have a SUBJECT?),
 `docs/testing/readings-go-stale.md` (is this reading CURRENT?), and
