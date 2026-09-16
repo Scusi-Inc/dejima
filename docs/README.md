@@ -1,6 +1,6 @@
 # The docs, mapped
 
-90 files, grouped by the question you arrived with. Every `.md` under `docs/` is
+91 files, grouped by the question you arrived with. Every `.md` under `docs/` is
 listed here exactly once, and `scripts/docs-index-check.py` fails the build if
 that stops being true or if a link here points at a file that does not exist.
 
