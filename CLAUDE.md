@@ -46,8 +46,15 @@ things:
   `could not import math/rand/v2`; the linter cannot parse the newer stdlib, and
   the linter is the gate.
 
-Correct install: `go1.26.3.linux-arm64.tar.gz` into `/usr/local`. `golangci-lint`
-lives at `$HOME/go/bin` and survives rebuilds.
+Correct install: `go1.26.3.linux-arm64.tar.gz` into `/usr/local`, then
+`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`.
+
+**Budget for reinstalling BOTH.** This page used to say `golangci-lint` "lives at
+`$HOME/go/bin` and survives rebuilds". It does not. `$HOME` is a named volume, so
+the claim was true of a container RECREATE and read as true of everything —
+including the 2026-09-12 02:15 rebuild, after which the binary was gone and had
+to be reinstalled at 02:43. A reading that was correct when it was taken looks
+exactly like one that is correct now (`docs/testing/readings-go-stale.md`).
 
 If `go` crashes oddly, check the toolchain before you suspect your own diff.
 
