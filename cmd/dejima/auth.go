@@ -105,6 +105,19 @@ func newAuthPushCmd() *cobra.Command {
 					fmt.Printf("pushed Codex credentials (from %s) — new islands will use them\n", csource)
 				}
 			}
+			// MUSE TOO, best-effort for the same reason. Muse authenticates by
+			// OIDC device code, so without this every island means another browser
+			// round-trip — the per-island account this command exists to avoid.
+			switch mblob, msource, merr := agentcreds.LoadMuse(); {
+			case merr != nil:
+				fmt.Println("no Muse login on this machine — skipped (run `muse` and log in, then re-run)")
+			default:
+				if err := c.PushMuseCredentials(cmd.Context(), mblob); err != nil {
+					fmt.Printf("⚠ Muse credentials found but the push failed: %v\n", err)
+				} else {
+					fmt.Printf("pushed Muse credentials (from %s) — new islands will use them\n", msource)
+				}
+			}
 			fmt.Println("note: existing islands keep their own copy; `dejima reset <name>` re-seeds one")
 			return nil
 		},

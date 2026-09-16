@@ -317,6 +317,7 @@ var agentLabelBase = map[string]string{
 	"claude-code": "claude",
 	"codex":       "codex",
 	"shell":       "shell",
+	"muse":        "muse",
 	"openclaw":    "openclaw",
 	"letta":       "letta",
 	"hermes":      "hermes",

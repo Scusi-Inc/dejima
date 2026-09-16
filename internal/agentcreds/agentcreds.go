@@ -19,6 +19,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+
+	"github.com/aoos/dejima/internal/paths"
 )
 
 // Source identifies where credentials were found.
@@ -203,6 +205,95 @@ func WriteCodexSeed(dir string, blob []byte) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, CodexAuthFile)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// ---------------------------------------------------------------------------
+// Muse Code (Meta's terminal coding agent)
+// ---------------------------------------------------------------------------
+
+// MuseAuthFile is the credential filename the muse launcher reads.
+//
+// The name matters less here than it does for Codex, and that is the whole
+// design. Codex's island shim copies /opt/host/codex/auth.json BY NAME, so the
+// filename is a contract with a script baked into the island image. Muse reads
+// MUSE_AUTH_PATH — a full path, set on the launch line — so the daemon points
+// it straight at the mounted seed and no shim exists to disagree with. Keeping
+// the same filename anyway costs nothing and keeps the two seeds legible side
+// by side in ~/.dejima/secrets.
+const MuseAuthFile = "auth.json"
+
+// ErrMuseNotFound means this machine has no Muse login to push.
+var ErrMuseNotFound = errors.New(
+	"no Muse credentials found (run `muse` and log in on this machine first)")
+
+// LoadMuse returns this host's Muse auth blob.
+//
+// Resolves the credential the way the launcher does — $XDG_CONFIG_HOME/muse
+// before ~/.config/muse — so a push from a host that sets XDG_CONFIG_HOME finds
+// the login the operator can plainly see, instead of reporting none.
+func LoadMuse() ([]byte, Source, error) {
+	dir, err := paths.HostMuseDir()
+	if err != nil {
+		return nil, "", ErrMuseNotFound
+	}
+	blob, err := os.ReadFile(filepath.Join(dir, MuseAuthFile))
+	if err != nil {
+		return nil, "", ErrMuseNotFound
+	}
+	if err := ValidateMuse(blob); err != nil {
+		return nil, "", err
+	}
+	return blob, SourceFile, nil
+}
+
+// ValidateMuse rejects a blob that is not the credential file, so a push cannot
+// store a truncated read or an unrelated file and have every island silently
+// inherit it.
+func ValidateMuse(blob []byte) error {
+	if len(bytes.TrimSpace(blob)) == 0 {
+		return errors.New("muse credentials are empty")
+	}
+	var probe map[string]any
+	if err := json.Unmarshal(blob, &probe); err != nil {
+		return fmt.Errorf("muse credentials are not JSON: %w", err)
+	}
+	if len(probe) == 0 {
+		return errors.New("muse credentials are an empty JSON object")
+	}
+	return nil
+}
+
+// WriteMuseSeed stores a pushed Muse blob in the daemon's seed dir, atomically —
+// an island starting mid-write must never read half a credential through the
+// bind mount.
+func WriteMuseSeed(dir string, blob []byte) (string, error) {
+	if err := ValidateMuse(blob); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, ".auth-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if _, err := tmp.Write(blob); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, MuseAuthFile)
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return "", err
 	}
