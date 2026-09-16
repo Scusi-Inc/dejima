@@ -266,3 +266,106 @@ func TestNudgeUsesAbsoluteDejimaPath(t *testing.T) {
 		t.Fatalf("nudge %q does not reference %q by absolute path", text, islandDejimaBin)
 	}
 }
+
+// The operator is attached with a half-typed message in the prompt. The nudge
+// must NOT be submitted — Enter sends the whole box, their words with it — and
+// must not be pasted yet either, because they are mid-sentence and their own
+// Enter is seconds away.
+//
+// Drives flushNudges rather than decideDelivery: the decision was already unit
+// tested, and the defect this guards against is the wiring not consulting it.
+func TestWakeFlushHoldsWhileTheOperatorIsTyping(t *testing.T) {
+	srv, h, _ := wakeServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"isl","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d", rr.Code)
+	}
+	agent := primaryAgentID(t, h, "isl")
+
+	var injected, pasted []string
+	srv.injectFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
+		injected = append(injected, text)
+		return nil
+	}
+	srv.pasteFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
+		pasted = append(pasted, text)
+		return nil
+	}
+	srv.idleFn = func(string, string) bool { return true }
+
+	// Attached, drafted, last keystroke a moment ago.
+	now := time.Now().Unix()
+	srv.paneFn = func(context.Context, *project.Project, *project.AgentSpec) paneReading {
+		return paneReading{
+			now: time.Unix(now, 0), attached: true,
+			keyboardIdle: 2 * time.Second, box: inputDrafted,
+		}
+	}
+
+	srv.wakeNudges.add("isl", agent, time.Now())
+	srv.flushNudges(context.Background())
+	if len(injected) != 0 {
+		t.Fatalf("submitted into a prompt holding the operator's draft: %v", injected)
+	}
+	if len(pasted) != 0 {
+		t.Fatalf("pasted while they were still typing: %v", pasted)
+	}
+
+	// THE MAIL MUST NOT BE LOST BY HOLDING IT. Once they send their own message
+	// the prompt is empty and the nudge is delivered normally — and it is still
+	// the same message, not a dropped one.
+	srv.paneFn = func(context.Context, *project.Project, *project.AgentSpec) paneReading {
+		return paneReading{now: time.Unix(now, 0), attached: true, box: inputEmpty}
+	}
+	srv.flushNudges(context.Background())
+	if len(injected) != 1 || !strings.Contains(injected[0], "1 new") {
+		t.Fatalf("held nudge was not delivered once the prompt cleared; got %v", injected)
+	}
+}
+
+// A terminal left open with text in it, nobody at the keyboard. Holding here
+// would delay mail indefinitely on a draft that is never going to be finished,
+// so the notice is pasted — visible immediately, their draft intact, no Enter.
+// And a second message must not stack another line into the same draft.
+func TestWakeFlushPastesIntoAnAbandonedDraftExactlyOnce(t *testing.T) {
+	srv, h, _ := wakeServer(t)
+	if rr := do(t, h, http.MethodPost, "/v1/islands",
+		`{"repo":"r","name":"isl","agent":"claude-code"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d", rr.Code)
+	}
+	agent := primaryAgentID(t, h, "isl")
+
+	var injected, pasted []string
+	srv.injectFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
+		injected = append(injected, text)
+		return nil
+	}
+	srv.pasteFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
+		pasted = append(pasted, text)
+		return nil
+	}
+	srv.idleFn = func(string, string) bool { return true }
+	srv.paneFn = func(context.Context, *project.Project, *project.AgentSpec) paneReading {
+		return paneReading{
+			now: time.Now(), attached: true,
+			keyboardIdle: 30 * time.Minute, box: inputDrafted,
+		}
+	}
+
+	srv.wakeNudges.add("isl", agent, time.Now())
+	srv.flushNudges(context.Background())
+	if len(pasted) != 1 {
+		t.Fatalf("an abandoned draft should have been pasted into once; got %v", pasted)
+	}
+	if len(injected) != 0 {
+		t.Fatalf("submitted somebody's draft: %v", injected)
+	}
+
+	// More mail, same untouched draft: the count is still pending, but a second
+	// line must not be added to what they will eventually read.
+	srv.wakeNudges.add("isl", agent, time.Now())
+	srv.flushNudges(context.Background())
+	if len(pasted) != 1 {
+		t.Errorf("stacked a second notice into the same draft: %v", pasted)
+	}
+}

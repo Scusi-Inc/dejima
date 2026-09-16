@@ -78,6 +78,24 @@ func (n *wakeNotifier) take(k nudgeKey) int {
 	return c
 }
 
+// restore puts a taken batch back, preserving the ORIGINAL arrival time so the
+// hold cap measures from when the mail actually landed rather than from the
+// last failed attempt. Without that an undeliverable nudge would reset its own
+// deadline on every tick and never reach the cap it exists to enforce.
+func (n *wakeNotifier) restore(k nudgeKey, count int, firstSeen time.Time) {
+	if count <= 0 {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.pending[k] += count
+	if cur, ok := n.firstSeen[k]; !ok || firstSeen.Before(cur) {
+		if !firstSeen.IsZero() {
+			n.firstSeen[k] = firstSeen
+		}
+	}
+}
+
 // pendingSince returns when the oldest undelivered nudge for k arrived (and
 // whether one is pending).
 func (n *wakeNotifier) pendingSince(k nudgeKey) (time.Time, bool) {
@@ -182,6 +200,7 @@ func (s *Server) flushNudges(ctx context.Context) {
 			s.log.Warn("wake-on-message: no idle heartbeat — delivering best-effort (possible stale island shim; run `dejima upgrade`)",
 				"island", k.island, "agent", k.agent)
 		}
+		firstSeen, _ := s.wakeNudges.pendingSince(k)
 		n := s.wakeNudges.take(k)
 		if n == 0 {
 			continue
@@ -195,8 +214,42 @@ func (s *Server) flushNudges(ctx context.Context) {
 			continue
 		}
 		text := fmt.Sprintf("📬 %d new message(s) — run: %s msg poll", n, islandDejimaBin)
-		if err := s.injectFn(ctx, p, a, text); err != nil {
-			s.log.Debug("wake inject", "island", k.island, "agent", k.agent, "err", err)
+
+		// Never submit into a prompt that is holding the operator's half-typed
+		// message: Enter sends the whole box, their words included. readPane says
+		// whether anyone is attached, whether the box has a draft, and how long
+		// since they last pressed a key; decideDelivery turns that into one of
+		// submit / paste / hold. See wake_delivery.go for what was measured.
+		pane := s.paneFn(ctx, p, a)
+		if pane.box == inputEmpty {
+			// They sent their message, and our earlier notice went with it.
+			s.pasted.clear(k)
+		}
+		switch decideDelivery(pane.attached, pane.box, pane.keyboardIdle, now.Sub(firstSeen)) {
+		case deliverHold:
+			// Mid-sentence. Put the count back and let the ticker retry — their own
+			// Enter is seconds away, and the nudge lands right behind it.
+			s.wakeNudges.restore(k, n, firstSeen)
+			continue
+		case deliverPaste:
+			// A draft nobody is working on. The notice goes in WITHOUT Enter, on
+			// its own line, so it is visible immediately and rides along with
+			// whatever they eventually send. Not acted on until they do — with
+			// their text in the box there is no way to submit ours alone.
+			if s.pasted.seen(k) {
+				s.wakeNudges.restore(k, n, firstSeen)
+				continue // already pasted into this draft; don't stack notices
+			}
+			if err := s.pasteFn(ctx, p, a, text); err != nil {
+				s.log.Debug("wake paste", "island", k.island, "agent", k.agent, "err", err)
+				s.wakeNudges.restore(k, n, firstSeen)
+				continue
+			}
+			s.pasted.mark(k)
+		default:
+			if err := s.injectFn(ctx, p, a, text); err != nil {
+				s.log.Debug("wake inject", "island", k.island, "agent", k.agent, "err", err)
+			}
 		}
 	}
 }

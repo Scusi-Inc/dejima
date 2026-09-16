@@ -123,6 +123,15 @@ type Handler struct {
 	// conversation instead of a cold start. Empty means the framework has no
 	// resume affordance, so a restart falls back to a normal (fresh) Launch.
 	ResumeLaunch string
+	// PromptGlyph is the character this framework draws its input prompt with,
+	// used to tell an EMPTY input box from one holding the operator's half-typed
+	// message before a mail nudge is submitted into it (see wake_delivery.go).
+	//
+	// Empty means "we have not established one", and that is the safe answer: the
+	// nudge path keeps its previous behaviour rather than switching to a
+	// paste-only route on a guess. It is deliberately not filled in for codex,
+	// whose answer is `codex queue` — delivery that never touches the input box.
+	PromptGlyph string
 }
 
 // LaunchFor returns the command to run for this handler, honoring resume when the
@@ -173,7 +182,8 @@ func (h Handler) NeedsProviderKey() bool { return h.RequiresProviderKey }
 // runs the type string as a command); see Lookup.
 var registry = map[string]Handler{
 	"claude-code": {ID: "claude-code", Kind: KindInteractive, Launch: "claude", ResumeLaunch: "claude --continue", StateDir: "/home/dejima/.claude", Bundled: true,
-		RepairCmd: []string{"npm", "install", "-g", "@anthropic-ai/claude-code@latest"}},
+		PromptGlyph: "\u276f", // ❯ — measured against Claude Code v2.1.273
+		RepairCmd:   []string{"npm", "install", "-g", "@anthropic-ai/claude-code@latest"}},
 	// `--sandbox danger-full-access`, NOT `--sandbox-policy=no-sandbox`. The latter
 	// is not a Codex flag — it exits 2 with "unexpected argument", the tmux session
 	// dies on the spot, and attaching lands the operator on a bare shell prompt
