@@ -9,6 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/githubid"
+	"github.com/aoos/dejima/internal/reposrc"
 )
 
 // The GitHub device flow, run INSIDE the pane.
@@ -39,6 +41,16 @@ const (
 	deviceFlowWaiting                         // code in hand, polling GitHub
 	deviceFlowDone                            // authorized and stored
 	deviceFlowFailed                          // expired, denied, or errored
+	// deviceFlowUnavailable — the daemon has no OAuth app, so guided sign-in can
+	// NEVER work here. Distinct from deviceFlowFailed because the difference is
+	// the whole bug: a failed flow offers [c] to retry, and retrying this one
+	// fails identically forever. It is a permanent property of the daemon, not
+	// an incident, and it has its own remedy.
+	deviceFlowUnavailable
+	// deviceFlowConnecting — the [g] path is in flight (gh read, token verified,
+	// identity stored). Its own state so the pane cannot be re-triggered while a
+	// store is half done.
+	deviceFlowConnecting
 )
 
 // deviceFlow is a device-flow sign-in in progress, owned by the GitHub pane.
@@ -47,11 +59,20 @@ type deviceFlow struct {
 	makeDefault bool
 	state       deviceFlowState
 
-	sessionID string
-	userCode  string
-	verifyURI string
-	interval  time.Duration
-	expiresAt time.Time
+	// ghAvailable records whether a signed-in `gh` was found on THIS machine when
+	// guided sign-in turned out to be unavailable. Sampled once, at that moment,
+	// rather than re-probed during a render: the pane redraws on every tick and
+	// `gh auth status` is a network call.
+	ghAvailable bool
+	// connectErr is why the [g] path failed, kept ON the unavailable screen
+	// rather than replacing it: the operator still needs the other routes, and
+	// swapping the whole pane for one error would take them away.
+	connectErr string
+	sessionID  string
+	userCode   string
+	verifyURI  string
+	interval   time.Duration
+	expiresAt  time.Time
 
 	// browserAsked records that we RAN an opener, not that a browser appeared.
 	// The distinction is the whole point: we can see the command's error, and
@@ -114,6 +135,18 @@ func (m tuiModel) applyDeviceStarted(msg deviceStartedMsg) (tuiModel, tea.Cmd) {
 	}
 	f := v.connect
 	if msg.err != nil {
+		// A self-hosted daemon has no OAuth app, so guided sign-in is dark by
+		// default — the NORM here, not an incident. The CLI has caught this since
+		// `dejima github connect` was written and completes over the token path
+		// instead; the TUI printed the daemon's 501 verbatim and stopped. Same
+		// daemon, same operator, and one surface dead-ended while the other just
+		// worked — while pointing at a THIRD command (`dejima auth push`) rather
+		// than the one that would have.
+		if deviceFlowUnconfigured(msg.err) {
+			f.state = deviceFlowUnavailable
+			f.ghAvailable = reposrc.GitHubAvailable() == nil
+			return m, nil
+		}
 		f.state, f.err = deviceFlowFailed, msg.err.Error()
 		return m, nil
 	}
@@ -177,6 +210,14 @@ func (m tuiModel) applyDevicePolled(msg devicePolledMsg) (tuiModel, tea.Cmd) {
 func (m tuiModel) deviceFlowKey(msg tea.KeyMsg) (tuiModel, tea.Cmd, bool) {
 	v := m.github
 	f := v.connect
+	if f.state == deviceFlowUnavailable && f.ghAvailable {
+		switch msg.String() {
+		case "g", "G", "enter":
+			f.state = deviceFlowConnecting
+			f.connectErr = ""
+			return m, m.connectViaLocalGhCmd(f.name, f.makeDefault), true
+		}
+	}
 	switch msg.String() {
 	case "esc", "ctrl+[", "q":
 		// Cancels the FLOW, not the pane. Nothing is revoked: if the operator
@@ -216,6 +257,35 @@ func (v *githubView) renderDeviceFlow(now time.Time) string {
 		b.WriteString(styleErrored.Render("  ⚠ " + f.err))
 		b.WriteString("\n\n")
 		b.WriteString(styleMuted.Render("  [c] try again   [esc] back"))
+		return b.String()
+	case deviceFlowUnavailable:
+		// NOT an error style and NOT a retry. Nothing went wrong and nothing the
+		// operator does here will make [c] work — the daemon simply has no OAuth
+		// app registered. Say that, then offer the route that does work.
+		b.WriteString(styleMuted.Render("  Guided sign-in needs a GitHub OAuth app, and this daemon has none."))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("  That is the normal state for a self-hosted daemon — nothing is broken."))
+		b.WriteString("\n\n")
+		if f.connectErr != "" {
+			b.WriteString(styleErrored.Render("  ⚠ " + f.connectErr))
+			b.WriteString("\n\n")
+		}
+		if f.ghAvailable {
+			b.WriteString("  " + styleAccent.Render("[g]") + " use the GitHub login already on this machine\n")
+			b.WriteString(styleMuted.Render("      (reads your signed-in `gh` and stores it as an identity)"))
+			b.WriteString("\n\n")
+		} else {
+			b.WriteString(styleMuted.Render("  No signed-in `gh` on this machine. Either:"))
+			b.WriteString("\n")
+			b.WriteString(styleMuted.Render("    · `gh auth login`, then reopen this pane, or"))
+			b.WriteString("\n")
+			b.WriteString(styleMuted.Render("    · `dejima github connect --token-stdin` with a personal access token"))
+			b.WriteString("\n\n")
+		}
+		b.WriteString(styleMuted.Render("  [esc] back"))
+		return b.String()
+	case deviceFlowConnecting:
+		b.WriteString(styleWaiting.Render("  ⏳ reading your gh login and storing it…"))
 		return b.String()
 	}
 
@@ -269,4 +339,82 @@ func (m tuiModel) openGithubViewConnecting(name string) (tea.Model, tea.Cmd) {
 		connect: &deviceFlow{name: name, makeDefault: true, state: deviceFlowStarting},
 	}
 	return m, m.startDeviceFlowCmd()
+}
+
+// --- the fallback the CLI has always had ----------------------------------
+
+// ghConnectedMsg is the result of the [g] path.
+type ghConnectedMsg struct {
+	identity string
+	login    string
+	scopes   string
+	err      error
+}
+
+// connectViaLocalGhCmd stores the machine's existing `gh` login as a Dejima
+// identity — the same three steps `connectGitHubViaToken` takes, minus its
+// printing, which would corrupt the TUI.
+//
+// Deliberately NOT a call into that function: it writes to stdout at seven
+// points and prompts for a token when gh is absent. Sharing the STEPS while
+// keeping the two presentations apart is the seam; sharing the function would
+// mean a prompt appearing under a full-screen UI with nowhere to type.
+func (m tuiModel) connectViaLocalGhCmd(name string, makeDefault bool) tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		login, token, err := reposrc.LocalGitHubLogin("")
+		if err != nil {
+			return ghConnectedMsg{err: err}
+		}
+		// Verify before storing, so a stale or over-narrow token fails here
+		// rather than inside an island days later.
+		verified, ghUserID, scopes, err := githubid.VerifyToken(ctx, "", token)
+		if err != nil {
+			return ghConnectedMsg{err: fmt.Errorf("token verification failed (nothing stored): %w", err)}
+		}
+		if verified != "" {
+			login = verified
+		}
+		id := strings.TrimSpace(name)
+		if id == "" {
+			id = login
+		}
+		if _, err := c.PutGitHubIdentity(ctx, id, api.PutGitHubIdentityRequest{
+			Login: login, ID: ghUserID, Token: token, Default: makeDefault, Scopes: scopes,
+		}); err != nil {
+			return ghConnectedMsg{err: err}
+		}
+		return ghConnectedMsg{identity: id, login: login, scopes: scopes}
+	}
+}
+
+// applyGhConnected lands the [g] result.
+func (m tuiModel) applyGhConnected(msg ghConnectedMsg) (tuiModel, tea.Cmd) {
+	v := m.github
+	if v == nil || v.connect == nil {
+		return m, nil // the pane closed while we were storing
+	}
+	f := v.connect
+	if msg.err != nil {
+		// Back to the screen that lists the other routes, with the reason on it.
+		// A failure here does not make the PAT path unavailable, so taking the
+		// operator somewhere with fewer options would be the wrong move.
+		f.state, f.connectErr = deviceFlowUnavailable, msg.err.Error()
+		return m, nil
+	}
+	notice := fmt.Sprintf("connected %s — identity %q is ready", msg.login, msg.identity)
+	// Say what the token CAN DO, at the moment it is stored. A token that
+	// authenticates and cannot open a pull request looks identical to a working
+	// one until an agent fails hours later with "Resource not accessible by
+	// personal access token" — naming nothing anyone can act on.
+	if note, canWrite := githubid.ScopeNote(msg.scopes); !canWrite {
+		notice = fmt.Sprintf("connected %s, but it CANNOT push or open PRs (scopes: %s) — re-issue with `repo`",
+			msg.login, note)
+	}
+	v.notice = notice
+	v.connect = nil
+	v.loading = true
+	return m, m.loadGithubIdentitiesCmd()
 }

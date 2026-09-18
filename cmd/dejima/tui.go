@@ -1247,6 +1247,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mm, cmd := m.applyDevicePolled(msg)
 		return mm, cmd
 
+	case ghConnectedMsg:
+		mm, cmd := m.applyGhConnected(msg)
+		return mm, cmd
+
 	case devicePollTickMsg:
 		// Only the flow this tick was scheduled for may act on it: a tick from a
 		// cancelled sign-in must not drive the one that replaced it.
