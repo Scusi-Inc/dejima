@@ -27,6 +27,7 @@ field in a call you were already making, a flag, a hash:
 | a version claim | master is not what anyone runs | `git tag --contains <sha>` |
 | a `$?` after a job | the job may not have finished | the thing the job wrote |
 | a send that returned `success` | `success` is the handoff, not the outcome | what the receiver got, or the delivery notice |
+| a screenshot of a UI | the harness may not be showing the program its size | the render, called directly, at a width you chose |
 
 And the second half, which no discriminator can supply:
 
@@ -235,6 +236,52 @@ about itself.
 That is also why it recurs across surfaces that have nothing to do with each
 other. It is not a property of Go, or GitHub, or git; it is a property of asking
 a system for a status and receiving a value with no timestamp attached.
+
+### The instrument was stale, not the reading
+
+Building a site demo, I captured the TUI from a detached tmux session and found
+every agent status clipped to two characters — `working` as `wo`, `idle` as `id`,
+`needs you` as `ne`. On every row. I widened the terminal to 132 and 146: still
+clipped. I attached a client: still clipped. I measured the pane: status began at
+display column 49 with five columns of room.
+
+I reported it to the operator as a confirmed pre-existing bug, traced it to
+`agentStatusCol = 40` overflowing past the pane edge, wrote a fix, and wrote a
+comment explaining which earlier doc had warned about exactly this shape.
+
+Then I rendered the row in Go, at known widths, with no terminal involved:
+
+```
+paneWidth=49  "◆ a1   Claude    needs you"  fits
+paneWidth=53  "◆ a1   Claude    needs you"  fits
+paneWidth=64  "◆ a1   Claude    needs you"  fits
+```
+
+The row is 49 columns and fits any pane at or above that. **There is no bug.**
+
+What I had never checked was the instrument. The TUI rendered at **93 columns
+regardless of the terminal size** — declared 100, 120 and 160 all produced a
+93-column frame — because bubbletea receives no window size in a detached tmux
+session and falls back. Every "wider terminal" I tried changed nothing because
+none of them reached the program. The clipping was real, reproducible, and
+entirely mine.
+
+**Why it belongs here.** The reading was never wrong about what it measured: the
+pane really was too narrow and the word really was cut. It was wrong about what
+it was measuring. And the two most persuasive things about it were both
+artefacts — it reproduced every time, and it survived the obvious control
+(widen the terminal), because that control acted on something the subject could
+not see.
+
+**The ask that would have caught it, and it is the family's own question pointed
+one level down:** not *is this reading current?* but *is this instrument
+reporting on the thing I named?* A capture harness is a subject too. Four lines
+of Go settled in one run what six terminal captures had confidently agreed on,
+because they took the program out of the terminal entirely — and the terminal was
+the defect.
+
+Cheap tell, in hindsight: three declared widths produced byte-identical output.
+A measurement that does not move when its input moves is not measuring its input.
 
 ## Related shapes — fresh readings that answer the wrong question
 
