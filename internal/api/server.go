@@ -928,8 +928,28 @@ func (s *Server) projectLock(name string) *sync.Mutex {
 	return m
 }
 
+// healthz is the reachability probe, and the ONLY route an island token can
+// reach that is not scoped to its own island. It now carries the daemon's
+// version, which is the one fact an agent inside an island could not obtain at
+// all.
+//
+// WHY THAT MATTERED. `dejima version` prints version.Version — the binary's
+// baked-in build stamp, with no daemon call. Inside an island that binary is
+// frozen in the island image, so it reports the version the ISLAND was built at
+// and keeps reporting it until someone runs `dejima upgrade`. An agent asking
+// "what version is this?" got an answer that was true of its own container and
+// had nothing to do with the daemon it was talking to.
+//
+// The failure that produced this: an agent read `dejima version` once, said
+// "the daemon is v0.9.11", and repeated it across hours of a session while the
+// daemon went to v0.9.16 — a stale reading with no way to refresh it, because
+// there was nothing to refresh it FROM. Providing the fact is the fix; telling
+// people to be more careful is not.
+//
+// Safe on this route: the caller already holds a valid token, and a version is
+// the same fact `dejima doctor` prints to anyone who can reach the host.
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, HealthzResponse{Status: "ok", Version: version.Version})
 }
 
 // handlePushClaudeCreds stores client-supplied Claude credentials as the seed
