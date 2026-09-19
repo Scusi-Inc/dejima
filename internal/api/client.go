@@ -1693,3 +1693,11 @@ func (c *Client) PutSecret(ctx context.Context, island, key, value string) (secr
 func (c *Client) DeleteSecret(ctx context.Context, island, key string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/islands/"+island+"/secrets/"+key, nil, nil)
 }
+
+// Healthz probes the daemon and returns what it says about itself — including
+// its VERSION, which a caller cannot derive from its own binary.
+func (c *Client) Healthz(ctx context.Context) (HealthzResponse, error) {
+	var out HealthzResponse
+	err := c.do(ctx, http.MethodGet, "/v1/healthz", nil, &out)
+	return out, err
+}

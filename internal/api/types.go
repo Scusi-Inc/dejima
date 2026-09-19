@@ -444,6 +444,15 @@ type OverviewResponse struct {
 // seeing what's running. Field tags are the locked contract between the client
 // (this type, a2) and the server handler (a1's P3). Memory fields are uint64 to
 // match OverviewResponse; disk is int64 to match disk.total_bytes.
+// HealthzResponse is the reachability probe's body. Version is the DAEMON's
+// version — deliberately not the caller's, which is the confusion this field
+// exists to end: a client (or an agent's island-baked CLI) knows its own build
+// stamp and previously had no way to learn the daemon's.
+type HealthzResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version,omitempty"`
+}
+
 type AggregateResponse struct {
 	TotalIslands     int     `json:"total_islands"`
 	Running          int     `json:"running"`

@@ -235,7 +235,43 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print the dejima version.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// BOTH, when a daemon can be reached, because they are different facts
+			// and only one of them was ever printed.
+			//
+			// version.Version is THIS BINARY's build stamp. Inside an island that
+			// binary is frozen in the island image, so it answers "what was this
+			// island built at?" — not "what is the daemon running?". An agent read
+			// this line once, reported it as the daemon's version, and repeated it
+			// for hours while the daemon moved five releases ahead. The number was
+			// never wrong; the question it answered was.
 			fmt.Printf("dejima version %s\n", version.Version)
+			c, err := client()
+			if err != nil {
+				return nil // no daemon configured: the client version is the whole answer
+			}
+			// cmd.Context() is nil unless the command went through Execute — which
+			// it does in production and does not when something calls RunE
+			// directly. Deriving a timeout from nil panics, and a version probe is
+			// the last place that should take the process down.
+			base := cmd.Context()
+			if base == nil {
+				base = context.Background()
+			}
+			ctx, cancel := context.WithTimeout(base, 5*time.Second)
+			defer cancel()
+			h, err := c.Healthz(ctx)
+			if err != nil || h.Version == "" {
+				// Unreachable, or a daemon too old to report it. Say WHICH, rather
+				// than printing nothing and leaving the client version looking like
+				// the complete answer.
+				fmt.Println("daemon version unknown (unreachable, or older than v0.9.18)")
+				return nil
+			}
+			if h.Version == version.Version {
+				fmt.Printf("daemon version %s (same)\n", h.Version)
+				return nil
+			}
+			fmt.Printf("daemon version %s\n", h.Version)
 			return nil
 		},
 	}

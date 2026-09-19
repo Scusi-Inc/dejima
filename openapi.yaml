@@ -2103,9 +2103,7 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties: { status: { type: string, example: ok } }
+              schema: { $ref: "#/components/schemas/HealthzResponse" }
   /v1/audit:
     get:
       tags: [daemon]
@@ -3050,6 +3048,16 @@ components:
         ephemeral: { type: boolean, description: an agent-spawned sub-agent (auto-reaped; counts against the spawn budget) }
         spawned_by: { type: string, description: id of the agent that spawned this one (lineage; empty for operator-created) }
         spawned_by_label: { type: string, description: human name of the spawning agent (so lineage renders as a name) }
+    HealthzResponse:
+      type: object
+      description: >-
+        Reachability probe. `version` is the DAEMON's version — the one fact an
+        agent inside an island cannot otherwise obtain, since `dejima version`
+        reports the binary's own build stamp and an island's binary is frozen in
+        its image until `dejima upgrade`.
+      properties:
+        status: { type: string, example: ok }
+        version: { type: string, description: "the daemon's version, e.g. v0.9.17" }
     AgentUsage:
       type: object
       description: >-
