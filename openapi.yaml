@@ -803,7 +803,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RestoreHomeResponse" }
-        "404": { description: no such island, or no such snapshot }
+        "404": { description: "no such island, or no such snapshot" }
   /v1/islands/{name}/mailbox:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
