@@ -404,3 +404,41 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
   .pick-label { min-width: 0; }
   .compare { font-size: 0.84rem; }
 }
+
+/* --- Interactive demo (index.html #try-dejima) -------------------------- */
+/* Terminal chrome around real captured frames. The frames carry their own
+   colours inline (pre-rendered at capture time), so this file styles only the
+   surround — tabs, the window, and the hint line under it. */
+.demo-wrap { margin: 2.5rem 0; }
+.demo-win {
+  background: #0d1117; border: 1px solid #1c3358; border-radius: 10px;
+  overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .35);
+}
+.demo-tabs {
+  display: flex; gap: 2px; padding: 6px 8px 0; background: #0a0d12;
+  border-bottom: 1px solid #1c3358; overflow-x: auto;
+}
+.demo-tab {
+  font: inherit; font-size: .82rem; color: #94a3b8; background: #121820;
+  border: 1px solid #1c3358; border-bottom: none;
+  border-radius: 6px 6px 0 0; padding: 5px 12px; cursor: pointer; white-space: nowrap;
+}
+.demo-tab.is-active { color: #eef3ff; background: #0d1117; }
+/* The screen is a <pre>: the frames are column-aligned box drawing, so any
+   proportional fallback or line-height rounding breaks the layout outright. */
+.demo-screen {
+  margin: 0; padding: 12px 14px; overflow-x: auto; outline: none;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.25; color: #c9d1d9;
+  white-space: pre; tab-size: 8;
+}
+.demo-screen:focus-visible { box-shadow: inset 0 0 0 2px #1c3358; }
+.demo-hint {
+  margin: .5rem 0 0; font-size: .85rem; color: #94a3b8; min-height: 1.4em;
+}
+.demo-note { font-size: .82rem; color: #64748b; margin-top: .35rem; }
+/* Without JS the section still says what it is rather than sitting blank. */
+#try-dejima:not(.is-live) .demo-screen { opacity: .75; }
+@media (max-width: 720px) {
+  .demo-screen { font-size: 10px; }
+}

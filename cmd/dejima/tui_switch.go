@@ -66,6 +66,12 @@ const (
 func (m tuiModel) openSwitcher() (tea.Model, tea.Cmd) {
 	cfg, _ := clientcfg.Load()
 	profiles := append([]clientcfg.Profile{{Name: "local", Host: ""}}, cfg.Profiles...)
+	if m.demo {
+		// Demo: the operator's REAL profiles must never reach a site capture —
+		// they carry host names and tailnet addresses. Synthetic ones instead,
+		// for the same reason tui_demo.go exists at all.
+		profiles = demoProfiles()
+	}
 	s := &switcherModel{profiles: profiles}
 	for i, p := range profiles {
 		if p.Host == m.activeHost {
