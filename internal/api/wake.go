@@ -327,6 +327,24 @@ func (s *Server) wakeIslandFor(ctx context.Context, name string) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandWoken, Island: name, Payload: map[string]any{"reason": "message"}})
+	// The entrypoint relaunches only the PRIMARY agent; every co-located agent is
+	// the daemon's job. Without this, wake-on-message brings the island up for a
+	// recipient that has no tmux session — and the nudge queued for it one call
+	// later is consumed by take() and injected into nothing, with the failure at
+	// log.Debug. Mail gone, on the path that exists BECAUSE an agent cannot be
+	// expected to poll.
+	//
+	// 14a7ac1 fixed this in three restart paths and #445 in reset; schedule.go's
+	// startIslandIfStopped says "this mirrors wakeIslandFor's core" directly above
+	// itself, so the fix landed on the mirror and not on the original.
+	//
+	// The ask is unconditional because containerResumesPrimary reads the
+	// CONTAINER, not the caller, so it is correct over both branches above: the
+	// recreate baked a cold launch it will read back as false, and the start
+	// inherited whatever an earlier upgrade baked. It fails CLOSED (exec error or
+	// non-zero → false), which cold-starts rather than resuming — the safe
+	// direction when we cannot see what the container holds.
+	s.reconcileAgentsAsync(p, s.containerResumesPrimary(ctx, p))
 }
 
 // DefaultWakeFlushInterval bounds how often queued nudges are retried for
