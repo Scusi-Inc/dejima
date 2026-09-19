@@ -64,13 +64,54 @@ def go_routes(api_dir: str) -> set[tuple[str, str]]:
 
 def spec_routes(spec_path: str) -> set[tuple[str, str]]:
     with open(spec_path, encoding="utf-8") as fh:
-        spec = yaml.safe_load(fh)
+        try:
+            spec = yaml.load(fh, _NoDuplicateKeys)
+        except yaml.YAMLError as e:
+            # A clean message, not a traceback: this is a gate someone reads at
+            # the end of a build, and a stack trace buries the one line that says
+            # what to fix.
+            print(f"FAIL: openapi.yaml does not parse strictly:\n  {e}", file=sys.stderr)
+            # sys.exit, not `return 1`: this helper is typed to return a set of
+            # routes, and handing the caller an int produces a traceback that
+            # buries the one line worth reading.
+            sys.exit(1)
     out: set[tuple[str, str]] = set()
     for path, ops in (spec.get("paths") or {}).items():
         for method in ops:
             if method.lower() in METHODS:
                 out.add((method.upper(), canon(path)))
     return out
+
+
+# yaml.safe_load ACCEPTS DUPLICATE KEYS SILENTLY, keeping the last one. redocly
+# does not, and rejects the whole spec — so a duplicate sails through every local
+# check here and fails in CI, which is the slowest possible place to learn it.
+#
+# That happened: two schemas needed the same new property, a script inserted it
+# twice into one of them, every local gate passed, and `Lint spec` failed with
+# "duplicated mapping key (2851:9)" several minutes later. The local check and
+# the CI check were reading the same file with different strictness, and the
+# lenient one was the one with the fast feedback loop.
+class _NoDuplicateKeys(yaml.SafeLoader):
+    pass
+
+
+def _no_dupes(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.YAMLError(
+                f"duplicate key {key!r} at line {key_node.start_mark.line + 1} — "
+                "redocly rejects the whole spec for this"
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_NoDuplicateKeys.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_dupes
+)
 
 
 def main() -> int:
