@@ -1212,6 +1212,14 @@ func newResetCmd() *cobra.Command {
 				fmt.Printf("  · any tool logins made inside the island (gh, npm, …)\n")
 				fmt.Printf("The workspace (code + git history) is preserved. This cannot be undone.\n")
 				fmt.Printf("To pick up a new secret instead, use: dejima agent restart %s <agent> --resume\n", name)
+				// The escape hatch, named AT the moment it is still possible to
+				// take. --include-home is the flag that matters and the one nobody
+				// would guess: it copies the HOME volume, which is precisely what
+				// this command is about to destroy. Plain eject saves the workspace
+				// — the one thing reset already preserves. Saying it afterwards is saying it too late, and
+				// an operator who has lost a month of agent context will not be
+				// consoled that the feature existed.
+				fmt.Printf("To keep a copy of what this erases first: dejima eject %s <dest-dir> --include-home\n", name)
 				fmt.Printf("Type the island name (%s) to confirm: ", name)
 				var confirm string
 				_, _ = fmt.Scanln(&confirm)
