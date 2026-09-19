@@ -454,10 +454,14 @@ func checkDocker(ctx context.Context, r *doctorReport) {
 // sizing checks assume colima. Saying "podman works" on this evidence would be
 // a claim the next person tests for us.
 func podmanHint() string {
-	return ". Using podman? Dejima runs the `docker` BINARY — a shell alias is " +
-		"not enough (aliases do not exist for exec). Reported to work with a real " +
-		"`docker` on PATH: `sudo dnf install podman-docker`, or " +
-		"`sudo ln -s $(command -v podman) /usr/local/bin/docker`. Untested by us"
+	return ". Using podman? Dejima runs a BINARY, not a shell alias (aliases do not " +
+		"exist for exec). Either point the daemon at it — `DEJIMAD_CONTAINER_BIN=podman` " +
+		"in the daemon's environment — or put a real `docker` on PATH " +
+		"(`sudo dnf install podman-docker`, or " +
+		"`sudo ln -s $(command -v podman) /usr/local/bin/docker`). If the island build " +
+		"then fails with `cannot apply additional memory protection after relocation`, " +
+		"that is a seccomp denial: `DEJIMAD_BUILD_OPTS=\"--security-opt seccomp=unconfined\"`, " +
+		"or update crun. Untested by us"
 }
 
 // dockerInstallHint names the per-OS way to install a container engine.

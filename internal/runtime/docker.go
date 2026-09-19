@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -39,10 +40,44 @@ func ceilingContext(ctx context.Context) (context.Context, context.CancelFunc) {
 type Docker struct {
 	// Bin is the docker binary. Defaults to "docker".
 	Bin string
+	// BuildOpts are extra arguments inserted into `build`, before the flags this
+	// package supplies. An escape hatch for engine- or host-specific options
+	// Dejima has no opinion about — see NewDocker.
+	BuildOpts []string
 }
 
-// NewDocker returns a Docker runtime backed by the `docker` CLI.
-func NewDocker() *Docker { return &Docker{Bin: "docker"} }
+// NewDocker returns a Docker runtime backed by the `docker` CLI, honouring two
+// operator escape hatches from the daemon's environment.
+//
+// DEJIMAD_CONTAINER_BIN names the binary. The doc comment above has claimed
+// since this file was written that podman is "easy to swap by overriding Bin" —
+// and nothing ever overrode it, so the only way to run podman was to put a file
+// called `docker` on PATH. A shell alias does NOT work and is the trap people
+// fall into: aliases live in interactive shells, and exec.Command does not
+// consult them, so `docker version` succeeds when the operator types it and
+// every Dejima check fails. Naming the binary is the honest fix.
+//
+// DEJIMAD_BUILD_OPTS carries extra `build` arguments. The case that forced it:
+// podman on Linux failing the island build with
+//
+//	/bin/sh: error while loading shared libraries: libc.so.6: cannot apply
+//	additional memory protection after relocation: Permission denied
+//
+// which is a seccomp/SELinux denial of mprotect, fixed on the host with
+// `--security-opt seccomp=unconfined` or a newer crun. Dejima has no business
+// deciding that for someone's host, and had no way to let them decide it
+// either — the operator knew the flag and there was nowhere to put it.
+//
+// Both are read ONCE, at daemon start. They are operator configuration on the
+// daemon's own environment, which is the same trust level as the daemon binary;
+// they are not reachable by an island, an agent, or any API caller.
+func NewDocker() *Docker {
+	bin := strings.TrimSpace(os.Getenv("DEJIMAD_CONTAINER_BIN"))
+	if bin == "" {
+		bin = "docker"
+	}
+	return &Docker{Bin: bin, BuildOpts: strings.Fields(os.Getenv("DEJIMAD_BUILD_OPTS"))}
+}
 
 func (d *Docker) bin() string {
 	if d.Bin == "" {
@@ -477,15 +512,25 @@ func (d *Docker) Logs(ctx context.Context, name string, follow bool) (io.ReadClo
 // build fails the stream's final Read returns the build error instead of EOF
 // (via CloseWithError), so callers distinguish success from failure without a
 // side channel.
-func (d *Docker) BuildImage(ctx context.Context, contextDir, dockerfile, tag string, buildArgs map[string]string) (io.ReadCloser, error) {
-	args := []string{"build", "-t", tag, "-f", filepath.Join(contextDir, dockerfile)}
+// buildArgv assembles the `build` command line. Split out from BuildImage so the
+// ORDER can be asserted without running an engine — the operator's own flags
+// have to land before the context path, and that is a positional property no
+// test of BuildImage's behaviour would catch.
+func (d *Docker) buildArgv(contextDir, dockerfile, tag string, buildArgs map[string]string) []string {
+	// Operator opts first, so a `--security-opt` they set cannot be positioned
+	// after the context path (where it would be parsed as another argument).
+	args := append([]string{"build"}, d.BuildOpts...)
+	args = append(args, "-t", tag, "-f", filepath.Join(contextDir, dockerfile))
 	// Sorted so the command line is deterministic (map order isn't) — a stable
 	// argv keeps build output and any log of it diffable across runs.
 	for _, k := range slices.Sorted(maps.Keys(buildArgs)) {
 		args = append(args, "--build-arg", k+"="+buildArgs[k])
 	}
-	args = append(args, contextDir)
-	cmd := exec.CommandContext(ctx, d.bin(), args...)
+	return append(args, contextDir)
+}
+
+func (d *Docker) BuildImage(ctx context.Context, contextDir, dockerfile, tag string, buildArgs map[string]string) (io.ReadCloser, error) {
+	cmd := exec.CommandContext(ctx, d.bin(), d.buildArgv(contextDir, dockerfile, tag, buildArgs)...)
 	r, w := io.Pipe()
 	cmd.Stdout = w
 	cmd.Stderr = w
