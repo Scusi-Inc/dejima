@@ -26,9 +26,11 @@ import time
 # share frames — frames are deduped by content hash, so a common prefix is
 # stored once and the transitions fan out from the shared node.
 SCENES = [
-    ("browse", "Browse the fleet", ["j", "j", "k", "Space", "j", "Down", "Up"]),
-    ("add-agent", "Add an agent", ["Enter", "Down", "Enter", "Escape", "Escape"]),
-    ("secrets", "Add a secret", ["s", "Escape"]),
+    ("browse", "Browse the fleet", ["j", "j", "Space", "j", "k"]),
+    ("add-agent", "Add an agent", ["j", "j", "j", "Enter", "Down", "Enter"]),
+    ("add-island", "Add an island", ["n"]),
+    ("switch", "Switch connection", ["C", "Down", "Escape"]),
+    ("secrets", "Secrets", ["s", "Escape"]),
     ("help", "Help", ["?", "Escape"]),
 ]
 

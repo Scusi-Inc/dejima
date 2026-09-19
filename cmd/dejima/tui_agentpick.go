@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/handlers"
 )
 
 // agentTypeOption is one selectable agent type in the picker. Headless types
@@ -347,6 +348,19 @@ type adderKeySetMsg struct {
 
 // addAgentSpecCmd posts a new agent to an island and reports the outcome.
 func (m tuiModel) addAgentSpecCmd(name string, req api.AgentSpecRequest) tea.Cmd {
+	if m.demo {
+		// Demo: no daemon to add to. Report the agent landing so the site capture
+		// walks the whole flow instead of stopping at an error nobody watching a
+		// landing page can act on. The id mirrors what the daemon would mint —
+		// the point of the scene is the flow, and a fake id in a synthetic fleet
+		// is no less true than the fake fleet it joins.
+		return func() tea.Msg {
+			return agentAddedMsg{
+				island: name, agentID: "a3", agentLabel: req.Label,
+				attachable: handlers.Attachable(req.Type),
+			}
+		}
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), api.AddAgentBudget)
 		defer cancel()

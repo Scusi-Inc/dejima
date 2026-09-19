@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/aoos/dejima/internal/api"
+	"github.com/aoos/dejima/internal/clientcfg"
 	"github.com/aoos/dejima/internal/link"
 	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/reposrc"
@@ -165,5 +166,16 @@ func demoRepos() []reposrc.Repo {
 		{Name: "storefront", Path: "/home/you/code/storefront"},
 		{Name: "api-gateway", Path: "/home/you/code/api-gateway"},
 		{Name: "infra", Path: "/home/you/code/infra"},
+	}
+}
+
+// demoProfiles is the synthetic connection list for the switcher scene. Real
+// profiles are the operator's host names and tailnet addresses; a site recording
+// must never carry them, which is the same rule the rest of this file follows.
+func demoProfiles() []clientcfg.Profile {
+	return []clientcfg.Profile{
+		{Name: "local", Host: ""},
+		{Name: "minion", Host: "minion.tail-scale.ts.net:7273"},
+		{Name: "studio", Host: "studio.tail-scale.ts.net:7273"},
 	}
 }

@@ -4336,6 +4336,21 @@ var asciiLogoSmall = []string{
 
 func (m tuiModel) renderHeader() string {
 	label := m.activeLabel
+	// The header is the ONE place demo mode was still showing the real world.
+	// Everything below it is synthetic — tui_demo.go exists so a site recording
+	// leaks no repos, paths or secrets — while the header went on printing the
+	// operator's actual daemon target. A capture for the public site carried
+	// `host.docker.internal:7274` in all 17 frames, which is a host name on a
+	// landing page and, on a tailnet-hosted fleet, a machine address.
+	//
+	// Stubbed here rather than at the field, because activeHost is load-bearing
+	// for reconnects and the switcher; only its DISPLAY is a leak.
+	if m.demo {
+		label = "minion.tail-scale.ts.net:7273"
+		if m.activeSource == "local" {
+			label = "local"
+		}
+	}
 	if label == "" {
 		if m.activeHost == "" {
 			label = "local"
@@ -4347,7 +4362,11 @@ func (m tuiModel) renderHeader() string {
 	// Flag an env-sourced target: DEJIMA_HOST overrides any saved profile, so a
 	// stale export silently wins — making that visible is the whole point.
 	envNote := ""
-	if m.activeSource == "env" {
+	if m.activeSource == "env" && !m.demo {
+		// "(env)" is a warning that a stale DEJIMA_HOST is overriding a profile.
+		// True of the capture machine, meaningless on a landing page, and it
+		// would be the only word in the demo that is about the recorder rather
+		// than about Dejima.
 		envNote = " (env)"
 	}
 
