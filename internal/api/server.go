@@ -3321,8 +3321,10 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 
 	// Honor the prior desired state. If the island was hibernated when reset
 	// was requested, leave the new container stopped.
+	leftStopped := false
 	if !wasRunning && p.DesiredState == project.StateHibernated {
 		_ = s.rt.StopContainer(r.Context(), p.ContainerName())
+		leftStopped = true
 	}
 
 	p.LastUsedAt = time.Now().UTC()
@@ -3331,6 +3333,19 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(events.Event{Type: events.TypeIslandReset, Island: p.Name})
+	// The entrypoint relaunches only the PRIMARY agent; the rest are the daemon's
+	// job. Reset was the last recreate path that never did this, so resetting a
+	// multi-agent island brought agent 0 back and left every co-located agent with
+	// no tmux session — the same gap upgrade had before a0bd706. Skipped when the
+	// island was deliberately left stopped above: there is no running container to
+	// create sessions in, and the next wake reconciles anyway.
+	//
+	// resume is FALSE, and not by omission. The home volume holding every
+	// transcript was removed and recreated empty above, so there is nothing to
+	// continue; TestResetDoesNotResume pins the primary to the same cold launch.
+	if !leftStopped {
+		s.reconcileAgentsAsync(p, false)
+	}
 	writeJSON(w, http.StatusOK, s.toInfo(r.Context(), p))
 }
 
