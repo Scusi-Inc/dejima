@@ -159,10 +159,11 @@ agent's push of a `.github/workflows/` change is rejected:
 
 A gate under `scripts/` needs a CI job to run it, and adding that job is the one
 edit none of us can land — so it ships as a script someone has to REMEMBER to
-run, which is the failure mode the gate existed to remove. `ci.yml` already runs
-`go test ./...` and `go test -race ./internal/api/...`, so a check written as a
-test in a package CI already walks is armed the moment it merges, with nothing
-for the operator to paste.
+run, which is the failure mode the gate existed to remove. `ci.yml:30` already
+runs `go test ./...`, which walks EVERY package — so a check written as a Go
+test anywhere in the tree is armed the moment it merges, with nothing for the
+operator to paste. `ci.yml:51` additionally runs `internal/api` (and bridge,
+events, mailbox) under `-race`, so a gate there is exercised twice per PR.
 
 On 2026-09-19 two agents wrote the same reconcile gate within the hour, one as a
 script and one as a Go test. The script was closed — not for its logic, which
