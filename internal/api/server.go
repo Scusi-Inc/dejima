@@ -81,13 +81,6 @@ type Server struct {
 	wakeEnabled bool
 	wakeNudges  *wakeNotifier
 	injectFn    func(ctx context.Context, p *project.Project, a *project.AgentSpec, text string) error
-	// pasteFn drops a notice into the prompt WITHOUT submitting it, for when the
-	// operator has a half-typed message there. Same seam shape as injectFn so
-	// tests can swap it.
-	pasteFn func(ctx context.Context, p *project.Project, a *project.AgentSpec, text string) error
-	// pasted remembers which agents already have an un-submitted notice sitting
-	// in their draft, so a stalled draft collects one line and not a wall of them.
-	pasted *pastedSet
 	// paneFn samples the agent's prompt (attached? drafted? how long since a
 	// keystroke?). A seam because the real one execs tmux in a container, and the
 	// delivery decision is worth testing without one.
@@ -350,9 +343,7 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 	}
 	// Wake-on-message seams (swappable in tests) + the store's arrival hook.
 	s.injectFn = s.tmuxInject
-	s.pasteFn = s.tmuxPaste
 	s.paneFn = s.readPane
-	s.pasted = newPastedSet()
 	s.idleFn = s.agentIdleAtBoundary
 	s.mailbox.SetArrivalHook(s.onMailboxArrival)
 	// GitHub device-flow capture: real GitHub calls by default (tests stub them);

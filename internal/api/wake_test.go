@@ -282,13 +282,9 @@ func TestWakeFlushHoldsWhileTheOperatorIsTyping(t *testing.T) {
 	}
 	agent := primaryAgentID(t, h, "isl")
 
-	var injected, pasted []string
+	var injected []string
 	srv.injectFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
 		injected = append(injected, text)
-		return nil
-	}
-	srv.pasteFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
-		pasted = append(pasted, text)
 		return nil
 	}
 	srv.idleFn = func(string, string) bool { return true }
@@ -307,9 +303,6 @@ func TestWakeFlushHoldsWhileTheOperatorIsTyping(t *testing.T) {
 	if len(injected) != 0 {
 		t.Fatalf("submitted into a prompt holding the operator's draft: %v", injected)
 	}
-	if len(pasted) != 0 {
-		t.Fatalf("pasted while they were still typing: %v", pasted)
-	}
 
 	// THE MAIL MUST NOT BE LOST BY HOLDING IT. Once they send their own message
 	// the prompt is empty and the nudge is delivered normally — and it is still
@@ -323,11 +316,12 @@ func TestWakeFlushHoldsWhileTheOperatorIsTyping(t *testing.T) {
 	}
 }
 
-// A terminal left open with text in it, nobody at the keyboard. Holding here
-// would delay mail indefinitely on a draft that is never going to be finished,
-// so the notice is pasted — visible immediately, their draft intact, no Enter.
-// And a second message must not stack another line into the same draft.
-func TestWakeFlushPastesIntoAnAbandonedDraftExactlyOnce(t *testing.T) {
+// A terminal left open with text in it, nobody at the keyboard. This used to
+// PASTE the notice and stop, which delivered nothing until a human pressed
+// Enter — on a terminal nobody was sitting at. The operator reported it as worse
+// than the always-submit behaviour it replaced, and they were right: mail that
+// silently never arrives is worse than mail that arrives at an awkward moment.
+func TestWakeFlushDeliversIntoAnAbandonedDraft(t *testing.T) {
 	srv, h, _ := wakeServer(t)
 	if rr := do(t, h, http.MethodPost, "/v1/islands",
 		`{"repo":"r","name":"isl","agent":"claude-code"}`); rr.Code != http.StatusCreated {
@@ -335,13 +329,9 @@ func TestWakeFlushPastesIntoAnAbandonedDraftExactlyOnce(t *testing.T) {
 	}
 	agent := primaryAgentID(t, h, "isl")
 
-	var injected, pasted []string
+	var injected []string
 	srv.injectFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
 		injected = append(injected, text)
-		return nil
-	}
-	srv.pasteFn = func(_ context.Context, _ *project.Project, _ *project.AgentSpec, text string) error {
-		pasted = append(pasted, text)
 		return nil
 	}
 	srv.idleFn = func(string, string) bool { return true }
@@ -354,18 +344,14 @@ func TestWakeFlushPastesIntoAnAbandonedDraftExactlyOnce(t *testing.T) {
 
 	srv.wakeNudges.add("isl", agent, time.Now())
 	srv.flushNudges(context.Background())
-	if len(pasted) != 1 {
-		t.Fatalf("an abandoned draft should have been pasted into once; got %v", pasted)
-	}
-	if len(injected) != 0 {
-		t.Fatalf("submitted somebody's draft: %v", injected)
+	if len(injected) != 1 || !strings.Contains(injected[0], "1 new") {
+		t.Fatalf("mail was not delivered to a parked terminal; got %v", injected)
 	}
 
-	// More mail, same untouched draft: the count is still pending, but a second
-	// line must not be added to what they will eventually read.
-	srv.wakeNudges.add("isl", agent, time.Now())
+	// And it is not re-sent with nothing pending — the batching contract still
+	// holds, which is what made the old paste path look correct in testing.
 	srv.flushNudges(context.Background())
-	if len(pasted) != 1 {
-		t.Errorf("stacked a second notice into the same draft: %v", pasted)
+	if len(injected) != 1 {
+		t.Errorf("nudge re-sent with nothing pending: %v", injected)
 	}
 }

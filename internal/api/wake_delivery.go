@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aoos/dejima/internal/handlers"
@@ -35,9 +34,28 @@ import (
 //     cannot tell a hard newline from a soft wrap, so the save step is lossy.
 //     Its failure mode is "we ate your draft", worse than the bug being fixed.
 //
-// SO: submit when the box is empty, paste when it is not. The only remaining
-// question is how long to wait for a draft that may never be finished, and that
-// is what client_activity answers.
+// THE FIRST VERSION OF THIS FILE PASTED INTO A PARKED DRAFT AND STOPPED THERE,
+// and that was a regression the operator reported as worse than the behaviour it
+// replaced. The contradiction, stated plainly because it is easy to re-introduce:
+//
+//	a paste is only delivered when a HUMAN presses Enter,
+//	and we chose to paste only when the keyboard had been idle 45 minutes.
+//
+// So the delivery mode built for "the operator is away" was the one mode that
+// cannot work while they are away. deliverPaste had no path to a send and
+// pastedSet blocked a second attempt, so the mail waited for an Enter that was
+// not coming. Mail that is silently never delivered is worse than mail that
+// arrives at an awkward moment: the old always-submit behaviour was at least
+// reliable, and reliability is the property a mailbox is for.
+//
+// SO: submit unless someone is ACTIVELY TYPING. Holding for a few seconds while
+// a sentence is finished is the part worth keeping — it costs a short delay and
+// prevents the clobber. Holding indefinitely for a draft nobody is working on
+// costs the message.
+//
+// A submit over a stale draft does not LOSE it: the draft is submitted too, and
+// lands in the transcript. That is a worse turn than it would have been, and a
+// far better outcome than a message nobody ever reads.
 const (
 	// operatorTypingWindow is how recently a keystroke means "mid-sentence, they
 	// are about to press Enter themselves" — hold, and the nudge lands right
@@ -49,8 +67,11 @@ const (
 	// mistaken for the operator typing). That is what makes it usable here, and
 	// it is a real tmux interface rather than a reading of rendered pixels.
 	operatorTypingWindow = 45 * time.Second
-	// draftHoldCap stops an abandoned draft holding mail forever. A terminal left
-	// open with text in it is the ordinary case, not an edge one.
+	// draftHoldCap stops even an actively-typed draft holding mail forever. The
+	// operator who types continuously for two minutes is rare; the one who starts
+	// a sentence, gets distracted, and leaves it there is not, and
+	// operatorTypingWindow alone would wait on them for as long as they kept
+	// touching the keyboard.
 	draftHoldCap = 2 * time.Minute
 )
 
@@ -73,9 +94,8 @@ const (
 type deliveryMode int
 
 const (
-	deliverSubmit deliveryMode = iota // type it and press Enter (today's behaviour)
-	deliverPaste                      // bracketed paste, no Enter — draft survives
-	deliverHold                       // try again shortly
+	deliverSubmit deliveryMode = iota // type it and press Enter
+	deliverHold                       // hold briefly; someone is mid-sentence
 )
 
 // decideDelivery is the whole policy, kept pure so it can be tested as a table
@@ -93,7 +113,7 @@ func decideDelivery(attached bool, box inputBoxState, keyboardIdle, heldFor time
 	}
 	// A draft is present (or the screen is unreadable, which we treat the same).
 	if keyboardIdle >= operatorTypingWindow || heldFor >= draftHoldCap {
-		return deliverPaste
+		return deliverSubmit
 	}
 	return deliverHold
 }
@@ -223,78 +243,4 @@ func promptGlyphFor(agentType string) string {
 		return ""
 	}
 	return h.PromptGlyph
-}
-
-// --- the paste path -------------------------------------------------------
-
-// Bracketed-paste markers (DEC 2004). Wrapping the notice in these is what makes
-// the receiving TUI treat it as PASTED content: the embedded newlines insert
-// literally instead of submitting, which is the entire mechanism here.
-const (
-	bpStart = "\x1b[200~"
-	bpEnd   = "\x1b[201~"
-)
-
-// tmuxPaste puts the notice in the prompt and does NOT press Enter.
-//
-// The newline either side is the measured part. Without the leading one the
-// notice lands jammed against whatever the operator was typing
-// (`...the sched[📬 2 new messages]`); with it their line survives and the
-// notice sits on its own row. The trailing one leaves their cursor on a fresh
-// line rather than at the end of our text.
-//
-// ONE line of content, deliberately: Claude Code collapses a 3-line paste into
-// `[Pasted text #1 +N lines]`, which is inline, opaque and absorbs the leading
-// newline — every property we are trying to avoid.
-//
-// The text is also written to be harmless if submitted. The operator will
-// sometimes press Enter without noticing it arrived, and
-// `📬 2 new message(s) — run: dejima msg poll` is a sensible thing to send an
-// agent; a cryptic marker would be noise in their transcript.
-func (s *Server) tmuxPaste(ctx context.Context, p *project.Project, a *project.AgentSpec, text string) error {
-	if a.Tmux == "" {
-		return nil
-	}
-	body := "\n[" + text + "]\n"
-	if _, _, code, err := s.rt.Exec(ctx, p.ContainerName(),
-		[]string{"tmux", "send-keys", "-t", a.Tmux, "-l", bpStart + body + bpEnd}); err != nil {
-		return err
-	} else if code != 0 {
-		return errPasteFailed(code)
-	}
-	return nil
-}
-
-type errPasteFailed int
-
-func (e errPasteFailed) Error() string {
-	return "tmux send-keys (paste) exit " + strconv.Itoa(int(e))
-}
-
-// pastedSet tracks agents whose draft already holds an un-submitted notice.
-// Cleared the moment the prompt is observed empty — that is the operator having
-// sent their message, taking our notice with it.
-type pastedSet struct {
-	mu sync.Mutex
-	m  map[nudgeKey]bool
-}
-
-func newPastedSet() *pastedSet { return &pastedSet{m: map[nudgeKey]bool{}} }
-
-func (p *pastedSet) seen(k nudgeKey) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.m[k]
-}
-
-func (p *pastedSet) mark(k nudgeKey) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.m[k] = true
-}
-
-func (p *pastedSet) clear(k nudgeKey) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.m, k)
 }

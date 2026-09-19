@@ -86,14 +86,22 @@ func TestDecideDelivery(t *testing.T) {
 		{"attached, empty prompt", true, inputEmpty, fresh, 0, deliverSubmit},
 		// Mid-sentence: their Enter is seconds away and the nudge lands behind it.
 		{"attached, mid-sentence", true, inputDrafted, fresh, 0, deliverHold},
-		// THE CASE THAT MOTIVATED THE KEYBOARD SIGNAL: a terminal left open with
-		// text in it. Holding here would delay mail indefinitely on a draft nobody
-		// intends to finish.
-		{"attached, abandoned draft", true, inputDrafted, stale, 0, deliverPaste},
+		// THE CASE THAT MOTIVATED THE KEYBOARD SIGNAL, and the one the first
+		// version of this file got backwards. A terminal left open with text in
+		// it: it used to PASTE here, which delivers nothing until a human presses
+		// Enter — and this branch is reached only when no human has touched the
+		// keyboard for 45 minutes. A delivery mode for "the operator is away"
+		// that requires the operator to be present.
+		//
+		// Submitting sends their stale draft along with the notice. That is a
+		// worse turn than it would have been, and far better than a message
+		// nobody ever reads.
+		{"attached, abandoned draft", true, inputDrafted, stale, 0, deliverSubmit},
 		// Even someone genuinely typing does not get to hold mail forever.
-		{"attached, typing but past the cap", true, inputDrafted, fresh, draftHoldCap, deliverPaste},
-		// An unreadable screen is not permission to submit somebody's draft.
-		{"attached, prompt not found", true, inputUnknown, stale, 0, deliverPaste},
+		{"attached, typing but past the cap", true, inputDrafted, fresh, draftHoldCap, deliverSubmit},
+		// An unreadable screen is treated as a draft — but a draft still gets
+		// delivered once nobody is typing, rather than held forever.
+		{"attached, prompt not found", true, inputUnknown, stale, 0, deliverSubmit},
 		// A framework with no known prompt keeps today's behaviour rather than
 		// being switched to paste-only on a guess.
 		{"framework we cannot read", true, inputUnreadable, fresh, 0, deliverSubmit},
@@ -158,5 +166,48 @@ func TestPasteBodyStaysOneLine(t *testing.T) {
 	}
 	if !strings.HasPrefix(body, "\n") || !strings.HasSuffix(body, "\n") {
 		t.Error("the notice needs a newline either side: leading so the operator's line survives, trailing so their cursor lands fresh")
+	}
+}
+
+// THE REGRESSION THIS FILE NOW GUARDS, stated as a property rather than a row:
+// there must be NO state in which mail is neither delivered nor retried. The
+// first version had one — deliverPaste was terminal, and pastedSet blocked a
+// second attempt, so a parked draft swallowed the message permanently.
+//
+// Written as an exhaustive sweep instead of examples, because the hole was not
+// in any single case anyone would think to write: it was in the combination
+// "we decided something, and that decision led nowhere".
+func TestEveryDecisionEitherDeliversOrRetries(t *testing.T) {
+	for _, attached := range []bool{true, false} {
+		for _, box := range []inputBoxState{inputUnreadable, inputEmpty, inputDrafted, inputUnknown} {
+			for _, idle := range []time.Duration{0, time.Second, operatorTypingWindow, time.Hour} {
+				for _, held := range []time.Duration{0, time.Minute, draftHoldCap, time.Hour} {
+					got := decideDelivery(attached, box, idle, held)
+					if got != deliverSubmit && got != deliverHold {
+						t.Fatalf("decideDelivery(attached=%v, box=%v, idle=%v, held=%v) = %v — "+
+							"a mode that neither delivers nor retries loses the message",
+							attached, box, idle, held, got)
+					}
+				}
+			}
+		}
+	}
+}
+
+// A hold must be TEMPORARY. Holding is only defensible because the operator is
+// finishing a sentence and will press Enter in seconds; past the cap it becomes
+// the silent loss this file exists to prevent.
+func TestAHoldAlwaysExpires(t *testing.T) {
+	// Mid-sentence: held, which is the behaviour worth keeping.
+	if got := decideDelivery(true, inputDrafted, time.Second, 0); got != deliverHold {
+		t.Errorf("a nudge arriving mid-sentence should wait, got %v", got)
+	}
+	// Same operator, still typing, but past the cap.
+	if got := decideDelivery(true, inputDrafted, time.Second, draftHoldCap); got != deliverSubmit {
+		t.Errorf("a hold outlived the cap and became a silent loss, got %v", got)
+	}
+	// Same operator, gone quiet.
+	if got := decideDelivery(true, inputDrafted, operatorTypingWindow, 0); got != deliverSubmit {
+		t.Errorf("a parked draft held the mail, got %v", got)
 	}
 }

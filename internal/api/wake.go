@@ -221,31 +221,12 @@ func (s *Server) flushNudges(ctx context.Context) {
 		// since they last pressed a key; decideDelivery turns that into one of
 		// submit / paste / hold. See wake_delivery.go for what was measured.
 		pane := s.paneFn(ctx, p, a)
-		if pane.box == inputEmpty {
-			// They sent their message, and our earlier notice went with it.
-			s.pasted.clear(k)
-		}
 		switch decideDelivery(pane.attached, pane.box, pane.keyboardIdle, now.Sub(firstSeen)) {
 		case deliverHold:
 			// Mid-sentence. Put the count back and let the ticker retry — their own
 			// Enter is seconds away, and the nudge lands right behind it.
 			s.wakeNudges.restore(k, n, firstSeen)
 			continue
-		case deliverPaste:
-			// A draft nobody is working on. The notice goes in WITHOUT Enter, on
-			// its own line, so it is visible immediately and rides along with
-			// whatever they eventually send. Not acted on until they do — with
-			// their text in the box there is no way to submit ours alone.
-			if s.pasted.seen(k) {
-				s.wakeNudges.restore(k, n, firstSeen)
-				continue // already pasted into this draft; don't stack notices
-			}
-			if err := s.pasteFn(ctx, p, a, text); err != nil {
-				s.log.Debug("wake paste", "island", k.island, "agent", k.agent, "err", err)
-				s.wakeNudges.restore(k, n, firstSeen)
-				continue
-			}
-			s.pasted.mark(k)
 		default:
 			if err := s.injectFn(ctx, p, a, text); err != nil {
 				s.log.Debug("wake inject", "island", k.island, "agent", k.agent, "err", err)
