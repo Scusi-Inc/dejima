@@ -182,6 +182,8 @@ func TestGitHubReposHandler(t *testing.T) {
 // the daemon issues and the last CreateContainer request, so a test can assert
 // the multi-agent orchestration without a real container engine.
 type fakeRuntime struct {
+	vops             []volumeOp
+	copyVolumeErr    error
 	mu               sync.Mutex
 	execs            [][]string
 	lastCreate       runtime.CreateRequest
@@ -252,13 +254,37 @@ func (f *fakeRuntime) ContainerImageID(context.Context, string) (string, error) 
 	}
 	return "sha256:current", nil
 }
-func (f *fakeRuntime) EnsureVolume(context.Context, string) error       { return nil }
-func (f *fakeRuntime) RemoveVolume(context.Context, string, bool) error { return nil }
+
+// volumeOp records one volume call IN ORDER. Order is the subject of the
+// snapshot tests — a copy taken after the removal copies an empty volume — and
+// the old volumeCopies slice could not express "before".
+type volumeOp struct{ op, name, src, dst string }
+
+func (f *fakeRuntime) volumeOps() []volumeOp {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]volumeOp(nil), f.vops...)
+}
+
+func (f *fakeRuntime) EnsureVolume(_ context.Context, name string) error {
+	f.mu.Lock()
+	f.vops = append(f.vops, volumeOp{op: "ensure", name: name})
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeRuntime) RemoveVolume(_ context.Context, name string, _ bool) error {
+	f.mu.Lock()
+	f.vops = append(f.vops, volumeOp{op: "remove", name: name})
+	f.mu.Unlock()
+	return nil
+}
 func (f *fakeRuntime) CopyVolumeData(_ context.Context, src, dst, _ string) error {
 	f.mu.Lock()
 	f.volumeCopies = append(f.volumeCopies, [2]string{src, dst})
+	f.vops = append(f.vops, volumeOp{op: "copy", src: src, dst: dst})
+	err := f.copyVolumeErr
 	f.mu.Unlock()
-	return nil
+	return err
 }
 func (f *fakeRuntime) EnsureNetwork(context.Context, string) error { return nil }
 func (f *fakeRuntime) RemoveNetwork(context.Context, string) error { return nil }

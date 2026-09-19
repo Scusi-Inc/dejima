@@ -93,8 +93,20 @@ type AgentSpec struct {
 }
 
 // Project is the persisted record for a single island.
+// HomeSnapshot is a copy of an island's home volume, taken automatically before
+// something destroys it. The home volume holds every agent's conversation
+// history and any tool logins made inside the island — the things an operator
+// running `reset` to apply a secret does not realise they are spending.
+type HomeSnapshot struct {
+	Volume  string    `toml:"volume"`
+	TakenAt time.Time `toml:"taken_at"`
+	Reason  string    `toml:"reason"` // what was about to destroy it: "reset"
+}
+
 type Project struct {
 	Name string `toml:"name"`
+	// HomeSnapshots are automatic pre-destruction copies, newest first.
+	HomeSnapshots []HomeSnapshot `toml:"home_snapshots,omitempty"`
 	// Title is a cosmetic, freely-editable display name. Name stays the durable
 	// infra handle (container/volume/network/config-dir identity, and the slug
 	// addressed by the CLI); Title is what the user reads. Empty → show Name.
