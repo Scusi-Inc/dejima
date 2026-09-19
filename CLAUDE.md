@@ -149,3 +149,28 @@ because the reader is not failing to find the rule, they have a specific correct
 belief that makes it feel inapplicable. If you are about to write a fourth
 paragraph about something that keeps happening, write a gate instead;
 `scripts/` has five and they work.
+
+**But write it as a Go test, because you cannot arm anything else.** The shared
+`gh` token here carries `gist, read:org, repo` and no `workflow` scope, so every
+agent's push of a `.github/workflows/` change is rejected:
+
+    ! [remote rejected] refusing to allow an OAuth App to create or update
+      workflow `.github/workflows/ci.yml` without `workflow` scope
+
+A gate under `scripts/` needs a CI job to run it, and adding that job is the one
+edit none of us can land — so it ships as a script someone has to REMEMBER to
+run, which is the failure mode the gate existed to remove. `ci.yml` already runs
+`go test ./...` and `go test -race ./internal/api/...`, so a check written as a
+test in a package CI already walks is armed the moment it merges, with nothing
+for the operator to paste.
+
+On 2026-09-19 two agents wrote the same reconcile gate within the hour, one as a
+script and one as a Go test. The script was closed — not for its logic, which
+was equivalent, but because it could not be armed. Prefer the Go test, and reach
+for `scripts/` only when the thing you are checking is not Go.
+
+A second reason, which decided the same case independently: a Go test can parse
+the AST, and a script over source text usually matches a regex. `\breconcileAgents\(`
+is satisfied by `// TODO: restore s.reconcileAgentsAsync(...)`, so the gate goes
+green on a function whose only call is prose about a call — and prose about
+exactly the call you just fixed is what a fix leaves lying around.
