@@ -34,6 +34,18 @@ import (
 // So this enumerates from the other end: every function that brings a container
 // up, asked whether it reconciles. A lesson that recurs twice becomes a check,
 // not a third comment.
+//
+// It asks ONE question — does this path reconcile at all — and answers it
+// mechanically. It deliberately does NOT check the resume VALUE: that invariant
+// is "ask when you did not bake; keep the literal when you did" (14a7ac1), it is
+// genuinely per-call-site, and a checker guessing at it would be wrong in both
+// directions. Two questions in one gate is how a gate acquires a waiver list
+// nobody reads.
+//
+// The search that found the first four enumerated "paths that reconcile badly".
+// The real set is "paths that bring a container up", and the difference is not
+// pedantry: a handler with the bug in its most complete form — no reconcile
+// whatsoever — has no row in the first table at all.
 func TestEveryContainerUpPathReconciles(t *testing.T) {
 	// Functions allowed to bring a container up WITHOUT reconciling, each with
 	// the reason. Empty today, and that is the point: adding a name here is a
@@ -106,10 +118,15 @@ func TestEveryContainerUpPathReconciles(t *testing.T) {
 	// THE CONTROL. A scan that matches nothing passes for the same reason a
 	// perfect codebase does, and this one walks files by glob and matches by
 	// AST shape — a rename, a move, or a build tag would empty it silently.
-	// Five is the number of paths that existed when this was written; fewer
-	// means the scan stopped seeing the population, not that the population
-	// improved.
-	if len(found) < 5 {
+	//
+	// NINE is the population when this was written, and the number is the whole
+	// control: a scan that sees fewer has stopped seeing the code it guards, not
+	// watched the code improve. A floor of 5 (the first draft) caught only a
+	// renamed predicate, which takes the count to 0 — it would have passed a glob
+	// that stopped matching one file, or panic.go and schedule.go moving out of
+	// the package, both of which leave 7. Adding a handler raises this number; if
+	// you are LOWERING it, say why in the same commit.
+	if len(found) < 9 {
 		t.Fatalf("this check found only %d container-up paths (%v). It is no longer looking at the code it was written to guard — fix the scan before trusting a pass", len(found), found)
 	}
 
