@@ -164,7 +164,7 @@ def ansi_to_html(text: str) -> str:
 
 
 class Pane:
-    def __init__(self, binary, cols=112, rows=34):
+    def __init__(self, binary, cols=132, rows=40):
         self.s = "democap"
         self.binary, self.cols, self.rows = binary, cols, rows
 
@@ -173,6 +173,29 @@ class Pane:
         subprocess.run(["tmux", "new-session", "-d", "-s", self.s,
                         "-x", str(self.cols), "-y", str(self.rows),
                         f"{shlex.quote(self.binary)} tui --demo"], check=True)
+        # THE SIZE HAS TO BE DELIVERED, not merely declared, and this is the whole
+        # reason the first version of this harness produced garbage.
+        #
+        # `new-session -x/-y` sets the session's size, but a DETACHED session has
+        # no client, so no SIGWINCH is sent and bubbletea never receives a
+        # WindowSizeMsg. It falls back and renders at 93 columns forever — at a
+        # declared 100, 120 and 160 alike. The panes come out too narrow and rows
+        # clip: `working` as `wo`, `needs you` as `ne`, `api-gateway` as
+        # `api-gatew…`.
+        #
+        # That read as a TUI bug, survived the obvious control (widen the
+        # terminal — which changed nothing, because nothing reached the program),
+        # and was reported as one. It is not: rendered directly in Go at a known
+        # width the same row fits. resize-window forces the event the detached
+        # session never sends.
+        #
+        # See docs/testing/readings-go-stale.md, "The instrument was stale, not
+        # the reading" — three declared widths produced byte-identical output,
+        # and a measurement that does not move when its input moves is not
+        # measuring its input.
+        time.sleep(1.5)
+        subprocess.run(["tmux", "resize-window", "-t", self.s,
+                        "-x", str(self.cols), "-y", str(self.rows)], capture_output=True)
         self._settle()
         return self
 
@@ -229,7 +252,7 @@ def main():
             scenes.append({"id": key, "title": title, "steps": steps})
             print(f"  {key}: {len(steps)} steps", file=sys.stderr)
 
-    doc = {"cols": 112, "rows": 34, "frames": frames, "scenes": scenes}
+    doc = {"cols": 132, "rows": 40, "frames": frames, "scenes": scenes}
     with open(args.out, "w") as fh:
         json.dump(doc, fh, separators=(",", ":"))
     print(f"{len(frames)} unique frames across {len(scenes)} scenes -> {args.out}", file=sys.stderr)
