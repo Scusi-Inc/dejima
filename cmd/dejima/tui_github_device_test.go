@@ -267,3 +267,128 @@ func TestAnUnknownPollStateKeepsWaitingRatherThanClaimingSuccess(t *testing.T) {
 		t.Errorf("an unknown state was read as success: %q", mm.github.notice)
 	}
 }
+
+// A SELF-HOSTED DAEMON HAS NO OAUTH APP, so guided sign-in is dark by default —
+// the norm here, not an incident. The CLI has caught this since `dejima github
+// connect` was written and completes over the token path instead. The TUI
+// printed the daemon's 501 verbatim and stopped, pointing at a THIRD command
+// (`dejima auth push --github`) rather than the one that would have worked.
+//
+// Same daemon, same operator, one surface dead-ending while the other just
+// works, is the defect. The tests below are about what the pane OFFERS, not
+// about the wording of the message.
+func unconfiguredFlow(t *testing.T, ghPresent bool) tuiModel {
+	t.Helper()
+	m := seededModel(t, island("alpha", "a1"))
+	m.github = &githubView{connect: &deviceFlow{name: "aoos", state: deviceFlowStarting}}
+	mm, _ := m.applyDeviceStarted(deviceStartedMsg{
+		err: errors.New("guided GitHub sign-in isn't configured on this daemon (no OAuth app); use `dejima auth push --github` with a token instead"),
+	})
+	// Probed for real in production; pinned here, since whether a signed-in gh
+	// exists on the machine running the tests is not this test's subject.
+	if f := mm.github.connect; f != nil {
+		f.ghAvailable = ghPresent
+	}
+	return mm
+}
+
+func TestGuidedSignInUnavailableIsNotAFailure(t *testing.T) {
+	mm := unconfiguredFlow(t, true)
+	f := mm.github.connect
+	if f == nil {
+		t.Fatal("the pane closed; the operator needs the alternatives")
+	}
+	// The distinction that IS the bug: deviceFlowFailed offers [c] to retry, and
+	// retrying this one fails identically forever. It is a permanent property of
+	// the daemon, not an incident.
+	if f.state == deviceFlowFailed {
+		t.Error("a daemon with no OAuth app was reported as a failed sign-in, " +
+			"which offers a retry that can never succeed")
+	}
+	if f.state != deviceFlowUnavailable {
+		t.Errorf("state = %v, want deviceFlowUnavailable", f.state)
+	}
+}
+
+// The screen must offer the route that WORKS. Asserting on the rendered pane
+// rather than on internal state, because "the operator can see a way forward"
+// is the actual requirement.
+func TestUnavailableOffersTheLocalGhRoute(t *testing.T) {
+	mm := unconfiguredFlow(t, true)
+	out := plain(mm.github.renderDeviceFlow(mm.now()))
+	if !strings.Contains(out, "[g]") {
+		t.Errorf("no [g] offer on a machine with a signed-in gh:\n%s", out)
+	}
+	if strings.Contains(out, "[c] try again") {
+		t.Errorf("offered a retry that cannot succeed:\n%s", out)
+	}
+	// The daemon's own message names `dejima auth push --github`. Repeating that
+	// verbatim is what sent the operator to a third command; the pane should
+	// surface what it can DO instead.
+	if strings.Contains(out, "auth push") {
+		t.Errorf("relayed the daemon's third-command pointer instead of acting:\n%s", out)
+	}
+}
+
+// With no gh to read, [g] must NOT be offered — an offer that fails on press is
+// worse than one that was never made. The manual routes take its place.
+func TestUnavailableWithoutGhOffersTheManualRoutes(t *testing.T) {
+	mm := unconfiguredFlow(t, false)
+	out := plain(mm.github.renderDeviceFlow(mm.now()))
+	if strings.Contains(out, "[g]") {
+		t.Errorf("offered [g] with no signed-in gh to read:\n%s", out)
+	}
+	if !strings.Contains(out, "gh auth login") || !strings.Contains(out, "--token-stdin") {
+		t.Errorf("neither manual route is named:\n%s", out)
+	}
+}
+
+// A failed [g] returns to the screen that lists the OTHER routes, with the
+// reason on it. Dropping the operator somewhere with fewer options — or closing
+// the pane — would take away the PAT path, which the failure did not invalidate.
+func TestAFailedLocalGhKeepsTheAlternativesOnScreen(t *testing.T) {
+	mm := unconfiguredFlow(t, true)
+	mm, _ = mm.applyGhConnected(ghConnectedMsg{err: errors.New("gh is signed out")})
+	f := mm.github.connect
+	if f == nil {
+		t.Fatal("the pane closed on a failed attempt")
+	}
+	if f.state != deviceFlowUnavailable {
+		t.Errorf("state = %v, want to be back on the routes screen", f.state)
+	}
+	out := plain(mm.github.renderDeviceFlow(mm.now()))
+	if !strings.Contains(out, "gh is signed out") {
+		t.Errorf("the reason it failed is not on screen:\n%s", out)
+	}
+	if !strings.Contains(out, "[g]") {
+		t.Errorf("the route was withdrawn after one failure:\n%s", out)
+	}
+}
+
+// Success stores the identity and reloads the list in place — the same handoff
+// removal the authorized device-flow path already makes.
+func TestLocalGhSuccessStoresAndReloads(t *testing.T) {
+	mm := unconfiguredFlow(t, true)
+	mm, cmd := mm.applyGhConnected(ghConnectedMsg{identity: "aoos", login: "aoos", scopes: "repo, read:org"})
+	if mm.github.connect != nil {
+		t.Error("a stored identity should end the flow")
+	}
+	if !strings.Contains(mm.github.notice, "aoos") {
+		t.Errorf("success must name what was stored, got %q", mm.github.notice)
+	}
+	if cmd == nil || !mm.github.loading {
+		t.Error("the identity list must reload in place")
+	}
+}
+
+// A token that authenticates but cannot push looks identical to a working one
+// until an agent fails hours later with "Resource not accessible by personal
+// access token" — a message naming nothing anyone can act on. Said HERE, at the
+// moment it is stored, exactly as the CLI path says it.
+func TestAReadOnlyTokenIsCalledOutWhenStored(t *testing.T) {
+	mm := unconfiguredFlow(t, true)
+	mm, _ = mm.applyGhConnected(ghConnectedMsg{identity: "aoos", login: "aoos", scopes: "read:org"})
+	if !strings.Contains(mm.github.notice, "CANNOT") {
+		t.Errorf("a token that cannot push was stored without saying so: %q", mm.github.notice)
+	}
+}
