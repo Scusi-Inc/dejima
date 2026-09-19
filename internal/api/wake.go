@@ -78,24 +78,6 @@ func (n *wakeNotifier) take(k nudgeKey) int {
 	return c
 }
 
-// restore puts a taken batch back, preserving the ORIGINAL arrival time so the
-// hold cap measures from when the mail actually landed rather than from the
-// last failed attempt. Without that an undeliverable nudge would reset its own
-// deadline on every tick and never reach the cap it exists to enforce.
-func (n *wakeNotifier) restore(k nudgeKey, count int, firstSeen time.Time) {
-	if count <= 0 {
-		return
-	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.pending[k] += count
-	if cur, ok := n.firstSeen[k]; !ok || firstSeen.Before(cur) {
-		if !firstSeen.IsZero() {
-			n.firstSeen[k] = firstSeen
-		}
-	}
-}
-
 // pendingSince returns when the oldest undelivered nudge for k arrived (and
 // whether one is pending).
 func (n *wakeNotifier) pendingSince(k nudgeKey) (time.Time, bool) {
@@ -200,7 +182,6 @@ func (s *Server) flushNudges(ctx context.Context) {
 			s.log.Warn("wake-on-message: no idle heartbeat — delivering best-effort (possible stale island shim; run `dejima upgrade`)",
 				"island", k.island, "agent", k.agent)
 		}
-		firstSeen, _ := s.wakeNudges.pendingSince(k)
 		n := s.wakeNudges.take(k)
 		if n == 0 {
 			continue
@@ -215,22 +196,19 @@ func (s *Server) flushNudges(ctx context.Context) {
 		}
 		text := fmt.Sprintf("📬 %d new message(s) — run: %s msg poll", n, islandDejimaBin)
 
-		// Never submit into a prompt that is holding the operator's half-typed
-		// message: Enter sends the whole box, their words included. readPane says
-		// whether anyone is attached, whether the box has a draft, and how long
-		// since they last pressed a key; decideDelivery turns that into one of
-		// submit / paste / hold. See wake_delivery.go for what was measured.
-		pane := s.paneFn(ctx, p, a)
-		switch decideDelivery(pane.attached, pane.box, pane.keyboardIdle, now.Sub(firstSeen)) {
-		case deliverHold:
-			// Mid-sentence. Put the count back and let the ticker retry — their own
-			// Enter is seconds away, and the nudge lands right behind it.
-			s.wakeNudges.restore(k, n, firstSeen)
-			continue
-		default:
-			if err := s.injectFn(ctx, p, a, text); err != nil {
-				s.log.Debug("wake inject", "island", k.island, "agent", k.agent, "err", err)
-			}
+		// DELIVER. Unconditionally, which is a decision and not an oversight —
+		// see docs/mail-nudge-delivery.md for the two attempts that came before
+		// this line and why both were withdrawn.
+		//
+		// The short version: there is no reliable way, from outside the agent, to
+		// tell whether a human is sitting at a terminal. tmux can say a CLIENT is
+		// attached; it cannot say anyone is looking at it. On a real fleet that
+		// gap is enormous — 31 clients across three sessions, most of them days
+		// stale, because every reconnect leaves one behind and none ever die.
+		// Gating delivery on that proxy withheld mail from an operator who was
+		// not there, which is the one failure a mailbox must not have.
+		if err := s.injectFn(ctx, p, a, text); err != nil {
+			s.log.Debug("wake inject", "island", k.island, "agent", k.agent, "err", err)
 		}
 	}
 }

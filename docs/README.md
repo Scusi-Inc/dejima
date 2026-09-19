@@ -1,6 +1,6 @@
 # The docs, mapped
 
-90 files, grouped by the question you arrived with. Every `.md` under `docs/` is
+91 files, grouped by the question you arrived with. Every `.md` under `docs/` is
 listed here exactly once, and `scripts/docs-index-check.py` fails the build if
 that stops being true or if a link here points at a file that does not exist.
 
@@ -76,6 +76,9 @@ writing a guard.
   [metrics-install-totals.md](metrics-install-totals.md)
 - [windows-native-daemon.md](windows-native-daemon.md) — research; the daemon
   does NOT build for native Windows, WSL2 is the only way.
+
+- [mail-nudge-delivery.md](mail-nudge-delivery.md) — why a mail nudge submits
+  unconditionally, and the two attempts to be cleverer that were withdrawn.
 
 ## "How do agents work here?"
 

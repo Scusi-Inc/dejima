@@ -81,11 +81,7 @@ type Server struct {
 	wakeEnabled bool
 	wakeNudges  *wakeNotifier
 	injectFn    func(ctx context.Context, p *project.Project, a *project.AgentSpec, text string) error
-	// paneFn samples the agent's prompt (attached? drafted? how long since a
-	// keystroke?). A seam because the real one execs tmux in a container, and the
-	// delivery decision is worth testing without one.
-	paneFn func(ctx context.Context, p *project.Project, a *project.AgentSpec) paneReading
-	idleFn func(island, agent string) bool
+	idleFn      func(island, agent string) bool
 
 	// Claude credential auto-seed (see claude_autoseed.go). autoSeed guards the
 	// one-shot capture so it runs at most once per boot and short-circuits cheaply
@@ -343,7 +339,6 @@ func NewServer(rt runtime.Runtime, log *slog.Logger, ev *events.Manager) *Server
 	}
 	// Wake-on-message seams (swappable in tests) + the store's arrival hook.
 	s.injectFn = s.tmuxInject
-	s.paneFn = s.readPane
 	s.idleFn = s.agentIdleAtBoundary
 	s.mailbox.SetArrivalHook(s.onMailboxArrival)
 	// GitHub device-flow capture: real GitHub calls by default (tests stub them);
