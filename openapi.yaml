@@ -781,6 +781,29 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExecResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/islands/{name}/restore:
+    post:
+      tags: [islands]
+      summary: Put back the home volume from a pre-destruction snapshot
+      description: >-
+        Restores every agent's conversation history and in-island tool logins
+        from the copy the daemon takes automatically before a reset. The CURRENT
+        home volume is snapshotted first, so a restore is itself undoable.
+      operationId: restoreHome
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RestoreHomeRequest" }
+      responses:
+        "200":
+          description: restored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RestoreHomeResponse" }
+        "404": { description: "no such island, or no such snapshot" }
   /v1/islands/{name}/mailbox:
     parameters: [ { $ref: "#/components/parameters/Name" } ]
     get:
@@ -2821,6 +2844,10 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AgentInfo" }
         built_version: { type: string, description: "daemon build the island's container was first created against; empty for islands created before version stamping" }
+        home_snapshots:
+          type: array
+          description: "automatic pre-destruction copies of the home volume; restore with POST /v1/islands/{name}/restore"
+          items: { $ref: "#/components/schemas/HomeSnapshotInfo" }
         upgraded_version:
           type: string
           description: >
@@ -3048,6 +3075,24 @@ components:
         ephemeral: { type: boolean, description: an agent-spawned sub-agent (auto-reaped; counts against the spawn budget) }
         spawned_by: { type: string, description: id of the agent that spawned this one (lineage; empty for operator-created) }
         spawned_by_label: { type: string, description: human name of the spawning agent (so lineage renders as a name) }
+    RestoreHomeRequest:
+      type: object
+      properties:
+        volume: { type: string, description: "snapshot volume to restore; omit for the newest" }
+    RestoreHomeResponse:
+      type: object
+      properties:
+        volume: { type: string }
+        taken_at: { type: string, format: date-time }
+    HomeSnapshotInfo:
+      type: object
+      description: >-
+        One automatic copy of an island's home volume, taken before something
+        destroyed it.
+      properties:
+        volume: { type: string }
+        taken_at: { type: string, format: date-time }
+        reason: { type: string, description: "what was about to destroy it, e.g. reset" }
     HealthzResponse:
       type: object
       description: >-

@@ -1701,3 +1701,12 @@ func (c *Client) Healthz(ctx context.Context) (HealthzResponse, error) {
 	err := c.do(ctx, http.MethodGet, "/v1/healthz", nil, &out)
 	return out, err
 }
+
+// RestoreHome puts a home-volume snapshot back over an island. An empty volume
+// means the newest — what someone who has just realised what they did wants.
+func (c *Client) RestoreHome(ctx context.Context, island, volume string) (RestoreHomeResponse, error) {
+	var out RestoreHomeResponse
+	err := c.do(ctx, http.MethodPost, "/v1/islands/"+url.PathEscape(island)+"/restore",
+		RestoreHomeRequest{Volume: volume}, &out)
+	return out, err
+}

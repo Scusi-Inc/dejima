@@ -91,8 +91,12 @@ type IslandInfo struct {
 	// recent `dejima upgrade` recreate. A stamp behind the running daemon means the
 	// island was built from an older image and may carry stale /opt shims. Both
 	// empty for islands created before version stamping (provenance unknown).
-	BuiltVersion    string `json:"built_version,omitempty"`
-	UpgradedVersion string `json:"upgraded_version,omitempty"`
+	BuiltVersion string `json:"built_version,omitempty"`
+	// HomeSnapshots are automatic pre-destruction copies of the home volume.
+	// Present so a client can show what a reset can be undone from without a
+	// second round trip — the moment someone needs this, they need it fast.
+	HomeSnapshots   []HomeSnapshotInfo `json:"home_snapshots,omitempty"`
+	UpgradedVersion string             `json:"upgraded_version,omitempty"`
 	// ImageStale reports whether this island's CONTAINER is running an image
 	// other than the one its tag resolves to now — the direct question the
 	// version stamps above only approximate. The stamps track the daemon's
@@ -346,6 +350,14 @@ type AgentUsage struct {
 	// without touching what was configured. An intent and an observation that
 	// share a name get read as one fact by whoever arrives later.
 	Model string `json:"model,omitempty"`
+}
+
+// HomeSnapshotInfo is one automatic copy of an island's home volume, taken
+// before something destroyed it.
+type HomeSnapshotInfo struct {
+	Volume  string    `json:"volume"`
+	TakenAt time.Time `json:"taken_at"`
+	Reason  string    `json:"reason"`
 }
 
 // IslandHealth surfaces crash-relevant facts that a remote client can't observe

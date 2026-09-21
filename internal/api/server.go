@@ -761,6 +761,7 @@ func (s *Server) buildRoutes(mux *routeRecorder) {
 	mux.HandleFunc("OPTIONS /v1/islands/{name}/agents/{id}/gateway/{path...}", s.handleAgentGateway)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/gateway-ready", s.getAgentGatewayReady)
 	mux.HandleFunc("GET /v1/islands/{name}/agents/{id}/session", s.sessionWS)
+	mux.HandleFunc("POST /v1/islands/{name}/restore", s.restoreHome)
 	mux.HandleFunc("POST /v1/islands/{name}/mailbox", s.sendMailbox)
 	mux.HandleFunc("GET /v1/islands/{name}/mailbox", s.pollMailbox)
 	mux.HandleFunc("POST /v1/links", s.grantLink)
@@ -3299,8 +3300,26 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 	_ = s.rt.StopContainer(r.Context(), p.ContainerName())
 	_ = s.rt.RemoveContainer(r.Context(), p.ContainerName(), true)
 
+	// TAKE THE COPY FIRST, and abort the whole reset if it cannot be taken.
+	//
+	// This handler knows exactly which volume it is about to destroy and what is
+	// in it. Every guard around it — the typed island name, the warning that
+	// lists "all conversation history", `eject --include-home` — asks the
+	// operator to know that too, and to act before they find out. The one that
+	// lost a month of Codex context did all of it correctly and still lost it.
+	//
+	// Fails CLOSED on purpose: a snapshot skipped on error reads as protection
+	// right up until the one time it mattered.
+	snap, err := s.snapshotHome(r.Context(), p, "reset")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError,
+			fmt.Errorf("refusing to reset: could not snapshot the home volume first (%w). "+
+				"Nothing was destroyed. `dejima eject %s <dir> --include-home` saves it by hand", err, p.Name))
+		return
+	}
+
 	// Clear the shared home-state volume (agent creds + tool auth); the workspace
-	// is preserved.
+	// is preserved, and the snapshot above holds what this removes.
 	if err := s.rt.RemoveVolume(r.Context(), p.HomeVolume(), true); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("remove home volume: %w", err))
 		return
@@ -3332,7 +3351,7 @@ func (s *Server) resetIsland(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.emit(events.Event{Type: events.TypeIslandReset, Island: p.Name})
+	s.emit(events.Event{Type: events.TypeIslandReset, Island: p.Name, Payload: map[string]any{"snapshot": snap}})
 	// The entrypoint relaunches only the PRIMARY agent; the rest are the daemon's
 	// job. Reset was the last recreate path that never did this, so resetting a
 	// multi-agent island brought agent 0 back and left every co-located agent with
@@ -3575,6 +3594,11 @@ func (s *Server) toInfo(ctx context.Context, p *project.Project) IslandInfo {
 	info.Agents = s.agentInfos(ctx, p, false)
 	info.GitHubIdentity = p.GitHubIdentity
 	info.BuiltVersion = p.BuiltVersion
+	for _, snap := range p.HomeSnapshots {
+		info.HomeSnapshots = append(info.HomeSnapshots, HomeSnapshotInfo{
+			Volume: snap.Volume, TakenAt: snap.TakenAt, Reason: snap.Reason,
+		})
+	}
 	info.UpgradedVersion = p.UpgradedVersion
 	// The direct image question, which the version stamps above only proxy for.
 	// See image_staleness.go: `dejima image build` moves the image without

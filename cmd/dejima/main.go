@@ -330,6 +330,7 @@ func newRootCmd() *cobra.Command {
 		newUnpinCmd(),
 		newScheduleCmd(),
 		newResetCmd(),
+		newRestoreCmd(),
 		newPurgeCmd(),
 		newPanicCmd(),
 		newUninstallCmd(),
@@ -1236,10 +1237,74 @@ func newResetCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("reset %s (container: %s)\n", info.Name, info.Container)
+			// SAY THE UNDO EXISTS, here, where someone who has just realised what
+			// they did is looking. The daemon copies the home volume aside before
+			// it destroys it; a snapshot nobody knows about is the same as none.
+			if len(info.HomeSnapshots) > 0 {
+				snap := info.HomeSnapshots[0]
+				for _, s := range info.HomeSnapshots {
+					if s.TakenAt.After(snap.TakenAt) {
+						snap = s
+					}
+				}
+				fmt.Println()
+				fmt.Printf("A copy of what was erased was taken first (%s).\n", snap.TakenAt.Local().Format("15:04:05"))
+				fmt.Printf("Put it back with:  dejima restore %s\n", name)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation")
+	return cmd
+}
+
+// newRestoreCmd puts a pre-destruction snapshot of the home volume back.
+func newRestoreCmd() *cobra.Command {
+	var volume string
+	var list bool
+	cmd := &cobra.Command{
+		Use:   "restore <name>",
+		Short: "Put back the agent memory a reset erased.",
+		Long: "Restores the island's home volume — every agent's conversation history and " +
+			"tool logins — from the copy the daemon takes automatically before anything " +
+			"destroys it.\n\n" +
+			"The CURRENT home volume is snapshotted before the restore, so this is not " +
+			"itself a one-way door: work done since the reset is recoverable the same way.\n\n" +
+			"With no --volume, restores the newest snapshot, which is what someone who has " +
+			"just realised what they did wants.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if list {
+				info, err := c.GetIsland(cmd.Context(), name)
+				if err != nil {
+					return err
+				}
+				if len(info.HomeSnapshots) == 0 {
+					fmt.Printf("no snapshots for %s\n", name)
+					return nil
+				}
+				for _, s := range info.HomeSnapshots {
+					fmt.Printf("%s  %s  (before %s)\n",
+						s.TakenAt.Local().Format("2006-01-02 15:04:05"), s.Volume, s.Reason)
+				}
+				return nil
+			}
+			out, err := c.RestoreHome(cmd.Context(), name, volume)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("restored %s from the copy taken %s\n", name, out.TakenAt.Local().Format("2006-01-02 15:04:05"))
+			fmt.Println("Agents come back with their conversations; attach and carry on.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&volume, "volume", "", "restore a specific snapshot (default: the newest)")
+	cmd.Flags().BoolVar(&list, "list", false, "list the snapshots instead of restoring")
 	return cmd
 }
 
