@@ -95,7 +95,21 @@ func newSecretSetCmd() *cobra.Command {
 			// agent keep failing with the old value and concludes it didn't work.
 			fmt.Println("⚠  RESTART TERMINALS TO APPLY")
 			fmt.Printf("   It's live in NEW shells in %s; anything already running still has the\n", island)
-			fmt.Println("   old environment. Restart the agent to pick it up.")
+			fmt.Print(secretRestartAdvice(island))
+			// NAME THE COMMAND, because this line is where an operator goes
+			// looking and `dejima reset` is what they can find.
+			//
+			// It used to say "Restart the agent to pick it up" and stop there. An
+			// operator who had just set a GH_TOKEN followed that instruction, went
+			// hunting for how, ran `dejima reset`, and lost every Codex
+			// conversation in the island — irreversibly. reset destroys the home
+			// volume; its own --help knows the right answer and says so, but
+			// nobody reads the help of the command they are about to not use.
+			//
+			// --resume is on the line for the same reason: `agent restart` without
+			// it relaunches COLD, which solves the secret and costs the
+			// conversation anyway, more quietly.
+
 			warnGitHubTokenPrecedence(cmd.Context(), c, island, meta.Name)
 			return nil
 		},
@@ -241,4 +255,24 @@ func gitHubCredentialFrom(rep api.CredentialMountReport) (has, known bool) {
 		}
 	}
 	return false, false
+}
+
+// secretRestartAdvice is what to run after setting a secret, with the command
+// spelled out.
+//
+// NAME THE COMMAND, because this is where an operator goes looking and
+// `dejima reset` is what they can find. It used to say "Restart the agent to
+// pick it up" and stop there. An operator who had just set a GH_TOKEN followed
+// that instruction, went hunting for how, ran reset, and lost every Codex
+// conversation in the island — irreversibly, because reset destroys the home
+// volume. reset's own --help knows the right answer; nobody reads the help of
+// the command they are about to not use.
+//
+// --resume is on the line for the same reason: `agent restart` without it
+// relaunches COLD, which applies the secret and costs the conversation anyway,
+// more quietly.
+func secretRestartAdvice(island string) string {
+	return "   old environment. To pick it up, per agent:\n\n" +
+		"     dejima agent restart " + island + " <agent-id> --resume\n\n" +
+		"   (--resume keeps the conversation; without it the agent comes back blank.)\n"
 }
