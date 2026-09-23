@@ -16,6 +16,11 @@ subject; that one asks whether a reading is still *current* — the case where t
 instrument worked, the answer was right, and the sentence built on it stopped
 being true without anyone touching it.
 
+A third sits after both: [**If the code knows enough to warn, it knows enough to
+offer the fix**](warnings-are-not-fixes.md), for the case where the check had a
+subject, the reading was current, the diagnosis was right — and printing it was
+mistaken for shipping it.
+
 ## The rule
 
 > When a test's only failure mode is *not noticing*, add a second test whose only
