@@ -562,6 +562,34 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5a. A LOCAL install must verify the daemon it just installed
+# ---------------------------------------------------------------------------
+# DEJIMA_HOST points the CLI at a REMOTE daemon and wins over everything. On a
+# local install it is therefore pointing at the wrong machine for the rest of
+# this script — so `dejima doctor` below probes a server on someone else's
+# network and reports FAIL for the daemon we just successfully installed.
+#
+# Observed, on a clean reinstall: Docker fine, binaries built, service
+# installed, and then
+#
+#   daemon  FAIL  daemon unreachable: Get "http://100.89.51.27:7273/v1/healthz"
+#   (list)  FAIL  daemon unreachable
+#   Error: dejima doctor: 2 check(s) failed
+#
+# immediately followed by "Setup complete." Nothing was wrong with the install.
+# The installer was asking the wrong machine and reporting the answer as its own
+# result.
+#
+# Unset for OUR process only. This changes nothing on disk and nothing in the
+# operator's shell — it makes the verification steps below check the thing this
+# script just built, which is the only claim they are entitled to make.
+if [[ "$DEST" == "local" && -n "${DEJIMA_HOST:-}" ]]; then
+    STALE_DEJIMA_HOST="$DEJIMA_HOST"
+    unset DEJIMA_HOST
+    export -n DEJIMA_HOST 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
 # 5b. Ensure dejimad is actually reachable
 # ---------------------------------------------------------------------------
 # On headless macOS (no Aqua/GUI session), launchctl can't load the plist —
@@ -600,6 +628,58 @@ fi
 # ---------------------------------------------------------------------------
 bold "7. Health check"
 dejima doctor || true
+
+# ---------------------------------------------------------------------------
+# 7b. The stale DEJIMA_HOST, offered as a fix rather than a fact
+# ---------------------------------------------------------------------------
+# install.sh detects this and says so. Saying so is not enough: the operator
+# who hit it read the warning, watched a successful install, and then every
+# single thing they did next failed against the old server — `dejima` could not
+# reach a daemon, and creating an island timed out posting to a machine on
+# someone else's network.
+#
+# The warning was correct, and correct-and-unactionable is the shape that
+# strands people. Same lesson as `secret set` telling someone to "restart the
+# agent" without naming the command.
+#
+# So: offer. Editing an rc file is the operator's call and it stays theirs —
+# this asks, backs the file up, and comments rather than deletes, so the line is
+# recoverable and visible. Declining leaves the exact command on screen.
+if [[ "$DEST" == "local" && -n "${STALE_DEJIMA_HOST:-}" ]]; then
+    printf '\n'
+    bold "One thing left: this shell still points at ${STALE_DEJIMA_HOST}"
+    info "DEJIMA_HOST overrides everything, so the CLI will talk to that server"
+    info "instead of the daemon just installed here — every command will fail."
+
+    RC_WITH_HOST=""
+    for rc in "$HOME/.zshenv" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+        [[ -f "$rc" ]] && grep -q '^[^#]*DEJIMA_HOST' "$rc" 2>/dev/null && RC_WITH_HOST="$rc" && break
+    done
+
+    if [[ -n "$RC_WITH_HOST" ]] && have_tty; then
+        printf '\n'
+        printf '  Comment out the DEJIMA_HOST line in %s? [Y/n]: ' "$RC_WITH_HOST" > /dev/tty
+        read -r reply -u "$TTY_FD" || reply=""
+        case "${reply:-y}" in
+            n|N|no|NO) ;;
+            *)
+                cp "$RC_WITH_HOST" "$RC_WITH_HOST.dejima-bak"
+                # Comment, never delete, and label it — a line someone wrote by
+                # hand should still be findable by the person who wrote it.
+                sed -i.tmp 's|^\([^#]*DEJIMA_HOST.*\)$|# disabled by dejima local install: \1|' "$RC_WITH_HOST"
+                rm -f "$RC_WITH_HOST.tmp"
+                ok "commented it out (backup: $RC_WITH_HOST.dejima-bak)"
+                info "Open a new shell, or run: unset DEJIMA_HOST"
+                ;;
+        esac
+    fi
+
+    if [[ -n "$RC_WITH_HOST" ]]; then
+        printf '\n'
+        info "If anything still talks to the old server, in THIS shell:"
+        bold "    unset DEJIMA_HOST"
+    fi
+fi
 
 printf '\n'
 bold "Setup complete."
