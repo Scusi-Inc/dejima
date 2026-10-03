@@ -58,6 +58,13 @@ type Fake struct {
 	// daemon's temp name. Both are one copy, and only the path distinguishes
 	// them.
 	copyDests []string
+	// removedVolumes records the name passed to every RemoveVolume. A count is
+	// useless for the thing this exists to prove: purge must remove a SPECIFIC
+	// set of volumes (workspace, home, and every home snapshot), and a test that
+	// only counts cannot tell three correct removals from three of the wrong
+	// ones — which is exactly the bug it is guarding, since the snapshots are the
+	// ones that used to be skipped.
+	removedVolumes []string
 	// CopyErrOn makes CopyToContainer fail for any destination containing this
 	// substring. Staging a MID-TRANSFER failure is otherwise impossible against a
 	// fake that always succeeds, and "some files crossed and some did not" is a
@@ -101,8 +108,20 @@ func New() *Fake { return &Fake{StatusVal: runtime.StatusRunning} }
 
 var _ runtime.Runtime = (*Fake)(nil)
 
-func (f *Fake) EnsureVolume(context.Context, string) error       { return nil }
-func (f *Fake) RemoveVolume(context.Context, string, bool) error { return nil }
+func (f *Fake) EnsureVolume(context.Context, string) error { return nil }
+func (f *Fake) RemoveVolume(_ context.Context, name string, _ bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedVolumes = append(f.removedVolumes, name)
+	return nil
+}
+
+// RemovedVolumes returns the name passed to every RemoveVolume, in order.
+func (f *Fake) RemovedVolumes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.removedVolumes...)
+}
 func (f *Fake) CopyVolumeData(context.Context, string, string, string) error {
 	return nil
 }
