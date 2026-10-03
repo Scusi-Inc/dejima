@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/aoos/dejima/internal/api"
 	"github.com/aoos/dejima/internal/handlers"
+	"github.com/aoos/dejima/internal/localmodel"
 )
 
 // agentTypeOption is one selectable agent type in the picker. Headless types
@@ -24,12 +26,100 @@ type agentTypeOption struct {
 	headless bool
 }
 
-var agentTypeOptions = []agentTypeOption{
-	{typ: "shell", desc: "plain terminal — a bash shell on the island workspace; attach and type"},
-	{typ: "claude-code", desc: "interactive AI agent — attach and drive it"},
-	{typ: "codex", desc: "interactive AI agent — attach and drive it"},
-	{typ: "openclaw", desc: "OpenClaw assistant — a contained 24/7 brain (configure it in the workspace)"},
-	{typ: api.AgentHeadless, desc: "background command — supervised, restarts on crash, logs only", headless: true},
+// agentTypeOptions is DERIVED from the handler registry, never hand-maintained.
+//
+// It used to be a hand-written list, and it went stale the way a hand-written
+// mirror of a registry always does. `aider` was added to the daemon as the
+// pairing for a LOCAL model — its own comment calls it "the natural pairing for
+// `dejima local`", it is the only type declaring the `local` provider — and it
+// never reached this list. So an operator who installed a local model saw it
+// detected in the header, opened "add agent", and was offered four types none
+// of which could use it. `dejima agent add --type aider` worked the whole time;
+// the TUI, which is how people actually add agents, could not. letta, hermes
+// and goose were invisible for the same reason.
+//
+// Deriving costs nothing here (the registry is compiled in, same binary) and
+// TestAgentPickerOffersEveryRegistryType keeps it honest.
+var agentTypeOptions = buildAgentTypeOptions()
+
+// agentTypeDesc is the operator-facing copy for a type. A registry type with no
+// entry still appears, with a description built from its kind — missing copy
+// must not make an agent unreachable, which is the bug above in miniature.
+var agentTypeDesc = map[string]string{
+	"shell":           "plain terminal — a bash shell on the island workspace; attach and type",
+	"claude-code":     "interactive AI agent — attach and drive it",
+	"codex":           "interactive AI agent — attach and drive it",
+	"aider":           "interactive AI agent — diff-based edits, tolerates smaller models",
+	"openclaw":        "OpenClaw assistant — a contained 24/7 brain (configure it in the workspace)",
+	"goose":           "Block's Goose — headless agent with a web UI",
+	"letta":           "Letta — stateful agent framework with a REST API + web UI",
+	"hermes":          "Hermes — messaging-bridge gateway (no local web UI)",
+	api.AgentHeadless: "background command — supervised, restarts on crash, logs only",
+}
+
+// agentTypeOrder is the order operators see. Types absent from it follow, in the
+// registry's own (alphabetical) order, so a new framework appears without an
+// edit here.
+var agentTypeOrder = []string{"shell", "claude-code", "codex", "aider", "openclaw", "goose", "letta", "hermes", api.AgentHeadless}
+
+// buildAgentTypeOptions turns the registry into picker rows.
+func buildAgentTypeOptions() []agentTypeOption {
+	rank := map[string]int{}
+	for i, t := range agentTypeOrder {
+		rank[t] = i
+	}
+	all := handlers.All()
+	sort.SliceStable(all, func(i, j int) bool {
+		ri, oki := rank[all[i].ID]
+		rj, okj := rank[all[j].ID]
+		switch {
+		case oki && okj:
+			return ri < rj
+		case oki != okj:
+			return oki // ranked types first, in order
+		default:
+			return all[i].ID < all[j].ID
+		}
+	})
+	opts := make([]agentTypeOption, 0, len(all))
+	for _, h := range all {
+		desc, ok := agentTypeDesc[h.ID]
+		if !ok {
+			desc = string(h.Kind) + " agent"
+		}
+		if supportsLocalProvider(h) {
+			// Name the pairing where it is chosen. The operator who pulled a
+			// local model is looking for the row that can use it, and the
+			// framework's own name does not say so.
+			desc += " — works with your local model"
+		}
+		opts = append(opts, agentTypeOption{
+			typ:      h.ID,
+			desc:     desc,
+			headless: h.ID == api.AgentHeadless, // only the generic type prompts for a command
+		})
+	}
+	return opts
+}
+
+// supportsLocalProvider reports whether a type can drive a locally-hosted model.
+func supportsLocalProvider(h handlers.Handler) bool {
+	for _, p := range h.SupportedProviders {
+		if p == localmodel.LocalProviderName {
+			return true
+		}
+	}
+	return false
+}
+
+// localCapableIndex is the first option that can drive a local model, or -1.
+func localCapableIndex() int {
+	for i, o := range agentTypeOptions {
+		if h, ok := handlers.Lookup(o.typ); ok && supportsLocalProvider(h) {
+			return i
+		}
+	}
+	return -1
 }
 
 // agentPickerPhase tracks the picker's internal step.
@@ -51,6 +141,21 @@ type agentPicker struct {
 }
 
 func newAgentPicker() agentPicker { return agentPicker{} }
+
+// newAgentPickerFor starts on the local-capable type when a local model is
+// actually pulled. Detection already tells the operator a model is there (the
+// header reads "local: …"); landing the cursor on the one row that can use it
+// is what makes that detection actionable without knowing the framework's name.
+// It is a default, not a restriction — every type stays selectable.
+func newAgentPickerFor(hasLocalModel bool) agentPicker {
+	p := agentPicker{}
+	if hasLocalModel {
+		if i := localCapableIndex(); i >= 0 {
+			p.cursor = i
+		}
+	}
+	return p
+}
 
 func (p agentPicker) selected() agentTypeOption { return agentTypeOptions[p.cursor] }
 func (p agentPicker) typ() string               { return p.selected().typ }
@@ -224,7 +329,11 @@ func (m tuiModel) openAgentAdder(island string) (tea.Model, tea.Cmd) {
 		m.lastError = fmt.Sprintf("island %q is %s; `w` to wake it before adding an agent", island, isl.Container)
 		return m, nil
 	}
-	m.agentAdder = &agentAdder{island: island, picker: newAgentPicker(), keyGap: m.agentKeyGap}
+	// Seed the picker with whether a local model is actually PULLED (not merely
+	// whether a backend is installed): the cursor should land on the
+	// local-capable agent only when there is a model for it to drive.
+	hasLocal := len(m.localModels) > 0
+	m.agentAdder = &agentAdder{island: island, picker: newAgentPickerFor(hasLocal), keyGap: m.agentKeyGap}
 	if isl, ok := m.islandByName(island); ok {
 		m.agentAdder.memWarn = memPressureWarning(isl, m.overview)
 	}
