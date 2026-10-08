@@ -2259,7 +2259,15 @@ func runSessionLoop(ctx context.Context, summonable bool, title string, paste *s
 	// at whatever it was called when this client attached.
 	retitle := tabTitler(term.IsTerminal(stdinFd), setTerminalTitle)
 	if term.IsTerminal(stdinFd) {
-		hint := "[dejima] attached. Detach: Ctrl-b d (tmux), or just close the terminal. " +
+		// Ctrl-C is named FIRST because it is the key people press to leave, and
+		// it is the one key that does not. It reaches the AGENT (interrupting
+		// Claude Code or Codex), never dejima, and the supervisor brings the
+		// agent back — so an operator pressing it to "quit the window" watches
+		// the agent restart and the window stay. One reported it as the window
+		// refusing to close. Nothing is broken; the banner simply never said
+		// where Ctrl-C goes.
+		hint := "[dejima] attached. Ctrl-C goes to the AGENT, not dejima — it will not close this window. " +
+			"Detach: Ctrl-b d (tmux), or just close the terminal. " +
 			"Session keeps running; this client auto-reconnects if the link drops."
 		if summonable {
 			hint += " Summon the dashboard: Ctrl-\\."

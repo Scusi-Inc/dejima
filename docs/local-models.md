@@ -160,6 +160,57 @@ POST   /v1/local/off
 
 ---
 
+## Reaching your own model proxy on the host (LiteLLM, vLLM, llama.cpp …)
+
+`dejima local` manages an Ollama backend for you, but you may already run your
+own OpenAI-compatible proxy on the host. Pointing an island at it is the same
+mechanism, and the one thing people get wrong is the hostname.
+
+**Use `host.docker.internal`, never `localhost`.** Inside an island,
+`localhost` is the island. The host is reachable at `host.docker.internal`,
+which is how the managed backend is wired too — see `OllamaEndpoint` in
+`internal/localmodel/backend.go`, `http://host.docker.internal:11434/v1`.
+
+So for a LiteLLM proxy on host port 4000:
+
+```sh
+# prompts for the key — don't pass it as a flag, it lands in shell history
+dejima provider set mine \
+  --base-url http://host.docker.internal:4000/v1 \
+  --env-var OPENAI_API_KEY
+dejima agent add <island> --type aider --provider mine --model mine/<model>
+```
+
+Any agent that reads `OPENAI_BASE_URL` picks it up; `aider` additionally
+bridges it to litellm's `OPENAI_API_BASE` (see the `aider` entry in
+`internal/handlers/handlers.go`).
+
+**There is nothing to allow in the egress policy.** Islands route outbound
+HTTP(S) through the daemon's egress proxy, but `host.docker.internal` is in
+every island's `no_proxy`, so host-bound traffic never touches the proxy and no
+allow rule applies to it. If a host service is unreachable, the cause is the
+hostname, the port, or the service binding to `127.0.0.1` inside the host's own
+namespace — not egress policy.
+
+**To see what an island is actually reaching**, which is the question people
+ask when this goes wrong:
+
+```sh
+dejima egress show <island>     # recent outbound connections, as observed
+dejima egress policy <island>   # the posture and any allow/deny rules
+```
+
+and to tighten it:
+
+```sh
+dejima egress mode <island> enforce      # deny-all except allow
+dejima egress allow <island> api.example.com
+dejima egress deny  <island> telemetry.example.com
+```
+
+`show` is the one to reach for first: it answers "where did it go" from
+observation rather than from what the policy claims.
+
 ## The caveat to keep front-and-center
 
 Local open models are **meaningfully weaker at *agentic* coding** than Claude /
