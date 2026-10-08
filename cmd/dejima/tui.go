@@ -3990,17 +3990,50 @@ func sortIslands(in []api.IslandInfo) []api.IslandInfo {
 // ---------------------------------------------------------------------------
 
 var (
-	stylePane      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#1c3358")).Padding(0, 1)
-	styleHeader    = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8")).Bold(true)
-	styleTitle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#eef3ff")).Bold(true)
-	styleMuted     = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
-	styleAccent    = lipgloss.NewStyle().Foreground(lipgloss.Color("#e8f1ff"))
-	styleSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#1c3358"))
-	styleRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("#34d399"))
-	styleHibernate = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
-	styleErrored   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
-	styleWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
-	styleNeedsYou  = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Bold(true) // the one call-to-action state — bold so it pops out of a quiet fleet
+	// THE PALETTE IS ADAPTIVE, and it has to be. These colors were picked
+	// against a dark terminal and hardcoded, which made the whole TUI
+	// near-invisible on a light one: #94a3b8 on white is about 2.3:1 against
+	// WCAG AA's 4.5:1, and #e8f1ff / #eef3ff are white on white. An operator
+	// on stock macOS Terminal reported it as "text contrast" and reasonably
+	// could not tell whether the fault was his theme or ours. It was ours.
+	//
+	// The rule the gate enforces (TestPaletteForegroundsAreAdaptive): a style
+	// that sets a FOREGROUND and no background is painted onto the terminal's
+	// own background, which we do not control, so its color must be adaptive.
+	// A style that sets BOTH — the broadcast bars, the selected row — carries
+	// its own contrast and is left alone.
+	//
+	// Light variants are the Tailwind ramp two-to-three steps darker, each at
+	// or above 4.5:1 on white; dark variants are exactly what shipped before,
+	// so nothing changes on a dark terminal.
+	cDim    = lipgloss.AdaptiveColor{Light: "#475569", Dark: "#94a3b8"} // muted body, headers, footer
+	cText   = lipgloss.AdaptiveColor{Light: "#1e293b", Dark: "#e8f1ff"} // emphasis
+	cStrong = lipgloss.AdaptiveColor{Light: "#0f172a", Dark: "#eef3ff"} // titles
+	cOK     = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34d399"} // running
+	cBad    = lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#f87171"} // errored
+	cAttn   = lipgloss.AdaptiveColor{Light: "#92400e", Dark: "#fbbf24"} // waiting / needs you
+	cFaint  = lipgloss.AdaptiveColor{Light: "#64748b", Dark: "#6b7a90"} // sub-agents, dimmer than cDim on both
+	// The selected row paints its OWN ground, so it does not need to adapt for
+	// legibility — but styleFirstRun shares this background by invariant
+	// (TestFirstRunRowUsesTheCallToActionGold) and carries cAttn on top of it.
+	// On a light terminal cAttn is #92400e, which is unreadable on dark navy,
+	// so the pair adapts together or not at all.
+	cSelFg      = lipgloss.AdaptiveColor{Light: "#0f172a", Dark: "#ffffff"}
+	cSelBg      = lipgloss.AdaptiveColor{Light: "#cbd5e1", Dark: "#1c3358"}
+	cBorder     = lipgloss.AdaptiveColor{Light: "#94a3b8", Dark: "#1c3358"}
+	cBorderMenu = lipgloss.AdaptiveColor{Light: "#64748b", Dark: "#3b5b8f"}
+
+	stylePane      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorder).Padding(0, 1)
+	styleHeader    = lipgloss.NewStyle().Foreground(cDim).Bold(true)
+	styleTitle     = lipgloss.NewStyle().Foreground(cStrong).Bold(true)
+	styleMuted     = lipgloss.NewStyle().Foreground(cDim)
+	styleAccent    = lipgloss.NewStyle().Foreground(cText)
+	styleSelected  = lipgloss.NewStyle().Foreground(cSelFg).Background(cSelBg)
+	styleRunning   = lipgloss.NewStyle().Foreground(cOK)
+	styleHibernate = lipgloss.NewStyle().Foreground(cDim)
+	styleErrored   = lipgloss.NewStyle().Foreground(cBad)
+	styleWaiting   = lipgloss.NewStyle().Foreground(cAttn)
+	styleNeedsYou  = lipgloss.NewStyle().Foreground(cAttn).Bold(true) // the one call-to-action state — bold so it pops out of a quiet fleet
 	// styleFirstRun is "+ Set up your first island" on an empty fleet: the
 	// call-to-action gold of styleNeedsYou, on the selected row's background.
 	//
@@ -4013,12 +4046,12 @@ var (
 	// works; without the highlight it read as decoration and people didn't know
 	// it was the thing to press. Color adds emphasis here, it does not replace
 	// the selection signal.
-	styleFirstRun = lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Bold(true).
-			Background(lipgloss.Color("#1c3358"))
+	styleFirstRun = lipgloss.NewStyle().Foreground(cAttn).Bold(true).
+			Background(cSelBg)
 	// styleSubAgent renders agent-spawned sub-agent rows: dimmer than styleMuted
 	// and italic, so a transient sub-agent reads as subordinate to its spawner.
-	styleSubAgent = lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7a90")).Italic(true)
-	styleFooter   = lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
+	styleSubAgent = lipgloss.NewStyle().Foreground(cFaint).Italic(true)
+	styleFooter   = lipgloss.NewStyle().Foreground(cDim)
 	// styleBroadcast is the attention bar for the header's top line: amber
 	// background, near-black bold text. Amber, not red — an update is attention,
 	// not danger; red stays reserved for PANIC/errors so the two never blur.
@@ -4036,7 +4069,7 @@ var (
 	styleWarnBroadcast = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1205")).Background(lipgloss.Color("#fb923c")).Bold(true)
 	// styleMenuBox frames the per-row action popup — a brighter border than the
 	// panes so it reads as a modal floating above them.
-	styleMenuBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3b5b8f")).Padding(0, 2)
+	styleMenuBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorderMenu).Padding(0, 2)
 )
 
 func (m tuiModel) View() string {
