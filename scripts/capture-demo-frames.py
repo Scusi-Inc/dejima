@@ -22,17 +22,56 @@ import subprocess
 import sys
 import time
 
-# Each scene is a path through the UI: a start state plus keys to press. Paths
-# share frames — frames are deduped by content hash, so a common prefix is
-# stored once and the transitions fan out from the shared node.
-SCENES = [
-    ("browse", "Browse the fleet", ["j", "j", "Space", "j", "k"]),
-    ("add-agent", "Add an agent", ["j", "j", "j", "Enter", "Down", "Enter"]),
-    ("add-island", "Add an island", ["n"]),
-    ("switch", "Switch connection", ["C", "Down", "Escape"]),
-    ("secrets", "Secrets", ["s", "Escape"]),
-    ("help", "Help", ["?", "Escape"]),
+# THE DEMO IS A GRAPH, NOT A TOUR.
+#
+# This used to be six hardcoded key paths (SCENES). That produced a demo where
+# only the keys on a rehearsed path did anything: a visitor pressed Escape, or
+# an arrow the script had not walked, and got nothing. On a landing page a dead
+# keystroke reads as a broken product, and being railroaded reads as a product
+# with less in it than it has.
+#
+# So: breadth-first from the root, trying EVERY key the TUI answers from EVERY
+# state we reach, and recording the transition. The result is an edge map the
+# page can walk freely — the visitor drives, and every key that does something
+# in the real TUI does the same thing here, because every edge in the map was
+# produced by pressing that key on the real TUI.
+#
+# Frames dedupe by content hash, so states reached by different routes collapse
+# to one node and the graph stays small.
+
+# Keys worth exploring, from the TUI's own footer and help. `q` is deliberately
+# absent: it quits, and a captured post-quit pane is a dead terminal. The page
+# handles q itself.
+KEYS = [
+    "Up", "Down", "Left", "Right", "Space", "Enter", "Escape",
+    "j", "k", "n", "s", "C", "?", ">", "m", "E",
 ]
+
+# How deep to walk. Each extra level multiplies capture time; 3 covers every
+# overlay plus a step inside it, which is where the interesting depth is.
+MAX_DEPTH = 2
+
+# A hard ceiling on work, so a UI change that makes every keystroke produce a
+# distinct frame cannot turn this into an unbounded crawl.
+MAX_EDGES = 1200
+
+# THE FLEET ANIMATES, AND THAT IS NOT A STATE CHANGE.
+#
+# `tui --demo` ticks memory, CPU and uptime, so two captures of the SAME screen
+# differ. Hashing raw output therefore minted a new "state" on every tick, and
+# the cheap return-to-parent check (press Escape, compare hashes) never matched
+# -- so the harness restarted the pane for nearly every probe and ran about
+# thirty times slower than the keystrokes themselves cost.
+#
+# Identity is the LAYOUT, not the numbers: navigation states differ by what is
+# selected and which overlay is up, never by a digit. So settle and hash on text
+# with the volatile runs flattened, and store the real capture for display.
+VOLATILE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+
+
+def stable_key(text: str) -> str:
+    return VOLATILE.sub("#", text)
+
 
 SGR = re.compile(r"\x1b\[([0-9;]*)m")
 OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
@@ -211,7 +250,7 @@ class Pane:
         last, stable = None, 0
         for _ in range(60):
             time.sleep(0.4)
-            now = self.raw()
+            now = stable_key(self.raw())
             if now == last and now.strip():
                 stable += 1
                 if stable >= 2:
@@ -219,6 +258,10 @@ class Pane:
             else:
                 stable = 0
             last = now
+
+    def restart(self):
+        subprocess.run(["tmux", "kill-session", "-t", self.s], capture_output=True)
+        self.__enter__()
 
     def raw(self) -> str:
         return subprocess.run(["tmux", "capture-pane", "-t", self.s, "-p", "-e"],
@@ -233,31 +276,89 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("binary")
     ap.add_argument("-o", "--out", default="demo-frames.json")
+    ap.add_argument("--max-depth", type=int, default=MAX_DEPTH)
     args = ap.parse_args()
 
-    frames, order, scenes = {}, [], []
+    frames = {}          # fid -> html
+    edges = {}           # fid -> {key: fid}
+    paths = {}           # fid -> key path from root (how to reach it again)
 
     def record(pane) -> str:
-        html = ansi_to_html(pane.raw())
-        fid = hashlib.sha256(html.encode()).hexdigest()[:12]
-        if fid not in frames:
-            frames[fid] = html
-            order.append(fid)
+        raw = pane.raw()
+        html = ansi_to_html(raw)
+        fid = hashlib.sha256(stable_key(raw).encode()).hexdigest()[:12]
+        frames.setdefault(fid, html)
         return fid
 
-    for key, title, keys in SCENES:
-        with Pane(args.binary) as pane:
-            steps = [{"key": None, "frame": record(pane)}]
-            for k in keys:
-                pane.send(k)
-                steps.append({"key": k, "frame": record(pane)})
-            scenes.append({"id": key, "title": title, "steps": steps})
-            print(f"  {key}: {len(steps)} steps", file=sys.stderr)
+    # Root.
+    with Pane(args.binary) as pane:
+        root = record(pane)
+    paths[root] = []
+    frontier, seen, explored = [root], {root}, 0
 
-    doc = {"cols": 132, "rows": 40, "frames": frames, "scenes": scenes}
+    for depth in range(args.max_depth):
+        nxt = []
+        for fid in frontier:
+            path = paths[fid]
+            with Pane(args.binary) as pane:
+                for k in path:
+                    pane.send(k)
+                # Confirm the replay landed where we think it did. A TUI whose
+                # state depends on timing would otherwise attribute an edge to
+                # the wrong parent, and the demo would teleport.
+                if record(pane) != fid:
+                    print(f"  ! replay diverged at depth {depth}; skipping node", file=sys.stderr)
+                    continue
+                for k in KEYS:
+                    if explored >= MAX_EDGES:
+                        break
+                    pane.send(k)
+                    dest = record(pane)
+                    explored += 1
+                    if dest != fid:
+                        edges.setdefault(fid, {})[k] = dest
+                        if dest not in seen:
+                            seen.add(dest)
+                            paths[dest] = path + [k]
+                            nxt.append(dest)
+                    # Try to get back to the parent cheaply. Escape reverses most
+                    # overlays; verify by hash rather than trusting it, and replay
+                    # from scratch when it did not work.
+                    if dest != fid:
+                        pane.send("Escape")
+                        if record(pane) != fid:
+                            pane.restart()
+                            for k2 in path:
+                                pane.send(k2)
+                            if record(pane) != fid:
+                                break  # cannot re-establish; move to the next node
+            print(f"  depth {depth}: {fid} -> {len(edges.get(fid, {}))} edges "
+                  f"({len(frames)} frames, {explored} probes)", file=sys.stderr)
+        frontier = nxt
+        if not frontier or explored >= MAX_EDGES:
+            break
+
+    # Drop anything the root cannot reach. BFS records a frame the moment it is
+    # seen, including ones only ever observed while verifying a replay, and an
+    # unreachable frame is pure payload — every one is ~10 KB the visitor
+    # downloads and can never see.
+    reachable, stack = {root}, [root]
+    while stack:
+        for dest in edges.get(stack.pop(), {}).values():
+            if dest not in reachable:
+                reachable.add(dest)
+                stack.append(dest)
+    dropped = len(frames) - len(reachable)
+    frames = {k: v for k, v in frames.items() if k in reachable}
+    edges = {k: v for k, v in edges.items() if k in reachable}
+    if dropped:
+        print(f"  pruned {dropped} unreachable frame(s)", file=sys.stderr)
+
+    doc = {"cols": 132, "rows": 40, "root": root, "frames": frames, "edges": edges}
     with open(args.out, "w") as fh:
         json.dump(doc, fh, separators=(",", ":"))
-    print(f"{len(frames)} unique frames across {len(scenes)} scenes -> {args.out}", file=sys.stderr)
+    print(f"{len(frames)} frames, {sum(len(v) for v in edges.values())} edges -> {args.out}",
+          file=sys.stderr)
 
 
 if __name__ == "__main__":

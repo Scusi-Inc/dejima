@@ -4,11 +4,16 @@
 // scripts/capture-demo-frames.py and pre-rendered to HTML spans at capture time.
 // Nothing here reimplements the TUI: this file is a projector, and the thing it
 // projects is the actual program. Re-run the capture after a TUI change and the
-// demo is current — which is the failure a hand-built mock cannot avoid, and
-// which herdr's own landing page documents in itself.
+// demo is current — which is the failure a hand-built mock cannot avoid.
 //
-// Degrades honestly: with JS off the section renders its first frame as static
-// HTML and the prompt line explains that the live version needs JS.
+// WHAT CHANGED, AND WHY. This used to walk six recorded scenes, so only keys on
+// a rehearsed path did anything: Escape did nothing, arrows did nothing off the
+// script, and the visitor was railroaded through one tour. The capture now
+// records a GRAPH — every key the TUI answers, tried from every state it
+// reaches — so this file no longer plays a tour. It hands over the keyboard.
+//
+// Degrades honestly: with JS off, or if the frame data fails to load, the
+// section says so rather than sitting blank.
 (function () {
   var root = document.getElementById('try-dejima');
   if (!root) return;
@@ -20,17 +25,27 @@
 
   var DATA = null;
   var edges = {};        // frameId -> { key -> frameId }
+  var rootFrame = null;
   var typed = '';        // what the visitor has typed at the fake shell
+  var history = [];      // lines printed above the shell prompt
   var tabs = [];         // [{id, title, kind:'tui'|'session', frame?, body?}]
+  // Where the visitor came from, so Escape always has somewhere to go. The
+  // capture is breadth-first and bounded, so the deepest states it reached have
+  // no recorded edges — without this, walking far enough in lands you on a
+  // screen where nothing responds, which is the exact complaint this rewrite
+  // exists to fix. Going back is honest there: it is what Escape does in the
+  // real TUI, and it is never a screen the visitor has not already seen.
+  var backStack = [];
   var active = 0;
 
-  // Keys the TUI answers, in the order a visitor should try them. Shown when a
-  // key does nothing, because a dead keystroke on a landing page reads as broken
-  // rather than as out of scope.
+  // Labels for keys the TUI answers, used when suggesting what to try. Only
+  // keys that actually have an edge from the current frame are ever offered, so
+  // this is naming, not promising.
   var LABELS = {
-    j: 'j / ↓ down', k: 'k / ↑ up', Space: 'space expand', Enter: '⏎ open',
-    Escape: 'esc back', C: 'C switch connection', s: 's secrets',
-    n: 'n new island', '?': '? help'
+    j: 'j/↓ down', k: 'k/↑ up', Down: '↓ down', Up: '↑ up',
+    Left: '←', Right: '→', Space: 'space expand', Enter: '⏎ open',
+    Escape: 'esc back', C: 'C connection', s: 's settings', m: 'm actions',
+    n: 'n new island', E: 'E collapse all', '?': '? help', '>': '> shell'
   };
 
   function keyName(e) {
@@ -46,20 +61,21 @@
     }
   }
 
-  // Build the transition graph from the recorded scenes. A frame reached by two
-  // scenes is one node, so a visitor who wanders from one flow into another
-  // keeps working rather than hitting the end of a script.
+  // Accept the graph produced by the current capture, and still work against an
+  // older scenes file — a stale demo-frames.json should degrade to the old tour,
+  // not to a blank box.
   function buildEdges(d) {
-    d.scenes.forEach(function (sc) {
+    if (d.edges) { edges = d.edges; rootFrame = d.root; return; }
+    edges = {};
+    (d.scenes || []).forEach(function (sc) {
       for (var i = 0; i + 1 < sc.steps.length; i++) {
         var from = sc.steps[i].frame, step = sc.steps[i + 1];
         if (!step.key) continue;
         (edges[from] || (edges[from] = {}))[step.key] = step.frame;
       }
     });
+    rootFrame = d.scenes && d.scenes[0] && d.scenes[0].steps[0].frame;
   }
-
-  function tuiTab() { return tabs[0]; }
 
   function render() {
     var t = tabs[active];
@@ -79,40 +95,124 @@
     });
   }
 
-  function hint(msg) {
-    hintEl.textContent = msg;
-  }
+  function hint(msg) { hintEl.textContent = msg; }
 
   function available() {
     var t = tabs[active];
     if (t.kind !== 'tui') return 'click the dejima tab to go back';
     var ks = Object.keys(edges[t.frame] || {});
-    if (!ks.length) return 'nothing further down this path — press esc';
-    return 'try: ' + ks.map(function (k) { return LABELS[k] || k; }).join('   ');
+    if (!ks.length) return 'esc back   ·   q quit';
+    var s = 'try: ' + ks.slice(0, 7).map(function (k) { return LABELS[k] || k; }).join('   ');
+    if (!ks.Escape && backStack.length) s += '   esc back';
+    return s + '   ·   q quit';
   }
 
-  // The fake shell. A blank terminal and one instruction is the whole opening —
-  // the visitor types the same thing they would type on their own machine.
+  // ---- the fake shell -------------------------------------------------------
+  //
+  // The opening is a terminal with a prompt and nothing else, because that is
+  // what the visitor sees on their own machine. `dejima` starts the dashboard;
+  // a few other commands answer so that typing something reasonable is not
+  // punished with silence, and anything else gets the shell's real reply.
+  var CANNED = {
+    'dejima --help': [
+      'dejima — isolated islands for AI coding agents, on your own hardware',
+      '',
+      'Usage:  dejima [command]',
+      '',
+      '  (no args)   open the dashboard',
+      '  init        create an island from a repo',
+      '  ls          list islands',
+      '  agent       add, open, or remove an agent',
+      '  secret      store a credential for an island',
+      '  egress      see or control an island’s outbound network',
+      '  doctor      check this machine',
+      '',
+      'Run `dejima` with no arguments to open the dashboard.'
+    ],
+    'dejima ls': [
+      'NAME        AGENTS  STATE     MEMORY     REPO',
+      'dejima           4  running   1.5 GiB    git@github.com:aoos/dejima.git',
+      'janus            2  running   341.5 MiB  git@github.com:aoos/janus.git',
+      'wildfire         2  running   605.8 MiB  git@github.com:aoos/wildfire.git'
+    ],
+    'dejima doctor': [
+      'System    docker          OK    server 28.1.1',
+      'System    tmux            OK    /opt/homebrew/bin/tmux',
+      'Egress    proxy listener  OK    127.0.0.1:7280 — accepting connections',
+      'Islands   3 running       OK',
+      '',
+      'No problems found.'
+    ],
+    'help': ['Try `dejima` to open the dashboard, or `dejima --help` for the commands.'],
+    'ls': ['dejima  janus  wildfire'],
+    'whoami': ['you'],
+    'pwd': ['/Users/you']
+  };
+
   function renderShell() {
-    screen.textContent = '$ ' + typed + '█';
-    hint('type  dejima  and press enter');
+    var out = history.length ? history.join('\n') + '\n' : '';
+    screen.textContent = out + '$ ' + typed + '█';
+    screen.scrollTop = screen.scrollHeight;
   }
 
-  function boot() {
-    tabs = [{ id: 'tui', title: 'dejima', kind: 'tui', frame: DATA.scenes[0].steps[0].frame }];
-    active = 0;
+  function runCommand(cmd) {
+    history.push('$ ' + cmd);
+    var c = cmd.trim();
+    if (c === 'dejima') { boot(); return; }
+    if (c === 'clear') { history = []; return; }
+    if (c === '') { return; }
+    var out = CANNED[c];
+    if (out) { history = history.concat(out, ''); return; }
+    history.push('zsh: command not found: ' + c.split(/\s+/)[0], '');
+  }
+
+  function go(frame) {
+    var t = tabs[active];
+    backStack.push(t.frame);
+    t.frame = frame;
     render();
     hint(available());
   }
 
+  function boot() {
+    if (!DATA) {
+      // Typed `dejima` before the frames arrived. Say so for the moment it
+      // takes, rather than swallowing the command.
+      hint('starting\u2026');
+      ensureData().then(boot).catch(function () {
+        history.push('the live demo could not load', '');
+        renderShell();
+        hint('the live demo could not load');
+      });
+      return;
+    }
+    tabs = [{ id: 'tui', title: 'dejima', kind: 'tui', frame: rootFrame }];
+    active = 0;
+    backStack = [];
+    render();
+    hint(available());
+  }
+
+  // Quitting returns to the shell the visitor started in, with the session's
+  // scrollback intact — the same thing `q` does on a real machine.
+  function quit() {
+    tabs = [];
+    backStack = [];
+    // runCommand already recorded the `$ dejima` that started this session;
+    // pushing it again here printed the command twice on every quit.
+    history.push('');
+    renderShell();
+    hint('type  dejima  and press enter');
+  }
+
   // Opening an agent is the one thing the capture cannot show: attaching needs a
-  // daemon, and demo mode has none. So the session tab is openly canned — the
-  // operator asked for exactly that — while every TUI frame stays real. Tabs are
-  // the TERMINAL's, which is how Dejima is actually used: the daemon sets their
-  // titles over the session protocol.
+  // daemon, and demo mode has none. So the session tab is openly canned, while
+  // every TUI frame stays real. Tabs are the TERMINAL's, which is how Dejima is
+  // actually used: the daemon sets their titles over the session protocol.
   function openSession() {
-    var existing = tabs.findIndex(function (t) { return t.id === 'a1'; });
-    if (existing > -1) { active = existing; render(); return; }
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].id === 'a1') { active = i; render(); return; }
+    }
     tabs.push({
       id: 'a1', title: 'api-gateway / a1', kind: 'session',
       body: [
@@ -127,7 +227,7 @@
         '',
         '  Want me to open a PR?',
         '',
-        '(this pane is illustrative — the frames in the dejima tab are real captures)'
+        '(this pane is illustrative — the dejima tab is a real capture)'
       ].join('\n')
     });
     active = tabs.length - 1;
@@ -142,39 +242,95 @@
     var k = keyName(e);
 
     if (!tabs.length) {                       // the fake shell
-      e.preventDefault();
       if (k === 'Enter') {
-        if (typed.trim() === 'dejima') { boot(); } else { typed = ''; renderShell(); }
+        e.preventDefault();
+        var cmd = typed; typed = '';
+        runCommand(cmd);
+        if (!tabs.length) renderShell();
         return;
       }
-      if (e.key === 'Backspace') { typed = typed.slice(0, -1); renderShell(); return; }
-      if (e.key.length === 1) { typed += e.key; renderShell(); }
+      if (e.key === 'Backspace') { e.preventDefault(); typed = typed.slice(0, -1); renderShell(); return; }
+      // Swallow the navigation keys here too. The screen has focus, so letting
+      // them through scrolls the page out from under a visitor who thinks they
+      // are driving a terminal.
+      if (k === 'Up' || k === 'Down' || k === 'Left' || k === 'Right' || k === 'Escape') {
+        e.preventDefault(); return;
+      }
+      if (e.key.length === 1) { e.preventDefault(); typed += e.key; renderShell(); }
       return;
     }
 
     var t = tabs[active];
-    if (t.kind !== 'tui') { return; }
+    if (t.kind !== 'tui') {
+      // A session tab has nothing to drive; let the page keep its keys.
+      return;
+    }
     e.preventDefault();
 
-    // Enter on an agent row is an attach, and attaching opens a tab.
+    if (k === 'q') { quit(); return; }
+
+    // Escape prefers what the real TUI did; where the capture stopped short it
+    // retraces the visitor's own steps rather than doing nothing.
+    if (k === 'Escape' && !(edges[t.frame] || {})['Escape']) {
+      if (backStack.length) {
+        t.frame = backStack.pop();
+        render();
+        hint(available());
+      } else {
+        hint('already at the top — q quits');
+      }
+      return;
+    }
+
+    // Enter on a row with no recorded transition is an attach, and attaching
+    // opens a tab — the one branch the capture cannot walk.
     if (k === 'Enter' && !(edges[t.frame] || {})[k]) { openSession(); return; }
 
     var next = (edges[t.frame] || {})[k];
-    if (!next) { hint('that key is not in this demo — ' + available()); return; }
-    t.frame = next;
-    render();
-    hint(available());
+    if (!next) { hint('nothing bound to that here — ' + available()); return; }
+    go(next);
   }
 
-  fetch('demo-frames.json').then(function (r) { return r.json(); }).then(function (d) {
-    DATA = d;
-    buildEdges(d);
-    root.classList.add('is-live');
-    screen.setAttribute('tabindex', '0');
-    screen.addEventListener('keydown', onKey);
-    screen.addEventListener('click', focusScreen);
-    renderShell();
-  }).catch(function () {
-    hint('the live demo could not load — the screenshot above is the real thing');
-  });
+  // Focus mode. Taking the arrow keys and Escape away from the page is a real
+  // change of mode, so the page shows it: everything behind the demo recedes
+  // while the demo has the keyboard, and comes back when it does not.
+  function installFocusMode() {
+    var dim = document.createElement('div');
+    dim.className = 'demo-dim';
+    dim.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(dim);
+    screen.addEventListener('focus', function () { document.body.classList.add('demo-focus'); });
+    screen.addEventListener('blur', function () { document.body.classList.remove('demo-focus'); });
+    // Clicking the dimmed page is a way out, not a trap.
+    dim.addEventListener('mousedown', function () { screen.blur(); });
+  }
+
+  // THE FRAMES LOAD ON FIRST TOUCH, NOT ON PAGE LOAD.
+  //
+  // Every frame is a full 132x40 screen of styled spans — about 10 KB each, and
+  // the graph has enough of them to matter. The demo sits near the top of the
+  // landing page, so fetching eagerly would put a megabyte in front of every
+  // visitor, including the ones who scroll straight past. The opening screen is
+  // a shell prompt this file can draw by itself, so nothing needs to be
+  // downloaded until someone actually clicks in.
+  var loading = null;
+  function ensureData() {
+    if (loading) return loading;
+    loading = fetch('demo-frames.json').then(function (r) { return r.json(); }).then(function (d) {
+      buildEdges(d);
+      if (!rootFrame || !d.frames[rootFrame]) throw new Error('no root frame');
+      DATA = d;
+      root.classList.add('is-live');
+      return d;
+    });
+    return loading;
+  }
+
+  screen.setAttribute('tabindex', '0');
+  screen.addEventListener('keydown', onKey);
+  screen.addEventListener('click', function () { ensureData(); focusScreen(); });
+  screen.addEventListener('focus', ensureData);
+  installFocusMode();
+  renderShell();
+  hint('click in, then type  dejima  and press enter');
 })();

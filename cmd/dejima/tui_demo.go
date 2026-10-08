@@ -32,9 +32,10 @@ func demoLatest(i, tick int) string {
 	}
 }
 
-func demoAgent(id, typ string, i, tick int, ageH time.Duration) api.AgentInfo {
+func demoAgent(id, label, typ string, i, tick int, ageH time.Duration) api.AgentInfo {
 	return api.AgentInfo{
 		ID:         id,
+		Label:      label,
 		Type:       typ,
 		State:      "running",
 		Attachable: typ != "headless",
@@ -43,9 +44,20 @@ func demoAgent(id, typ string, i, tick int, ageH time.Duration) api.AgentInfo {
 	}
 }
 
-// demoIslands is the synthetic fleet: a multi-agent flagship, a couple of
-// smaller islands, and one hibernated — across two repos, so group-by-repo also
-// reads well.
+// demoIslands is the synthetic fleet.
+//
+// FOUR UNRELATED PROJECTS, NOT ONE COMPANY'S MICROSERVICES. The first version
+// was storefront / api-gateway / infra / docs-site, all under github.com/acme,
+// with two islands sharing a repo. That reads as one deployment split four
+// ways, which undersells the thing being shown: people run Dejima across the
+// unrelated projects they happen to own, a game beside a payments backend
+// beside a phone app.
+//
+// AGENTS ARE NAMED BY ROLE, because that is how a fleet is actually driven —
+// an orchestrator plus workers on their own worktrees, which is the pattern
+// this product exists to make survivable. "manager / level-designer / campaign"
+// says what the island is doing; "a1 / a2 / a3" says only that there are three
+// of something.
 func demoIslands(tick int) []api.IslandInfo {
 	stat := func(memGB float64, cpu float64) *api.IslandStats {
 		return &api.IslandStats{
@@ -57,44 +69,46 @@ func demoIslands(tick int) []api.IslandInfo {
 	// CPU jitters with the tick so the stats line isn't frozen.
 	jit := float64((tick*7)%23) + 12
 
-	web := api.IslandInfo{
-		Name: "storefront", Repo: "github.com/acme/storefront", Agent: "claude-code",
+	game := api.IslandInfo{
+		Name: "kiloton", Repo: "github.com/you/kiloton", Agent: "claude-code",
 		State: "running", Container: "running", Stats: stat(3.1, jit),
 		Agents: []api.AgentInfo{
-			demoAgent("a1", "claude-code", 0, tick, 2*time.Hour),
-			demoAgent("a2", "codex", 1, tick, 90*time.Minute),
-			demoAgent("a3", "headless", 2, tick, 40*time.Minute),
+			demoAgent("a1", "manager", "claude-code", 0, tick, 24*time.Hour),
+			demoAgent("a2", "level-designer", "codex", 1, tick, 18*time.Hour),
+			demoAgent("a3", "campaign", "claude-code", 2, tick, 7*time.Hour),
+			demoAgent("a4", "balance", "headless", 1, tick, 40*time.Minute),
 		},
 	}
-	api2 := api.IslandInfo{
-		Name: "api-gateway", Repo: "github.com/acme/storefront", Agent: "claude-code",
+	ledger := api.IslandInfo{
+		Name: "ledger-api", Repo: "github.com/you/ledger-api", Agent: "claude-code",
 		State: "running", Container: "running", Stats: stat(2.2, jit*0.7+5),
 		Agents: []api.AgentInfo{
-			demoAgent("a1", "claude-code", 2, tick, 3*time.Hour),
-			demoAgent("a2", "claude-code", 0, tick, 25*time.Minute),
+			demoAgent("a1", "manager", "claude-code", 2, tick, 3*time.Hour),
+			demoAgent("a2", "migrations", "codex", 0, tick, 25*time.Minute),
+			demoAgent("a3", "security-scan", "headless", 1, tick, 2*time.Hour),
 		},
 	}
-	infra := api.IslandInfo{
-		Name: "infra", Repo: "github.com/acme/infra", Agent: "codex",
+	atlas := api.IslandInfo{
+		Name: "atlas-ios", Repo: "github.com/you/atlas-ios", Agent: "codex",
 		State: "running", Container: "running", Stats: stat(1.4, jit*0.4+3),
 		Agents: []api.AgentInfo{
-			demoAgent("c1", "codex", 1, tick, 5*time.Hour),
+			demoAgent("c1", "core", "codex", 1, tick, 5*time.Hour),
+			demoAgent("c2", "ui", "claude-code", 0, tick, 55*time.Minute),
 		},
 	}
-	docs := api.IslandInfo{
-		Name: "docs-site", Repo: "github.com/acme/infra", Agent: "claude-code",
+	playbook := api.IslandInfo{
+		Name: "playbook", Repo: "github.com/you/playbook", Agent: "claude-code",
 		State: "hibernated", Container: "exited",
-		Agents: []api.AgentInfo{{ID: "a1", Type: "claude-code", State: "stopped"}},
+		Agents: []api.AgentInfo{{ID: "a1", Label: "auto", Type: "claude-code", State: "stopped"}},
 	}
 	// Surface the island-level "needs you" flag when its first agent is waiting,
 	// so the row glyph matches the agent state (mirrors the real daemon).
-	for i := range []*api.IslandInfo{&web, &api2, &infra} {
-		isl := []*api.IslandInfo{&web, &api2, &infra}[i]
+	for _, isl := range []*api.IslandInfo{&game, &ledger, &atlas} {
 		if len(isl.Agents) > 0 && isl.Agents[0].AgentState != nil {
 			isl.AgentState = isl.Agents[0].AgentState
 		}
 	}
-	return []api.IslandInfo{web, api2, infra, docs}
+	return []api.IslandInfo{game, ledger, atlas, playbook}
 }
 
 func demoIsland(name string, tick int) (*api.IslandInfo, bool) {
@@ -163,9 +177,9 @@ func demoSecrets(island string) []secrets.Meta {
 // first-island flow — no real filesystem scan, so no real repo names leak.
 func demoRepos() []reposrc.Repo {
 	return []reposrc.Repo{
-		{Name: "storefront", Path: "/home/you/code/storefront"},
-		{Name: "api-gateway", Path: "/home/you/code/api-gateway"},
-		{Name: "infra", Path: "/home/you/code/infra"},
+		{Name: "kiloton", Path: "/home/you/code/kiloton"},
+		{Name: "ledger-api", Path: "/home/you/code/ledger-api"},
+		{Name: "atlas-ios", Path: "/home/you/code/atlas-ios"},
 	}
 }
 
