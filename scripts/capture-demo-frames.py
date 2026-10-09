@@ -205,7 +205,7 @@ def ansi_to_html(text: str) -> str:
 
 
 class Pane:
-    def __init__(self, binary, cols=132, rows=40):
+    def __init__(self, binary, cols=170, rows=40):
         self.s = "democap"
         self.binary, self.cols, self.rows = binary, cols, rows
 
@@ -354,7 +354,7 @@ def main():
     if dropped:
         print(f"  pruned {dropped} unreachable frame(s)", file=sys.stderr)
 
-    doc = {"cols": 132, "rows": 40, "root": root, "frames": frames, "edges": edges}
+    doc = {"cols": 170, "rows": 40, "root": root, "frames": frames, "edges": edges}
     with open(args.out, "w") as fh:
         json.dump(doc, fh, separators=(",", ":"))
     print(f"{len(frames)} frames, {sum(len(v) for v in edges.values())} edges -> {args.out}",

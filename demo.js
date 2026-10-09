@@ -266,6 +266,16 @@
       return;
     }
     e.preventDefault();
+    press(k);
+  }
+
+  // The named-key half of the handler, split out so the on-screen controls in
+  // full-window mode drive exactly the same code as a keyboard. A phone has no
+  // arrows and no Escape, so without those buttons full-window would be a large
+  // picture of a terminal rather than one you can use.
+  function press(k) {
+    var t = tabs[active];
+    if (!t || t.kind !== 'tui') return;
 
     if (k === 'q') { quit(); return; }
 
@@ -326,11 +336,62 @@
     return loading;
   }
 
+  // FULL-WINDOW ON A PHONE, WITH CONTROLS.
+  // The frame is 170 columns; a portrait phone gives each character under four
+  // pixels. Tapping fills the window and turns the frame on its side. The
+  // controls are not decoration: a phone keyboard has no arrows and no Escape,
+  // so without them this would be a large picture of a terminal.
+  function isPhone() {
+    try { return window.matchMedia('(max-width: 820px), (pointer: coarse)').matches; }
+    catch (e) { return false; }
+  }
+
+  function installFullWindow() {
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'demo-close';
+    close.setAttribute('aria-label', 'Close the demo');
+    close.textContent = '\u00d7';
+    document.body.appendChild(close);
+
+    var keys = document.createElement('div');
+    keys.className = 'demo-keys';
+    [['\u2191', 'Up'], ['\u2193', 'Down'], ['\u23ce', 'Enter'], ['esc', 'Escape'], ['q', 'q']]
+      .forEach(function (pair) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = pair[0];
+        b.addEventListener('click', function (ev) { ev.stopPropagation(); press(pair[1]); });
+        keys.appendChild(b);
+      });
+    document.body.appendChild(keys);
+
+    function exit() {
+      document.body.classList.remove('demo-full');
+      document.body.classList.remove('demo-focus');
+    }
+    close.addEventListener('click', exit);
+    // Escape leaves full-window before it reaches the TUI: to someone whose
+    // phone has just filled with a terminal, that is what the key means.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.body.classList.contains('demo-full')) { exit(); }
+    });
+
+    screen.addEventListener('click', function () {
+      if (!isPhone() || document.body.classList.contains('demo-full')) return;
+      document.body.classList.add('demo-full');
+      // Nobody opens this to look at a shell prompt they cannot type at, so a
+      // phone goes straight to the dashboard.
+      ensureData().then(function () { if (!tabs.length) boot(); });
+    });
+  }
+
   screen.setAttribute('tabindex', '0');
   screen.addEventListener('keydown', onKey);
   screen.addEventListener('click', function () { ensureData(); focusScreen(); });
   screen.addEventListener('focus', ensureData);
   installFocusMode();
+  installFullWindow();
   renderShell();
   hint('click in, then type  dejima  and press enter');
 })();

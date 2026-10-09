@@ -12,7 +12,12 @@
 html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
   font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased; }
-main { max-width: 800px; margin: 0 auto; padding: 3rem 1.5rem 6rem; }
+/* The measure was 800px, set when the page was all prose. It now carries a
+   1500px-wide terminal, and an 800px column beside that reads as a narrow
+   strip. Widened to 1040px; individual prose blocks keep their own tighter
+   max-width (see .hero-sub) so paragraphs do not run to an unreadable
+   line length just because the page got wider. */
+main { max-width: 1040px; margin: 0 auto; padding: 3rem 1.5rem 6rem; }
 
 /* Masthead + brand --------------------------------------------------- */
 header { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 1.2rem; }
@@ -400,9 +405,17 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
    colours inline (pre-rendered at capture time), so this file styles only the
    surround — tabs, the window, and the hint line under it. */
 .demo-wrap { margin: 2.5rem 0; }
+/* THE DEMO BREAKS OUT OF THE 800px COLUMN.
+   A terminal is 170 columns wide; inside the article measure it could only be
+   shown by shrinking the type to nothing or handing the visitor a horizontal
+   scrollbar, and it had the scrollbar. Prose wants a narrow measure, a terminal
+   wants its own width, so this one element gets the viewport. */
 .demo-win {
   background: #000; border: 1px solid #1c3358; border-radius: 10px;
   overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+  width: min(1500px, calc(100vw - 2rem));
+  margin-left: 50%; transform: translateX(-50%);
+  container-type: inline-size;
 }
 .demo-tabs {
   display: flex; gap: 2px; padding: 6px 8px 0; background: #0a0d12;
@@ -419,13 +432,19 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 .demo-screen {
   margin: 0; padding: 12px 14px; overflow-x: auto; outline: none;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 14px; line-height: 1.25; color: #c9d1d9; background: #000;
+  line-height: 1.25; color: #c9d1d9; background: #000;
   white-space: pre; tab-size: 8;
-  /* THE BOX DOES NOT RESIZE. The capture is 40 rows, and at line-height 1.25
-     that is 50em of this element's own size — so the shell prompt, a help
-     overlay and the full dashboard all occupy one terminal-shaped window
-     instead of the page reflowing on every keystroke. */
-  min-height: 50em;
+  /* THE TYPE IS SIZED TO THE FRAME, so 170 columns fit exactly and nothing
+     scrolls sideways at any width. A monospace cell is ~0.6em wide; 0.62 is
+     deliberate slack, because the fallback fonts differ slightly and
+     under-filling by a hair is invisible while over-filling is a scrollbar.
+     The floor keeps a phone legible — below it the overflow rule takes over. */
+  font-size: max(9px, calc((100cqw - 28px) / (170 * 0.62)));
+  /* THE BOX DOES NOT RESIZE. 41 rows at line-height 1.25 is 51.25em of this
+     element's own size — so the shell prompt, a help overlay and the full
+     dashboard all occupy one terminal-shaped window (about 2:1) instead of the
+     page reflowing on every keystroke. */
+  min-height: 51.25em;
 }
 .demo-screen:focus-visible { box-shadow: inset 0 0 0 2px #1c3358; }
 
@@ -441,11 +460,69 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
 body.demo-focus .demo-dim { opacity: 1; }
 body.demo-focus #try-dejima { position: relative; z-index: 50; }
 @media (prefers-reduced-motion: reduce) { .demo-dim { transition: none; } }
+
+/* FULL-WINDOW ON A PHONE.
+   A 170-column terminal in a 390px-wide portrait viewport works out at under
+   4px a character — present, and unreadable. Tapping it therefore fills the
+   window and turns the frame on its side, so the long axis of the phone
+   becomes the long axis of the terminal. That is a rotation we do ourselves:
+   the Screen Orientation API needs real fullscreen and iOS Safari does not
+   implement it at all, so relying on it would mean the feature simply missing
+   on most phones. */
+.demo-close {
+  position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); right: 10px;
+  z-index: 1002; display: none;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: rgba(13, 17, 23, .9); color: #e8f1ff;
+  border: 1px solid #1c3358; font: 600 20px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+body.demo-full .demo-close { display: block; }
+/* Controls stay in PHONE coordinates, not the terminal's: the frame may be
+   rotated, but thumbs are still at the bottom of the device. */
+.demo-keys {
+  position: fixed; z-index: 1002; display: none;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  gap: 8px;
+}
+body.demo-full .demo-keys { display: flex; }
+.demo-keys button {
+  min-width: 52px; height: 44px; border-radius: 10px;
+  background: rgba(13, 17, 23, .92); color: #e8f1ff;
+  border: 1px solid #1c3358; font: 600 16px/1 ui-monospace, monospace;
+  cursor: pointer;
+}
+.demo-keys button:active { background: #1c3358; }
+body.demo-full { overflow: hidden; }
+body.demo-full .demo-win {
+  position: fixed; inset: 0; z-index: 1001;
+  width: 100vw; height: 100dvh; max-width: none;
+  margin: 0; transform: none; border-radius: 0; border: 0;
+}
+body.demo-full .demo-tabs { display: none; }
+body.demo-full .demo-screen {
+  position: absolute; top: 50%; left: 50%;
+  min-height: 0; padding: 8px;
+  /* The rotated box is as wide as the viewport is TALL, so the type is sized
+     off the height. Same 0.62 cell-width slack as the desktop rule. */
+  width: 100dvh; height: 100vw;
+  font-size: max(6px, calc((100dvh - 16px) / (170 * 0.62)));
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center center;
+  overflow: hidden;
+}
+/* A phone already held sideways needs no rotation — just the full window. */
+@media (orientation: landscape) {
+  body.demo-full .demo-screen {
+    width: 100vw; height: 100dvh;
+    transform: translate(-50%, -50%);
+    font-size: max(6px, calc((100vw - 16px) / (170 * 0.62)));
+  }
+}
 .demo-hint {
   margin: .5rem 0 0; font-size: .85rem; color: #94a3b8; min-height: 1.4em;
 }
 /* Without JS the section still says what it is rather than sitting blank. */
 #try-dejima:not(.is-live) .demo-screen { opacity: .75; }
-@media (max-width: 720px) {
-  .demo-screen { font-size: 11px; }
-}
+

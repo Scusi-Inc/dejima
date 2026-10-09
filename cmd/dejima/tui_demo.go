@@ -46,7 +46,9 @@ func demoAgent(id, label, typ string, i, tick int, ageH time.Duration) api.Agent
 
 // demoIslands is the synthetic fleet.
 //
-// FOUR UNRELATED PROJECTS, NOT ONE COMPANY'S MICROSERVICES. The first version
+// THREE UNRELATED PROJECTS, NOT ONE COMPANY'S MICROSERVICES, and none of them
+// named after a repo the operator actually owns -- a demo fleet must be
+// invented, not borrowed. The first version
 // was storefront / api-gateway / infra / docs-site, all under github.com/acme,
 // with two islands sharing a repo. That reads as one deployment split four
 // ways, which undersells the thing being shown: people run Dejima across the
@@ -69,46 +71,46 @@ func demoIslands(tick int) []api.IslandInfo {
 	// CPU jitters with the tick so the stats line isn't frozen.
 	jit := float64((tick*7)%23) + 12
 
-	game := api.IslandInfo{
-		Name: "kiloton", Repo: "github.com/you/kiloton", Agent: "claude-code",
+	forge := api.IslandInfo{
+		Name: "pixelforge", Repo: "github.com/you/pixelforge", Agent: "claude-code",
 		State: "running", Container: "running", Stats: stat(3.1, jit),
 		Agents: []api.AgentInfo{
 			demoAgent("a1", "manager", "claude-code", 0, tick, 24*time.Hour),
-			demoAgent("a2", "level-designer", "codex", 1, tick, 18*time.Hour),
-			demoAgent("a3", "campaign", "claude-code", 2, tick, 7*time.Hour),
+			demoAgent("a2", "level-design", "codex", 1, tick, 18*time.Hour),
+			demoAgent("a3", "encounters", "claude-code", 2, tick, 7*time.Hour),
 			demoAgent("a4", "balance", "headless", 1, tick, 40*time.Minute),
 		},
 	}
-	ledger := api.IslandInfo{
-		Name: "ledger-api", Repo: "github.com/you/ledger-api", Agent: "claude-code",
+	nimbus := api.IslandInfo{
+		Name: "nimbus-api", Repo: "github.com/you/nimbus-api", Agent: "claude-code",
 		State: "running", Container: "running", Stats: stat(2.2, jit*0.7+5),
 		Agents: []api.AgentInfo{
 			demoAgent("a1", "manager", "claude-code", 2, tick, 3*time.Hour),
 			demoAgent("a2", "migrations", "codex", 0, tick, 25*time.Minute),
-			demoAgent("a3", "security-scan", "headless", 1, tick, 2*time.Hour),
+			demoAgent("a3", "load-test", "headless", 1, tick, 2*time.Hour),
+			demoAgent("a4", "security-scan", "headless", 2, tick, 6*time.Hour),
 		},
 	}
-	atlas := api.IslandInfo{
-		Name: "atlas-ios", Repo: "github.com/you/atlas-ios", Agent: "codex",
-		State: "running", Container: "running", Stats: stat(1.4, jit*0.4+3),
-		Agents: []api.AgentInfo{
-			demoAgent("c1", "core", "codex", 1, tick, 5*time.Hour),
-			demoAgent("c2", "ui", "claude-code", 0, tick, 55*time.Minute),
-		},
-	}
-	playbook := api.IslandInfo{
-		Name: "playbook", Repo: "github.com/you/playbook", Agent: "claude-code",
+	// Hibernated, and deliberately so: stop-and-keep is a real state of the
+	// product and the only one that shows what an idle island costs (nothing).
+	// Three islands was the brief, so this is the third rather than a fourth —
+	// it carries two agents so the state reads as "parked", not "empty".
+	harbor := api.IslandInfo{
+		Name: "harbor-ios", Repo: "github.com/you/harbor-ios", Agent: "codex",
 		State: "hibernated", Container: "exited",
-		Agents: []api.AgentInfo{{ID: "a1", Label: "auto", Type: "claude-code", State: "stopped"}},
+		Agents: []api.AgentInfo{
+			{ID: "c1", Label: "core", Type: "codex", State: "stopped"},
+			{ID: "c2", Label: "ui", Type: "claude-code", State: "stopped"},
+		},
 	}
 	// Surface the island-level "needs you" flag when its first agent is waiting,
 	// so the row glyph matches the agent state (mirrors the real daemon).
-	for _, isl := range []*api.IslandInfo{&game, &ledger, &atlas} {
+	for _, isl := range []*api.IslandInfo{&forge, &nimbus} {
 		if len(isl.Agents) > 0 && isl.Agents[0].AgentState != nil {
 			isl.AgentState = isl.Agents[0].AgentState
 		}
 	}
-	return []api.IslandInfo{game, ledger, atlas, playbook}
+	return []api.IslandInfo{forge, nimbus, harbor}
 }
 
 func demoIsland(name string, tick int) (*api.IslandInfo, bool) {
@@ -177,9 +179,9 @@ func demoSecrets(island string) []secrets.Meta {
 // first-island flow — no real filesystem scan, so no real repo names leak.
 func demoRepos() []reposrc.Repo {
 	return []reposrc.Repo{
-		{Name: "kiloton", Path: "/home/you/code/kiloton"},
-		{Name: "ledger-api", Path: "/home/you/code/ledger-api"},
-		{Name: "atlas-ios", Path: "/home/you/code/atlas-ios"},
+		{Name: "pixelforge", Path: "/home/you/code/pixelforge"},
+		{Name: "nimbus-api", Path: "/home/you/code/nimbus-api"},
+		{Name: "harbor-ios", Path: "/home/you/code/harbor-ios"},
 	}
 }
 
