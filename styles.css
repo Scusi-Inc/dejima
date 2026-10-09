@@ -440,11 +440,11 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
      under-filling by a hair is invisible while over-filling is a scrollbar.
      The floor keeps a phone legible — below it the overflow rule takes over. */
   font-size: max(9px, calc((100cqw - 28px) / (170 * 0.62)));
-  /* THE BOX DOES NOT RESIZE. 41 rows at line-height 1.25 is 51.25em of this
+  /* THE BOX DOES NOT RESIZE. 40 rows at line-height 1.25 is 50em of this
      element's own size — so the shell prompt, a help overlay and the full
      dashboard all occupy one terminal-shaped window (about 2:1) instead of the
      page reflowing on every keystroke. */
-  min-height: 51.25em;
+  min-height: 50em;
 }
 .demo-screen:focus-visible { box-shadow: inset 0 0 0 2px #1c3358; }
 
