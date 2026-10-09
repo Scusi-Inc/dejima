@@ -50,3 +50,4 @@ go.work.sum
 # GitHub push protection.
 core
 core.*
+__pycache__/
