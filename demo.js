@@ -410,8 +410,16 @@
         return;
       }
       if (sel && sel.kind === 'agent') {
-        var owner = ownerOf(sel.label);
-        if (owner) { openSession(owner[0], sel.label, owner[1]); return; }
+        // The capture records which island the row sat under. An agent LABEL is
+        // not unique — "manager" exists in two islands — so resolving by label
+        // alone opened the wrong island's pane: plausible enough to go
+        // unnoticed, which is the worst way for a demo to be wrong.
+        var isl = sel.island, list = isl ? (ISLAND_AGENTS[isl] || []) : [];
+        for (var q = 0; q < list.length; q++) {
+          if (list[q][0] === sel.label) { openSession(isl, sel.label, list[q][1]); return; }
+        }
+        var own = ownerOf(sel.label);   // older frames carry no island
+        if (own) { openSession(own[0], sel.label, own[1]); return; }
       }
       // No selection metadata and nothing recorded for Enter: open the first
       // island anyway rather than do nothing. Frames captured before the

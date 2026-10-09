@@ -86,27 +86,75 @@ VOLATILE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 CURSOR = "\u25b6"  # ▶ , the row marker
 
 
+def _island_on(line: str):
+    """The island name if this line is an island heading, else None."""
+    # The row STARTS with a panel border, so splitting on the first │ and
+    # taking [0] yields the empty string before it — which is why this matched
+    # nothing at all on the first attempt. Take the first segment with content:
+    # that is the left panel, and the detail pane is a later one.
+    segs = [s for s in line.split("\u2502") if s.strip()]
+    if not segs:
+        return None
+    body = segs[0]
+    if CURSOR in body:
+        body = body.split(CURSOR, 1)[1]
+    if any(g in body for g in ("\u251c", "\u2514")):
+        return None  # a child row, not a heading
+    for g in "\u25be\u25b8\u25cf\u25c6\u25a0\u23f8\u23f5\u2502\u21d5\u26b7!":
+        body = body.replace(g, " ")
+    parts = [c.strip() for c in re.split(r"\s{2,}", body) if c.strip()]
+    if not parts:
+        return None
+    m = re.match(r"^([A-Za-z0-9._-]+)\s*\((\d+)\)$", parts[0])
+    return m.group(1) if m else None
+
+
 def selected_row(text: str):
-    """Return {kind,label} for the highlighted row, or None."""
+    """Return {kind,label[,island]} for the highlighted row, or None.
+
+    Tracks the island heading above the cursor, because an agent label is not
+    unique: "manager" exists in more than one island, so a label alone would
+    open the wrong island's agent — plausible enough to go unnoticed, which is
+    the worst kind of wrong for a demo.
+    """
+    owner = None
     for line in text.split("\n"):
+        head = _island_on(line)
+        if head:
+            owner = head
         if CURSOR not in line:
             continue
         body = line.split(CURSOR, 1)[1]
-        body = body.replace("\u2502", " ")  # │ panel borders
+        # EVERY CAPTURED LINE SPANS BOTH PANELS. The detail panel on the right
+        # shares the row, so reading to end of line gave labels like
+        # "manager Claude up 1d working [⏎] attach [X] remove". Cut at the first
+        # panel border; everything after it belongs to the other pane.
+        body = body.split("\u2502", 1)[0]
         agent = any(g in body for g in ("\u251c", "\u2514"))  # ├ └ : a child row
-        for g in "\u25be\u25b8\u25cf\u25c6\u25a0\u251c\u2514\u2500\u21d5\u26b7!":
+        # ⏸ is the hibernated island's state glyph. Leaving it in made the only
+        # parked island parse as kind "other": the glyph became the first column
+        # and the name never reached the island pattern — so Enter on the one
+        # island that most needs explaining opened nothing.
+        for g in "\u25be\u25b8\u25cf\u25c6\u25a0\u23f8\u23f5\u251c\u2514\u2500\u21d5\u26b7!":
             body = body.replace(g, " ")
-        label = " ".join(body.split())
-        if not label:
+        # COLUMNS ARE SEPARATED BY RUNS OF SPACES, so collapsing whitespace
+        # first destroys the only boundary between the row's name and its stats.
+        parts = [c.strip() for c in re.split(r"\s{2,}", body) if c.strip()]
+        if not parts:
             return None
-        # Island rows carry an agent count: "nimbus-api (4)  running · …".
-        m = re.match(r"^([A-Za-z0-9._-]+)\s*\((\d+)\)", label)
+        first = parts[0]
+        # Island rows carry an agent count: "nimbus-api (4)".
+        m = re.match(r"^([A-Za-z0-9._-]+)\s*\((\d+)\)$", first)
         if m and not agent:
             return {"kind": "island", "label": m.group(1), "agents": int(m.group(2))}
-        name = label.split("  ")[0].strip()
-        if name.startswith("+") or name.startswith("secrets"):
-            return {"kind": "other", "label": name}
-        return {"kind": "agent" if agent else "other", "label": name}
+        if first.startswith("+") or first.startswith("secrets"):
+            return {"kind": "other", "label": first}
+        if agent:
+            out = {"kind": "agent", "label": first}
+            if owner:
+                out["island"] = owner
+            return out
+        return {"kind": "other", "label": first}
     return None
 
 
