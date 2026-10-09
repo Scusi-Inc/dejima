@@ -217,7 +217,16 @@ fi
 # shSingleQuote does on the daemon side — a launch command containing a quote
 # would otherwise break out of the nesting.
 launch_with_secrets() {
-    local inner=". /etc/profile.d/10-dejima-secrets.sh 2>/dev/null || true; exec $1"
+    # Keep in step with agentLaunchScript on the daemon side — the primary and
+    # the co-located agents must source the same things the same way, which
+    # TestPrimaryLaunchSourcesSecretsLikeCoLocatedAgents enforces. The provider
+    # key matters most HERE: most islands have one agent and that agent is the
+    # primary, so a fix applied only to the daemon path misses the common case.
+    # ONE single-quoted literal, deliberately: the parity test matches this
+    # prologue against agentLaunchScript's by comparing SOURCE TEXT, so escapes
+    # or a split across lines make an identical runtime string look different
+    # and the check passes or fails for the wrong reason.
+    local inner='. /etc/profile.d/10-dejima-secrets.sh 2>/dev/null || true; set -a; _dk="${DEJIMA_PROVIDER_KEY_FILE:-}"; [ -f "$_dk" ] && . "$_dk"; set +a; exec '"$1"
     printf 'exec bash -c %q' "$inner"
 }
 

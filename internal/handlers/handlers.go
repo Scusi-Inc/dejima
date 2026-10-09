@@ -196,8 +196,17 @@ var registry = map[string]Handler{
 	// to fail on every command. init.sh writes the same setting into config.toml;
 	// passing it here too keeps the agent working when the operator has supplied
 	// their own config, which init.sh deliberately leaves alone.
-	"codex": {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox danger-full-access", StateDir: "/home/dejima/.codex", Bundled: true,
-		RepairCmd: []string{"npm", "install", "-g", "@openai/codex@latest"}},
+	// Codex authenticates itself (a ChatGPT login copied from the host), so it
+	// needs no provider — but it CAN take one, and an operator running local
+	// models will want to. The key file is sourced centrally by
+	// agentLaunchScript, NOT here: a Bundled handler's Launch must begin with
+	// its own binary, because TestBundledLaunchCommandsAreAcceptedByTheirBinaries
+	// takes fields[0] and probes it. Wrapping this line in `bash -lc` made that
+	// binary "bash".
+	"codex": {ID: "codex", Kind: KindInteractive, Launch: "codex --sandbox danger-full-access",
+		StateDir: "/home/dejima/.codex", Bundled: true,
+		SupportedProviders: []string{"local", "openai"},
+		RepairCmd:          []string{"npm", "install", "-g", "@openai/codex@latest"}},
 	// Aider: the open, model-agnostic tier-1 anchor (interactive). Its diff-based
 	// edit loop tolerates weaker LOCAL models far better than a tool-call-heavy
 	// agent — so it's the natural pairing for `dejima local`. Self-installs on
