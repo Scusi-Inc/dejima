@@ -1,6 +1,6 @@
 # Dejima — positioning
 
-**Last updated:** 2026-06-09
+**Last updated:** 2026-10-09 (refinement below; the June thesis stands)
 
 This note records *what Dejima is and isn't*, and why. It exists so that future
 decisions — features, roadmap, marketing copy, contributions — can be checked
@@ -31,6 +31,40 @@ Dejima's bet is that **agent persistence and context persistence should be
 first-class infrastructure, separate from both the model and the UI.**
 
 ---
+
+## October 2026 refinement: what we say first
+
+The June thesis held up under a long adversarial review. What changed is the
+order we say things in, and one distinction that turned out to be the clearest
+way to explain Dejima.
+
+- **Pitch:** *persistent, brokered agent environments on hardware you control.*
+  Not "a sandbox": isolated sandboxes are becoming a commodity (Docker Sandboxes,
+  E2B, Daytona, Cloudflare). Persistence (islands that hibernate and wake rather
+  than being thrown away) and brokered crossings (the Port, capabilities, MCP,
+  the ledger) are the parts nobody else ships.
+- **The unit of isolation is the project, not the agent.** *Walls between
+  projects, open doors inside.* Cloud sandboxes wall off every agent, which makes
+  collaboration the hard part. Worktree managers share freely with no wall at
+  all. Dejima walls the project and makes collaboration inside it the default.
+  `scripts/site-claim-check.py` already pins the per-project claim. This is the
+  same fact, said as a strength.
+- **`dejimad` is the product, and every UI is a client.** Harbormaster and the
+  operator's own business tooling reach Dejima only through the public API. That
+  isn't a rule we hope to keep; it's how Harbormaster is built today, and it's
+  what makes "build on it" true.
+- **Integrations are how people find it.** Middleware has no magic moment of its
+  own; it makes a tool people already use safer. In order: anything with an SSH
+  transport (built: [`framework-backends.md`](framework-backends.md)), a
+  Paperclip `sandbox_provider` plugin that declares persistent leases, and an
+  Orca recipe that adds an *agent* to a project's island rather than creating an
+  island per workspace. The test for each: can its agents share one island?
+- **Agents with real authority** follow
+  [`bounded-delegation.md`](bounded-delegation.md): credentials stay on the
+  host, budgets are per time window, and the agent that reads untrusted input is
+  not the one that acts.
+- **Hardware:** a Mac mini, a Linux box, or a server you own or rent. The Mac
+  mini is the hero hardware, not a requirement, and the cloud VM guides stay.
 
 ## What Dejima *is*
 
