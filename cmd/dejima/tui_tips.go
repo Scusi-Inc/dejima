@@ -28,5 +28,8 @@ func (m tuiModel) footerTipText() string {
 	if len(tips) == 0 {
 		return ""
 	}
+	if demoFrozen() {
+		return tips[0] // hold still for a frame capture — see demoFrozen
+	}
 	return tips[(m.ticks/tipRotateTicks)%len(tips)]
 }

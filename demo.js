@@ -331,6 +331,7 @@
       if (!rootFrame || !d.frames[rootFrame]) throw new Error('no root frame');
       DATA = d;
       root.classList.add('is-live');
+      scheduleFit();
       return d;
     });
     return loading;
@@ -380,11 +381,47 @@
     screen.addEventListener('click', function () {
       if (!isPhone() || document.body.classList.contains('demo-full')) return;
       document.body.classList.add('demo-full');
+      scheduleFit();
       // Nobody opens this to look at a shell prompt they cannot type at, so a
       // phone goes straight to the dashboard.
       ensureData().then(function () { if (!tabs.length) boot(); });
     });
   }
+
+  // FIT THE TYPE TO THE FRAME BY MEASURING IT, not by assuming a cell width.
+  //
+  // The CSS first did this with a constant: font-size = width / (cols * 0.62).
+  // A monospace advance is near 0.6em in the fonts this was written against,
+  // but the stack falls back per platform -- Consolas on Windows is about
+  // 0.55em -- and the error lands as dead space on the right of the frame,
+  // which is exactly how it was reported. The browser knows the real number, so
+  // ask it: render a known string, divide, and scale. Re-measured on resize
+  // because the fallback can change with the width (and because the container
+  // does).
+  var fitRaf = 0;
+  function fitType() {
+    if (!DATA) return;
+    var cols = DATA.cols || 170;
+    var probe = document.createElement('span');
+    probe.textContent = new Array(101).join('M'); // 100 chars
+    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-size:100px';
+    probe.style.fontFamily = getComputedStyle(screen).fontFamily;
+    screen.appendChild(probe);
+    var per = probe.getBoundingClientRect().width / 100 / 100; // em per char
+    screen.removeChild(probe);
+    if (!(per > 0)) return;
+    var cs = getComputedStyle(screen);
+    var avail = screen.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (!(avail > 0)) return;
+    var size = avail / (cols * per);
+    screen.style.fontSize = Math.max(6, Math.floor(size * 100) / 100) + 'px';
+  }
+  function scheduleFit() {
+    if (fitRaf) return;
+    fitRaf = requestAnimationFrame(function () { fitRaf = 0; fitType(); });
+  }
+  window.addEventListener('resize', scheduleFit);
+  window.addEventListener('orientationchange', scheduleFit);
 
   screen.setAttribute('tabindex', '0');
   screen.addEventListener('keydown', onKey);

@@ -30,6 +30,12 @@ func currentTip(tick int) string {
 	if len(dashboardTips) == 0 {
 		return ""
 	}
+	// A frame capture hashes the screen to tell states apart, and a header line
+	// that rewrites itself every few polls makes one screen look like sixteen.
+	// See demoFrozen in tui_demo.go.
+	if demoFrozen() {
+		tick = 0
+	}
 	if tick < 0 {
 		tick = -tick
 	}

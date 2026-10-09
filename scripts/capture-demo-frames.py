@@ -39,21 +39,29 @@ import time
 # Frames dedupe by content hash, so states reached by different routes collapse
 # to one node and the graph stays small.
 
-# Keys worth exploring, from the TUI's own footer and help. `q` is deliberately
-# absent: it quits, and a captured post-quit pane is a dead terminal. The page
-# handles q itself.
-KEYS = [
-    "Up", "Down", "Left", "Right", "Space", "Enter", "Escape",
-    "j", "k", "n", "s", "C", "?", ">", "m", "E",
-]
+# MOVE keys walk the list. They are captured by WALKING, not by probing: press
+# Down to the bottom recording each step, then k back to the top, then j down,
+# then Up back — four passes, every edge a real keypress, and the whole list
+# navigable in both directions with both key names.
+#
+# This replaced a plain breadth-first crawl, which spent its probe budget on
+# breadth and reached depth two. Arrow navigation is the main thing anyone does
+# with a list, and it dead-ended after a single press: "nothing bound to that
+# here". Breadth was the wrong axis.
+MOVE_PASSES = [("Down", "k"), ("j", "Up")]
 
-# How deep to walk. Each extra level multiplies capture time; 3 covers every
-# overlay plus a step inside it, which is where the interesting depth is.
-MAX_DEPTH = 2
+# OPEN keys are probed at every row on the way down, because they are reversible:
+# press, record, press Escape, confirm by hash that we are back where we were.
+# That is what makes probing them at every node affordable.
+OPEN_KEYS = ["Space", "Enter", "s", "?", "n", "C", ">", "m", "E"]
 
-# A hard ceiling on work, so a UI change that makes every keystroke produce a
-# distinct frame cannot turn this into an unbounded crawl.
-MAX_EDGES = 1200
+# How far down the list to walk before giving up on finding the end. The walk
+# stops early when a press changes nothing, which is what the bottom looks like.
+MAX_WALK = 24
+
+# The captured terminal geometry. One place, so the JSON, the harness and the
+# page cannot disagree about how wide a frame is.
+COLS, ROWS = 136, 40
 
 # THE FLEET ANIMATES, AND THAT IS NOT A STATE CHANGE.
 #
@@ -205,15 +213,19 @@ def ansi_to_html(text: str) -> str:
 
 
 class Pane:
-    def __init__(self, binary, cols=170, rows=40):
+    def __init__(self, binary, cols=COLS, rows=ROWS):
         self.s = "democap"
         self.binary, self.cols, self.rows = binary, cols, rows
 
     def __enter__(self):
         subprocess.run(["tmux", "kill-session", "-t", self.s], capture_output=True)
+        # DEJIMA_DEMO_FREEZE stops the fleet animating. Without it the agent
+        # state words churn on a timer, every visit to the same screen hashes
+        # differently, and the graph fragments into hundreds of one-shot frames
+        # (see demoFrozen in cmd/dejima/tui_demo.go).
         subprocess.run(["tmux", "new-session", "-d", "-s", self.s,
                         "-x", str(self.cols), "-y", str(self.rows),
-                        f"{shlex.quote(self.binary)} tui --demo"], check=True)
+                        f"DEJIMA_DEMO_FREEZE=1 {shlex.quote(self.binary)} tui --demo"], check=True)
         # THE SIZE HAS TO BE DELIVERED, not merely declared, and this is the whole
         # reason the first version of this harness produced garbage.
         #
@@ -276,12 +288,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("binary")
     ap.add_argument("-o", "--out", default="demo-frames.json")
-    ap.add_argument("--max-depth", type=int, default=MAX_DEPTH)
     args = ap.parse_args()
 
-    frames = {}          # fid -> html
-    edges = {}           # fid -> {key: fid}
-    paths = {}           # fid -> key path from root (how to reach it again)
+    frames, edges = {}, {}
 
     def record(pane) -> str:
         raw = pane.raw()
@@ -290,58 +299,63 @@ def main():
         frames.setdefault(fid, html)
         return fid
 
-    # Root.
+    def link(a, key, b):
+        if a != b:
+            edges.setdefault(a, {})[key] = b
+
     with Pane(args.binary) as pane:
         root = record(pane)
-    paths[root] = []
-    frontier, seen, explored = [root], {root}, 0
 
-    for depth in range(args.max_depth):
-        nxt = []
-        for fid in frontier:
-            path = paths[fid]
-            with Pane(args.binary) as pane:
-                for k in path:
-                    pane.send(k)
-                # Confirm the replay landed where we think it did. A TUI whose
-                # state depends on timing would otherwise attribute an edge to
-                # the wrong parent, and the demo would teleport.
-                if record(pane) != fid:
-                    print(f"  ! replay diverged at depth {depth}; skipping node", file=sys.stderr)
-                    continue
-                for k in KEYS:
-                    if explored >= MAX_EDGES:
+        # --- pass 1: walk down, probing the reversible keys at every row -----
+        spine = [root]
+        cur = root
+        for _ in range(MAX_WALK):
+            for k in OPEN_KEYS:
+                pane.send(k)
+                dest = record(pane)
+                if dest == cur:
+                    continue  # key does nothing here; nothing to record
+                link(cur, k, dest)
+                pane.send("Escape")
+                if record(pane) != cur:
+                    # Escape did not bring us back. Rebuild the position from
+                    # the root rather than guess, so later edges are not
+                    # attributed to the wrong row.
+                    pane.restart()
+                    back = record(pane)
+                    for step in spine[1:]:
+                        pane.send("Down")
+                        back = record(pane)
+                    if back != cur:
+                        print("  ! lost position; stopping the walk", file=sys.stderr)
                         break
-                    pane.send(k)
-                    dest = record(pane)
-                    explored += 1
-                    if dest != fid:
-                        edges.setdefault(fid, {})[k] = dest
-                        if dest not in seen:
-                            seen.add(dest)
-                            paths[dest] = path + [k]
-                            nxt.append(dest)
-                    # Try to get back to the parent cheaply. Escape reverses most
-                    # overlays; verify by hash rather than trusting it, and replay
-                    # from scratch when it did not work.
-                    if dest != fid:
-                        pane.send("Escape")
-                        if record(pane) != fid:
-                            pane.restart()
-                            for k2 in path:
-                                pane.send(k2)
-                            if record(pane) != fid:
-                                break  # cannot re-establish; move to the next node
-            print(f"  depth {depth}: {fid} -> {len(edges.get(fid, {}))} edges "
-                  f"({len(frames)} frames, {explored} probes)", file=sys.stderr)
-        frontier = nxt
-        if not frontier or explored >= MAX_EDGES:
-            break
+            pane.send("Down")
+            nxt = record(pane)
+            if nxt == cur:
+                break  # bottom of the list
+            link(cur, "Down", nxt)
+            spine.append(nxt)
+            cur = nxt
+        print(f"  walked {len(spine)} rows, {len(frames)} frames", file=sys.stderr)
 
-    # Drop anything the root cannot reach. BFS records a frame the moment it is
-    # seen, including ones only ever observed while verifying a replay, and an
-    # unreachable frame is pure payload — every one is ~10 KB the visitor
-    # downloads and can never see.
+        # --- remaining passes: the other three move keys, in both directions --
+        for down_key, up_key in MOVE_PASSES:
+            # Up to the top.
+            for i in range(len(spine) - 1, 0, -1):
+                pane.send(up_key)
+                dest = record(pane)
+                link(spine[i], up_key, dest)
+            # Down to the bottom.
+            for i in range(0, len(spine) - 1):
+                pane.send(down_key)
+                dest = record(pane)
+                link(spine[i], down_key, dest)
+            print(f"  pass {down_key}/{up_key}: {sum(len(v) for v in edges.values())} edges",
+                  file=sys.stderr)
+
+    # Drop anything the root cannot reach. A frame recorded while re-establishing
+    # position is pure payload -- every one is ~10 KB the visitor downloads and
+    # can never see.
     reachable, stack = {root}, [root]
     while stack:
         for dest in edges.get(stack.pop(), {}).values():
@@ -354,7 +368,7 @@ def main():
     if dropped:
         print(f"  pruned {dropped} unreachable frame(s)", file=sys.stderr)
 
-    doc = {"cols": 170, "rows": 40, "root": root, "frames": frames, "edges": edges}
+    doc = {"cols": COLS, "rows": ROWS, "root": root, "frames": frames, "edges": edges}
     with open(args.out, "w") as fh:
         json.dump(doc, fh, separators=(",", ":"))
     print(f"{len(frames)} frames, {sum(len(v) for v in edges.values())} edges -> {args.out}",

@@ -405,16 +405,12 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
    colours inline (pre-rendered at capture time), so this file styles only the
    surround — tabs, the window, and the hint line under it. */
 .demo-wrap { margin: 2.5rem 0; }
-/* THE DEMO BREAKS OUT OF THE 800px COLUMN.
-   A terminal is 170 columns wide; inside the article measure it could only be
-   shown by shrinking the type to nothing or handing the visitor a horizontal
-   scrollbar, and it had the scrollbar. Prose wants a narrow measure, a terminal
-   wants its own width, so this one element gets the viewport. */
+/* The demo sits in the page measure like everything else. It briefly broke out
+   to 1500px to fit a 170-column frame; the frame is 136 columns now, which fits
+   the column, so the page keeps one set of margins instead of two. */
 .demo-win {
   background: #000; border: 1px solid #1c3358; border-radius: 10px;
   overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
-  width: min(1500px, calc(100vw - 2rem));
-  margin-left: 50%; transform: translateX(-50%);
   container-type: inline-size;
 }
 .demo-tabs {
@@ -434,12 +430,12 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   line-height: 1.25; color: #c9d1d9; background: #000;
   white-space: pre; tab-size: 8;
-  /* THE TYPE IS SIZED TO THE FRAME, so 170 columns fit exactly and nothing
-     scrolls sideways at any width. A monospace cell is ~0.6em wide; 0.62 is
-     deliberate slack, because the fallback fonts differ slightly and
-     under-filling by a hair is invisible while over-filling is a scrollbar.
-     The floor keeps a phone legible — below it the overflow rule takes over. */
-  font-size: max(9px, calc((100cqw - 28px) / (170 * 0.62)));
+  /* A FALLBACK ONLY. demo.js measures the actual font and sets font-size
+     exactly, because the cell width is not a constant: this rule assumed
+     ~0.62em and Windows Chrome falls back to Consolas at ~0.55em, which left a
+     tenth of the frame as dead space down the right-hand side. This value is
+     what renders before the script runs, and if it never runs. */
+  font-size: max(9px, calc((100cqw - 28px) / (136 * 0.6)));
   /* THE BOX DOES NOT RESIZE. 40 rows at line-height 1.25 is 50em of this
      element's own size — so the shell prompt, a help overlay and the full
      dashboard all occupy one terminal-shaped window (about 2:1) instead of the
@@ -507,7 +503,7 @@ body.demo-full .demo-screen {
   /* The rotated box is as wide as the viewport is TALL, so the type is sized
      off the height. Same 0.62 cell-width slack as the desktop rule. */
   width: 100dvh; height: 100vw;
-  font-size: max(6px, calc((100dvh - 16px) / (170 * 0.62)));
+  font-size: max(6px, calc((100dvh - 16px) / (136 * 0.6)));
   transform: translate(-50%, -50%) rotate(90deg);
   transform-origin: center center;
   overflow: hidden;
@@ -517,7 +513,7 @@ body.demo-full .demo-screen {
   body.demo-full .demo-screen {
     width: 100vw; height: 100dvh;
     transform: translate(-50%, -50%);
-    font-size: max(6px, calc((100vw - 16px) / (170 * 0.62)));
+    font-size: max(6px, calc((100vw - 16px) / (136 * 0.6)));
   }
 }
 .demo-hint {

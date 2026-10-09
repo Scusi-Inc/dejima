@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"time"
 
 	"github.com/aoos/dejima/internal/api"
@@ -18,10 +19,27 @@ import (
 // states churn on the tick so the hero clip looks alive. Nothing here touches a
 // network or a real island. See strategy/tui-capture-runbook.md for the scenes.
 
+// demoFrozen reports whether the fleet should hold still.
+//
+// The animation below is right for a screen recording and fatal for a frame
+// CAPTURE. scripts/capture-demo-frames.py identifies a screen by hashing it, so
+// a fleet that rewrites "working" to "needs you" every few seconds mints a new
+// state every few seconds: a walk that takes minutes recorded 178 frames of
+// what are really ten screens, every edge pointed at a frame that had already
+// expired, and pruning reduced a 232-edge graph to nine. Numbers were already
+// handled (the hash flattens digit runs); these are words, and no hash can tell
+// a word that changed because the UI changed from one that changed because a
+// timer fired. So the generator holds still instead, and only when asked.
+func demoFrozen() bool { return os.Getenv("DEJIMA_DEMO_FREEZE") != "" }
+
 // demoLatest cycles an agent through working → needs-you → idle so the fleet
 // animates. Offset by index so the agents aren't all in lock-step; /2 slows it
-// to a readable cadence for a recording.
+// to a readable cadence for a recording. Frozen, the spread across agents stays
+// (the fleet still shows all three states at once) and only the motion stops.
 func demoLatest(i, tick int) string {
+	if demoFrozen() {
+		tick = 0
+	}
 	switch (tick/2 + i) % 3 {
 	case 0:
 		return "" // running, no terminal signal → "working" (green)
