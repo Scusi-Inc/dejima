@@ -103,12 +103,15 @@ back by reading a short summary, not by replaying two days of conversation.
   (`handlers.Handler.ResumeLaunch`), and `containerResumesPrimary` keeps the
   primary agent and the others consistent
   (`internal/api/resume_consistency.go`).
-- **Missing:** an operator's `dejima wake` doesn't decide whether to resume.
-  Whatever launch command was baked into the container when it was created
-  decides, so an island resumes on wake only if it happens to have been upgraded
-  at some point. That's issue #333.
-- **Meant to stay cold:** unattended wakes (scheduled, wake-on-message) and
-  unpanic should start fresh and rely on what's on disk. Today they follow the
-  baked launch command too, so an upgraded island resumes on them as well. `claude --continue` picks the
+- **Built (#333):** the caller decides at each start, not the container's
+  history. The daemon writes the primary's launch to a read-only mounted file
+  before every start it initiates, and `image/start.sh` prefers it over the
+  launch baked in at create (`internal/api/launch_intent.go`). An operator's
+  `dejima wake` resumes.
+- **Cold on purpose:** unattended wakes (scheduled, wake-on-message) and
+  unpanic start fresh and rely on what's on disk. `claude --continue` picks the
   most recent conversation in that directory, which may not be the agent's own,
   and an emergency stop shouldn't resume the agent that caused it.
+- **Rollout:** an island picks this up once it's recreated on a rebuilt image
+  (`dejima image`, then `dejima upgrade`). Until then it keeps its old
+  behaviour, and the daemon follows it, so its agents never split.

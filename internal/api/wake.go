@@ -316,7 +316,9 @@ func (s *Server) wakeIslandFor(ctx context.Context, name string) {
 			return
 		}
 	default:
-		if err := s.rt.StartContainer(ctx, p.ContainerName()); err != nil {
+		// Cold, like a scheduled wake: nobody chose to resume this conversation,
+		// and the message that woke the island is delivered as a fresh turn.
+		if err := s.startWithIntent(ctx, p, false); err != nil {
 			s.log.Warn("wake-on-message: start", "island", name, "err", err)
 			return
 		}

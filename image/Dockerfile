@@ -153,7 +153,10 @@ RUN mkdir -p /opt/dejima/pipx/bin && chown -R dejima:dejima /opt/dejima/pipx
 
 # Entrypoint.
 COPY image/start.sh /usr/local/bin/dejima-start.sh
-RUN chmod +x /usr/local/bin/dejima-start.sh
+# The marker tells the daemon this start.sh reads /opt/host/launch/primary (#333).
+# An older image has no marker, and the daemon falls back to $DEJIMA_LAUNCH.
+RUN chmod +x /usr/local/bin/dejima-start.sh && \
+    mkdir -p /opt/dejima/features && touch /opt/dejima/features/launch-intent
 
 USER dejima
 WORKDIR /workspace

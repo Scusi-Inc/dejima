@@ -419,6 +419,31 @@ func LLMIslandConfigDir(name string) (string, error) {
 	return dir, nil
 }
 
+// LaunchIntentPath returns ~/.dejima/launch/<name> WITHOUT creating it — for
+// cleanup when the island is torn down.
+func LaunchIntentPath(name string) (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "launch", name), nil
+}
+
+// LaunchIntentDir returns the per-island dir holding the primary agent's launch
+// command for the container's NEXT start, mounted read-only at /opt/host/launch.
+// It is a directory rather than a file mount so an atomic rename shows through.
+// 0755: the in-container user is not the host user, and it holds no secrets.
+func LaunchIntentDir(name string) (string, error) {
+	dir, err := LaunchIntentPath(name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // HostGHConfigDir returns the user's ~/.config/gh dir (may not exist).
 func HostGHConfigDir() (string, error) {
 	home, err := os.UserHomeDir()
