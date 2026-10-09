@@ -423,6 +423,10 @@ kbd { background: var(--code-bg); border: 1px solid var(--border);
   border-radius: 6px 6px 0 0; padding: 5px 12px; cursor: pointer; white-space: nowrap;
 }
 .demo-tab.is-active { color: #eef3ff; background: #000; }
+.demo-tab-x {
+  margin-left: 8px; opacity: .55; font-weight: 700;
+}
+.demo-tab-x:hover { opacity: 1; }
 /* The screen is a <pre>: the frames are column-aligned box drawing, so any
    proportional fallback or line-height rounding breaks the layout outright. */
 .demo-screen {

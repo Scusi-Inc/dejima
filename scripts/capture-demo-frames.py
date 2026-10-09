@@ -77,6 +77,39 @@ COLS, ROWS = 136, 40
 VOLATILE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 
 
+# The page cannot see what the TUI has selected: a frame is opaque HTML, so
+# "Enter opens the highlighted thing" is unanswerable from the frame alone. The
+# capture knows, though — the cursor is on screen — so it reads the highlighted
+# row out of each frame and ships it as metadata. That is what lets Enter mean
+# the same thing here as in the real TUI: all of an island's agents, or one
+# agent.
+CURSOR = "\u25b6"  # ▶ , the row marker
+
+
+def selected_row(text: str):
+    """Return {kind,label} for the highlighted row, or None."""
+    for line in text.split("\n"):
+        if CURSOR not in line:
+            continue
+        body = line.split(CURSOR, 1)[1]
+        body = body.replace("\u2502", " ")  # │ panel borders
+        agent = any(g in body for g in ("\u251c", "\u2514"))  # ├ └ : a child row
+        for g in "\u25be\u25b8\u25cf\u25c6\u25a0\u251c\u2514\u2500\u21d5\u26b7!":
+            body = body.replace(g, " ")
+        label = " ".join(body.split())
+        if not label:
+            return None
+        # Island rows carry an agent count: "nimbus-api (4)  running · …".
+        m = re.match(r"^([A-Za-z0-9._-]+)\s*\((\d+)\)", label)
+        if m and not agent:
+            return {"kind": "island", "label": m.group(1), "agents": int(m.group(2))}
+        name = label.split("  ")[0].strip()
+        if name.startswith("+") or name.startswith("secrets"):
+            return {"kind": "other", "label": name}
+        return {"kind": "agent" if agent else "other", "label": name}
+    return None
+
+
 def stable_key(text: str) -> str:
     return VOLATILE.sub("#", text)
 
@@ -290,13 +323,17 @@ def main():
     ap.add_argument("-o", "--out", default="demo-frames.json")
     args = ap.parse_args()
 
-    frames, edges = {}, {}
+    frames, edges, rows = {}, {}, {}
 
     def record(pane) -> str:
         raw = pane.raw()
         html = ansi_to_html(raw)
         fid = hashlib.sha256(stable_key(raw).encode()).hexdigest()[:12]
-        frames.setdefault(fid, html)
+        if fid not in frames:
+            frames[fid] = html
+            sel = selected_row(CSI.sub("", OSC.sub("", SGR.sub("", raw))))
+            if sel:
+                rows[fid] = sel
         return fid
 
     def link(a, key, b):
@@ -365,10 +402,12 @@ def main():
     dropped = len(frames) - len(reachable)
     frames = {k: v for k, v in frames.items() if k in reachable}
     edges = {k: v for k, v in edges.items() if k in reachable}
+    rows = {k: v for k, v in rows.items() if k in reachable}
     if dropped:
         print(f"  pruned {dropped} unreachable frame(s)", file=sys.stderr)
 
-    doc = {"cols": COLS, "rows": ROWS, "root": root, "frames": frames, "edges": edges}
+    doc = {"cols": COLS, "rows": ROWS, "root": root, "frames": frames,
+           "edges": edges, "selected": rows}
     with open(args.out, "w") as fh:
         json.dump(doc, fh, separators=(",", ":"))
     print(f"{len(frames)} frames, {sum(len(v) for v in edges.values())} edges -> {args.out}",

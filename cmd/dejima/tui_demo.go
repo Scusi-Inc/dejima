@@ -10,6 +10,7 @@ import (
 	"github.com/aoos/dejima/internal/policy"
 	"github.com/aoos/dejima/internal/reposrc"
 	"github.com/aoos/dejima/internal/secrets"
+	"github.com/aoos/dejima/internal/version"
 )
 
 // Demo mode (`dejima tui --demo`) drives the dashboard from a synthetic fleet
@@ -143,7 +144,15 @@ func demoIsland(name string, tick int) (*api.IslandInfo, bool) {
 
 func demoOverview(tick int) *api.OverviewResponse {
 	isls := demoIslands(tick)
-	o := &api.OverviewResponse{TotalIslands: len(isls), DockerReachable: true, IslandImagePresent: true}
+	// Report THIS client's versions. Without them APIVersion is 0, which
+	// versionSkew correctly reads as "daemon predates version reporting" and
+	// prints an update warning across the footer — true of a daemon that is
+	// not there, useless to a visitor, and the first thing they see on the
+	// landing page. The demo has no daemon; it should not claim a broken one.
+	o := &api.OverviewResponse{
+		TotalIslands: len(isls), DockerReachable: true, IslandImagePresent: true,
+		DaemonVersion: version.Version, APIVersion: version.APIVersion,
+	}
 	for _, isl := range isls {
 		switch isl.Container {
 		case "running":

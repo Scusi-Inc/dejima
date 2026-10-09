@@ -82,7 +82,7 @@
     if (t.kind === 'tui') {
       screen.innerHTML = DATA.frames[t.frame] || '';
     } else {
-      screen.textContent = t.body;
+      screen.textContent = renderSession(t);
     }
     tabsEl.innerHTML = '';
     tabs.forEach(function (tab, i) {
@@ -91,6 +91,17 @@
       b.className = 'demo-tab' + (i === active ? ' is-active' : '');
       b.textContent = tab.title;
       b.addEventListener('click', function () { active = i; render(); focusScreen(); });
+      // Agent tabs close; the dejima tab does not. Esc and ctrl-c do the same
+      // thing from the keyboard — this is for people reaching for a mouse.
+      if (i > 0) {
+        var x = document.createElement('span');
+        x.className = 'demo-tab-x';
+        x.textContent = '\u00d7';
+        x.setAttribute('role', 'button');
+        x.setAttribute('aria-label', 'Close ' + tab.title);
+        x.addEventListener('click', function (ev) { ev.stopPropagation(); closeTab(i); focusScreen(); });
+        b.appendChild(x);
+      }
       tabsEl.appendChild(b);
     });
   }
@@ -99,7 +110,7 @@
 
   function available() {
     var t = tabs[active];
-    if (t.kind !== 'tui') return 'click the dejima tab to go back';
+    if (t.kind === 'session') return 'type a prompt \u00b7 esc or ctrl-c closes this tab';
     var ks = Object.keys(edges[t.frame] || {});
     if (!ks.length) return 'esc back   ·   q quit';
     var s = 'try: ' + ks.slice(0, 7).map(function (k) { return LABELS[k] || k; }).join('   ');
@@ -205,39 +216,130 @@
     hint('type  dejima  and press enter');
   }
 
-  // Opening an agent is the one thing the capture cannot show: attaching needs a
-  // daemon, and demo mode has none. So the session tab is openly canned, while
-  // every TUI frame stays real. Tabs are the TERMINAL's, which is how Dejima is
-  // actually used: the daemon sets their titles over the session protocol.
-  function openSession() {
-    for (var i = 0; i < tabs.length; i++) {
-      if (tabs[i].id === 'a1') { active = i; render(); return; }
+  // Opening an agent is the one thing a capture cannot show: attaching needs a
+  // daemon, and demo mode has none. So these panes are openly synthetic, while
+  // every frame in the dejima tab stays a real capture. They are not a static
+  // blob though — you can type at them, because "what is it like to sit in
+  // front of one of these" is the question the whole page exists to answer, and
+  // a screenshot cannot answer it.
+  //
+  // Tabs are the TERMINAL's, which is how Dejima actually works: the daemon
+  // sets their titles over the session protocol.
+  var AGENTS = {
+    'claude-code': {
+      name: 'Claude',
+      intro: function (isl, label) {
+        return [
+          '\u2726 Claude Code  \u00b7  ' + isl + '/' + label + '  \u00b7  /workspace',
+          '',
+          '  Context: 4 files \u00b7 CLAUDE.md loaded \u00b7 git ' + isl + ' @ master',
+          ''
+        ];
+      },
+      replies: [
+        ['  I read the three files that touch the retry path.', '',
+         '  The budget is applied per attempt rather than per request, so a',
+         '  slow upstream multiplies it. Moving it to the caller fixes the',
+         '  hang and keeps the per-attempt timeout.', '',
+         '  Want me to make that change and add the regression test?'],
+        ['  Done \u2014 3 files changed, tests pass.', '',
+         '    internal/retry/budget.go   | 18 +++++---',
+         '    internal/retry/budget_test.go | 41 +++++++++',
+         '    CHANGELOG.md               |  2 +', '',
+         '  Shall I open a PR?']
+      ]
+    },
+    codex: {
+      name: 'Codex',
+      intro: function (isl, label) {
+        return ['codex \u00b7 ' + isl + '/' + label + ' \u00b7 /workspace', ''];
+      },
+      replies: [
+        ['thinking\u2026', '',
+         'Found 2 candidates. The migration runs before the index exists, so',
+         'the backfill scans. Reordering 004 and 005 fixes it.', '',
+         'apply? (y/n)'],
+        ['applied. 2 files changed.', '', 'running tests\u2026 ok (41 passed)']
+      ]
     }
+  };
+
+  // Which agents each island holds, mirroring cmd/dejima/tui_demo.go. Needed
+  // because the frames are pictures: the page can read WHICH row is selected
+  // from the capture, but not what an island contains.
+  var ISLAND_AGENTS = {
+    'pixelforge': [['manager', 'claude-code'], ['level-design', 'codex'],
+                   ['encounters', 'claude-code'], ['balance', 'headless']],
+    'nimbus-api': [['manager', 'claude-code'], ['migrations', 'codex'],
+                   ['load-test', 'headless'], ['security-scan', 'headless']],
+    'harbor-ios': [['core', 'codex'], ['ui', 'claude-code']]
+  };
+  function ownerOf(agentLabel) {
+    for (var isl in ISLAND_AGENTS) {
+      var list = ISLAND_AGENTS[isl];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i][0] === agentLabel) return [isl, list[i][1]];
+      }
+    }
+    return null;
+  }
+
+  function agentSpec(type) { return AGENTS[type] || AGENTS['claude-code']; }
+
+  function renderSession(tab) {
+    var spec = agentSpec(tab.agentType);
+    var out = tab.lines.join('\n');
+    return out + '\n\n' + tab.prompt + tab.typed + '\u2588';
+  }
+
+  // openSession opens ONE agent. Opening an island opens every agent in it,
+  // which is what Enter does in the real TUI — and why the tab bar is a bar.
+  function openSession(island, label, type) {
+    var id = island + '/' + label;
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].id === id) { active = i; render(); return; }
+    }
+    var spec = agentSpec(type);
     tabs.push({
-      id: 'a1', title: 'api-gateway / a1', kind: 'session',
-      body: [
-        'Attached to api-gateway / a1 — Claude.',
-        'Detach with ctrl-b d; the agent keeps running.',
-        '',
-        '> summarise what changed on this branch',
-        '',
-        '  Three commits since origin/master. The first moves the retry budget',
-        '  out of the request path, the second adds the test that would have',
-        '  caught the original hang, and the third is a docs fix.',
-        '',
-        '  Want me to open a PR?',
-        '',
-        '(this pane is illustrative — the dejima tab is a real capture)'
-      ].join('\n')
+      id: id, title: id, kind: 'session', agentType: type,
+      lines: spec.intro(island, label),
+      prompt: type === 'codex' ? '\u203a ' : '> ',
+      typed: '', turn: 0
     });
     active = tabs.length - 1;
     render();
-    hint('click the dejima tab to go back');
+    hint('type a prompt and press enter   \u00b7   esc or ctrl-c closes this tab');
+  }
+
+  function submitPrompt(tab) {
+    var spec = agentSpec(tab.agentType);
+    var text = tab.typed.trim();
+    tab.typed = '';
+    if (!text) return;
+    tab.lines = tab.lines.concat([tab.prompt + text, '']);
+    tab.lines = tab.lines.concat(spec.replies[tab.turn % spec.replies.length], ['']);
+    tab.turn++;
+    render();
+  }
+
+  function closeTab(i) {
+    if (i <= 0) return;           // the dejima tab is not closeable
+    tabs.splice(i, 1);
+    active = Math.min(active, tabs.length - 1);
+    render();
+    hint(available());
   }
 
   function focusScreen() { screen.focus(); }
 
   function onKey(e) {
+    // ctrl-c is allowed through: in a terminal it is how you leave, and a
+    // visitor who has opened four agent tabs needs a way out that is not the
+    // mouse. Every other modifier chord belongs to the browser.
+    if (e.ctrlKey && (e.key === 'c' || e.key === 'C')) {
+      if (active > 0) { e.preventDefault(); closeTab(active); }
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     var k = keyName(e);
 
@@ -261,8 +363,12 @@
     }
 
     var t = tabs[active];
-    if (t.kind !== 'tui') {
-      // A session tab has nothing to drive; let the page keep its keys.
+    if (t.kind === 'session') {
+      e.preventDefault();
+      if (k === 'Escape') { closeTab(active); return; }
+      if (k === 'Enter') { submitPrompt(t); return; }
+      if (e.key === 'Backspace') { t.typed = t.typed.slice(0, -1); render(); return; }
+      if (e.key.length === 1) { t.typed += e.key; render(); }
       return;
     }
     e.preventDefault();
@@ -292,9 +398,31 @@
       return;
     }
 
-    // Enter on a row with no recorded transition is an attach, and attaching
-    // opens a tab — the one branch the capture cannot walk.
-    if (k === 'Enter' && !(edges[t.frame] || {})[k]) { openSession(); return; }
+    // Enter attaches when the highlighted row is something attachable. The
+    // capture ships what the cursor was on (a frame is opaque HTML, so the page
+    // cannot see it otherwise), which is what lets Enter mean here what it
+    // means in the real TUI: every agent in an island, or the one agent.
+    if (k === 'Enter') {
+      var sel = (DATA.selected || {})[t.frame];
+      if (sel && sel.kind === 'island') {
+        var list = ISLAND_AGENTS[sel.label] || [];
+        for (var i = 0; i < list.length; i++) openSession(sel.label, list[i][0], list[i][1]);
+        return;
+      }
+      if (sel && sel.kind === 'agent') {
+        var owner = ownerOf(sel.label);
+        if (owner) { openSession(owner[0], sel.label, owner[1]); return; }
+      }
+      // No selection metadata and nothing recorded for Enter: open the first
+      // island anyway rather than do nothing. Frames captured before the
+      // cursor row was recorded would otherwise make Enter dead, and a dead
+      // Enter on a dashboard reads as a broken page.
+      if (!sel && !(edges[t.frame] || {})[k]) {
+        var first = 'nimbus-api', fl = ISLAND_AGENTS[first];
+        for (var j = 0; j < fl.length; j++) openSession(first, fl[j][0], fl[j][1]);
+        return;
+      }
+    }
 
     var next = (edges[t.frame] || {})[k];
     if (!next) { hint('nothing bound to that here — ' + available()); return; }
@@ -413,7 +541,11 @@
     var cs = getComputedStyle(screen);
     var avail = screen.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     if (!(avail > 0)) return;
-    var size = avail / (cols * per);
+    // Two pixels of slack. Sub-pixel advance widths accumulate over 136
+    // columns, and overshooting by a fraction summons a horizontal scrollbar —
+    // which then narrows clientWidth and shifts the whole frame, which is how
+    // this was reported: "weird indenting when I scroll through options".
+    var size = (avail - 2) / (cols * per);
     screen.style.fontSize = Math.max(6, Math.floor(size * 100) / 100) + 'px';
   }
   function scheduleFit() {
