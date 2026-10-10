@@ -134,12 +134,18 @@ changes.
 
 ## Where the knowledge is
 
-`docs/README.md` maps all 91 docs by the question you arrived with. Three are
+`docs/README.md` maps all 92 docs by the question you arrived with. Three are
 worth reading before you diagnose anything or write a guard:
 `docs/testing/guards-need-controls.md` (does this check have a SUBJECT?),
 `docs/testing/readings-go-stale.md` (is this reading CURRENT?), and
 `docs/testing/lifecycle-not-value.md` (WHEN does this code run? — the one that
 decides whether a fix reaches things that already exist).
+
+A fourth is worth reading before you write a WARNING rather than a check:
+`docs/testing/warnings-are-not-fixes.md`. If the remedy is already in the
+function that prints the warning, printing it is not the deliverable — three
+times in one week that gap cost an operator a lost Codex history, a destroyed
+home volume, and a broken install.
 
 **A lesson that recurs twice becomes a check, not a third comment.** On
 2026-09-03 five pieces of knowledge failed to propagate; every one was already

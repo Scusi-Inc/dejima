@@ -1,6 +1,6 @@
 # The docs, mapped
 
-91 files, grouped by the question you arrived with. Every `.md` under `docs/` is
+92 files, grouped by the question you arrived with. Every `.md` under `docs/` is
 listed here exactly once, and `scripts/docs-index-check.py` fails the build if
 that stops being true or if a link here points at a file that does not exist.
 
@@ -38,6 +38,9 @@ writing a guard.
 - [testing/lifecycle-not-value.md](testing/lifecycle-not-value.md) — a claim
   about what ALREADY EXISTS is answered by the call site, not the function. Asks
   WHEN the code runs. The create-time path that cannot retrofit a live container.
+- [testing/warnings-are-not-fixes.md](testing/warnings-are-not-fixes.md) — the
+  code diagnosed it correctly and printed the diagnosis instead of acting on it.
+  Asks what a working check DID with what it found. Three instances, one week.
 - [wsl-windows-postmortem.md](wsl-windows-postmortem.md) — the Windows/WSL host:
   what was broken and why nobody had seen it. Docker Desktop's VM was hiding two
   unrelated assumptions.
