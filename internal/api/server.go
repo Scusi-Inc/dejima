@@ -2586,6 +2586,19 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 	if err != nil {
 		return err
 	}
+	// The primary's launch for this first start, and the mount that lets every
+	// later start choose again (see launch_intent.go). Kept out of
+	// credentialBindMounts on purpose: that list is also the drift check's
+	// expectation, and an island created before this mount existed is not
+	// drifted, it just falls back to its baked DEJIMA_LAUNCH.
+	if err := writeLaunchIntent(p, resume); err != nil {
+		return fmt.Errorf("launch intent: %w", err)
+	}
+	intentBind, err := launchIntentBind(p)
+	if err != nil {
+		return fmt.Errorf("launch intent: %w", err)
+	}
+	binds = append(binds, intentBind)
 
 	// A local-copy seed: mount the host repo read-only so the island can clone
 	// from it into its own workspace volume (the silo stays an independent copy).
@@ -3191,6 +3204,11 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	if dir, err := paths.HarnessPolicyIslandPath(p.Name); err == nil {
 		_ = os.RemoveAll(dir)
 	}
+	// The primary's launch intent: no secrets, but a stale one would decide how
+	// the next island to reuse the name launches its primary.
+	if dir, err := paths.LaunchIntentPath(p.Name); err == nil {
+		_ = os.RemoveAll(dir)
+	}
 	// Per-island secrets: values (keychain entries) AND the metadata + the
 	// materialized mount file. Scoped to the island, so they must not outlive
 	// it — and keychain entries would otherwise persist with nothing pointing
@@ -3247,17 +3265,20 @@ func (s *Server) wakeIsland(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch status {
+	// resume=true: `dejima wake` is an operator choosing to bring agents back,
+	// the graceful, operator-initiated restart ResumeLaunch exists for — the same
+	// reasoning as upgrade (#333). Unattended wakes stay cold; see wake.go.
 	case runtime.StatusMissing:
 		// Container was removed; recreate it against the existing volumes.
-		if err := s.createContainerForProject(r.Context(), p, "", false); err != nil {
+		if err := s.createContainerForProject(r.Context(), p, "", true); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 	case runtime.StatusRunning:
 		// No-op; already awake.
 	default:
-		if err := s.rt.StartContainer(r.Context(), p.ContainerName()); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("start container: %w", err))
+		if err := s.startWithIntent(r.Context(), p, true); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 	}

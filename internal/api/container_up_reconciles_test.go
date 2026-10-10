@@ -52,9 +52,13 @@ func TestEveryContainerUpPathReconciles(t *testing.T) {
 	// deliberate, reviewed act rather than an omission nobody notices.
 	allowed := map[string]string{}
 
+	// startWithIntent wraps StartContainer to record the launch intent first
+	// (#333). It is a primitive like the creator, and listing it here is what
+	// keeps its callers checked: they no longer call StartContainer by name.
 	const (
 		bringsUpA = "createContainerForProject"
 		bringsUpB = "StartContainer"
+		bringsUpC = "startWithIntent"
 	)
 	reconcilers := map[string]bool{"reconcileAgentsAsync": true, "reconcileAgents": true}
 
@@ -79,8 +83,8 @@ func TestEveryContainerUpPathReconciles(t *testing.T) {
 		}
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || fn.Name.Name == bringsUpA {
-				continue // the creator itself is the primitive, not a path
+			if !ok || fn.Body == nil || fn.Name.Name == bringsUpA || fn.Name.Name == bringsUpC {
+				continue // the creator and the starter are primitives, not paths
 			}
 			var bringsUp, reconciles bool
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -93,7 +97,7 @@ func TestEveryContainerUpPathReconciles(t *testing.T) {
 					return true
 				}
 				switch {
-				case sel.Sel.Name == bringsUpA, sel.Sel.Name == bringsUpB:
+				case sel.Sel.Name == bringsUpA, sel.Sel.Name == bringsUpB, sel.Sel.Name == bringsUpC:
 					bringsUp = true
 				case reconcilers[sel.Sel.Name]:
 					reconciles = true
