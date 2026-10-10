@@ -3844,6 +3844,17 @@ func (m tuiModel) openIslandAgents(name string) (tea.Model, tea.Cmd) {
 // invisible to us and counts as opened. Detecting that needs a handshake back
 // from the spawned client, which does not exist yet.
 func (m tuiModel) openAgents(name string, ids []string) (tea.Model, tea.Cmd) {
+	// Inside tmux, a handful of agents tile into ONE window as panes: opening an
+	// island means opening everything in it, and as tabs that buried the
+	// dashboard under several lookalike titles. Falls through to one window per
+	// agent when tmux is not the backend (macOS/Windows have no pane concept, so
+	// the same keystroke must not mean different things on different machines),
+	// when there are too many to tile, or if tmux refuses.
+	if len(ids) > 1 && len(ids) <= paneSplitMax && os.Getenv("TMUX") != "" {
+		if err := m.openAgentPanes(name, ids); err == nil {
+			return m, nil
+		}
+	}
 	var (
 		failed   []string
 		firstErr string
