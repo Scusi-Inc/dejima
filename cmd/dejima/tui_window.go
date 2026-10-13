@@ -91,6 +91,97 @@ func (m tuiModel) windowLabel(name, agentID, agentLabel string) string {
 	return island + "/" + suffix
 }
 
+// agentInner builds the shell command a spawned window or pane runs. Shared by
+// both so a pane and a tab cannot drift in what they actually launch.
+func (m tuiModel) agentInner(exe, verb, name, agentID, winLabel string, extra []string) string {
+	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s %s %s",
+		shquote(m.activeHost), shquote(winLabel), shquote(exe), verb, shquote(name))
+	if agentID != "" {
+		inner += " --agent " + shquote(agentID)
+	}
+	for _, e := range extra {
+		inner += " " + e
+	}
+	return inner
+}
+
+// tmuxDriveAllowed gates the real tmux shell-outs. A TEST BINARY NEVER TOUCHES
+// A REAL TMUX SESSION — see canOpenNewWindow above, where exactly this leaked
+// stray windows into an operator's live session for a week. It is a var rather
+// than a bare testing.Testing() check for the same reason canOpenNewWindow is:
+// a test that WANTS this path (with tmuxCmd stubbed) can opt in, and every test
+// that does not is safe without having to know the path exists.
+var tmuxDriveAllowed = func() bool { return !testing.Testing() }
+
+// paneSplitMax is the most agents worth tiling into one window. Past four the
+// panes are too small for an agent's UI to be usable, and the session protocol
+// faithfully resizes the island's tmux to match — so the result is correct and
+// unreadable. Beyond this, tabs.
+const paneSplitMax = 4
+
+// tmuxCmd is the test seam for the tmux shell-outs below.
+var tmuxCmd = exec.Command
+
+// openAgentPanes opens ONE new window and tiles the island's agents into it as
+// panes, rather than giving each agent its own window.
+//
+// Opening an island means opening everything in it, and as tabs that buried the
+// dashboard under four lookalike titles. Panes keep the island visible as one
+// thing. The usual reason not to nest terminals is size — an inner program
+// never learns it is in a quarter of a screen — but that is already solved
+// here: the session protocol sends a resize envelope on attach and on every
+// later change (see runSession in main.go), so each island's tmux follows its
+// pane exactly.
+//
+// tmux only. The macOS and Windows openers have no pane concept, so callers
+// fall back to windows there rather than letting the same keystroke mean
+// different things on different machines.
+func (m tuiModel) openAgentPanes(name string, ids []string) error {
+	if !tmuxDriveAllowed() {
+		return fmt.Errorf("refusing to drive tmux from a test binary")
+	}
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "dejima"
+	}
+	label := func(id string) string { return m.windowLabel(name, id, "") }
+
+	// The window is named for the ISLAND; the panes carry the agent names.
+	islandLabel := name
+	if isl, ok := m.islandByName(name); ok {
+		islandLabel = islandDisplay(isl)
+	}
+	out, err := tmuxCmd("tmux", "new-window", "-P", "-F", "#{window_id} #{pane_id}",
+		"-n", islandLabel, m.agentInner(exe, "connect", name, ids[0], label(ids[0]), nil)).Output()
+	if err != nil {
+		return fmt.Errorf("tmux new-window: %w", err)
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) != 2 {
+		return fmt.Errorf("tmux new-window: unexpected output %q", strings.TrimSpace(string(out)))
+	}
+	win, firstPane := fields[0], fields[1]
+
+	// Pane titles replace the per-tab titles this mode gives up: one tab means
+	// one OSC title, so without these there is nothing on screen saying which
+	// agent is which.
+	_ = tmuxCmd("tmux", "set-window-option", "-t", win, "pane-border-status", "top").Run()
+	_ = tmuxCmd("tmux", "select-pane", "-t", firstPane, "-T", label(ids[0])).Run()
+
+	for _, id := range ids[1:] {
+		po, err := tmuxCmd("tmux", "split-window", "-t", win, "-P", "-F", "#{pane_id}",
+			m.agentInner(exe, "connect", name, id, label(id), nil)).Output()
+		if err != nil {
+			return fmt.Errorf("tmux split-window: %w", err)
+		}
+		_ = tmuxCmd("tmux", "select-pane", "-t", strings.TrimSpace(string(po)), "-T", label(id)).Run()
+		// Re-tile as we go: tmux splits the ACTIVE pane, so without this the
+		// third split halves an already-half pane instead of the window.
+		_ = tmuxCmd("tmux", "select-layout", "-t", win, "tiled").Run()
+	}
+	return tmuxCmd("tmux", "select-layout", "-t", win, "tiled").Run()
+}
+
 // openAgentWindow launches `dejima <verb> <name> [--agent id] [extra…]` in a
 // separate window so the TUI can stay up as an overview. tmux is the portable
 // path (a sibling window); macOS scripts Terminal/iTerm; Windows opens a tab.
@@ -112,14 +203,7 @@ func (m tuiModel) openAgentWindow(verb, name, agentID, agentLabel string, extra 
 	// A shell command string: pin DEJIMA_HOST + the resolved tab title (so the
 	// spawned session's OSC title uses the agent's LABEL, not its id), then exec
 	// the verb. winLabel already prefers the label and falls back to the id.
-	inner := fmt.Sprintf("DEJIMA_HOST=%s DEJIMA_TAB_TITLE=%s exec %s %s %s",
-		shquote(m.activeHost), shquote(winLabel), shquote(exe), verb, shquote(name))
-	if agentID != "" {
-		inner += " --agent " + shquote(agentID)
-	}
-	for _, e := range extra {
-		inner += " " + e
-	}
+	inner := m.agentInner(exe, verb, name, agentID, winLabel, extra)
 
 	switch {
 	case os.Getenv("TMUX") != "":
