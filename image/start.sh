@@ -48,6 +48,16 @@ report_clone_failure() {
 # keep the image runnable on its own (e.g. `docker run` for debugging).
 SESSION="${DEJIMA_TMUX:-agent-a1}"
 LAUNCH="${DEJIMA_LAUNCH:-}"
+# DEJIMA_LAUNCH is fixed when the container is CREATED, but `docker start` reuses
+# the container, so it cannot say whether THIS start should resume the primary's
+# conversation (#333). The daemon writes that choice to a read-only mounted file
+# before each start it initiates; prefer it when it is there and non-empty. The
+# daemon only trusts this file on images that ship the marker below, so keep the
+# two together.
+LAUNCH_INTENT="/opt/host/launch/primary"
+if [[ -s "$LAUNCH_INTENT" ]]; then
+    LAUNCH="$(cat "$LAUNCH_INTENT")"
+fi
 
 # /workspace and the per-agent state dir (e.g. ~/.claude) are named volumes. A
 # volume mounted over a path the image didn't pre-create lands owned by root,

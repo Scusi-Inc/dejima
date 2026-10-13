@@ -131,7 +131,10 @@ func (s *Server) startIslandIfStopped(ctx context.Context, p *project.Project, n
 			return
 		}
 	default:
-		if err := s.rt.StartContainer(ctx, p.ContainerName()); err != nil {
+		// Cold: a scheduled wake fires unattended, and `claude --continue` picks the
+		// newest conversation in the directory, which may not be the agent's own.
+		// The task arrives by injection; the agent's memory is on disk.
+		if err := s.startWithIntent(ctx, p, false); err != nil {
 			s.log.Warn("scheduled-wake: start", "island", p.Name, "err", err)
 			return
 		}

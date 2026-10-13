@@ -54,6 +54,8 @@ writing a guard.
 - [security-boundary.md](security-boundary.md) — privilege exchange-down, the
   ironclad rule. Read before touching anything that crosses the island wall.
 - [exit-ramp.md](exit-ramp.md) — `dejima eject`, the no-lock-in guarantee.
+- [bounded-delegation.md](bounded-delegation.md) — five rules for agents that
+  hold real authority (money, mail), with what is built and what is not.
 - [launch-checklist.md](launch-checklist.md)
 
 ## "How do I test this, and what does green actually mean?"

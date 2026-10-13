@@ -152,7 +152,9 @@ func (s *Server) restartToRunning(ctx context.Context, p *project.Project) bool 
 			return false
 		}
 	default:
-		if err := s.rt.StartContainer(ctx, p.ContainerName()); err != nil {
+		// Cold: the panic button is an emergency stop, plausibly BECAUSE an agent
+		// was misbehaving. Resuming it mid-thought is the wrong default.
+		if err := s.startWithIntent(ctx, p, false); err != nil {
 			s.log.Error("unpanic: start container", "island", p.Name, "err", err)
 			return false
 		}
