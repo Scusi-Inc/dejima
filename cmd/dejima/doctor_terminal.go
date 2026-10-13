@@ -72,3 +72,32 @@ func checkTerminal(r *doctorReport) {
 			"this is deliberate: advertising them to a terminal that can't parse them smears output (see image/tmux.conf)")
 	}
 }
+
+// checkTerminalClipboard reports a terminal that cannot carry the clipboard
+// out of a child shell.
+//
+// Terminal.app does not implement OSC 52, so text copied inside an island
+// session never reaches the Mac's clipboard, and an agent's auth URL cannot be
+// copied at all. Dejima cannot fix that — it is the emulator's missing
+// feature, not ours.
+//
+// What Dejima CAN fix is that the fact evaporated. macTermNudge() says this
+// once, at first launch, and then writes a marker so it never says it again —
+// a one-time notice about a PERMANENT property of the machine. An operator
+// read it (or didn't) on day one, hit the clipboard wall days later, and had
+// nothing left to connect the two; he reported it as a bug. Doctor is where
+// someone goes when something is wrong, it is idempotent, and it never
+// mentioned this. Now it does.
+//
+// INFO, not WARN: the setup is working as well as that terminal permits, and
+// doctor must not exit non-zero over a choice of terminal.
+func checkTerminalClipboard(r *doctorReport) {
+	if currentTerminal() != terminalAppleTerminal {
+		return
+	}
+	r.add("Terminal", "clipboard", "INFO",
+		"Terminal.app has no OSC 52 — text copied inside an island session will not reach "+
+			"the system clipboard, and an agent's auth URL cannot be copied",
+		"use iTerm2, WezTerm or Ghostty for clipboard and tabs; Terminal.app also opens every "+
+			"agent in a separate window")
+}
