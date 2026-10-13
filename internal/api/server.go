@@ -3175,6 +3175,19 @@ func (s *Server) teardown(ctx context.Context, p *project.Project, force bool) e
 	_ = s.rt.RemoveContainer(ctx, p.ContainerName(), force)
 	_ = s.rt.RemoveVolume(ctx, p.WorkspaceVolume(), force)
 	_ = s.rt.RemoveVolume(ctx, p.HomeVolume(), force)
+	// The home SNAPSHOTS. Each is a FULL COPY of the home volume (snapshotHome),
+	// kept homeSnapshotKeep deep, and project.Delete below drops the record that
+	// names them — so a snapshot not removed here is orphaned beyond recovery:
+	// nothing lists it, and no later purge can find it to try again. On a host
+	// that reset a few islands before purging them this is the largest thing
+	// Dejima leaves behind, and it leaves it where only `docker volume ls` looks.
+	//
+	// force=true regardless of the caller's flag: the record is deleted
+	// unconditionally two lines down, so declining to remove the volume does not
+	// preserve a recoverable snapshot, it strands an unreachable one.
+	for _, snap := range p.HomeSnapshots {
+		_ = s.rt.RemoveVolume(ctx, snap.Volume, true)
+	}
 	_ = s.rt.RemoveNetwork(ctx, p.NetworkName())
 	// Drop the island's materialized GitHub identity (a plaintext token on disk);
 	// it lives outside the project dir, so project.Delete won't catch it.

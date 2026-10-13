@@ -168,6 +168,7 @@ func runDoctor(ctx context.Context) *doctorReport {
 	checkDaemon(ctx, r)
 	checkSupervision(ctx, r)
 	checkDocker(ctx, r)
+	checkOrphanedSnapshots(ctx, r)
 	checkVMMemory(ctx, r)
 	checkVMCPU(ctx, r)
 	checkIslandImage(ctx, r)
