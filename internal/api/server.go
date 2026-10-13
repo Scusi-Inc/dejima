@@ -2994,7 +2994,20 @@ func shSingleQuote(s string) string {
 // still launches and health reports missing-provider-auth.
 func agentProviderEnv(a *project.AgentSpec) string {
 	h, ok := handlers.Lookup(a.Type)
-	if !ok || !h.RequiresProviderKey {
+	if !ok {
+		return ""
+	}
+	// RequiresProviderKey means "this framework CANNOT work without a key", and
+	// gating on it alone silently dropped the provider for the agents that can
+	// work either way. codex and claude-code are Bundled: they authenticate
+	// themselves, so they require nothing — but registerLocalProvider's own
+	// comment says OPENAI_API_KEY + OPENAI_BASE_URL is "the shape
+	// OpenAI-compatible agents (aider, codex, goose, …) already read". Pointing
+	// codex at `local` was always meant to work; this is what stopped it.
+	//
+	// An EXPLICIT provider is an instruction, not a default: if the operator
+	// assigned one, honour it whatever the handler would otherwise need.
+	if !h.RequiresProviderKey && strings.TrimSpace(a.Provider) == "" {
 		return ""
 	}
 	var b strings.Builder
@@ -3035,7 +3048,16 @@ func agentLaunchScript(a *project.AgentSpec, resume bool) string {
 		// dropping /opt/dejima/npm-global/bin where the agent binary lives. bash
 		// (not sh) so load-secrets' %q-quoted output evals correctly. A missing hook
 		// (older image) is a harmless no-op; headless agents wrap their own bash -lc.
-		inner := ". /etc/profile.d/10-dejima-secrets.sh 2>/dev/null || true; exec " + launch
+		// Source the resolved provider key, for EVERY interactive agent rather
+		// than per-handler. The key bytes live in a 0600 mounted file and never
+		// become container env (see agentProviderEnv), so something has to read
+		// the file — and handlers that each wrote their own copy of this line
+		// meant a bundled agent given a provider silently got nothing. Guarded,
+		// so it is a no-op when no provider is assigned; harmless for the
+		// handlers whose own launch line still sources it too.
+		inner := ". /etc/profile.d/10-dejima-secrets.sh 2>/dev/null || true; " +
+			"set -a; _dk=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$_dk\" ] && . \"$_dk\"; set +a; " +
+			"exec " + launch
 		return idEnv + "exec bash -c " + shSingleQuote(inner)
 	}
 	// Headless: capture output to the per-agent log, optionally with a restart loop.

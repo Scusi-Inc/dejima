@@ -29,7 +29,11 @@ func sourcePrologue(t *testing.T) string {
 	got := agentLaunchScript(&project.AgentSpec{ID: "a1", Type: "claude-code"}, false)
 	// The prologue is everything from the leading `.` up to and including the
 	// `; exec ` that precedes the real launch command.
-	re := regexp.MustCompile(`\. /etc/profile\.d/[^\s]+ 2>/dev/null \|\| true; exec `)
+	// The prologue now has TWO parts: the secrets hook and the provider key.
+	// Both must reach the primary, so both are derived here and required in
+	// start.sh — a provider sourced only on the daemon path would miss the
+	// common island, which has exactly one agent and it is the primary.
+	re := regexp.MustCompile(`\. /etc/profile\.d/[^\s]+ 2>/dev/null \|\| true; .*?exec `)
 	m := re.FindString(got)
 	if m == "" {
 		t.Fatalf("agentLaunchScript no longer sources a profile.d hook — if that is intentional, "+

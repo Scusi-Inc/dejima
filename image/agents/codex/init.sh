@@ -45,8 +45,33 @@ if ! codex --version >/dev/null 2>&1; then
 fi
 
 # --- credentials -----------------------------------------------------------
+#
+# TWO MODES, AND THE HOST CONFIG BELONGS TO ONLY ONE OF THEM.
+#
+# Default (no provider assigned): this agent is the operator's ChatGPT login,
+# so the host's auth and config come along — that is the whole point.
+#
+# Provider assigned (`dejima agent add --provider local`, say): this agent is
+# pointed at a model endpoint of its own, and the host's config.toml is now
+# actively wrong. An operator who set up Ollama behind a LiteLLM proxy had a
+# host config naming `env_key = "LITELLM_API_KEY"`; it was copied into every
+# island, and Codex there refused to start:
+#
+#     Missing environment variable: `LITELLM_API_KEY`.
+#
+# The island does not have that variable and should not — it is a different
+# environment, which is the product working. But nothing said so, and the
+# error names a variable the operator never set in the island and cannot see
+# where it came from. So a provider-backed codex does not inherit the host's
+# config; it gets one written for the provider it was given. auth.json still
+# comes across: harmless when unused, and it keeps a ChatGPT fallback working
+# if the provider is later removed.
+HOST_FILES=(auth.json credentials.json config.toml)
+if [[ -n "${DEJIMA_PROVIDER:-}" ]]; then
+    HOST_FILES=(auth.json credentials.json)
+fi
 if [[ -d "$HOST_CODEX" ]]; then
-    for f in auth.json credentials.json config.toml; do
+    for f in "${HOST_FILES[@]}"; do
         if [[ -f "$HOST_CODEX/$f" && ! -f "$HOME_CODEX/$f" ]]; then
             cp "$HOST_CODEX/$f" "$HOME_CODEX/$f"
         fi
@@ -78,6 +103,28 @@ fi
 #
 # Only when the operator has not supplied their own config: a config.toml copied
 # from the host is their decision and is left alone.
+if [[ ! -f "$HOME_CODEX/config.toml" && -n "${DEJIMA_PROVIDER:-}" && -n "${OPENAI_BASE_URL:-}" ]]; then
+    # Provider-backed: point Codex at the endpoint Dejima resolved, reading the
+    # key from OPENAI_API_KEY — the shape registerLocalProvider materializes and
+    # the one every OpenAI-compatible agent here already reads. env_key names a
+    # variable the island actually has, which is the whole fix.
+    {
+        echo "# Written by Dejima for provider '${DEJIMA_PROVIDER}'."
+        echo "#"
+        echo "# Delete or edit this file to use your own settings; Dejima will not"
+        echo "# rewrite it. Removing the agent's provider restores the host config."
+        echo 'sandbox_mode = "danger-full-access"'
+        echo 'approval_policy = "never"'
+        echo 'model_provider = "dejima"'
+        [[ -n "${DEJIMA_MODEL:-}" ]] && echo "model = \"${DEJIMA_MODEL#*/}\""
+        echo ''
+        echo '[model_providers.dejima]'
+        echo "name = \"${DEJIMA_PROVIDER}\""
+        echo "base_url = \"${OPENAI_BASE_URL}\""
+        echo 'env_key = "OPENAI_API_KEY"'
+    } > "$HOME_CODEX/config.toml"
+fi
+
 if [[ ! -f "$HOME_CODEX/config.toml" ]]; then
     cat > "$HOME_CODEX/config.toml" <<'CODEX_CONFIG'
 # Written by Dejima on first agent start.
