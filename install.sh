@@ -199,7 +199,8 @@ if [[ "$DEST" == "local" ]]; then
         [[ -n "${DEJIMA_HOST:-}" ]] && info "  DEJIMA_HOST=${DEJIMA_HOST} is set in this shell"
         [[ -n "$stale_rc" ]] && info "  and set in:${stale_rc}"
         info "A local daemon will start, but the CLI will keep talking to that server"
-        info "until you remove the line and open a new shell. Nothing here edits it."
+        info "until the line is gone. The installer offers to comment it out at the end;"
+        info "you can also do it now, or run \`unset DEJIMA_HOST\` in this shell."
         echo
     fi
 fi
