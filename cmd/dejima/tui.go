@@ -4707,7 +4707,7 @@ func (m tuiModel) renderList(width int) (string, int) {
 		// selected — Enter already worked — but with no ▶ and no highlight it
 		// read as decoration, so people didn't know it was the thing to press.
 		body := styleFirstRun.Render("▶ + Set up your first island") + "\n\n" +
-			styleAccent.Render("Press ⏎ to start") + styleMuted.Render(" — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` or `+` opens this anytime.)")
+			styleAccent.Render("Press ⏎ to start") + styleMuted.Render(" — you'll pick a source: a local repo, a git URL,\nor browse your GitHub repos. (`n` opens this anytime.)")
 		// Nudge missing Claude creds before the first island, so a claude-code
 		// agent doesn't start unauthenticated and fail at first attach.
 		//

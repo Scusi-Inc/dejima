@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/aoos/dejima/internal/api"
 )
 
@@ -58,6 +60,44 @@ func TestGenuineFirstRunStillWelcomes(t *testing.T) {
 		}
 		if strings.Contains(out, "Nothing has been deleted") {
 			t.Errorf("%s: a fresh install was warned about a fleet it does not have", name)
+		}
+	}
+}
+
+// The first-run hint names keys that open the island creator. Every key it names
+// must actually do that, from this exact screen.
+//
+// It said "`n` or `+` opens this anytime", and `+` opened nothing: it is "add an
+// agent to the selected island", and on a first run the selected row belongs to
+// no island, so it was a no-op. Help text is a claim about the handler, written
+// in a different file from the handler, so the only way to keep it true is to
+// press what it says.
+func TestFirstRunHintKeysOpenTheCreator(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := tuiModel{width: 100, height: 40}
+	out, _ := m.renderList(90)
+
+	i := strings.Index(out, "opens this anytime")
+	if i < 0 {
+		t.Fatalf("no first-run hint to check — the scan has lost its subject:\n%s", out)
+	}
+	// The keys are the backticked tokens in the parenthetical before the phrase.
+	start := strings.LastIndex(out[:i], "(")
+	if start < 0 {
+		t.Fatalf("hint has no parenthetical: %q", out[:i])
+	}
+	parts := strings.Split(out[start:i], "`")
+	var keys []string
+	for j := 1; j < len(parts); j += 2 {
+		keys = append(keys, parts[j])
+	}
+	if len(keys) == 0 {
+		t.Fatalf("hint names no keys: %q", out[start:i])
+	}
+	for _, k := range keys {
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+		if got.(tuiModel).creator == nil {
+			t.Errorf("the first-run hint says `%s` opens the creator; pressing it here does not", k)
 		}
 	}
 }
