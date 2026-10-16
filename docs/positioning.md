@@ -44,22 +44,32 @@ way to explain Dejima.
   than being thrown away) and brokered crossings (the Port, capabilities, MCP,
   the ledger) are the parts nobody else ships.
 - **The unit of isolation is the project, not the agent.** *Walls between
-  projects, doors you open yourself.* Cloud sandboxes wall off every agent, which
-  makes collaboration the hard part. Worktree managers share freely with no wall
-  at all. Dejima walls the project and makes collaboration inside it the default.
-  `scripts/site-claim-check.py` already pins the per-project claim. This is the
-  same fact, said as a strength.
+  projects, agent collaboration within projects.* Cloud sandboxes wall off every
+  agent, which makes collaboration the hard part. Worktree managers share freely
+  with no wall at all. Dejima walls the project and makes collaboration inside it
+  the default. `scripts/site-claim-check.py` already pins the per-project claim.
+  This is the same fact, said as a strength.
 
-  The second line was *"open doors inside"* until 2026-10-15. It overclaimed:
-  what Dejima gives is communication PROTOCOLS -- `dejima msg` within an island,
-  `dejima link` between them (deny-all until `link grant`, per topic, with
-  destructive actions queued for the operator), Port for host files. None of
-  that is anything-goes, and a hero line saying "open doors" invited the reader
-  to assume it was. Note which direction the error ran: site-claim-check.py
-  exists to catch sentences that overclaim ISOLATION, so it was blind to one
-  that overclaimed OPENNESS, and what found it was the operator re-asking the
-  question -- the same mechanism that script's own header credits for all three
-  previous instances, and still the only thing that has ever caught one.
+  The second line read *"open doors inside"* until 2026-10-15, then *"doors you
+  open yourself"* for a day. Both were the operator's call to reject, and the
+  objection was the same each time: what Dejima gives is communication
+  PROTOCOLS -- `dejima msg` within an island, `dejima link` between them
+  (deny-all until `link grant`, scoped per topic, destructive actions queued for
+  the operator), Port for host files -- and none of that is anything-goes. A
+  door metaphor cannot carry the distinction: an open door says no governance, a
+  door you open yourself says the operator is working a lock all day, and
+  neither says what actually happens, which is agents coordinating under a
+  protocol. The line now states the fact plainly and claims nothing about how
+  permissive the inside is. It repeats "projects" deliberately: the repetition
+  is what puts the unit of isolation in the headline.
+
+  Worth naming the direction the error ran, because it says where to look next
+  time. site-claim-check.py exists to catch sentences that overclaim ISOLATION
+  -- the per-agent wall, fixed by hand three times -- so it was blind by
+  construction to one that overclaimed OPENNESS, and the h1 was never pinned.
+  What found it was the operator re-asking the question, which is the same
+  mechanism that script's own header credits for all three previous instances,
+  and still the only thing that has ever caught one.
 - **`dejimad` is the product, and every UI is a client.** Harbormaster and the
   operator's own business tooling reach Dejima only through the public API. That
   isn't a rule we hope to keep; it's how Harbormaster is built today, and it's

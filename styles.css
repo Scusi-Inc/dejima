@@ -78,6 +78,7 @@ td code { background: transparent; border: 0; padding: 0; color: var(--accent); 
 .hero { margin: 1.6rem 0 1.4rem; }
 .hero-eyebrow { color: var(--muted); font-size: 1rem; font-weight: 500; margin: 0 0 0.5rem; }
 .hero-h { font-size: 2.1rem; line-height: 1.15; letter-spacing: -0.02em;
+  text-wrap: balance;
   color: var(--hover); margin: 0 0 0.8rem; font-weight: 700; text-transform: none; }
 .hero-sub { font-size: 1.15rem; color: var(--fg); max-width: 38rem; margin: 0 0 1.4rem; }
 .hero-platforms { display: inline-block; color: var(--muted); font-size: 0.95rem;
