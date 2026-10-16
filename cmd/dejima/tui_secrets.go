@@ -49,6 +49,19 @@ type islandSecretsMsg struct {
 	added string
 }
 
+// rowCount is how many SELECTABLE rows the pane has: one per secret, plus a
+// trailing "add a secret" row. The add row is always present, so an island with
+// no secrets still has exactly one thing the cursor can land on — which it did
+// not before, and that was the bug: the empty state rendered a paragraph
+// explaining what secrets are and offered nothing to act on.
+func (v *secretsView) rowCount() int { return len(v.secrets) + 1 }
+
+// onAddRow reports whether the cursor is on the trailing add row. It also
+// answers "is there no secret under the cursor?", which every row action has to
+// ask before indexing v.secrets — with no secrets at all, cursor 0 IS the add
+// row.
+func (v *secretsView) onAddRow() bool { return v.cursor >= len(v.secrets) }
+
 func (m tuiModel) openSecretsView(island string) (tea.Model, tea.Cmd) {
 	if island == "" {
 		m.lastNotice = "select an island first — secrets are per-island"
@@ -141,7 +154,7 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "down", "j":
-		if v.cursor < len(v.secrets)-1 {
+		if v.cursor < v.rowCount()-1 {
 			v.cursor++
 		}
 		return m, nil
@@ -166,12 +179,31 @@ func (m tuiModel) secretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		island := v.island
 		m.secretsPane = nil
 		return m.openRestartView(island), nil
+	case "enter":
+		// Enter is the key an operator tries on a highlighted row, and it was
+		// bound to nothing here. On the add row it opens the form; on a secret it
+		// rotates THAT secret with the name already filled in, which is the only
+		// other thing this pane can do to a row. Binding it on one row and
+		// leaving it dead on the rest is the same inconsistency in a smaller box.
+		if v.onAddRow() {
+			v.adding, v.addPhase = true, 0
+			v.nameInput, v.valInput, v.err, v.notice = "", "", "", ""
+			return m, nil
+		}
+		v.adding, v.addPhase = true, 1
+		v.nameInput, v.valInput = v.secrets[v.cursor].Name, ""
+		v.err, v.notice = "", ""
+		return m, nil
 	case "a":
 		v.adding, v.addPhase = true, 0
 		v.nameInput, v.valInput, v.err, v.notice = "", "", "", ""
 		return m, nil
 	case "x":
-		if len(v.secrets) == 0 {
+		// onAddRow, not len(v.secrets) == 0. The cursor can now sit one past the
+		// last secret, so the old guard let v.secrets[v.cursor] run out of range
+		// on any island that HAS secrets — the case the old guard looked like it
+		// was covering.
+		if v.onAddRow() {
 			return m, nil
 		}
 		name := v.secrets[v.cursor].Name
@@ -304,8 +336,20 @@ func (v *secretsView) view(width int) string {
 				s.CreatedAt.Local().Format("2006-01-02"), rotated)
 			b.WriteString(marker + row + "\n")
 		}
-		b.WriteString("\n")
 	}
+
+	// The trailing add row. A selectable row rather than a line of footer help,
+	// because [a] in a footer is not discoverable and an operator looking at an
+	// island with no secrets had a paragraph of prose and nothing to press.
+	// Enter is what people try on a highlighted row, so there is now a row to
+	// highlight.
+	addLabel := "+ add a secret"
+	addMarker := "  "
+	if v.onAddRow() {
+		addMarker = styleAccent.Render("▶ ")
+		addLabel = styleAccent.Render(addLabel)
+	}
+	b.WriteString(addMarker + addLabel + "\n\n")
 
 	if v.restartPending {
 		// Loud on purpose: this is the single thing most likely to make the
@@ -350,6 +394,6 @@ func (v *secretsView) view(width int) string {
 		b.WriteString(styleRunning.Render("✓ " + v.notice))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(styleMuted.Render("[↑/↓] select   [a] add/rotate   [x] remove   [!] recreate to apply   [R] restart agents   [r] reload   [esc] back"))
+	b.WriteString(styleMuted.Render("[↑/↓] select   [⏎] add / rotate selected   [x] remove   [!] recreate to apply   [R] restart agents   [r] reload   [esc] back"))
 	return b.String()
 }
