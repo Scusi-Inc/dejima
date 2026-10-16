@@ -176,3 +176,100 @@ func TestRestartChecklistDoesNotPromiseSecrets(t *testing.T) {
 		t.Errorf("checklist still promises a restart applies secrets; got %q", out)
 	}
 }
+
+// THE ADD ROW. [a] was the only way into the add form, and a key named in a
+// footer is not an affordance: an operator on an island with no secrets saw a
+// paragraph about what secrets are and had nothing to select or press. The pane
+// now carries a trailing "add a secret" row that the cursor can land on, in
+// both the empty and the populated case.
+
+// An island with no secrets still has one selectable row, and Enter on it opens
+// the form. This is the reported case.
+func TestSecretsEmptyIslandStillHasARowToPressEnterOn(t *testing.T) {
+	m := tuiModel{secretsPane: &secretsView{island: "wildfire"}}
+	if got := m.secretsPane.rowCount(); got != 1 {
+		t.Fatalf("rowCount on an empty island = %d, want 1 (the add row)", got)
+	}
+	if !m.secretsPane.onAddRow() {
+		t.Fatal("cursor 0 on an empty island should be the add row")
+	}
+	if !strings.Contains(m.secretsPane.view(100), "add a secret") {
+		t.Error("the empty state renders no add row — this is the reported bug:\n" +
+			"a block of prose with nothing to act on")
+	}
+	m = feedSecrets(m, "enter")
+	if !m.secretsPane.adding || m.secretsPane.addPhase != 0 {
+		t.Errorf("enter on the add row: adding=%v phase=%d, want true/0",
+			m.secretsPane.adding, m.secretsPane.addPhase)
+	}
+}
+
+// Down walks past the last secret onto the add row, and stops there.
+func TestSecretsCursorReachesAddRowAndStops(t *testing.T) {
+	m := tuiModel{secretsPane: &secretsView{
+		island:  "wildfire",
+		secrets: []secrets.Meta{{Name: "A"}, {Name: "B"}},
+	}}
+	m = feedSecrets(m, "down", "down") // A → B → add row
+	if !m.secretsPane.onAddRow() {
+		t.Fatalf("cursor = %d, want the add row at 2", m.secretsPane.cursor)
+	}
+	m = feedSecrets(m, "down", "down") // must not run off the end
+	if m.secretsPane.cursor != 2 {
+		t.Errorf("cursor ran past the add row to %d", m.secretsPane.cursor)
+	}
+}
+
+// [x] on the add row is a no-op. Before the cursor could reach that row the
+// guard was `len(v.secrets) == 0`, which would now let v.secrets[v.cursor] run
+// out of range on exactly the islands that HAVE secrets — a panic, not a
+// misfire, and this is the test that would have caught it.
+func TestSecretsRemoveOnAddRowIsANoOp(t *testing.T) {
+	m := tuiModel{secretsPane: &secretsView{
+		island:  "wildfire",
+		secrets: []secrets.Meta{{Name: "A"}},
+	}}
+	m = feedSecrets(m, "down") // onto the add row
+	if !m.secretsPane.onAddRow() {
+		t.Fatal("setup: cursor should be on the add row")
+	}
+	out, _ := m.secretsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m = out.(tuiModel)
+	if m.confirm != nil {
+		t.Errorf("[x] on the add row opened a remove confirm for %v", m.confirm)
+	}
+}
+
+// Enter on a SECRET rotates that one, with the name prefilled, landing straight
+// in the masked value field. Enter bound on one row and dead on the others is
+// the same inconsistency the add row exists to remove.
+func TestSecretsEnterOnASecretRotatesIt(t *testing.T) {
+	m := tuiModel{secretsPane: &secretsView{
+		island:  "wildfire",
+		secrets: []secrets.Meta{{Name: "NPM_TOKEN"}, {Name: "EXPO_TOKEN"}},
+	}}
+	m = feedSecrets(m, "down", "enter") // cursor → EXPO_TOKEN
+	v := m.secretsPane
+	if !v.adding || v.addPhase != 1 {
+		t.Fatalf("adding=%v phase=%d, want true/1 (straight to the value)", v.adding, v.addPhase)
+	}
+	if v.nameInput != "EXPO_TOKEN" {
+		t.Errorf("nameInput = %q, want the selected secret EXPO_TOKEN", v.nameInput)
+	}
+	if v.valInput != "" {
+		t.Errorf("valInput = %q, want empty — the old value is never shown", v.valInput)
+	}
+}
+
+// A reload must not knock the cursor off the add row. The clamp used to pin it
+// to len(secrets)-1, so the reload that FOLLOWS adding a secret would move the
+// selection out from under the operator.
+func TestSecretsReloadKeepsTheCursorOnTheAddRow(t *testing.T) {
+	m := tuiModel{secretsPane: &secretsView{island: "wildfire", secrets: []secrets.Meta{{Name: "A"}}}}
+	m.secretsPane.cursor = 1 // the add row
+	out, _ := m.Update(islandSecretsMsg{island: "wildfire", secrets: []secrets.Meta{{Name: "A"}}})
+	m = out.(tuiModel)
+	if !m.secretsPane.onAddRow() {
+		t.Errorf("after reload cursor = %d, want it still on the add row", m.secretsPane.cursor)
+	}
+}
