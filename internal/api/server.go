@@ -137,6 +137,14 @@ type Server struct {
 	diskData map[string]int64
 	diskAt   time.Time
 
+	// Free-space cache. Same 30s TTL and the same reasoning, but a separate
+	// sample because it comes from a different place: `df` inside a running
+	// island rather than `docker system df` (see engineSpace for why it cannot
+	// be read from the daemon's own filesystem).
+	spaceMu   sync.Mutex
+	spaceData diskSpace
+	spaceAt   time.Time
+
 	// autonomyDial, when non-empty, is the host:port an in-island brain dials
 	// to reach this daemon over the token-authenticated TCP path (the macOS
 	// route where the unix socket can't be bind-mounted; e.g.

@@ -265,11 +265,17 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		out.IslandImagePresent = exists
 	}
 	allStats := s.statsAll(r.Context())
+	// Any one running island will do to measure free space through: they all
+	// share the engine's filesystem, which is the whole point of the figure.
+	dfVia := ""
 	for _, p := range projects {
 		status, _ := s.rt.Status(r.Context(), p.ContainerName())
 		switch status {
 		case runtime.StatusRunning:
 			out.Running++
+			if dfVia == "" {
+				dfVia = p.ContainerName()
+			}
 			if stats, ok := allStats[p.ContainerName()]; ok {
 				out.MemoryUsageBytes += stats.MemoryUsageBytes
 				out.MemoryLimitBytes += stats.MemoryLimitBytes
@@ -293,6 +299,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	out.HostMemoryBytes = vmmem.HostMemoryBytes()
 	out.VMRecommendedBytes = vmmem.RecommendedBytes(out.HostMemoryBytes)
+	// Substrate storage, host-wide like the memory figures above rather than
+	// owner-filtered like the counts: "is there room for another island" is a
+	// property of the server, not of the caller's own slice of it.
+	out.DiskUsedBytes = dejimaVolumeTotal(s.volumeSizes(r.Context()))
+	if sp := s.engineSpace(r.Context(), dfVia); sp.CapacityBytes > 0 {
+		out.DiskCapacityBytes, out.DiskFreeBytes = sp.CapacityBytes, sp.FreeBytes
+	}
 	// Stamp the caller's own identity (multi-tenant "who am I") so a client can
 	// drive its own-vs-all view without a second request.
 	if id, ok := IdentityFromContext(r.Context()); ok {
@@ -316,11 +329,15 @@ func (s *Server) handleAggregate(w http.ResponseWriter, r *http.Request) {
 	}
 	out := AggregateResponse{TotalIslands: len(projects)}
 	allStats := s.statsAll(r.Context())
+	dfVia := ""
 	for _, p := range projects {
 		status, _ := s.rt.Status(r.Context(), p.ContainerName())
 		switch status {
 		case runtime.StatusRunning:
 			out.Running++
+			if dfVia == "" {
+				dfVia = p.ContainerName()
+			}
 			if stats, ok := allStats[p.ContainerName()]; ok {
 				out.MemoryUsageBytes += stats.MemoryUsageBytes
 				out.MemoryLimitBytes += stats.MemoryLimitBytes
@@ -332,10 +349,9 @@ func (s *Server) handleAggregate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, sz := range s.volumeSizes(r.Context()) {
-		if sz > 0 {
-			out.DiskTotalBytes += sz
-		}
+	out.DiskTotalBytes = dejimaVolumeTotal(s.volumeSizes(r.Context()))
+	if sp := s.engineSpace(r.Context(), dfVia); sp.CapacityBytes > 0 {
+		out.DiskCapacityBytes, out.DiskFreeBytes = sp.CapacityBytes, sp.FreeBytes
 	}
 	writeJSON(w, http.StatusOK, out)
 }
