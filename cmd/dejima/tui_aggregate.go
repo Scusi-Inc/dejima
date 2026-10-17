@@ -105,7 +105,18 @@ func (m tuiModel) renderAggregateView() string {
 	row("Memory", mem)
 	row("CPU", fmt.Sprintf("%.1f%%", r.CPUPercent))
 	if r.DiskTotalBytes > 0 {
-		row("Disk", humanBytes(uint64(r.DiskTotalBytes)))
+		disk := humanBytes(uint64(r.DiskTotalBytes))
+		// The capacity this is measured against is the engine's filesystem, not
+		// the daemon host's — worth naming here, where there is room to say it,
+		// because on macOS the two differ and the VM's is the one that runs out.
+		if r.DiskCapacityBytes > 0 {
+			pct := float64(r.DiskTotalBytes) / float64(r.DiskCapacityBytes) * 100
+			disk += fmt.Sprintf(" of %s  (%.0f%%)", humanBytes(uint64(r.DiskCapacityBytes)), pct)
+		}
+		row("Disk", disk)
+		if r.DiskFreeBytes > 0 {
+			row("Free", humanBytes(uint64(r.DiskFreeBytes)))
+		}
 	}
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render("[r] refresh · [esc] close"))

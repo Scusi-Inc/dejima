@@ -4466,6 +4466,8 @@ func (m tuiModel) renderHeader() string {
 	// The local-model note replaces them because it IS decision-shaping: it is
 	// the difference between an agent you pay per token for and one you do not,
 	// and it was previously invisible outside a settings sub-page.
+	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
+
 	serverLine := styleMuted.Render("server: ") + styleAccent.Render(label)
 	if m.activeSource == "env" {
 		serverLine += styleMuted.Render(" via $DEJIMA_HOST")
@@ -4474,8 +4476,24 @@ func (m tuiModel) renderHeader() string {
 	if note := localHeaderNote(m.localModels); note != "" {
 		serverLine += styleMuted.Render("  ·  ") + styleAccent.Render(note)
 	}
-
-	infoW := m.width - lipgloss.Width(logoArt[0]) - 9
+	// Storage earns the line on the rule stated above: it is the difference
+	// between creating another island and clearing one out first, and it was
+	// previously only reachable by knowing to press `%`.
+	//
+	// It goes on LAST and in whichever form fits, because the info block is
+	// rendered with MaxWidth, which TRUNCATES rather than wraps — an over-long
+	// line would silently lose its tail, and the tail is where the new note
+	// sits. So the full note is tried, then the short one, then nothing; the
+	// pieces already on the line keep their place either way.
+	if full, short := diskHeaderNotes(m.overview); full != "" {
+		for _, note := range []string{full, short} {
+			cand := serverLine + styleMuted.Render("  ·  ") + styleAccent.Render(note)
+			if lipgloss.Width(cand) <= infoW {
+				serverLine = cand
+				break
+			}
+		}
+	}
 
 	// The top line is the announcement bar: normally blank (keeping the 7-row
 	// info block aligned with the logo), but a full-width highlighted broadcast
