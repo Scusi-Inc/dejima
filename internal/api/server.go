@@ -2963,8 +2963,30 @@ func (s *Server) runAgentShim(ctx context.Context, p *project.Project, a *projec
 	}
 	// `[ -x ] || exit 0` keeps a missing shim (unknown type / stale image) silent.
 	cmd := "[ -x " + shim + " ] || exit 0; exec " + shim
+	// THE SHIM NEEDS THE SAME PROVIDER VIEW THE LAUNCH LINE HAS.
+	//
+	// This ran with DEJIMA_AGENT_ID and DEJIMA_WORKTREE and nothing else, while
+	// the agent's provider reached only agentLaunchScript — so a per-type shim
+	// deciding anything from DEJIMA_PROVIDER / OPENAI_BASE_URL saw neither, and
+	// decided it for the wrong branch. codex's shim writes its config here, and
+	// without these it wrote the one that inherits the host's.
+	//
+	// The container-wide DEJIMA_PROVIDER is no substitute: it is the PRIMARY
+	// agent's, set once at create (see createContainerForProject), so a
+	// co-located agent with a provider of its own got the primary's answer or
+	// nothing. Sourcing the key file is what supplies OPENAI_BASE_URL, which
+	// never exists as container env by design — the key bytes stay in the 0600
+	// mounted file.
+	// EXPORT, not a bare `VAR=v` prefix. A prefix applies to the NEXT command
+	// only, and the next command here is the `[ -x ]` test — so the shim was
+	// exec'd with none of them and silently inherited the container's, which
+	// carries the PRIMARY agent's DEJIMA_AGENT_ID and no DEJIMA_WORKTREE at all.
+	// Verified: the prefix form yields the ambient id and an unset worktree.
+	env := "export DEJIMA_AGENT_ID=" + shSingleQuote(a.ID) +
+		" DEJIMA_WORKTREE=" + shSingleQuote(wt) + " " + agentProviderEnv(a) + "; "
+	srcKey := "set -a; _dk=\"${DEJIMA_PROVIDER_KEY_FILE:-}\"; [ -f \"$_dk\" ] && . \"$_dk\"; set +a; "
 	_, stderr, code, err := s.rt.Exec(ctx, p.ContainerName(),
-		[]string{"sh", "-c", "DEJIMA_AGENT_ID=" + a.ID + " DEJIMA_WORKTREE='" + wt + "' " + cmd})
+		[]string{"sh", "-c", env + srcKey + cmd})
 	if err != nil || code != 0 {
 		s.log.Warn("agent shim", "island", p.Name, "agent", a.ID, "type", a.Type,
 			"code", code, "err", err, "stderr", strings.TrimSpace(stderr))
@@ -3852,7 +3874,18 @@ func islandLLMConfigDir(p *project.Project) (string, error) {
 	seen := map[string]providercreds.Provider{}
 	for i := range p.Agents {
 		a := &p.Agents[i]
-		if h, ok := handlers.Lookup(a.Type); !ok || !h.RequiresProviderKey {
+		// RequiresProviderKey means "this framework CANNOT work without a key".
+		// Gating on it ALONE skipped the agents that can work either way, so a
+		// Bundled agent the operator explicitly pointed at a provider got no
+		// .env file materialized at all — and then every downstream consumer of
+		// that file (the launch line's `[ -f "$_dk" ]`, the per-type shim) was a
+		// silent no-op. agentProviderEnv already states the rule this is the
+		// other half of: an EXPLICIT provider is an instruction, not a default.
+		h, ok := handlers.Lookup(a.Type)
+		if !ok {
+			continue
+		}
+		if !h.RequiresProviderKey && strings.TrimSpace(a.Provider) == "" {
 			continue
 		}
 		if prov, ok := store.Resolve(a.Provider); ok {
