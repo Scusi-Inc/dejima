@@ -33,7 +33,7 @@ import (
 )
 
 // releaseDownloadBase is the GitHub release-asset base URL, overridable in tests.
-var releaseDownloadBase = "https://github.com/aoos/dejima/releases/download"
+var releaseDownloadBase = "https://github.com/Scusi-Inc/dejima/releases/download"
 
 // AssetName returns the release archive name for a platform, matching the names
 // produced by `make release-binaries` (see .github/workflows/release.yml):

@@ -74,7 +74,7 @@ func DetectMode() Mode {
 }
 
 // releasesURL is the GitHub "latest release" endpoint, overridable in tests.
-var releasesURL = "https://api.github.com/repos/aoos/dejima/releases/latest"
+var releasesURL = "https://api.github.com/repos/Scusi-Inc/dejima/releases/latest"
 
 // ReleaseInfo is the newest published release: its tag, its notes (the curated
 // release body — the source of the in-app "what's in this update" blurb), and the
