@@ -441,6 +441,18 @@ type OverviewResponse struct {
 	HostMemoryBytes    uint64 `json:"host_memory_bytes,omitempty"`
 	VMMemoryBytes      uint64 `json:"vm_memory_bytes,omitempty"`
 	VMRecommendedBytes uint64 `json:"vm_recommended_bytes,omitempty"`
+	// Substrate storage, the same host-wide shape as the memory figures above.
+	// DiskUsedBytes is what Dejima's island volumes occupy; DiskCapacityBytes /
+	// DiskFreeBytes describe the filesystem those volumes live on — on macOS the
+	// colima/Docker Desktop VM disk, which is the pool all islands share and is
+	// NOT the Mac's SSD.
+	//
+	// Free space is measured with one `df` inside a running island, so a host
+	// with nothing running reports used-only. 0 means UNDETERMINABLE and must
+	// not be rendered as "no space left".
+	DiskUsedBytes     int64 `json:"disk_used_bytes,omitempty"`
+	DiskCapacityBytes int64 `json:"disk_capacity_bytes,omitempty"`
+	DiskFreeBytes     int64 `json:"disk_free_bytes,omitempty"`
 	// Owner / Role identify the AUTHENTICATED caller (multi-tenant "who am I"), so
 	// a client can drive the own-vs-all lens: the host owner (role "owner") sees
 	// all islands and can filter to Owner; a teammate is already server-filtered.
@@ -473,6 +485,10 @@ type AggregateResponse struct {
 	MemoryLimitBytes uint64  `json:"memory_limit_bytes"`
 	CPUPercent       float64 `json:"cpu_percent"`
 	DiskTotalBytes   int64   `json:"disk_total_bytes"`
+	// Capacity and free space of the filesystem the island volumes share. 0 =
+	// undeterminable (nothing running to measure through); see OverviewResponse.
+	DiskCapacityBytes int64 `json:"disk_capacity_bytes,omitempty"`
+	DiskFreeBytes     int64 `json:"disk_free_bytes,omitempty"`
 }
 
 // AdminUpdateRequest is the body of POST /v1/admin/update. Execute=false (the
