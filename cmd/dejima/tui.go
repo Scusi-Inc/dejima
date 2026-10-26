@@ -1319,8 +1319,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				v.err = msg.err.Error()
 			} else {
 				v.err, v.secrets = "", msg.secrets
-				if v.cursor >= len(v.secrets) { // a removal can shrink the list
-					v.cursor = max(0, len(v.secrets)-1)
+				// Clamp to rowCount, not len(secrets): the pane has a trailing
+				// "add a secret" row at index len(secrets), so clamping to the
+				// secrets alone would knock the cursor OFF that row on every
+				// reload — including the reload that follows adding a secret.
+				if v.cursor >= v.rowCount() { // a removal can shrink the list
+					v.cursor = max(0, v.rowCount()-1)
 				}
 				if msg.added != "" {
 					v.restartPending = true
