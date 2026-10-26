@@ -3942,6 +3942,26 @@ components:
         host_memory_bytes: { type: integer }
         vm_memory_bytes: { type: integer }
         vm_recommended_bytes: { type: integer }
+        disk_used_bytes:
+          type: integer
+          description: >
+            Bytes occupied by Dejima's island volumes. Host-wide, like the
+            memory figures above, rather than owner-filtered like the counts.
+            0 when the storage driver does not report volume size.
+        disk_capacity_bytes:
+          type: integer
+          description: >
+            Size of the filesystem the island volumes live on — on macOS the
+            colima/Docker Desktop VM disk, which is the pool all islands share
+            and is NOT the host's own disk. Measured with one `df` inside a
+            running island, so 0 when nothing is running. 0 means
+            UNDETERMINABLE, never "full".
+        disk_free_bytes:
+          type: integer
+          description: >
+            Space left on that same filesystem. 0 means UNDETERMINABLE (no
+            running island to measure through) and must not be rendered as "no
+            space left".
         owner: { type: string, description: "the authenticated caller's own tenant (multi-tenant who-am-i); empty when no identity" }
         role: { type: string, description: "the authenticated caller's role (owner|operator|viewer); empty when no identity" }
     AggregateResponse:
@@ -3955,6 +3975,12 @@ components:
         memory_limit_bytes: { type: integer }
         cpu_percent: { type: number }
         disk_total_bytes: { type: integer }
+        disk_capacity_bytes:
+          type: integer
+          description: "Size of the filesystem the island volumes share; 0 = undeterminable. See OverviewResponse."
+        disk_free_bytes:
+          type: integer
+          description: "Space left on that filesystem; 0 = undeterminable, never \"full\"."
     SessionEnvelope:
       type: object
       description: >
