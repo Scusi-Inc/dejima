@@ -7,28 +7,33 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aoos/dejima/internal/selfupdate"
 )
 
 // The generated drop-in must (a) pin both binary destinations and the restart
 // target, with the wildcard only in the copy's source position, and (b) actually
 // parse as sudoers — a malformed drop-in can wedge sudo for the whole machine.
 func TestSudoersTemplate(t *testing.T) {
-	content := fmt.Sprintf(sudoersTemplate,
-		"alice", "/usr/local/bin/dejima", "/usr/local/bin/dejimad", launchdLabel)
+	const bin = "/usr/local/bin"
+	content := fmt.Sprintf(sudoersTemplate, "alice",
+		selfupdate.StagingPath(bin+"/dejima"), selfupdate.StagingPath(bin+"/dejimad"),
+		bin+"/dejima", bin+"/dejimad", launchdLabel)
 
 	for _, want := range []string{
 		"alice ALL=(root) NOPASSWD:",
-		"/usr/bin/install -m 0755 * /usr/local/bin/dejima,",
-		"/usr/bin/install -m 0755 * /usr/local/bin/dejimad,",
+		"/usr/bin/install -m 0755 " + selfupdate.StagingPath(bin+"/dejima") + " " + bin + "/dejima,",
+		"/usr/bin/install -m 0755 " + selfupdate.StagingPath(bin+"/dejimad") + " " + bin + "/dejimad,",
 		"/bin/launchctl kickstart -k system/" + launchdLabel,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("rendered sudoers missing %q\n---\n%s", want, content)
 		}
 	}
-	// The wildcard belongs only to the source of the copy, never the destination.
-	if strings.Contains(content, "* /usr/local/bin/dejima ") || strings.Contains(content, "/usr/local/bin/*") {
-		t.Errorf("wildcard must not reach a destination path\n%s", content)
+	// No wildcard anywhere now: sudo 1.9.17 rejects one in an argument, and the
+	// source is pinned to the staging path instead. See sudoers_drift_test.go.
+	if strings.Contains(content, "*") {
+		t.Errorf("wildcard must not appear at all\n%s", content)
 	}
 
 	visudo := "/usr/sbin/visudo"

@@ -375,9 +375,31 @@ func elevatedInstall(ctx context.Context, src, target string, out io.Writer) err
 	if runtime.GOOS == "windows" {
 		return errors.New("no elevation path on Windows")
 	}
+	// Stage at the ONE source path the NOPASSWD rule names. The rule pins the
+	// source as well as the destination now (sudo 1.9.17 rejects a wildcard in
+	// an argument), so installing straight from the scratch download would no
+	// longer match the grant — and a non-matching grant does not warn, it just
+	// stops applying, leaving a headless daemon to fail with "a password is
+	// required". Both sides spell it via selfupdate.StagingPath.
+	//
+	// Best-effort: if staging fails we still try the direct form, which is what
+	// an interactive `sudo dejima update` (password path, no rule involved)
+	// wants anyway.
+	staged := StagingPath(target)
+	source := src
+	if err := stageForElevatedInstall(src, staged); err == nil {
+		source = staged
+		defer os.Remove(staged)
+	}
 	// Passwordless first: the NOPASSWD rule `dejima service install --system`
 	// writes, and the only path a daemon can take at all.
-	cmd := exec.CommandContext(ctx, "sudo", "-n", "/usr/bin/install", "-m", "0755", src, target)
+	argv := ElevatedInstallArgv(target)
+	if source != staged {
+		// Staging failed; fall back to the scratch path. The NOPASSWD rule will
+		// not match this, which is correct — it is the interactive path.
+		argv = []string{"/usr/bin/install", "-m", "0755", source, target}
+	}
+	cmd := exec.CommandContext(ctx, "sudo", append([]string{"-n"}, argv...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err == nil {
@@ -398,7 +420,7 @@ func elevatedInstall(ctx context.Context, src, target string, out io.Writer) err
 		defer tty.Close()
 		fmt.Fprintf(out, "%s is root-owned — sudo needs your password to replace the binary:\n",
 			filepath.Dir(target))
-		ask := exec.CommandContext(ctx, "sudo", "/usr/bin/install", "-m", "0755", src, target)
+		ask := exec.CommandContext(ctx, "sudo", argv...)
 		ask.Stdin, ask.Stdout, ask.Stderr = tty, out, out
 		if err := ask.Run(); err == nil {
 			return nil
