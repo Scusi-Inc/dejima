@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aoos/dejima/internal/selfupdate"
 )
 
 const launchdSystemPlist = "/Library/LaunchDaemons/" + launchdLabel + ".plist"
@@ -21,21 +23,30 @@ const launchdSystemSudoers = "/etc/sudoers.d/dejima"
 
 // sudoersTemplate grants exactly the two privileged steps a daemon self-update
 // needs and nothing else: replace the two dejima binaries in their install dir,
-// and restart this one launchd job. The binary destinations and the restart
-// target are pinned; only the copy's source path is a wildcard (sudo matches
-// arguments positionally, so no extra flags can be smuggled in). Verbs:
-// %[1]s=user, %[2]s=dejima path, %[3]s=dejimad path, %[4]s=launchd label.
+// and restart this one launchd job. EVERY path is pinned — source and
+// destination both — and sudo matches arguments positionally, so no extra flags
+// can be smuggled in. Verbs: %[1]s=user, %[2]s/%[3]s=staged sources,
+// %[4]s=dejima path, %[5]s=dejimad path, %[6]s=launchd label.
+//
+// The source used to be a wildcard. sudo 1.9.17 refuses to parse that at all:
+//
+//	syntax error: wildcards are not allowed in command arguments
+//
+// which is the parser catching the thing the old comment called "deliberately
+// narrow" — a wildcard in an argument position is how a scoped grant becomes an
+// unscoped one. selfupdate.StagingPath now gives both sides one spelling of the
+// source, so the grant is narrower than it was AND parses on current sudo.
 const sudoersTemplate = `# Managed by dejima (dejima service install --system).
 # Remove with 'dejima service uninstall' or by deleting this file.
 #
 # Lets %[1]s apply daemon self-updates (dejima update, TUI [U]) without a
 # password prompt: the system daemon is headless (no TTY), so the two privileged
 # steps — replacing the dejima binaries and restarting the launchd job — cannot
-# prompt for one. Scope is deliberately narrow: the binary destinations and the
-# restart target are pinned; only the source path of the copy is a wildcard.
-%[1]s ALL=(root) NOPASSWD: /usr/bin/install -m 0755 * %[2]s, \
-                          /usr/bin/install -m 0755 * %[3]s, \
-                          /bin/launchctl kickstart -k system/%[4]s
+# prompt for one. Scope is deliberately narrow: every path here is pinned, and
+# the update stages its new binary at the one source named below.
+%[1]s ALL=(root) NOPASSWD: /usr/bin/install -m 0755 %[2]s %[4]s, \
+                          /usr/bin/install -m 0755 %[3]s %[5]s, \
+                          /bin/launchctl kickstart -k system/%[6]s
 `
 
 // parseIDs converts a user's numeric uid/gid strings into ints for os.Chown.
@@ -222,10 +233,14 @@ func (m *launchdSystemManager) Restart() error {
 // validates with `visudo -cf` first and never installs an unparseable file — a
 // broken sudoers drop-in can wedge sudo for every user on the box.
 func installSelfUpdateSudoers(u *user.User, binDir string) error {
+	dejimaPath := filepath.Join(binDir, "dejima")
+	dejimadPath := filepath.Join(binDir, "dejimad")
 	content := fmt.Sprintf(sudoersTemplate,
 		u.Username,
-		filepath.Join(binDir, "dejima"),
-		filepath.Join(binDir, "dejimad"),
+		selfupdate.StagingPath(dejimaPath),
+		selfupdate.StagingPath(dejimadPath),
+		dejimaPath,
+		dejimadPath,
 		launchdLabel,
 	)
 	tmp, err := os.CreateTemp("", "dejima-sudoers-*")
