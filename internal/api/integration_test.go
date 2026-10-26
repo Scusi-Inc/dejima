@@ -584,7 +584,11 @@ func TestMultiAgentLifecycle(t *testing.T) {
 	// agent-state hook into the shared ~/.claude) before launch — start.sh only
 	// runs the primary's. Without this, p2 has no heartbeat → wake-on-message,
 	// idle-hibernate, and the idle metric are silently dead for it.
-	if !execContains(calls, "/opt/dejima/agents/claude-code/init.sh", "DEJIMA_AGENT_ID=p2") {
+	// Quoted and EXPORTED. The bare `DEJIMA_AGENT_ID=p2 ` prefix this used to
+	// match applied only to the `[ -x ]` test that followed it, so the shim
+	// exec'd without it and inherited the container's PRIMARY id — this
+	// assertion passed on the text of a command whose effect was the bug.
+	if !execContains(calls, "/opt/dejima/agents/claude-code/init.sh", "export DEJIMA_AGENT_ID='p2'") {
 		t.Errorf("expected p2's per-type shim (init.sh) to run before launch; execs=%v", calls)
 	}
 	// The shim also receives this agent's worktree so init.sh can pre-accept

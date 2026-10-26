@@ -78,6 +78,53 @@ if [[ -d "$HOST_CODEX" ]]; then
     done
 fi
 
+# --- a config that cannot work here ----------------------------------------
+#
+# THE ONE CHECK THAT DOES NOT CARE HOW THE FILE GOT HERE.
+#
+# Everything above is about not copying the wrong config in. That is worth
+# doing and it is not sufficient, because a config.toml arrives by more routes
+# than the copy: one copied before any of this shipped and still sitting in the
+# island's home volume (nothing below ever overwrites an existing file), one an
+# operator wrote by hand, one left by a provider that has since been removed.
+# Each of those was a separate bug report and each got a separate fix aimed at
+# its own route.
+#
+# So check the PROPERTY instead of the provenance. Codex reads its key from the
+# variable named by `env_key`, and a config selecting a provider whose env_key
+# is unset in this island cannot start — that is decidable here, at agent start,
+# without knowing where the file came from:
+#
+#     Missing environment variable: `LITELLM_API_KEY`.
+#
+# An operator running Ollama behind a LiteLLM proxy had that variable on the
+# host and never in the island, which is the boundary working as intended. The
+# error names a variable they never set here and gives no hint where it came
+# from.
+#
+# Moved aside, never deleted: it is the operator's file, it is the only copy of
+# whatever they had configured, and the path is printed so they can look.
+config_selects_missing_env() {
+    local cfg="$1" prov key
+    [[ -f "$cfg" ]] || return 1
+    prov=$(sed -n 's/^[[:space:]]*model_provider[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | tail -1)
+    [[ -n "$prov" ]] || return 1
+    # env_key from THAT provider's table only: a config may define several, and
+    # the ones not selected are irrelevant to whether codex can start.
+    key=$(sed -n "/^\[model_providers\.${prov}\]/,/^\[/p" "$cfg" |
+        sed -n 's/^[[:space:]]*env_key[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    [[ -n "$key" ]] || return 1
+    [[ -z "${!key:-}" ]]
+}
+
+if config_selects_missing_env "$HOME_CODEX/config.toml"; then
+    mv "$HOME_CODEX/config.toml" "$HOME_CODEX/config.toml.unusable"
+    echo "dejima: ~/.codex/config.toml selected a model provider whose API-key" >&2
+    echo "dejima: variable is not set in this island, so codex could not start." >&2
+    echo "dejima: moved it to ~/.codex/config.toml.unusable and wrote a working one." >&2
+    echo "dejima: to use that endpoint here, add the key with: dejima secret set <island> <VAR>" >&2
+fi
+
 # --- sandbox ---------------------------------------------------------------
 #
 # THE ISLAND IS THE SANDBOX. Codex ships its own, built on bubblewrap, and
