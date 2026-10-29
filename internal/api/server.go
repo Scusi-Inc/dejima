@@ -2687,9 +2687,15 @@ func (s *Server) createContainerForProject(ctx context.Context, p *project.Proje
 			// the read-only mounted file is (materialized by islandLLMConfigDir),
 			// so the secret never appears in env / `docker inspect`. The per-agent
 			// shim sources the file and translates DEJIMA_MODEL into native config.
-			if h.RequiresProviderKey {
+			//
+			// Same rule as agentProviderEnv: an EXPLICIT provider is an instruction,
+			// so a bundled agent (codex) that was given one gets it here too. Gating
+			// on RequiresProviderKey alone dropped it for the PRIMARY only — #461
+			// fixed added agents, and a codex island created pointing at `local`
+			// still launched with no provider at all.
+			if h.RequiresProviderKey || strings.TrimSpace(pa.Provider) != "" {
 				if pa.Model != "" {
-					env["DEJIMA_MODEL"] = pa.Model
+					env["DEJIMA_MODEL"] = launchModel(pa.Provider, pa.Model)
 				}
 				if store, err := providercreds.Load(); err == nil {
 					if prov, ok := store.Resolve(pa.Provider); ok {
@@ -3055,7 +3061,7 @@ func agentProviderEnv(a *project.AgentSpec) string {
 	}
 	var b strings.Builder
 	if a.Model != "" {
-		b.WriteString("DEJIMA_MODEL=" + shSingleQuote(a.Model) + " ")
+		b.WriteString("DEJIMA_MODEL=" + shSingleQuote(launchModel(a.Provider, a.Model)) + " ")
 	}
 	store, err := providercreds.Load()
 	if err != nil {
