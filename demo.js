@@ -45,7 +45,9 @@
     j: 'j/↓ down', k: 'k/↑ up', Down: '↓ down', Up: '↑ up',
     Left: '←', Right: '→', Space: 'space expand', Enter: '⏎ open',
     Escape: 'esc back', C: 'C connection', s: 's settings', m: 'm actions',
-    n: 'n new island', E: 'E collapse all', '?': '? help', '>': '> shell'
+    n: 'n new island', E: 'E collapse all', '?': '? help', '>': '> shell',
+    '+': '+ add agent', X: 'X remove agent', H: 'H server', e: 'e rename',
+    d: 'd purge'
   };
 
   function keyName(e) {
@@ -114,7 +116,10 @@
     var ks = Object.keys(edges[t.frame] || {});
     if (!ks.length) return 'esc back   ·   q quit';
     var s = 'try: ' + ks.slice(0, 7).map(function (k) { return LABELS[k] || k; }).join('   ');
-    if (!ks.Escape && backStack.length) s += '   esc back';
+    // ks is an ARRAY, so ks.Escape was always undefined and this always fired.
+    // Harmless while no frame had a real Escape edge; now that the capture
+    // records them, it printed "esc back" twice on every panel.
+    if (ks.indexOf('Escape') === -1 && backStack.length) s += '   esc back';
     return s + '   ·   q quit';
   }
 

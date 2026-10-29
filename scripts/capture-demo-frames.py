@@ -53,7 +53,22 @@ MOVE_PASSES = [("Down", "k"), ("j", "Up")]
 # OPEN keys are probed at every row on the way down, because they are reversible:
 # press, record, press Escape, confirm by hash that we are back where we were.
 # That is what makes probing them at every node affordable.
-OPEN_KEYS = ["Space", "Enter", "s", "?", "n", "C", ">", "m", "E"]
+# Every key the root footer ADVERTISES belongs here, plus the panel openers.
+# A footer naming a key that does nothing is the loudest "this is a mock" signal
+# a visitor gets, and the old set left [+], [X] and [H] dead on the dashboard.
+#
+# Deliberately absent: `q` quits the TUI and would end the crawl (the page
+# handles it itself), and `U`/`a`/`o` reach for a daemon, an attach or a new
+# terminal window — none of which exist behind `--demo`, so they would capture
+# an error state and present it as the product.
+# `R` (refresh) is deliberately absent too, and for a different reason than the
+# others: it is not irreversible, it is INVISIBLE. It redraws the dashboard with
+# fresh stats, so the frame differs only in a CPU percentage — a new node by
+# content hash, carrying none of the dashboard's key edges, and the visitor who
+# presses it lands somewhere that looks identical and answers nothing. Twenty
+# such frames, every one a dead end.
+OPEN_KEYS = ["Space", "Enter", "s", "?", "n", "C", ">", "m", "E",
+             "+", "X", "H", "e", "d"]
 
 # How far down the list to walk before giving up on finding the end. The walk
 # stops early when a press changes nothing, which is what the bottom looks like.
@@ -402,7 +417,27 @@ def main():
                     continue  # key does nothing here; nothing to record
                 link(cur, k, dest)
                 pane.send("Escape")
-                if record(pane) != cur:
+                back_fid = record(pane)
+                # RECORD THE WAY BACK. The walk has always pressed Escape here to
+                # return to the row it was probing from; it just never wrote the
+                # edge down. So every panel the visitor could open was a node with
+                # no way out — 34 of 54 frames were dead ends, and demo.js had to
+                # synthesise a back-stack to paper over it. The transition is
+                # already being made and verified; this is only keeping it.
+                if back_fid == cur:
+                    link(dest, "Escape", cur)
+                else:
+                    # NOT EVERY OPENER IS A PANEL. `E` collapses the whole tree
+                    # and `Space` expands a row: there is nothing over the top to
+                    # dismiss, so Escape leaves the visitor in the new state with
+                    # no recorded way back, and the key the footer advertises
+                    # becomes a trapdoor. These are TOGGLES — the same key
+                    # returns — so try that before giving up and rebuilding.
+                    pane.send(k)
+                    back_fid = record(pane)
+                    if back_fid == cur:
+                        link(dest, k, cur)
+                if back_fid != cur:
                     # Escape did not bring us back. Rebuild the position from
                     # the root rather than guess, so later edges are not
                     # attributed to the wrong row.
