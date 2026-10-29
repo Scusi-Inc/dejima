@@ -166,6 +166,16 @@ func demoOverview(tick int) *api.OverviewResponse {
 	}
 	o.MemoryLimitBytes = 8 * 1024 * 1024 * 1024
 	o.CPUPercent = float64((tick*7)%23) + 18
+	// Substrate storage, or the header's newest line is blank in the one place
+	// most people will ever see this TUI. A demo fixture that omits a field
+	// silently un-ships the feature for every visitor, and nothing fails.
+	//
+	// Fixed rather than derived from tick: the figure is meant to read as a
+	// slow-moving fact about the host, and a disk total that visibly jitters
+	// every two seconds would say the opposite.
+	o.DiskUsedBytes = 42*1024*1024*1024 + 900*1024*1024
+	o.DiskCapacityBytes = 352 * 1024 * 1024 * 1024
+	o.DiskFreeBytes = 310 * 1024 * 1024 * 1024
 	return o
 }
 
