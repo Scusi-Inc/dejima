@@ -462,15 +462,6 @@ func HostClaudeDir() (string, error) {
 	return filepath.Join(home, ".claude"), nil
 }
 
-// HostCodexDir returns the user's ~/.codex dir (may not exist).
-func HostCodexDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".codex"), nil
-}
-
 // CodexSeedDir returns ~/.dejima/secrets/codex — where a pushed Codex login is
 // stored so islands can inherit it.
 //
