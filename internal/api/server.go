@@ -4078,37 +4078,53 @@ func credentialBindMounts(p *project.Project) ([]runtime.BindMount, error) {
 		}
 	}
 
-	// Codex: a PUSHED login wins over the daemon host's own ~/.codex, and it is
-	// mounted at THE SAME PATH rather than beside it.
+	// Codex: this mount carries CREDENTIALS, never the daemon host's ~/.codex.
 	//
-	// That path choice is the whole point. Every island's codex shim already
-	// copies /opt/host/codex/auth.json into the agent's ~/.codex — it has for a
-	// long time — so serving the pushed credential at that path makes it reach
-	// islands built from images that predate any of this. A new mount point would
-	// have needed a new shim, which ships in the image, which does not reach the
-	// containers already on disk. That is the trap this repo keeps re-learning,
-	// and here it is avoidable for free.
+	// It used to be either/or — a pushed login, else the host's whole ~/.codex at
+	// the same path — and that fallback shipped the host's config.toml into every
+	// island alongside the credentials. config.toml describes the HOST: its
+	// localhost, its environment variables, its proxy. An operator who set up a
+	// local model behind a LiteLLM proxy on the daemon box had
 	//
-	// The push takes precedence because it is the more DELIBERATE of the two: an
-	// operator who ran `dejima auth push` on a logged-in machine said which
-	// account islands should use, where the host's ~/.codex is whatever happens
-	// to be on the daemon box.
-	codexMounted := false
+	//     model_provider = "litellm"
+	//     base_url       = "http://localhost:4000/v1"
+	//     env_key        = "LITELLM_API_KEY"
+	//
+	// copied into every island, where localhost is the container, that variable
+	// does not exist, and codex refused to start:
+	//
+	//     Missing environment variable: `LITELLM_API_KEY`.
+	//
+	// Nothing done inside the island could fix it, because the shim re-copies the
+	// file on every agent start whenever the local one is absent — so deleting it
+	// lasted exactly until the next restart. Choosing a local model ON THE HOST is
+	// not a statement about islands and must not reach them.
+	//
+	// Claude already had this right: /opt/host/claude carries the host dir and
+	// /opt/host/claude-seed carries credentials — two mounts for two jobs. Codex
+	// had one path doing both, so WHICH job it did depended on whether a push had
+	// ever happened. Now it only ever does the credential one.
+	//
+	// The path stays, because every island's shim already copies
+	// /opt/host/codex/auth.json BY NAME — so this reaches islands built from
+	// images that predate it, on container recreate, with no image rebuild.
+	//
+	// Seeding from the daemon host's own login is kept: it is how a box that IS
+	// logged in furnishes its islands. A push still wins, as the more deliberate
+	// of the two, so the host is consulted only when no push exists. Snapshotting
+	// instead of live-mounting costs nothing: the shim copies auth.json once,
+	// under a `! -f` guard, and never re-reads it.
 	if seedDir, err := paths.CodexSeedDir(); err == nil {
-		if _, statErr := os.Stat(filepath.Join(seedDir, agentcreds.CodexAuthFile)); statErr == nil {
+		seeded := filepath.Join(seedDir, agentcreds.CodexAuthFile)
+		if _, statErr := os.Stat(seeded); statErr != nil {
+			if blob, _, loadErr := agentcreds.LoadCodex(); loadErr == nil {
+				_, _ = agentcreds.WriteCodexSeed(seedDir, blob)
+			}
+		}
+		if _, statErr := os.Stat(seeded); statErr == nil {
 			binds = append(binds, runtime.BindMount{
 				HostPath: seedDir, ContainerPath: "/opt/host/codex", ReadOnly: true,
 			})
-			codexMounted = true
-		}
-	}
-	if !codexMounted {
-		if codexDir, err := paths.HostCodexDir(); err == nil {
-			if _, statErr := os.Stat(codexDir); statErr == nil {
-				binds = append(binds, runtime.BindMount{
-					HostPath: codexDir, ContainerPath: "/opt/host/codex", ReadOnly: true,
-				})
-			}
 		}
 	}
 
